@@ -27,7 +27,8 @@ pub const containers = struct {
     /// Sequential containers (lists, deques, etc.)
     pub const lists = struct {
         pub const SkipList = @import("containers/lists/skip_list.zig").SkipList;
-        // TODO: XorLinkedList, UnrolledLinkedList will be added here
+        pub const XorLinkedList = @import("containers/lists/xor_linked_list.zig").XorLinkedList;
+        // TODO: UnrolledLinkedList will be added here
     };
 
     /// Queue variants
