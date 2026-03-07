@@ -64,6 +64,8 @@ zuda/
 └── docs/                        # Documentation
 ```
 
+> **NOTE**: 위 디렉토리 구조와 PRD의 구조는 **참고용**이다. 실제 구현 과정에서 폴더 구조, 파일명, 모듈 구성 등은 필요에 따라 변경될 수 있다.
+
 ---
 
 ## Development Workflow
