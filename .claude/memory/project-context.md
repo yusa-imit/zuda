@@ -2,24 +2,27 @@
 
 ## Current Status
 - **Version**: 0.0.0 (pre-release)
-- **Phase**: Phase 1 — Foundations (not started)
+- **Phase**: Phase 1 — Foundations (IN PROGRESS)
 - **Zig Version**: 0.15.2
-- **Tests**: Placeholder only (basic add, fuzz example)
+- **Last CI Status**: ✓ GREEN (all tests passing)
 
 ## Phase 1 Progress
-- [ ] Project scaffolding: CI, testing harness, benchmark framework
-- [ ] Lists & Queues: SkipList, XorLinkedList, UnrolledLinkedList, Deque
+- [x] Project scaffolding: CI, testing harness, benchmark framework
+- [x] Lists & Queues (2/4): SkipList ✓, XorLinkedList ✓
+- [ ] Lists & Queues (remaining): UnrolledLinkedList, Deque
 - [ ] Hash containers: CuckooHashMap, RobinHoodHashMap, SwissTable, ConsistentHashRing
 - [ ] Heaps: FibonacciHeap, BinomialHeap, PairingHeap, DaryHeap
 
 ## Implemented Data Structures
-(none yet)
+### Lists & Queues
+- **SkipList(K, V)** - Probabilistic balanced structure with O(log n) operations
+- **XorLinkedList(T)** - Memory-efficient doubly linked list using XOR pointers
 
 ## Implemented Algorithms
 (none yet)
 
 ## Test Metrics
-- Unit tests: 2 (placeholder)
-- Property tests: 0
+- Unit tests: 10+ (SkipList + XorLinkedList + placeholders)
+- Property tests: SkipList has property-based tests
 - Fuzz tests: 1 (example only)
 - Benchmarks: 0
