@@ -2,9 +2,8 @@ const std = @import("std");
 const zuda = @import("zuda");
 
 pub fn main() !void {
-    // Prints to stderr, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-    try zuda.bufferedPrint();
+    std.debug.print("zuda - Zig Unofficial Datastructures and Algorithms\n", .{});
+    std.debug.print("This is a library. Import it with: const zuda = @import(\"zuda\");\n", .{});
 }
 
 test "simple test" {
