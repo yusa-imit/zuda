@@ -33,7 +33,7 @@ pub const containers = struct {
 
     /// Queue variants
     pub const queues = struct {
-        // TODO: Deque will be added here
+        pub const Deque = @import("containers/queues/deque.zig").Deque;
     };
 
     /// Hash-based containers
