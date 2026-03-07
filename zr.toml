@@ -1,0 +1,226 @@
+[project]
+name = "zuda"
+version = "0.0.0"
+description = "Zig Unofficial Datastructures and Algorithms — comprehensive DSA library"
+
+[toolchains.zig]
+version = "0.15.2"
+auto_install = true
+
+# ─── Core Tasks ───────────────────────────────────────────────────────
+
+[tasks.build]
+cmd = "zig build"
+description = "Build the library"
+cache = true
+inputs = ["src/**/*.zig", "build.zig", "build.zig.zon"]
+outputs = ["zig-out/"]
+
+[tasks.test]
+cmd = "zig build test"
+description = "Run all tests (unit + property + fuzz)"
+deps = ["build"]
+
+[tasks.test-fast]
+cmd = "zig build test"
+description = "Run tests without build dependency"
+
+[tasks.fuzz]
+cmd = "zig build test -- --fuzz"
+description = "Run fuzz tests"
+timeout_ms = 3600000
+deps = ["build"]
+
+[tasks.run]
+cmd = "zig build run"
+description = "Run the executable"
+deps = ["build"]
+
+# ─── Code Quality ─────────────────────────────────────────────────────
+
+[tasks.fmt]
+cmd = "zig fmt src/ && (test -d tests && zig fmt tests/ || true) && (test -d bench && zig fmt bench/ || true) && (test -d examples && zig fmt examples/ || true)"
+description = "Format all Zig source files"
+
+[tasks.fmt-check]
+cmd = "zig fmt --check src/ && (test -d tests && zig fmt --check tests/ || true) && (test -d bench && zig fmt --check bench/ || true) && (test -d examples && zig fmt --check examples/ || true)"
+description = "Check formatting without modifying"
+
+[tasks.lint]
+cmd = "zig fmt --check src/"
+description = "Lint: check formatting of library source"
+
+[tasks.validate]
+cmd = "zig build test"
+description = "Validate: build + all tests pass"
+deps = ["fmt-check"]
+
+# ─── Benchmarks ───────────────────────────────────────────────────────
+
+[tasks.bench]
+cmd = "zig build -Doptimize=ReleaseFast run"
+description = "Run benchmarks (ReleaseFast)"
+deps = ["build"]
+
+[tasks.bench-safe]
+cmd = "zig build -Doptimize=ReleaseSafe run"
+description = "Run benchmarks (ReleaseSafe, with safety checks)"
+
+# ─── Cross-Compilation ───────────────────────────────────────────────
+
+[tasks.cross-linux-x86]
+cmd = "zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe"
+description = "Cross-compile for x86_64 Linux"
+
+[tasks.cross-linux-arm]
+cmd = "zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSafe"
+description = "Cross-compile for aarch64 Linux"
+
+[tasks.cross-macos-x86]
+cmd = "zig build -Dtarget=x86_64-macos-none -Doptimize=ReleaseSafe"
+description = "Cross-compile for x86_64 macOS"
+
+[tasks.cross-macos-arm]
+cmd = "zig build -Dtarget=aarch64-macos-none -Doptimize=ReleaseSafe"
+description = "Cross-compile for aarch64 macOS"
+
+[tasks.cross-windows-x86]
+cmd = "zig build -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseSafe"
+description = "Cross-compile for x86_64 Windows"
+
+[tasks.cross-windows-arm]
+cmd = "zig build -Dtarget=aarch64-windows-msvc -Doptimize=ReleaseSafe"
+description = "Cross-compile for aarch64 Windows"
+
+[tasks.cross-all]
+cmd = "echo 'All 6 targets built successfully'"
+description = "Cross-compile for all 6 targets"
+deps = ["cross-linux-x86", "cross-linux-arm", "cross-macos-x86", "cross-macos-arm", "cross-windows-x86", "cross-windows-arm"]
+
+# ─── Cleanup ──────────────────────────────────────────────────────────
+
+[tasks.clean]
+cmd = "rm -rf zig-out .zig-cache"
+description = "Remove all build artifacts and caches"
+
+[tasks.clean-all]
+cmd = "rm -rf zig-out .zig-cache .zr-cache"
+description = "Remove build artifacts, Zig cache, and zr cache"
+
+# ─── Git & Release ────────────────────────────────────────────────────
+
+[tasks.status]
+cmd = "git status && echo '---' && git log --oneline -5"
+description = "Show git status and recent commits"
+
+[tasks.changelog]
+cmd = "git log $(git describe --tags --abbrev=0 2>/dev/null || echo '')..HEAD --oneline --pretty=format:'- %s'"
+description = "Generate changelog since last tag"
+
+[tasks.preflight]
+cmd = "echo '✓ All preflight checks passed'"
+description = "Run all pre-release checks"
+deps_serial = ["clean", "build", "test", "fmt-check", "cross-all"]
+
+# ─── Development Workflows ───────────────────────────────────────────
+
+[tasks.dev]
+cmd = "echo 'Ready for development'"
+description = "Set up development environment"
+deps_serial = ["build", "test"]
+
+[tasks.check]
+cmd = "echo '✓ All checks passed'"
+description = "Quick check: format + build + test"
+deps_serial = ["fmt-check", "build", "test"]
+
+# ─── Profiles ─────────────────────────────────────────────────────────
+
+[profile.debug]
+description = "Debug build with full safety checks"
+[profile.debug.task.build]
+cmd = "zig build"
+
+[profile.release]
+description = "Release build with optimizations"
+[profile.release.task.build]
+cmd = "zig build -Doptimize=ReleaseSafe"
+
+[profile.fast]
+description = "Maximum performance build"
+[profile.fast.task.build]
+cmd = "zig build -Doptimize=ReleaseFast"
+
+[profile.small]
+description = "Minimum binary size build"
+[profile.small.task.build]
+cmd = "zig build -Doptimize=ReleaseSmall"
+
+# ─── Workflows ────────────────────────────────────────────────────────
+
+[workflows.ci]
+description = "Full CI pipeline: lint → test → cross-compile"
+
+[[workflows.ci.stages]]
+name = "quality"
+tasks = ["fmt-check"]
+fail_fast = true
+
+[[workflows.ci.stages]]
+name = "build-test"
+tasks = ["build", "test"]
+fail_fast = true
+
+[[workflows.ci.stages]]
+name = "cross-compile"
+tasks = ["cross-linux-x86", "cross-linux-arm", "cross-macos-x86", "cross-macos-arm", "cross-windows-x86", "cross-windows-arm"]
+parallel = true
+
+[workflows.release]
+description = "Full release pipeline: preflight → changelog → tag"
+
+[[workflows.release.stages]]
+name = "preflight"
+tasks = ["clean", "fmt-check", "build", "test"]
+fail_fast = true
+
+[[workflows.release.stages]]
+name = "cross-verify"
+tasks = ["cross-all"]
+fail_fast = true
+
+[[workflows.release.stages]]
+name = "finalize"
+tasks = ["changelog"]
+
+[workflows.dev-cycle]
+description = "Development cycle: build → test → format"
+
+[[workflows.dev-cycle.stages]]
+name = "build"
+tasks = ["build"]
+
+[[workflows.dev-cycle.stages]]
+name = "test"
+tasks = ["test"]
+
+[[workflows.dev-cycle.stages]]
+name = "format"
+tasks = ["fmt"]
+
+# ─── Aliases ──────────────────────────────────────────────────────────
+
+[alias.t]
+expand = "run test"
+
+[alias.b]
+expand = "run build"
+
+[alias.c]
+expand = "run check"
+
+[alias.f]
+expand = "run fmt"
+
+[alias.x]
+expand = "run cross-all"
