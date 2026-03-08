@@ -38,7 +38,9 @@ pub const containers = struct {
 
     /// Hash-based containers
     pub const hashing = struct {
-        // TODO: CuckooHashMap, RobinHoodHashMap, SwissTable, ConsistentHashRing will be added here
+        pub const CuckooHashMap = @import("containers/hashing/cuckoo_hash_map.zig").CuckooHashMap;
+        pub const AutoCuckooHashMap = @import("containers/hashing/cuckoo_hash_map.zig").AutoCuckooHashMap;
+        // TODO: RobinHoodHashMap, SwissTable, ConsistentHashRing will be added here
     };
 
     /// Heap variants
