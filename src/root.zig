@@ -48,7 +48,7 @@ pub const containers = struct {
 
     /// Heap variants
     pub const heaps = struct {
-        // TODO: FibonacciHeap, BinomialHeap, PairingHeap, DaryHeap will be added here
+        pub const FibonacciHeap = @import("containers/heaps/fibonacci_heap.zig").FibonacciHeap;
     };
 
     /// Tree-based containers
