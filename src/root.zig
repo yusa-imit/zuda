@@ -40,7 +40,9 @@ pub const containers = struct {
     pub const hashing = struct {
         pub const CuckooHashMap = @import("containers/hashing/cuckoo_hash_map.zig").CuckooHashMap;
         pub const AutoCuckooHashMap = @import("containers/hashing/cuckoo_hash_map.zig").AutoCuckooHashMap;
-        // TODO: RobinHoodHashMap, SwissTable, ConsistentHashRing will be added here
+        pub const RobinHoodHashMap = @import("containers/hashing/robin_hood_hash_map.zig").RobinHoodHashMap;
+        pub const AutoRobinHoodHashMap = @import("containers/hashing/robin_hood_hash_map.zig").AutoRobinHoodHashMap;
+        // TODO: SwissTable, ConsistentHashRing will be added here
     };
 
     /// Heap variants
