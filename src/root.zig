@@ -42,7 +42,8 @@ pub const containers = struct {
         pub const AutoCuckooHashMap = @import("containers/hashing/cuckoo_hash_map.zig").AutoCuckooHashMap;
         pub const RobinHoodHashMap = @import("containers/hashing/robin_hood_hash_map.zig").RobinHoodHashMap;
         pub const AutoRobinHoodHashMap = @import("containers/hashing/robin_hood_hash_map.zig").AutoRobinHoodHashMap;
-        // TODO: SwissTable, ConsistentHashRing will be added here
+        pub const SwissTable = @import("containers/hashing/swiss_table.zig").SwissTable;
+        // TODO: ConsistentHashRing will be added here
     };
 
     /// Heap variants
