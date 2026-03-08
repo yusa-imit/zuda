@@ -51,6 +51,7 @@ pub const containers = struct {
         pub const FibonacciHeap = @import("containers/heaps/fibonacci_heap.zig").FibonacciHeap;
         pub const BinomialHeap = @import("containers/heaps/binomial_heap.zig").BinomialHeap;
         pub const PairingHeap = @import("containers/heaps/pairing_heap.zig").PairingHeap;
+        pub const DaryHeap = @import("containers/heaps/dary_heap.zig").DaryHeap;
     };
 
     /// Tree-based containers
