@@ -136,3 +136,34 @@ if (!node.is_leaf) {
     }
 }
 ```
+
+## Tree Deletion with Fixup Parent Tracking
+For red-black tree deletion, track parent separately when fixup node may be null:
+
+```zig
+fn deleteNode(self: *Self, node: *Node) void {
+    var original_color = node.color;
+    var fixup_node: ?*Node = null;
+    var fixup_parent: ?*Node = null;  // Track parent separately!
+
+    if (node.left == null) {
+        fixup_node = node.right;
+        fixup_parent = node.parent;  // Save before transplant
+        self.transplant(node, node.right);
+    }
+    // ... rest of deletion ...
+
+    if (original_color == .black) {
+        // Pass both node AND parent to fixup
+        self.deleteFixup(fixup_node, fixup_parent);
+    }
+}
+
+fn deleteFixup(self: *Self, node: ?*Node, parent: ?*Node) void {
+    // Can now access parent even when node is null
+    const p = parent orelse return;
+    // ...
+}
+```
+
+This pattern is essential when fixup may need to walk up the tree starting from a null node (double-black situation).
