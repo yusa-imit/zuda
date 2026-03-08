@@ -57,14 +57,14 @@ pub fn RedBlackTree(
             pub fn next(self: *Iterator) !?Entry {
                 if (self.stack.items.len == 0) return null;
 
-                const node = self.stack.pop();
+                const node = self.stack.pop().?; // pop() returns ?T in Zig 0.15
                 const result = Entry{ .key = node.key, .value = node.value };
 
                 // Push right subtree
                 if (node.right) |right| {
                     var current: ?*Node = right;
                     while (current) |n| {
-                        try self.stack.append(n);
+                        try self.stack.append(self.allocator, n); // Zig 0.15 API
                         current = n.left;
                     }
                 }
@@ -73,7 +73,7 @@ pub fn RedBlackTree(
             }
 
             pub fn deinit(self: *Iterator) void {
-                self.stack.deinit();
+                self.stack.deinit(self.allocator); // Zig 0.15 API
             }
         };
 
@@ -534,13 +534,13 @@ pub fn RedBlackTree(
         /// Create an in-order iterator (sorted by key).
         /// Time: O(log n) for initialization | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
-            var stack = std.ArrayList(*Node).init(self.allocator);
-            errdefer stack.deinit();
+            var stack: std.ArrayList(*Node) = .{}; // Zig 0.15 API
+            errdefer stack.deinit(self.allocator);
 
             // Initialize stack with leftmost path
             var current = self.root;
             while (current) |node| {
-                try stack.append(node);
+                try stack.append(self.allocator, node); // Zig 0.15 API
                 current = node.left;
             }
 
@@ -816,7 +816,7 @@ test "RedBlackTree: stress test with random operations" {
     );
     defer tree.deinit();
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     // Insert 1000 random elements

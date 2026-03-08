@@ -139,5 +139,8 @@ test {
     _ = internal.testing;
     _ = internal.bench;
     _ = containers.trees.BTree;
+    _ = containers.trees.RedBlackTree;
     _ = containers.trees.AVLTree;
+    _ = containers.trees.SplayTree;
+    _ = containers.trees.AATree;
 }

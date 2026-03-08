@@ -210,85 +210,58 @@ pub fn SplayTree(
         fn splay(self: *Self, node_opt: ?*Node, key: K) ?*Node {
             var node = node_opt orelse return null;
 
-            var left_tree_max: ?*Node = null; // rightmost node of left tree
-            var right_tree_min: ?*Node = null; // leftmost node of right tree
-            var left_tree_root: ?*Node = null;
-            var right_tree_root: ?*Node = null;
+            // Dummy nodes to simplify linking
+            var left_dummy = Node{ .key = undefined, .value = undefined };
+            var right_dummy = Node{ .key = undefined, .value = undefined };
+            var left_max = &left_dummy; // rightmost of left tree
+            var right_min = &right_dummy; // leftmost of right tree
 
             while (true) {
                 const cmp = compareFn(self.context, key, node.key);
 
                 if (cmp == .lt) {
-                    // Key is in left subtree
-                    if (node.left) |left| {
-                        const left_cmp = compareFn(self.context, key, left.key);
-                        if (left_cmp == .lt) {
-                            // Zig-zig: rotate right twice
-                            node.left = left.right;
-                            left.right = node;
-                            node = left;
-                            if (node.left == null) break;
-                        } else if (left_cmp == .gt) {
-                            // Zig-zag: will handle in next iteration
-                        } else {
-                            // Found key at left child
-                        }
-                    } else {
-                        break;
+                    // Key < node.key: go left
+                    const left = node.left orelse break;
+
+                    if (compareFn(self.context, key, left.key) == .lt) {
+                        // Zig-zig: rotate right
+                        node.left = left.right;
+                        left.right = node;
+                        node = left;
+                        if (node.left == null) break;
                     }
 
-                    // Link right
-                    if (right_tree_min) |rtm| {
-                        rtm.left = node;
-                    } else {
-                        right_tree_root = node;
-                    }
-                    right_tree_min = node;
+                    // Link right: hang current node on right tree
+                    right_min.left = node;
+                    right_min = node;
                     node = node.left orelse break;
-                    right_tree_min.?.left = null;
                 } else if (cmp == .gt) {
-                    // Key is in right subtree
-                    if (node.right) |right| {
-                        const right_cmp = compareFn(self.context, key, right.key);
-                        if (right_cmp == .gt) {
-                            // Zig-zig: rotate left twice
-                            node.right = right.left;
-                            right.left = node;
-                            node = right;
-                            if (node.right == null) break;
-                        } else if (right_cmp == .lt) {
-                            // Zig-zag: will handle in next iteration
-                        } else {
-                            // Found key at right child
-                        }
-                    } else {
-                        break;
+                    // Key > node.key: go right
+                    const right = node.right orelse break;
+
+                    if (compareFn(self.context, key, right.key) == .gt) {
+                        // Zig-zig: rotate left
+                        node.right = right.left;
+                        right.left = node;
+                        node = right;
+                        if (node.right == null) break;
                     }
 
-                    // Link left
-                    if (left_tree_max) |ltm| {
-                        ltm.right = node;
-                    } else {
-                        left_tree_root = node;
-                    }
-                    left_tree_max = node;
+                    // Link left: hang current node on left tree
+                    left_max.right = node;
+                    left_max = node;
                     node = node.right orelse break;
-                    left_tree_max.?.right = null;
                 } else {
                     // Found exact key
                     break;
                 }
             }
 
-            // Assemble the tree
-            if (left_tree_max) |ltm| {
-                ltm.right = node.left;
-            }
-            if (right_tree_min) |rtm| {
-                rtm.left = node.right;
-            }
-            node.left = left_tree_root;
-            node.right = right_tree_root;
+            // Assemble: left tree + node + right tree
+            left_max.right = node.left;
+            right_min.left = node.right;
+            node.left = left_dummy.right;
+            node.right = right_dummy.left;
 
             return node;
         }
