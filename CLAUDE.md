@@ -1,6 +1,6 @@
 # zuda — Claude Code Orchestrator
 
-> **zuda**: Zig Unofficial Datastructures and Algorithms
+> **zuda**: Zig Universal Datastructures and Algorithms
 > Current Phase: **Phase 1 — Foundations**
 
 ---

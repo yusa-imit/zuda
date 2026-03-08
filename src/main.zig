@@ -2,7 +2,7 @@ const std = @import("std");
 const zuda = @import("zuda");
 
 pub fn main() !void {
-    std.debug.print("zuda - Zig Unofficial Datastructures and Algorithms\n", .{});
+    std.debug.print("zuda - Zig Universal Datastructures and Algorithms\n", .{});
     std.debug.print("This is a library. Import it with: const zuda = @import(\"zuda\");\n", .{});
 }
 

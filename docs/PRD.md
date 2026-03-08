@@ -1,6 +1,6 @@
 # zuda — Product Requirements Document
 
-> **Zig Unofficial Datastructures and Algorithms**
+> **Zig Universal Datastructures and Algorithms**
 > A comprehensive, production-grade collection of data structures and algorithms written in idiomatic Zig.
 
 **Version:** 0.1 (Draft)

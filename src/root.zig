@@ -1,4 +1,4 @@
-//! zuda - Zig Unofficial Datastructures and Algorithms
+//! zuda - Zig Universal Datastructures and Algorithms
 //!
 //! A comprehensive library of data structures and algorithms for Zig.
 //!
