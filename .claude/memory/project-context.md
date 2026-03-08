@@ -14,7 +14,8 @@
 
 ## Phase 2 Progress — Trees & Range Queries
 - [ ] Balanced BSTs: RedBlackTree, AVLTree, SplayTree, AATree, ScapegoatTree
-- [ ] Tries & B-Trees: Trie, RadixTree, BTree
+- [x] Tries & B-Trees (1/3): BTree ✓
+- [ ] Tries & B-Trees (remaining): Trie, RadixTree
 - [ ] Range query: SegmentTree, LazySegmentTree, FenwickTree, SparseTable, IntervalTree
 - [ ] Spatial: KDTree, RTree, QuadTree, OctTree
 - [ ] Strings: SuffixArray, SuffixTree
@@ -38,11 +39,14 @@
 - **PairingHeap(T)** - Simple multi-pass pairing heap
 - **DaryHeap(T, d)** - Generalized d-ary heap with comptime branching factor
 
+### Trees & Range Queries (Phase 2)
+- **BTree(K, V, order, Context)** - Self-balancing search tree with variable branching factor
+
 ## Implemented Algorithms
 (none yet — Phase 3-4)
 
 ## Test Metrics
-- Unit tests: 11 passing
-- Property tests: SkipList + heap invariants
+- Unit tests: 22 passing (11 BTree + 11 Phase 1)
+- Property tests: SkipList + heap invariants + BTree sorted iteration
 - Fuzz tests: 1
 - Benchmarks: 0
