@@ -71,7 +71,8 @@ pub const containers = struct {
 
     /// String-specialized structures
     pub const strings = struct {
-        // TODO: SuffixArray, SuffixTree, Trie, etc. will be added here
+        pub const Trie = @import("containers/trees/trie.zig").Trie;
+        // TODO: SuffixArray, SuffixTree, RadixTree, etc. will be added here
     };
 
     /// Spatial index structures
@@ -145,4 +146,5 @@ test {
     _ = containers.trees.SplayTree;
     _ = containers.trees.AATree;
     _ = containers.trees.ScapegoatTree;
+    _ = containers.strings.Trie;
 }
