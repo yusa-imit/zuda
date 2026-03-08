@@ -4,7 +4,7 @@
 - **Version**: 0.1.0
 - **Phase**: Phase 2 — Trees & Range Queries (IN PROGRESS)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (22/22 tests passing)
+- **Last CI Status**: ✓ GREEN (32/32 tests passing)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -13,7 +13,7 @@
 - [x] Heaps: FibonacciHeap, BinomialHeap, PairingHeap, DaryHeap
 
 ## Phase 2 Progress — Trees & Range Queries
-- [ ] Balanced BSTs (1/5): RedBlackTree ✓, AVLTree, SplayTree, AATree, ScapegoatTree
+- [ ] Balanced BSTs (2/5): RedBlackTree ✓, AVLTree ✓, SplayTree, AATree, ScapegoatTree
 - [x] Tries & B-Trees (1/3): BTree ✓
 - [ ] Tries & B-Trees (remaining): Trie, RadixTree
 - [ ] Range query: SegmentTree, LazySegmentTree, FenwickTree, SparseTable, IntervalTree
@@ -42,12 +42,13 @@
 ### Trees & Range Queries (Phase 2)
 - **BTree(K, V, order, Context)** - Self-balancing search tree with variable branching factor
 - **RedBlackTree(K, V, Context, compareFn)** - Color-based balanced BST with O(log n) operations
+- **AVLTree(K, V, Context, compareFn)** - Strictly balanced BST with height-based balancing (±1 balance factor)
 
 ## Implemented Algorithms
 (none yet — Phase 3-4)
 
 ## Test Metrics
-- Unit tests: 22 passing (10 RedBlackTree + 11 BTree + 11 Phase 1)
-- Property tests: SkipList + heap invariants + BTree sorted iteration + RedBlackTree validation
+- Unit tests: 32 passing (10 AVLTree + 10 RedBlackTree + 11 BTree + 11 Phase 1)
+- Property tests: SkipList + heap invariants + BTree sorted iteration + AVLTree/RedBlackTree validation
 - Fuzz tests: 1
 - Benchmarks: 0
