@@ -62,6 +62,7 @@ pub const containers = struct {
         pub const SplayTree = @import("containers/trees/splay_tree.zig").SplayTree;
         pub const AATree = @import("containers/trees/aa_tree.zig").AATree;
         pub const ScapegoatTree = @import("containers/trees/scapegoat_tree.zig").ScapegoatTree;
+        pub const SegmentTree = @import("containers/trees/segment_tree.zig").SegmentTree;
     };
 
     /// Graph representations
@@ -147,6 +148,7 @@ test {
     _ = containers.trees.SplayTree;
     _ = containers.trees.AATree;
     _ = containers.trees.ScapegoatTree;
+    _ = containers.trees.SegmentTree;
     _ = containers.strings.Trie;
     _ = containers.strings.RadixTree;
 }
