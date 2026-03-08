@@ -56,7 +56,7 @@ pub const containers = struct {
 
     /// Tree-based containers
     pub const trees = struct {
-        // TODO: RedBlackTree, AVLTree, BTree, etc. will be added here
+        pub const BTree = @import("containers/trees/btree.zig").BTree;
     };
 
     /// Graph representations
@@ -134,4 +134,5 @@ test {
     std.testing.refAllDecls(@This());
     _ = internal.testing;
     _ = internal.bench;
+    _ = containers.trees.BTree;
 }
