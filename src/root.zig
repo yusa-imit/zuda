@@ -59,6 +59,7 @@ pub const containers = struct {
         pub const BTree = @import("containers/trees/btree.zig").BTree;
         pub const RedBlackTree = @import("containers/trees/red_black_tree.zig").RedBlackTree;
         pub const AVLTree = @import("containers/trees/avl_tree.zig").AVLTree;
+        pub const SplayTree = @import("containers/trees/splay_tree.zig").SplayTree;
     };
 
     /// Graph representations
