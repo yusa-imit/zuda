@@ -332,14 +332,15 @@ pub fn SplayTree(
         pub const Iterator = struct {
             stack: std.ArrayList(*Node),
             current: ?*Node,
+            allocator: Allocator,
 
             pub fn next(self: *Iterator) ?Entry {
                 while (self.current != null or self.stack.items.len > 0) {
                     if (self.current) |node| {
-                        self.stack.append(node) catch return null;
+                        self.stack.append(self.allocator, node) catch return null;
                         self.current = node.left;
                     } else {
-                        const node = self.stack.pop();
+                        const node = self.stack.pop().?;
                         self.current = node.right;
                         return Entry{
                             .key = node.key,
@@ -351,15 +352,16 @@ pub fn SplayTree(
             }
 
             pub fn deinit(self: *Iterator) void {
-                self.stack.deinit();
+                self.stack.deinit(self.allocator);
             }
         };
 
         /// Time: O(1) to create, O(n) to iterate | Space: O(log n)
-        pub fn iterator(self: *const Self) !Iterator {
+        pub fn iterator(self: *const Self) Iterator {
             return Iterator{
-                .stack = std.ArrayList(*Node).init(self.allocator),
+                .stack = .{},
                 .current = self.root,
+                .allocator = self.allocator,
             };
         }
     };
@@ -501,7 +503,7 @@ test "SplayTree: iterator in-order traversal" {
         _ = try tree.insert(key, key * 10);
     }
 
-    var iter = try tree.iterator();
+    var iter = tree.iterator();
     defer iter.deinit();
 
     const expected = [_]i64{ 1, 2, 3, 5, 7, 8, 9 };
