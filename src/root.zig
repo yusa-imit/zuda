@@ -75,7 +75,8 @@ pub const containers = struct {
         pub const IntGraph = @import("containers/graphs/adjacency_list.zig").IntGraph;
         pub const AdjacencyMatrix = @import("containers/graphs/adjacency_matrix.zig").AdjacencyMatrix;
         pub const CompressedSparseRow = @import("containers/graphs/compressed_sparse_row.zig").CompressedSparseRow;
-        pub const Edge = @import("containers/graphs/compressed_sparse_row.zig").Edge;
+        pub const CSREdge = @import("containers/graphs/compressed_sparse_row.zig").Edge;
+        pub const EdgeList = @import("containers/graphs/edge_list.zig").EdgeList;
     };
 
     /// String-specialized structures
