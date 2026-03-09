@@ -1,7 +1,40 @@
 # zuda Debugging Notes
 
 ## Fixed Issues
-(none yet)
+
+### SuffixTree Edge Splitting Bug (Issue #1, fixed in d17ca50)
+**Symptoms**: `findAll()` returned duplicate suffix indices (e.g., 3 instead of 2 for "ana" in "banana"); `longestRepeatedSubstring()` returned null for strings with repeated substrings.
+
+**Root Cause**: Two separate bugs:
+1. **Pattern search at edge boundaries**: When pattern match exhausted exactly at `j == edge.label.len`, the code didn't move `node` to `edge.target`. This left `node` pointing to a parent node, causing `collectLeaves()` to collect incorrect suffix indices from parent's subtree.
+2. **LRS detection logic**: Only checked `node.children.count() >= 2`, but missed nodes with `suffix_index != null` AND `children.count() >= 1`. Such nodes represent a repeated substring (one occurrence ends at this node, another continues in a child path).
+
+**Fix**:
+```zig
+// Before: ambiguous condition chain
+if (i < pattern.len) {
+    node = edge.target;
+} else if (j < edge.label.len) {
+    found_edge = edge;
+}
+
+// After: explicit exhausted case handling
+if (i >= pattern.len) {
+    if (j < edge.label.len) {
+        found_edge = edge;
+    } else {
+        node = edge.target;  // MUST move to target when pattern ends at boundary
+    }
+} else {
+    node = edge.target;
+}
+
+// LRS fix: recognize both branching patterns
+const is_repeated = (node.children.count() >= 2) or
+                   (node.suffix_index != null and node.children.count() >= 1);
+```
+
+**Lesson**: In compressed suffix trees, internal nodes can have `suffix_index` set when a suffix ends exactly at a branch point. Pattern search must explicitly handle all three cases: pattern continues, ends mid-edge, ends at boundary.
 
 ## Known Zig 0.15.x Gotchas (from sibling projects)
 - `std.ArrayList(T){}` not `.init(allocator)` — unmanaged API
