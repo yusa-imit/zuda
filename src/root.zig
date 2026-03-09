@@ -84,6 +84,8 @@ pub const containers = struct {
     /// Spatial index structures
     pub const spatial = struct {
         pub const KDTree = @import("containers/spatial/kd_tree.zig").KDTree;
+        pub const RTree = @import("containers/spatial/r_tree.zig").RTree;
+        pub const BoundingBox = @import("containers/spatial/r_tree.zig").BoundingBox;
     };
 
     /// Probabilistic data structures
@@ -160,4 +162,5 @@ test {
     _ = containers.strings.Trie;
     _ = containers.strings.RadixTree;
     _ = containers.spatial.KDTree;
+    _ = containers.spatial.RTree;
 }
