@@ -50,11 +50,12 @@
 - **SuffixTree(T)** - Compressed trie of all suffixes with pattern matching and LRS queries (basic O(n²) implementation)
 
 ## Phase 3 Progress — 🚧 IN PROGRESS
-- [x] Graph Representations (1/4): AdjacencyList ✓
-- [ ] Graph Representations (3/4): AdjacencyMatrix, CompressedSparseRow, EdgeList
-- [ ] Traversal & shortest paths: BFS, DFS, Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's
+- [x] Graph Representations (4/4): AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList ✓
+- [x] Traversal (2/2): BFS ✓, DFS ✓
+- [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
+- [ ] Shortest paths: Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's
 - [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
-- [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian, topological sort
+- [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
 ## Implemented Data Structures - Phase 3
 ### Graph Representations (Phase 3)
@@ -62,29 +63,36 @@
   - Supports directed/undirected, weighted/unweighted graphs
   - O(1) amortized add vertex/edge, O(deg(v)) edge queries
   - Helper: IntGraph(W) for u32 vertices
+- **AdjacencyMatrix(V)** - Dense graph representation, O(1) edge query, O(V²) space
+- **CompressedSparseRow(V, W)** - Immutable, cache-friendly format for analytics
+- **EdgeList(V, W)** - Minimal representation for edge-centric algorithms (Kruskal, etc.)
 
-## Implemented Algorithms
-(none yet — Phase 3-4)
+## Implemented Algorithms - Phase 3
+### Graph Traversal
+- **BFS(V, Context)** - Breadth-first search with shortest path computation
+- **DFS(V, Context)** - Depth-first search with pre/post-order traversal
+### DAG Algorithms
+- **TopologicalSort(V, Context)** - Kahn's algorithm + DFS-based topological ordering
+  - Consumer: zr task runner (replaces custom topo_sort.zig)
+  - Cycle detection with vertex reporting
 
 ## Test Metrics
-- Unit tests: 231 passing / 231 total (100%)
+- Unit tests: 263 passing / 263 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-09 - Hour 21)
-**STABILIZATION MODE (hour % 4 == 0 branch):**
-- ✅ Fixed SuffixTree bug #1: edge splitting and LRS logic (d17ca50)
-  - Pattern search now correctly handles edge boundaries
-  - LRS detection fixed for nodes with suffix_index AND children
-- ✅ CI GREEN: All 219 tests passing
-
-**FEATURE MODE (returned after bug fix):**
-- ✅ Implemented AdjacencyList (dbed907)
-  - Generic V vertex type, W weight type (void for unweighted)
-  - Directed/undirected graph support
-  - 12 comprehensive tests (all passing)
-  - Consumer: Will replace zr's DAG implementation
-- ✅ Phase 3 STARTED: 1/4 graph representations complete
-- 🎯 Next: AdjacencyMatrix, then graph algorithms (BFS, DFS, etc.)
+## Recent Progress (Session 2026-03-10 - Hour 07)
+**FEATURE MODE (hour % 4 == 3):**
+- ✅ Implemented TopologicalSort (33173df)
+  - Kahn's algorithm (BFS-based with in-degree tracking)
+  - DFS-based alternative (reverse post-order)
+  - Cycle detection with vertex collection
+  - 6 comprehensive tests (simple DAG, cycles, edge cases)
+  - Consumer: zr task runner (replaces src/graph/topo_sort.zig - 323 LOC)
+- ✅ All graph representations now complete (4/4):
+  - AdjacencyMatrix, CompressedSparseRow, EdgeList implemented previously
+  - BFS and DFS already implemented
+- ✅ CI GREEN: All 263 tests passing (100%)
+- 🎯 Next: Cycle detection standalone, then shortest path algorithms (Dijkstra)
