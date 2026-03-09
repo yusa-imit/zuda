@@ -13,12 +13,11 @@
 - [x] Heaps: FibonacciHeap, BinomialHeap, PairingHeap, DaryHeap
 
 ## Phase 2 Progress — Trees & Range Queries
-- [ ] Balanced BSTs (2/5): RedBlackTree ✓, AVLTree ✓, SplayTree, AATree, ScapegoatTree
-- [x] Tries & B-Trees (1/3): BTree ✓
-- [ ] Tries & B-Trees (remaining): Trie, RadixTree
-- [ ] Range query: SegmentTree, LazySegmentTree, FenwickTree, SparseTable, IntervalTree
-- [ ] Spatial: KDTree, RTree, QuadTree, OctTree
-- [ ] Strings: SuffixArray, SuffixTree
+- [x] Balanced BSTs (5/5): RedBlackTree ✓, AVLTree ✓, SplayTree ✓, AATree ✓, ScapegoatTree ✓
+- [x] Tries & B-Trees (3/3): BTree ✓, Trie ✓, RadixTree ✓
+- [x] Range query (5/5): SegmentTree ✓, LazySegmentTree ✓, FenwickTree ✓, SparseTable ✓, IntervalTree ✓
+- [ ] Spatial (3/4): KDTree ✓, RTree ✓, QuadTree ✓, OctTree
+- [ ] Strings (0/2): SuffixArray, SuffixTree
 
 ## Implemented Data Structures
 ### Lists & Queues (Phase 1)
@@ -43,12 +42,16 @@
 - **BTree(K, V, order, Context)** - Self-balancing search tree with variable branching factor
 - **RedBlackTree(K, V, Context, compareFn)** - Color-based balanced BST with O(log n) operations
 - **AVLTree(K, V, Context, compareFn)** - Strictly balanced BST with height-based balancing (±1 balance factor)
+- **SplayTree, AATree, ScapegoatTree** - Additional balanced BSTs with different rebalancing strategies
+- **Trie, RadixTree** - Prefix-based string containers
+- **SegmentTree, LazySegmentTree, FenwickTree, SparseTable, IntervalTree** - Range query structures
+- **KDTree, RTree, QuadTree** - Spatial index structures (2D/3D partitioning)
 
 ## Implemented Algorithms
 (none yet — Phase 3-4)
 
 ## Test Metrics
-- Unit tests: 32 passing (10 AVLTree + 10 RedBlackTree + 11 BTree + 11 Phase 1)
-- Property tests: SkipList + heap invariants + BTree sorted iteration + AVLTree/RedBlackTree validation
+- Unit tests: 37 passing (5 QuadTree + 32 previous)
+- Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
