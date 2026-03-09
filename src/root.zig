@@ -87,6 +87,7 @@ pub const containers = struct {
         pub const RTree = @import("containers/spatial/r_tree.zig").RTree;
         pub const BoundingBox = @import("containers/spatial/r_tree.zig").BoundingBox;
         pub const QuadTree = @import("containers/spatial/quad_tree.zig").QuadTree;
+        pub const OctTree = @import("containers/spatial/octtree.zig").OctTree;
     };
 
     /// Probabilistic data structures
@@ -165,4 +166,5 @@ test {
     _ = containers.spatial.KDTree;
     _ = containers.spatial.RTree;
     _ = containers.spatial.QuadTree;
+    _ = containers.spatial.OctTree;
 }
