@@ -83,7 +83,7 @@ pub const containers = struct {
 
     /// Spatial index structures
     pub const spatial = struct {
-        // TODO: KDTree, RTree, QuadTree, OctTree will be added here
+        pub const KDTree = @import("containers/spatial/kd_tree.zig").KDTree;
     };
 
     /// Probabilistic data structures
@@ -159,4 +159,5 @@ test {
     _ = containers.trees.IntervalTree;
     _ = containers.strings.Trie;
     _ = containers.strings.RadixTree;
+    _ = containers.spatial.KDTree;
 }
