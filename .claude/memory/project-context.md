@@ -2,9 +2,9 @@
 
 ## Current Status
 - **Version**: 0.1.0
-- **Phase**: Phase 2 — Trees & Range Queries (IN PROGRESS)
+- **Phase**: Phase 2 — Trees & Range Queries (ALMOST COMPLETE)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (32/32 tests passing)
+- **Last CI Status**: ✓ GREEN (all tests passing)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -16,8 +16,8 @@
 - [x] Balanced BSTs (5/5): RedBlackTree ✓, AVLTree ✓, SplayTree ✓, AATree ✓, ScapegoatTree ✓
 - [x] Tries & B-Trees (3/3): BTree ✓, Trie ✓, RadixTree ✓
 - [x] Range query (5/5): SegmentTree ✓, LazySegmentTree ✓, FenwickTree ✓, SparseTable ✓, IntervalTree ✓
-- [ ] Spatial (3/4): KDTree ✓, RTree ✓, QuadTree ✓, OctTree
-- [ ] Strings (0/2): SuffixArray, SuffixTree
+- [x] Spatial (4/4): KDTree ✓, RTree ✓, QuadTree ✓, OctTree ✓
+- [ ] Strings (1/2): SuffixArray ✓, SuffixTree
 
 ## Implemented Data Structures
 ### Lists & Queues (Phase 1)
@@ -45,13 +45,20 @@
 - **SplayTree, AATree, ScapegoatTree** - Additional balanced BSTs with different rebalancing strategies
 - **Trie, RadixTree** - Prefix-based string containers
 - **SegmentTree, LazySegmentTree, FenwickTree, SparseTable, IntervalTree** - Range query structures
-- **KDTree, RTree, QuadTree** - Spatial index structures (2D/3D partitioning)
+- **KDTree, RTree, QuadTree, OctTree** - Spatial index structures (2D/3D partitioning)
+- **SuffixArray(T)** - Space-efficient suffix array with LCP, pattern matching, and longest repeated substring queries
 
 ## Implemented Algorithms
 (none yet — Phase 3-4)
 
 ## Test Metrics
-- Unit tests: 37 passing (5 QuadTree + 32 previous)
+- Unit tests: 209 passing
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
+
+## Recent Progress (Session 2026-03-09)
+- ✅ Implemented OctTree (3D spatial partitioning, 8-octant subdivision)
+- ✅ Implemented SuffixArray (pattern matching, LCP array, longest repeated substring)
+- 📊 Phase 2 progress: 17/18 structures complete (94%)
+- 🎯 Next: SuffixTree to complete Phase 2
