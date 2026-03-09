@@ -117,6 +117,7 @@ pub const algorithms = struct {
     /// Graph algorithms
     pub const graph = struct {
         pub const BFS = @import("algorithms/graph/bfs.zig").BFS;
+        pub const DFS = @import("algorithms/graph/dfs.zig").DFS;
     };
 
     /// String algorithms
@@ -178,4 +179,5 @@ test {
     _ = containers.graphs.AdjacencyList;
     _ = containers.graphs.AdjacencyMatrix;
     _ = algorithms.graph.BFS;
+    _ = algorithms.graph.DFS;
 }
