@@ -231,12 +231,19 @@ pub fn SuffixTree(comptime T: type) type {
                 }
 
                 i += j;
-                if (i < pattern.len) {
+                if (i >= pattern.len) {
+                    // Pattern exhausted
+                    if (j < edge.label.len) {
+                        // Pattern ends in middle of edge
+                        found_edge = edge;
+                        edge_match_len = j;
+                    } else {
+                        // Pattern ends exactly at edge boundary
+                        node = edge.target;
+                    }
+                } else {
+                    // Pattern continues, move to target node
                     node = edge.target;
-                } else if (j < edge.label.len) {
-                    // Pattern ends in middle of edge
-                    found_edge = edge;
-                    edge_match_len = j;
                 }
             }
 
@@ -282,7 +289,11 @@ pub fn SuffixTree(comptime T: type) type {
 
         fn dfsLongestRepeated(self: *const Self, node: *const Node, depth: usize, max_len: *usize, max_start: *usize) void {
             // Internal nodes with multiple children represent repeated substrings
-            if (node.children.count() >= 2 and depth > max_len.*) {
+            // OR nodes with suffix_index AND at least one child (suffix ends here + continues in child)
+            const is_repeated = (node.children.count() >= 2) or
+                               (node.suffix_index != null and node.children.count() >= 1);
+
+            if (is_repeated and depth > 0 and depth > max_len.*) {
                 max_len.* = depth;
                 // Find any leaf to get the substring position
                 if (self.findAnyLeaf(node)) |idx| {
