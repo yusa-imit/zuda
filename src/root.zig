@@ -73,6 +73,7 @@ pub const containers = struct {
     pub const graphs = struct {
         pub const AdjacencyList = @import("containers/graphs/adjacency_list.zig").AdjacencyList;
         pub const IntGraph = @import("containers/graphs/adjacency_list.zig").IntGraph;
+        pub const AdjacencyMatrix = @import("containers/graphs/adjacency_matrix.zig").AdjacencyMatrix;
     };
 
     /// String-specialized structures
@@ -172,4 +173,5 @@ test {
     _ = containers.spatial.QuadTree;
     _ = containers.spatial.OctTree;
     _ = containers.graphs.AdjacencyList;
+    _ = containers.graphs.AdjacencyMatrix;
 }
