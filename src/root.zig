@@ -65,6 +65,7 @@ pub const containers = struct {
         pub const SegmentTree = @import("containers/trees/segment_tree.zig").SegmentTree;
         pub const LazySegmentTree = @import("containers/trees/lazy_segment_tree.zig").LazySegmentTree;
         pub const FenwickTree = @import("containers/trees/fenwick_tree.zig").FenwickTree;
+        pub const SparseTable = @import("containers/trees/sparse_table.zig").SparseTable;
     };
 
     /// Graph representations
@@ -153,6 +154,7 @@ test {
     _ = containers.trees.SegmentTree;
     _ = containers.trees.LazySegmentTree;
     _ = containers.trees.FenwickTree;
+    _ = containers.trees.SparseTable;
     _ = containers.strings.Trie;
     _ = containers.strings.RadixTree;
 }
