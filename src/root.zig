@@ -116,7 +116,7 @@ pub const algorithms = struct {
 
     /// Graph algorithms
     pub const graph = struct {
-        // TODO: BFS, DFS, Dijkstra, etc. will be added here
+        pub const BFS = @import("algorithms/graph/bfs.zig").BFS;
     };
 
     /// String algorithms
@@ -177,4 +177,5 @@ test {
     _ = containers.spatial.OctTree;
     _ = containers.graphs.AdjacencyList;
     _ = containers.graphs.AdjacencyMatrix;
+    _ = algorithms.graph.BFS;
 }
