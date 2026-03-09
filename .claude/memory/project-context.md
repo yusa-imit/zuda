@@ -2,9 +2,9 @@
 
 ## Current Status
 - **Version**: 0.1.0
-- **Phase**: Phase 2 — Trees & Range Queries ✅ **COMPLETE**
+- **Phase**: Phase 3 — Graph Algorithms 🚧 **IN PROGRESS**
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (219/219 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (231/231 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -49,20 +49,42 @@
 - **SuffixArray(T)** - Space-efficient suffix array with LCP, pattern matching, and longest repeated substring queries
 - **SuffixTree(T)** - Compressed trie of all suffixes with pattern matching and LRS queries (basic O(n²) implementation)
 
+## Phase 3 Progress — 🚧 IN PROGRESS
+- [x] Graph Representations (1/4): AdjacencyList ✓
+- [ ] Graph Representations (3/4): AdjacencyMatrix, CompressedSparseRow, EdgeList
+- [ ] Traversal & shortest paths: BFS, DFS, Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's
+- [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
+- [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian, topological sort
+
+## Implemented Data Structures - Phase 3
+### Graph Representations (Phase 3)
+- **AdjacencyList(V, W, Context, hashFn, eqlFn)** - Space-efficient graph using adjacency lists, O(V + E) space
+  - Supports directed/undirected, weighted/unweighted graphs
+  - O(1) amortized add vertex/edge, O(deg(v)) edge queries
+  - Helper: IntGraph(W) for u32 vertices
+
 ## Implemented Algorithms
 (none yet — Phase 3-4)
 
 ## Test Metrics
-- Unit tests: 219 passing / 219 total (100%)
+- Unit tests: 231 passing / 231 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-09 - Hour 21 - STABILIZATION MODE)
+## Recent Progress (Session 2026-03-09 - Hour 21)
+**STABILIZATION MODE (hour % 4 == 0 branch):**
 - ✅ Fixed SuffixTree bug #1: edge splitting and LRS logic (d17ca50)
   - Pattern search now correctly handles edge boundaries
   - LRS detection fixed for nodes with suffix_index AND children
 - ✅ CI GREEN: All 219 tests passing
-- ✅ Phase 2 remains COMPLETE: 18/18 structures (100%)
-- 🎯 Next: Begin Phase 3 — Graph Algorithms
+
+**FEATURE MODE (returned after bug fix):**
+- ✅ Implemented AdjacencyList (dbed907)
+  - Generic V vertex type, W weight type (void for unweighted)
+  - Directed/undirected graph support
+  - 12 comprehensive tests (all passing)
+  - Consumer: Will replace zr's DAG implementation
+- ✅ Phase 3 STARTED: 1/4 graph representations complete
+- 🎯 Next: AdjacencyMatrix, then graph algorithms (BFS, DFS, etc.)
