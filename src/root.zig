@@ -125,6 +125,7 @@ pub const algorithms = struct {
         pub const Johnson = @import("algorithms/graph/johnson.zig").Johnson;
         pub const Kruskal = @import("algorithms/graph/kruskal.zig").Kruskal;
         pub const Prim = @import("algorithms/graph/prim.zig").Prim;
+        pub const Boruvka = @import("algorithms/graph/boruvka.zig").Boruvka;
         pub const TopologicalSort = @import("algorithms/graph/topological_sort.zig").TopologicalSort;
     };
 
@@ -195,5 +196,6 @@ test {
     _ = algorithms.graph.Johnson;
     _ = algorithms.graph.Kruskal;
     _ = algorithms.graph.Prim;
+    _ = algorithms.graph.Boruvka;
     _ = algorithms.graph.TopologicalSort;
 }
