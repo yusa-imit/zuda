@@ -129,6 +129,7 @@ pub const algorithms = struct {
         pub const TarjanSCC = @import("algorithms/graph/tarjan_scc.zig").TarjanSCC;
         pub const KosarajuSCC = @import("algorithms/graph/kosaraju_scc.zig").KosarajuSCC;
         pub const TopologicalSort = @import("algorithms/graph/topological_sort.zig").TopologicalSort;
+        pub const Bridges = @import("algorithms/graph/bridges.zig").Bridges;
     };
 
     /// String algorithms
