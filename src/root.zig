@@ -126,6 +126,7 @@ pub const algorithms = struct {
         pub const Kruskal = @import("algorithms/graph/kruskal.zig").Kruskal;
         pub const Prim = @import("algorithms/graph/prim.zig").Prim;
         pub const Boruvka = @import("algorithms/graph/boruvka.zig").Boruvka;
+        pub const TarjanSCC = @import("algorithms/graph/tarjan_scc.zig").TarjanSCC;
         pub const TopologicalSort = @import("algorithms/graph/topological_sort.zig").TopologicalSort;
     };
 
@@ -197,5 +198,6 @@ test {
     _ = algorithms.graph.Kruskal;
     _ = algorithms.graph.Prim;
     _ = algorithms.graph.Boruvka;
+    _ = algorithms.graph.TarjanSCC;
     _ = algorithms.graph.TopologicalSort;
 }
