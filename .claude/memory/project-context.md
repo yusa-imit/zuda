@@ -53,7 +53,7 @@
 - [x] Graph Representations (4/4): AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList ✓
 - [x] Traversal (2/2): BFS ✓, DFS ✓
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
-- [ ] Shortest paths: Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's
+- [ ] Shortest paths (2/5): Dijkstra ✓, Bellman-Ford ✓, A*, Floyd-Warshall, Johnson's
 - [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
@@ -75,24 +75,29 @@
 - **TopologicalSort(V, Context)** - Kahn's algorithm + DFS-based topological ordering
   - Consumer: zr task runner (replaces custom topo_sort.zig)
   - Cycle detection with vertex reporting
+### Shortest Paths
+- **Dijkstra(V, W, Context)** - Single-source shortest paths for non-negative weights, O((V+E) log V)
+- **BellmanFord(V, W, Context)** - Single-source shortest paths with negative weights, O(V*E)
+  - Handles negative edge weights correctly
+  - Detects and reports negative cycles
+  - Path reconstruction via parent pointers
 
 ## Test Metrics
-- Unit tests: 263 passing / 263 total (100%)
+- Unit tests: 271 passing / 271 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-10 - Hour 07)
+## Recent Progress (Session 2026-03-10 - Hour 11)
 **FEATURE MODE (hour % 4 == 3):**
-- ✅ Implemented TopologicalSort (33173df)
-  - Kahn's algorithm (BFS-based with in-degree tracking)
-  - DFS-based alternative (reverse post-order)
-  - Cycle detection with vertex collection
-  - 6 comprehensive tests (simple DAG, cycles, edge cases)
-  - Consumer: zr task runner (replaces src/graph/topo_sort.zig - 323 LOC)
-- ✅ All graph representations now complete (4/4):
-  - AdjacencyMatrix, CompressedSparseRow, EdgeList implemented previously
-  - BFS and DFS already implemented
-- ✅ CI GREEN: All 263 tests passing (100%)
-- 🎯 Next: Cycle detection standalone, then shortest path algorithms (Dijkstra)
+- ✅ Implemented Bellman-Ford (5b73974)
+  - Single-source shortest paths with negative edge weights support
+  - Negative cycle detection with affected vertex reporting
+  - Path reconstruction functionality
+  - Time: O(V * E), Space: O(V)
+  - 8 comprehensive tests (positive weights, negative weights, cycles, disconnected, edge cases)
+  - Complements Dijkstra for graphs where negative weights may exist
+- ✅ Fixed ArrayList API for Zig 0.15: `.{}` syntax instead of `.init()`
+- ✅ CI GREEN: All 271 tests passing (100%)
+- 🎯 Next: A* (heuristic shortest path), then Floyd-Warshall (all-pairs)
