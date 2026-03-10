@@ -131,6 +131,7 @@ pub const algorithms = struct {
         pub const TopologicalSort = @import("algorithms/graph/topological_sort.zig").TopologicalSort;
         pub const Bridges = @import("algorithms/graph/bridges.zig").Bridges;
         pub const ArticulationPoints = @import("algorithms/graph/articulation_points.zig").ArticulationPoints;
+        pub const EdmondsKarp = @import("algorithms/graph/edmonds_karp.zig").EdmondsKarp;
     };
 
     /// String algorithms
@@ -204,4 +205,7 @@ test {
     _ = algorithms.graph.TarjanSCC;
     _ = algorithms.graph.KosarajuSCC;
     _ = algorithms.graph.TopologicalSort;
+    _ = algorithms.graph.Bridges;
+    _ = algorithms.graph.ArticulationPoints;
+    _ = algorithms.graph.EdmondsKarp;
 }
