@@ -56,7 +56,7 @@
 - [x] Shortest paths (5/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson ✓
 - [x] MST (3/3): Kruskal ✓, Prim ✓, Borůvka ✓
 - [x] Connectivity (4/4): Tarjan SCC ✓, Kosaraju SCC ✓, Bridges ✓, Articulation Points ✓
-- [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
+- [ ] Flow & matching (2/5): Edmonds-Karp ✓, Dinic ✓, Push-Relabel, Hopcroft-Karp, Hungarian
 
 ## Implemented Data Structures - Phase 3
 ### Graph Representations (Phase 3)
@@ -129,15 +129,39 @@
   - DFS with low-link values, root has ≥2 children rule
   - Single-pass algorithm, handles disconnected components
   - Consumer: Social network analysis (key influencers), transportation networks (critical hubs)
+### Flow Algorithms
+- **EdmondsKarp(V, C, Context)** - Max flow via Ford-Fulkerson with BFS, O(VE²)
+  - BFS for shortest augmenting paths (guarantees polynomial time)
+  - Returns max flow value, flow on each edge, and minimum cut
+  - Consumer: network capacity planning, bipartite matching
+- **Dinic(V, C, Context)** - Max flow via level graphs and blocking flows, O(V²E)
+  - BFS to build level graph (distance layers from source)
+  - DFS to find blocking flows with current-edge optimization
+  - Unit capacity networks: O(E * min(V^(2/3), E^(1/2)))
+  - Faster than Edmonds-Karp for many practical cases
+  - Consumer: general purpose max flow, efficient alternative to Edmonds-Karp
 
 ## Test Metrics
-- Unit tests: 345 passing / 345 total (100%)
+- Unit tests: 352 passing / 352 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-11 - Hour 01)
+## Recent Progress (Session 2026-03-11 - Hour 05)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented Dinic's max flow algorithm (5b1abf5)
+  - Level graph construction via BFS for distance layers
+  - Blocking flow computation via DFS with current-edge optimization
+  - Algorithm: O(V²E) time, faster than Edmonds-Karp for many practical cases
+  - Special case: Unit capacity networks achieve O(E * min(V^(2/3), E^(1/2)))
+  - 7 tests: basic max flow, single edge, no path, diamond, unit capacity, parallel edges, error case
+  - Residual graph with forward/reverse edge pairs (rev_index tracking)
+  - Consumer: general purpose max flow, efficient alternative to Edmonds-Karp
+- ✅ CI GREEN: All 352 tests passing (100%)
+- 🎯 Next: Push-Relabel algorithm (preflow-push approach with height heuristic)
+
+## Previous Session (Session 2026-03-11 - Hour 01)
 **FEATURE MODE (hour % 4 == 1):**
 - ✅ Implemented Bridges (cut edges) algorithm (cb832a5)
   - Tarjan's bridge-finding via DFS with low-link values
