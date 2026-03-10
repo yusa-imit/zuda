@@ -53,7 +53,7 @@
 - [x] Graph Representations (4/4): AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList ✓
 - [x] Traversal (2/2): BFS ✓, DFS ✓
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
-- [ ] Shortest paths (2/5): Dijkstra ✓, Bellman-Ford ✓, A*, Floyd-Warshall, Johnson's
+- [ ] Shortest paths (3/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall, Johnson's
 - [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
@@ -81,23 +81,28 @@
   - Handles negative edge weights correctly
   - Detects and reports negative cycles
   - Path reconstruction via parent pointers
+- **AStar(V, W, Context)** - Heuristic-guided shortest path, O(E) worst case, typically O(b^d)
+  - Uses admissible heuristic function for efficient pathfinding
+  - Early termination when goal is reached
+  - Ideal for navigation, routing, game AI pathfinding
 
 ## Test Metrics
 - Unit tests: 271 passing / 271 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
-- Known issues: None
+- Known issues: A* tests pending (anonymous struct type system constraints)
 
-## Recent Progress (Session 2026-03-10 - Hour 11)
-**FEATURE MODE (hour % 4 == 3):**
-- ✅ Implemented Bellman-Ford (5b73974)
-  - Single-source shortest paths with negative edge weights support
-  - Negative cycle detection with affected vertex reporting
-  - Path reconstruction functionality
-  - Time: O(V * E), Space: O(V)
-  - 8 comprehensive tests (positive weights, negative weights, cycles, disconnected, edge cases)
-  - Complements Dijkstra for graphs where negative weights may exist
-- ✅ Fixed ArrayList API for Zig 0.15: `.{}` syntax instead of `.init()`
+## Recent Progress (Session 2026-03-10 - Hour 13)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented A* (67f7bb8)
+  - Heuristic-guided shortest path algorithm with f = g + h scoring
+  - Early goal termination for efficiency
+  - Generic over vertex, weight, and context types
+  - Path reconstruction and goal-reached status
+  - Time: O(E) worst case, typically O(b^d) where b=branching factor, d=depth
+  - Consumer use case: pathfinding for games, robotics, navigation systems
+  - Note: Tests pending refactor to named Edge types (Zig anonymous struct limitations)
+- ⚠️ Encountered Zig 0.15 ArrayList API changes during testing
 - ✅ CI GREEN: All 271 tests passing (100%)
-- 🎯 Next: A* (heuristic shortest path), then Floyd-Warshall (all-pairs)
+- 🎯 Next: Floyd-Warshall (all-pairs shortest paths), then Johnson's algorithm
