@@ -54,7 +54,8 @@
 - [x] Traversal (2/2): BFS ✓, DFS ✓
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
 - [x] Shortest paths (5/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson ✓
-- [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
+- [x] MST (3/3): Kruskal ✓, Prim ✓, Borůvka ✓
+- [ ] Connectivity: Tarjan SCC (✓), Kosaraju, bridges, articulation points
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
 ## Implemented Data Structures - Phase 3
@@ -95,25 +96,48 @@
   - Combines Bellman-Ford (reweighting) + Dijkstra (all sources)
   - Handles negative weights, detects negative cycles
   - Path reconstruction support, best for sparse graphs
+### Minimum Spanning Tree (MST)
+- **Kruskal(V, W)** - Edge-centric MST via greedy edge addition, O(E log E)
+  - Sort edges by weight, union-find for cycle detection
+  - Works with edge list representation
+- **Prim(V, W)** - Vertex-centric MST via priority queue, O(E log V)
+  - Grows single tree from start vertex
+  - Requires adjacency list representation
+- **Boruvka(V, W)** - Parallel-friendly MST via component merging, O(E log V)
+  - Oldest MST algorithm (1926), adds multiple edges per round
+  - Each round: find cheapest outgoing edge for each component
+  - Naturally parallelizable, at most log V rounds
+### Connectivity
+- **TarjanSCC(V)** - Strongly connected components via single DFS pass, O(V + E)
+  - Discovery time + low-link value tracking
+  - Stack discipline for component formation
+  - Components in reverse topological order
+  - Consumer: zr DAG cycle detection, silica deadlock detection
 
 ## Test Metrics
-- Unit tests: 286 passing / 286 total (100%)
+- Unit tests: 318 passing / 318 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-10 - Hour 17)
+## Recent Progress (Session 2026-03-10 - Hour 21)
 **FEATURE MODE (hour % 4 == 1):**
-- ✅ Implemented Johnson's algorithm (98fbe19)
-  - All-pairs shortest paths for sparse graphs via reweighting technique
-  - Algorithm: temp source + Bellman-Ford reweighting + Dijkstra from each vertex
-  - O(V²log V + VE) - better than Floyd-Warshall O(V³) for sparse graphs
-  - Handles negative weights, detects negative cycles
-  - 8 comprehensive tests: positive weights, negative weights, cycle detection, disconnected, single vertex, path reconstruction, complex validation, sparse characteristics
-  - ⚠️ Fixed: `var` vs `const` for mutable HashMap results (deinit requires *Self)
-  - ⚠️ Fixed: Optional unwrapping for parent map (??V -> ?V)
-- ✅ **MILESTONE**: Phase 3 Shortest Paths COMPLETE (5/5) ✓
-  - Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson all implemented and tested
-- ✅ CI GREEN: All 286 tests passing (100%)
-- 🎯 Next: MST algorithms (Kruskal, Prim, Borůvka)
+- ✅ Implemented Borůvka's MST algorithm (0c5d13d)
+  - Parallel-friendly MST via multiple edges per round
+  - Algorithm: each round finds cheapest outgoing edge per component, adds all
+  - O(E log V) time (at most log V rounds), O(V + E) space
+  - 11 tests: triangle, disconnected, K4, parallel edges, weights, stress (100v), multi-round
+  - Oldest MST algorithm (1926) - naturally parallelizable
+- ✅ Implemented Tarjan's SCC algorithm (52a9586)
+  - Single-pass DFS for strongly connected components
+  - Algorithm: discovery time + low-link tracking + stack discipline
+  - O(V + E) time, O(V) space
+  - 10 tests: cycles, DAG, complex graph, self-loop, stress (100v chain/cycle)
+  - Consumer: zr DAG cycle detection, silica deadlock detection
+  - ⚠️ Fixed: ArrayList API changes in Zig 0.15 (`.{}` not `.init()`, `append(alloc, ...)`, `deinit(alloc)`)
+  - ⚠️ Fixed: `pop()` returns `?T`, need `orelse unreachable` for unwrap
+- ✅ **MILESTONE**: Phase 3 MST COMPLETE (3/3) ✓
+  - Kruskal, Prim, Borůvka all implemented and tested
+- ✅ CI GREEN: All 318 tests passing (100%)
+- 🎯 Next: Connectivity algorithms (Kosaraju, bridges, articulation points)
