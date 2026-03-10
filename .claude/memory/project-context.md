@@ -4,7 +4,7 @@
 - **Version**: 0.1.0
 - **Phase**: Phase 3 — Graph Algorithms 🚧 **IN PROGRESS**
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (231/231 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (345/345 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -55,7 +55,8 @@
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
 - [x] Shortest paths (5/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson ✓
 - [x] MST (3/3): Kruskal ✓, Prim ✓, Borůvka ✓
-- [ ] Connectivity: Tarjan SCC (✓), Kosaraju, bridges, articulation points
+- [x] Connectivity: Tarjan SCC ✓, Kosaraju SCC ✓
+- [ ] Connectivity (remaining): bridges, articulation points
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
 ## Implemented Data Structures - Phase 3
@@ -113,16 +114,22 @@
   - Stack discipline for component formation
   - Components in reverse topological order
   - Consumer: zr DAG cycle detection, silica deadlock detection
+- **KosarajuSCC(V)** - Strongly connected components via two DFS passes, O(V + E)
+  - Phase 1: DFS to compute finish times
+  - Phase 2: Transpose graph (reverse edges)
+  - Phase 3: DFS on transposed graph in decreasing finish order
+  - Conceptually simpler than Tarjan, easier to parallelize
+  - Components in topological order (opposite of Tarjan)
 
 ## Test Metrics
-- Unit tests: 318 passing / 318 total (100%)
+- Unit tests: 345 passing / 345 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-10 - Hour 21)
-**FEATURE MODE (hour % 4 == 1):**
+## Recent Progress (Session 2026-03-10 - Hour 23)
+**FEATURE MODE (hour % 4 == 3):**
 - ✅ Implemented Borůvka's MST algorithm (0c5d13d)
   - Parallel-friendly MST via multiple edges per round
   - Algorithm: each round finds cheapest outgoing edge per component, adds all
@@ -139,5 +146,12 @@
   - ⚠️ Fixed: `pop()` returns `?T`, need `orelse unreachable` for unwrap
 - ✅ **MILESTONE**: Phase 3 MST COMPLETE (3/3) ✓
   - Kruskal, Prim, Borůvka all implemented and tested
-- ✅ CI GREEN: All 318 tests passing (100%)
-- 🎯 Next: Connectivity algorithms (Kosaraju, bridges, articulation points)
+- ✅ Implemented Kosaraju's SCC algorithm (b9cec0e)
+  - Two-pass DFS for strongly connected components
+  - Algorithm: finish times → transpose graph → reverse DFS
+  - O(V + E) time, O(V + E) space (transposed graph storage)
+  - 11 tests: single vertex, cycles, DAG, complex graph, self-loop, stress (100v chain/cycle), edge case
+  - Conceptually simpler than Tarjan, easier to parallelize
+  - Components in topological order (opposite of Tarjan)
+- ✅ CI GREEN: All 345 tests passing (100%)
+- 🎯 Next: Connectivity algorithms (bridges, articulation points)
