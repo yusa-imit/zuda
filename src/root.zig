@@ -120,6 +120,7 @@ pub const algorithms = struct {
         pub const DFS = @import("algorithms/graph/dfs.zig").DFS;
         pub const Dijkstra = @import("algorithms/graph/dijkstra.zig").Dijkstra;
         pub const BellmanFord = @import("algorithms/graph/bellman_ford.zig").BellmanFord;
+        pub const AStar = @import("algorithms/graph/a_star.zig").AStar;
         pub const TopologicalSort = @import("algorithms/graph/topological_sort.zig").TopologicalSort;
     };
 
@@ -185,5 +186,6 @@ test {
     _ = algorithms.graph.DFS;
     _ = algorithms.graph.Dijkstra;
     _ = algorithms.graph.BellmanFord;
+    _ = algorithms.graph.AStar;
     _ = algorithms.graph.TopologicalSort;
 }
