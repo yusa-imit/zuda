@@ -118,6 +118,7 @@ pub const algorithms = struct {
     pub const graph = struct {
         pub const BFS = @import("algorithms/graph/bfs.zig").BFS;
         pub const DFS = @import("algorithms/graph/dfs.zig").DFS;
+        pub const Dijkstra = @import("algorithms/graph/dijkstra.zig").Dijkstra;
         pub const TopologicalSort = @import("algorithms/graph/topological_sort.zig").TopologicalSort;
     };
 
@@ -181,5 +182,6 @@ test {
     _ = containers.graphs.AdjacencyMatrix;
     _ = algorithms.graph.BFS;
     _ = algorithms.graph.DFS;
+    _ = algorithms.graph.Dijkstra;
     _ = algorithms.graph.TopologicalSort;
 }
