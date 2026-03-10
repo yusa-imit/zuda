@@ -53,7 +53,7 @@
 - [x] Graph Representations (4/4): AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList ✓
 - [x] Traversal (2/2): BFS ✓, DFS ✓
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
-- [ ] Shortest paths (3/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall, Johnson's
+- [ ] Shortest paths (4/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson's
 - [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
@@ -85,24 +85,28 @@
   - Uses admissible heuristic function for efficient pathfinding
   - Early termination when goal is reached
   - Ideal for navigation, routing, game AI pathfinding
+- **FloydWarshall(V, W, Context)** - All-pairs shortest paths, O(V³) time, O(V²) space
+  - Computes shortest distances between all vertex pairs
+  - Handles negative edge weights (detects negative cycles)
+  - Distance and parent matrices for path reconstruction
+  - Best for small-medium graphs (V < ~500) needing complete distance information
 
 ## Test Metrics
-- Unit tests: 271 passing / 271 total (100%)
+- Unit tests: 278 passing / 278 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
-- Known issues: A* tests pending (anonymous struct type system constraints)
+- Known issues: None
 
-## Recent Progress (Session 2026-03-10 - Hour 13)
-**FEATURE MODE (hour % 4 == 1):**
-- ✅ Implemented A* (67f7bb8)
-  - Heuristic-guided shortest path algorithm with f = g + h scoring
-  - Early goal termination for efficiency
-  - Generic over vertex, weight, and context types
-  - Path reconstruction and goal-reached status
-  - Time: O(E) worst case, typically O(b^d) where b=branching factor, d=depth
-  - Consumer use case: pathfinding for games, robotics, navigation systems
-  - Note: Tests pending refactor to named Edge types (Zig anonymous struct limitations)
-- ⚠️ Encountered Zig 0.15 ArrayList API changes during testing
-- ✅ CI GREEN: All 271 tests passing (100%)
-- 🎯 Next: Floyd-Warshall (all-pairs shortest paths), then Johnson's algorithm
+## Recent Progress (Session 2026-03-10 - Hour 15)
+**FEATURE MODE (hour % 4 == 3):**
+- ✅ Implemented Floyd-Warshall (65f46de)
+  - All-pairs shortest paths using dynamic programming
+  - O(V³) time, O(V²) space with distance/parent matrices
+  - Handles negative weights, detects negative cycles via diagonal check
+  - Generic Edge type to avoid Zig anonymous struct issues
+  - Path reconstruction with getPath() method
+  - 7 comprehensive tests: basic paths, negative weights, cycle detection, disconnected graphs, path reconstruction
+- ⚠️ Learned: Zig 0.15 ArrayList API requires explicit allocator in all methods
+- ✅ CI GREEN: All 278 tests passing (100%)
+- 🎯 Next: Johnson's algorithm (last of Phase 3 shortest paths), then MST algorithms
