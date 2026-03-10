@@ -55,8 +55,7 @@
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
 - [x] Shortest paths (5/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson ✓
 - [x] MST (3/3): Kruskal ✓, Prim ✓, Borůvka ✓
-- [x] Connectivity: Tarjan SCC ✓, Kosaraju SCC ✓
-- [ ] Connectivity (remaining): bridges, articulation points
+- [x] Connectivity (4/4): Tarjan SCC ✓, Kosaraju SCC ✓, Bridges ✓, Articulation Points ✓
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
 ## Implemented Data Structures - Phase 3
@@ -120,6 +119,16 @@
   - Phase 3: DFS on transposed graph in decreasing finish order
   - Conceptually simpler than Tarjan, easier to parallelize
   - Components in topological order (opposite of Tarjan)
+- **Bridges(V)** - Find bridges (cut edges) in undirected graph, O(V + E)
+  - Bridge = edge whose removal increases connected components
+  - DFS with discovery times and low-link tracking
+  - Single-pass algorithm, handles disconnected components
+  - Consumer: Network reliability (single point of failure), circuit design
+- **ArticulationPoints(V)** - Find articulation points (cut vertices) in undirected graph, O(V + E)
+  - Articulation point = vertex whose removal increases connected components
+  - DFS with low-link values, root has ≥2 children rule
+  - Single-pass algorithm, handles disconnected components
+  - Consumer: Social network analysis (key influencers), transportation networks (critical hubs)
 
 ## Test Metrics
 - Unit tests: 345 passing / 345 total (100%)
@@ -128,7 +137,26 @@
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-10 - Hour 23)
+## Recent Progress (Session 2026-03-11 - Hour 01)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented Bridges (cut edges) algorithm (cb832a5)
+  - Tarjan's bridge-finding via DFS with low-link values
+  - Algorithm: bridge detected when low[v] > discovery[u] (no back edge from v's subtree)
+  - O(V + E) time, O(V) space
+  - 11 tests: empty, simple bridge, triangle, square with diagonal, chain, cycle with tail, disconnected, complex, self-loop, stress (100 nodes)
+  - Consumer: network reliability, circuit design, road network planning
+- ✅ Implemented Articulation Points (cut vertices) algorithm (ab4b970)
+  - Tarjan's articulation point finding via DFS with low-link values
+  - Algorithm: root with ≥2 children OR non-root with child v where low[v] ≥ discovery[u]
+  - O(V + E) time, O(V) space
+  - 12 tests: empty, single vertex, simple chain, triangle, star, chain, cycle with tail, two cycles, disconnected, complex, self-loop, stress (100 nodes)
+  - Consumer: social network analysis (key influencers), transportation (critical hubs)
+- ✅ **MILESTONE**: Phase 3 Connectivity COMPLETE (4/4) ✓
+  - Tarjan SCC, Kosaraju SCC, Bridges, Articulation Points all implemented
+- ✅ CI GREEN: All 345 tests passing (100%)
+- 🎯 Next: Flow & matching algorithms (Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian)
+
+## Previous Session (Session 2026-03-10 - Hour 23)
 **FEATURE MODE (hour % 4 == 3):**
 - ✅ Implemented Borůvka's MST algorithm (0c5d13d)
   - Parallel-friendly MST via multiple edges per round
