@@ -53,7 +53,7 @@
 - [x] Graph Representations (4/4): AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList ✓
 - [x] Traversal (2/2): BFS ✓, DFS ✓
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
-- [ ] Shortest paths (4/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson's
+- [x] Shortest paths (5/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson ✓
 - [ ] MST & connectivity: Kruskal, Prim, Borůvka, Tarjan SCC, Kosaraju, bridges, articulation points
 - [ ] Flow & matching: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian
 
@@ -90,23 +90,30 @@
   - Handles negative edge weights (detects negative cycles)
   - Distance and parent matrices for path reconstruction
   - Best for small-medium graphs (V < ~500) needing complete distance information
+- **Johnson(V, W, Context)** - All-pairs shortest paths via reweighting, O(V²log V + VE)
+  - More efficient than Floyd-Warshall for sparse graphs (E << V²)
+  - Combines Bellman-Ford (reweighting) + Dijkstra (all sources)
+  - Handles negative weights, detects negative cycles
+  - Path reconstruction support, best for sparse graphs
 
 ## Test Metrics
-- Unit tests: 278 passing / 278 total (100%)
+- Unit tests: 286 passing / 286 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-10 - Hour 15)
-**FEATURE MODE (hour % 4 == 3):**
-- ✅ Implemented Floyd-Warshall (65f46de)
-  - All-pairs shortest paths using dynamic programming
-  - O(V³) time, O(V²) space with distance/parent matrices
-  - Handles negative weights, detects negative cycles via diagonal check
-  - Generic Edge type to avoid Zig anonymous struct issues
-  - Path reconstruction with getPath() method
-  - 7 comprehensive tests: basic paths, negative weights, cycle detection, disconnected graphs, path reconstruction
-- ⚠️ Learned: Zig 0.15 ArrayList API requires explicit allocator in all methods
-- ✅ CI GREEN: All 278 tests passing (100%)
-- 🎯 Next: Johnson's algorithm (last of Phase 3 shortest paths), then MST algorithms
+## Recent Progress (Session 2026-03-10 - Hour 17)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented Johnson's algorithm (98fbe19)
+  - All-pairs shortest paths for sparse graphs via reweighting technique
+  - Algorithm: temp source + Bellman-Ford reweighting + Dijkstra from each vertex
+  - O(V²log V + VE) - better than Floyd-Warshall O(V³) for sparse graphs
+  - Handles negative weights, detects negative cycles
+  - 8 comprehensive tests: positive weights, negative weights, cycle detection, disconnected, single vertex, path reconstruction, complex validation, sparse characteristics
+  - ⚠️ Fixed: `var` vs `const` for mutable HashMap results (deinit requires *Self)
+  - ⚠️ Fixed: Optional unwrapping for parent map (??V -> ?V)
+- ✅ **MILESTONE**: Phase 3 Shortest Paths COMPLETE (5/5) ✓
+  - Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson all implemented and tested
+- ✅ CI GREEN: All 286 tests passing (100%)
+- 🎯 Next: MST algorithms (Kruskal, Prim, Borůvka)
