@@ -158,22 +158,40 @@
   - Consumer: task scheduling, bipartite matching with costs
 
 ## Phase 4 Progress — In Progress
-- [ ] **Sorting** (4/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (in-place), BlockSort
-- [ ] **String algorithms**: KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm
-- [ ] **Probabilistic**: BloomFilter, CountMinSketch, HyperLogLog, CuckooFilter, MinHash
-- [ ] **Cache**: LRUCache, LFUCache, ARCCache
-- [ ] **Geometry**: Convex hull, Line intersection, Closest pair, Voronoi
-- [ ] **DP Utilities**: LIS, LCS, Edit distance, Knapsack
-- [ ] **Math**: GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
+- [x] **Sorting** (6/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (3 variants) ✓, BlockSort ✓
+- [ ] **String algorithms** (0/5): KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm
+- [ ] **Probabilistic** (0/5): BloomFilter, CountMinSketch, HyperLogLog, CuckooFilter, MinHash
+- [ ] **Cache** (0/3): LRUCache, LFUCache, ARCCache
+- [ ] **Geometry** (0/4): Convex hull, Line intersection, Closest pair, Voronoi
+- [ ] **DP Utilities** (0/4): LIS, LCS, Edit distance, Knapsack
+- [ ] **Math** (0/6): GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
 
 ## Test Metrics
-- Unit tests: 458 passing / 458 total (100%)
+- Unit tests: 492 passing / 492 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-11 - Hour 13)
+## Recent Progress (Session 2026-03-11 - Hour 15)
+**FEATURE MODE (hour % 4 == 3):**
+- ✅ Implemented MergeSort family - three variants (53f6199)
+  - **MergeSort**: Classic top-down recursive O(n log n) with O(n) space
+  - **MergeSortBottomUp**: Iterative variant with better cache locality
+  - **NaturalMergeSort**: Adaptive O(n) best case, exploits existing runs
+  - All variants stable, generic over T with custom comparator
+  - 20 tests passing: empty, sorted, reverse, duplicates, stability, stress (10k)
+- ✅ Implemented BlockSort in-place stable sorting (77f0a9b)
+  - O(n log n) time with O(1) space via block rotation
+  - Triple-reverse rotation algorithm for in-place merging
+  - Adaptive: detects natural runs, uses insertion sort for small runs
+  - 14 tests passing: basic, edge cases, stability, rotation unit, stress (1k)
+- ✅ **MILESTONE**: Phase 4 Sorting COMPLETE (6/6) ✓
+  - All sorting algorithms implemented: TimSort, IntroSort, RadixSort, CountingSort, MergeSort (3), BlockSort
+- ✅ CI GREEN: All 492 tests passing (100%)
+- 🎯 Next: String algorithms (KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm)
+
+## Previous Progress (Session 2026-03-11 - Hour 13)
 **FEATURE MODE (hour % 4 == 1):**
 - ✅ Implemented IntroSort hybrid sorting algorithm (0cf5274)
   - Quicksort + heapsort + insertion sort hybrid
