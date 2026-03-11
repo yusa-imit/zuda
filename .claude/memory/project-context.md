@@ -161,19 +161,32 @@
 - [x] **Sorting** (6/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (3 variants) ✓, BlockSort ✓
 - [x] **String algorithms** (5/5): KMP ✓, Boyer-Moore ✓, Rabin-Karp ✓, Aho-Corasick ✓, Z-algorithm ✓
 - [x] **Probabilistic** (4/5): BloomFilter ✓, CountMinSketch ✓, HyperLogLog ✓, CuckooFilter ✓, MinHash
-- [ ] **Cache** (0/3): LRUCache, LFUCache, ARCCache
+- [x] **Cache** (1/3): LRUCache ✓, LFUCache, ARCCache
 - [ ] **Geometry** (0/4): Convex hull, Line intersection, Closest pair, Voronoi
 - [ ] **DP Utilities** (0/4): LIS, LCS, Edit distance, Knapsack
 - [ ] **Math** (0/6): GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
 
 ## Test Metrics
-- Unit tests: 566 passing / 566 total (100%)
+- Unit tests: 577 passing / 577 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-11 - Hour 23)
+## Recent Progress (Session 2026-03-12 - Hour 01)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented LRUCache eviction cache (14f8b5c)
+  - O(1) get/put/remove via HashMap + doubly-linked list
+  - HashMap for O(1) lookup, linked list (head=MRU, tail=LRU) for eviction order
+  - Optional comptime eviction callback for cleanup (dirty page flushing)
+  - API: init, get (marks MRU), peek (no LRU update), put (evicts LRU if full), remove, clear
+  - 11 tests passing: basic ops, eviction on overflow, LRU ordering, peek vs get, callback
+  - Consumer: silica buffer pool (replaces 1237 LOC), general caching use cases
+- ✅ **MILESTONE**: Phase 4 Cache 1/3 complete (LRUCache)
+- ✅ CI: Pushed to main (14f8b5c)
+- 🎯 Next: LFUCache (Least Frequently Used) or MinHash to complete probabilistic (4/5 → 5/5)
+
+## Previous Progress (Session 2026-03-11 - Hour 23)
 **FEATURE MODE (hour % 4 == 3):**
 - ✅ Implemented BloomFilter probabilistic set membership (cdc96bc)
   - Space-efficient with configurable false positive rate (ε, δ)
