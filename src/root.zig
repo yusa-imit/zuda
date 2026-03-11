@@ -111,6 +111,7 @@ pub const algorithms = struct {
         pub const IntroSort = @import("algorithms/sorting/introsort.zig").IntroSort;
         pub const introsort = @import("algorithms/sorting/introsort.zig").sort;
         pub const RadixSort = @import("algorithms/sorting/radixsort.zig").RadixSort;
+        pub const CountingSort = @import("algorithms/sorting/countingsort.zig").CountingSort;
     };
 
     /// Searching algorithms
@@ -223,4 +224,5 @@ test {
     _ = algorithms.sorting.TimSort;
     _ = algorithms.sorting.IntroSort;
     _ = algorithms.sorting.RadixSort;
+    _ = algorithms.sorting.CountingSort;
 }
