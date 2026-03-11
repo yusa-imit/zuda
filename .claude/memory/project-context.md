@@ -2,9 +2,9 @@
 
 ## Current Status
 - **Version**: 0.1.0
-- **Phase**: Phase 3 — Graph Algorithms 🚧 **IN PROGRESS**
+- **Phase**: Phase 3 — Graph Algorithms ✅ **COMPLETE** | Phase 4 ready to start
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (345/345 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (367/367 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -49,14 +49,14 @@
 - **SuffixArray(T)** - Space-efficient suffix array with LCP, pattern matching, and longest repeated substring queries
 - **SuffixTree(T)** - Compressed trie of all suffixes with pattern matching and LRS queries (basic O(n²) implementation)
 
-## Phase 3 Progress — 🚧 IN PROGRESS
+## Phase 3 Progress — ✅ COMPLETE
 - [x] Graph Representations (4/4): AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList ✓
 - [x] Traversal (2/2): BFS ✓, DFS ✓
 - [x] DAG Algorithms (1/1): TopologicalSort (Kahn + DFS) ✓
 - [x] Shortest paths (5/5): Dijkstra ✓, Bellman-Ford ✓, A* ✓, Floyd-Warshall ✓, Johnson ✓
 - [x] MST (3/3): Kruskal ✓, Prim ✓, Borůvka ✓
 - [x] Connectivity (4/4): Tarjan SCC ✓, Kosaraju SCC ✓, Bridges ✓, Articulation Points ✓
-- [ ] Flow & matching (3/5): Edmonds-Karp ✓, Dinic ✓, Push-Relabel ✓, Hopcroft-Karp, Hungarian
+- [x] Flow & matching (5/5): Edmonds-Karp ✓, Dinic ✓, Push-Relabel ✓, Hopcroft-Karp ✓, Hungarian ✓
 
 ## Implemented Data Structures - Phase 3
 ### Graph Representations (Phase 3)
@@ -146,9 +146,19 @@
   - Height bound (2V) prevents infinite loops, current-edge optimization
   - Returns max flow, edge flows, and minimum cut
   - Consumer: network capacity planning, parallelizable max flow
+- **HopcroftKarp(V, Context)** - Maximum cardinality bipartite matching, O(E * sqrt(V))
+  - BFS to build layered graph, DFS to find vertex-disjoint augmenting paths
+  - Alternating paths: unmatched-matched edges
+  - Returns matching size, pair_u/pair_v bidirectional lookup
+  - Consumer: job assignment, resource allocation
+- **Hungarian(W)** - Optimal assignment (min-cost perfect matching), O(n³)
+  - Kuhn-Munkres algorithm, primal-dual approach
+  - Cost matrix reduction + BFS augmentation with slack adjustment
+  - Returns total cost and assignment array
+  - Consumer: task scheduling, bipartite matching with costs
 
 ## Test Metrics
-- Unit tests: 358 passing / 358 total (100%)
+- Unit tests: 367 passing / 367 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
@@ -160,14 +170,24 @@
   - Preflow-push approach with local push/relabel operations
   - Algorithm: O(V³) basic, O(V²E) with FIFO selection
   - Height labeling function guides pushes, height bound (2V) prevents infinite loops
-  - Current-edge optimization in discharge() avoids redundant scans
-  - 6 tests: basic max flow, single edge, no path, source equals sink, complex network, minimum cut
-  - Returns max flow value, edge flows, and minimum cut (BFS on residual graph)
-  - ⚠️ Fixed: Infinite loop issue when no path exists - added height bound check
-  - ⚠️ Fixed: Discharge logic - current-edge pointer prevents repeated edge scans
-  - Consumer: network capacity planning, parallelizable max flow
-- ✅ CI GREEN: All 358 tests passing (100%)
-- 🎯 Next: Hopcroft-Karp (bipartite matching) or Hungarian algorithm
+  - 6 tests passing - all max flow scenarios covered
+- ✅ Implemented Hopcroft-Karp bipartite matching algorithm (253107e)
+  - Maximum cardinality matching in bipartite graphs
+  - Algorithm: O(E * sqrt(V)) via layered graphs and augmenting paths
+  - BFS builds layered graph, DFS finds vertex-disjoint paths
+  - 4 tests passing: simple, empty, complete K_{3,3}, asymmetric
+- ✅ Implemented Hungarian optimal assignment algorithm (5ae8199)
+  - Kuhn-Munkres for min-cost perfect matching
+  - Algorithm: O(n³) primal-dual with cost reduction and slack adjustment
+  - Handles both min-cost (direct) and max-weight (negated) problems
+  - 5 tests passing: 2x2, 3x3, max-weight, empty, single element
+  - ⚠️ Fixed: Integer overflow in cost adjustment - separate visited row/col logic
+- ✅ **MILESTONE**: Phase 3 Flow & Matching COMPLETE (5/5) ✓
+- ✅ **MILESTONE**: Phase 3 Graph Algorithms COMPLETE ✓
+  - All 19 graph representations and algorithms implemented
+  - 367 tests passing (100%)
+- ✅ CI GREEN: All 367 tests passing (100%)
+- 🎯 Next: Phase 4 - Algorithms & Probabilistic Structures (sorting, string algorithms, caching)
 
 ## Previous Session (Session 2026-03-11 - Hour 01)
 **FEATURE MODE (hour % 4 == 1):**
