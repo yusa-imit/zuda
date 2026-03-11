@@ -109,6 +109,7 @@ pub const containers = struct {
     /// Cache eviction strategies
     pub const cache = struct {
         pub const LRUCache = @import("containers/cache/lru_cache.zig").LRUCache;
+        pub const LFUCache = @import("containers/cache/lfu_cache.zig").LFUCache;
     };
 };
 
@@ -259,4 +260,5 @@ test {
     _ = containers.probabilistic.HyperLogLog;
     _ = containers.probabilistic.CuckooFilter;
     _ = containers.cache.LRUCache;
+    _ = containers.cache.LFUCache;
 }
