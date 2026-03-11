@@ -112,6 +112,9 @@ pub const algorithms = struct {
         pub const introsort = @import("algorithms/sorting/introsort.zig").sort;
         pub const RadixSort = @import("algorithms/sorting/radixsort.zig").RadixSort;
         pub const CountingSort = @import("algorithms/sorting/countingsort.zig").CountingSort;
+        pub const MergeSort = @import("algorithms/sorting/mergesort.zig").MergeSort;
+        pub const MergeSortBottomUp = @import("algorithms/sorting/mergesort.zig").MergeSortBottomUp;
+        pub const NaturalMergeSort = @import("algorithms/sorting/mergesort.zig").NaturalMergeSort;
     };
 
     /// Searching algorithms
