@@ -106,7 +106,8 @@ pub const containers = struct {
 pub const algorithms = struct {
     /// Sorting algorithms
     pub const sorting = struct {
-        // TODO: TimSort, IntroSort, RadixSort, etc. will be added here
+        pub const TimSort = @import("algorithms/sorting/timsort.zig").TimSort;
+        pub const timsort = @import("algorithms/sorting/timsort.zig").sort;
     };
 
     /// Searching algorithms
@@ -216,4 +217,5 @@ test {
     _ = algorithms.graph.PushRelabel;
     _ = algorithms.graph.HopcroftKarp;
     _ = algorithms.graph.Hungarian;
+    _ = algorithms.sorting.TimSort;
 }
