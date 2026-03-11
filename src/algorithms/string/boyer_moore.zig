@@ -49,7 +49,7 @@ pub fn BoyerMoore(comptime T: type) type {
             const good_suffix = try allocator.alloc(usize, pattern.len);
             errdefer allocator.free(good_suffix);
 
-            computeGoodSuffix(pattern, good_suffix);
+            try computeGoodSuffix(pattern, good_suffix);
 
             return .{
                 .allocator = allocator,
@@ -95,8 +95,8 @@ pub fn BoyerMoore(comptime T: type) type {
         /// Find all occurrences of pattern in text
         /// Time: O(n * m) worst | Space: O(k)
         pub fn findAll(self: *const Self, text: []const T, allocator: Allocator) !std.ArrayList(usize) {
-            var matches = std.ArrayList(usize).init(allocator);
-            errdefer matches.deinit();
+            var matches: std.ArrayList(usize) = .{};
+            errdefer matches.deinit(allocator);
 
             if (text.len < self.pattern.len) return matches;
 
@@ -110,7 +110,7 @@ pub fn BoyerMoore(comptime T: type) type {
                 }
 
                 if (j == 0) {
-                    try matches.append(s);
+                    try matches.append(allocator, s);
                     s += if (self.pattern.len > 1) self.good_suffix[0] else 1;
                 } else {
                     const bad_char_shift = self.getBadCharShift(text[s + j - 1], j - 1);
@@ -170,7 +170,7 @@ pub fn BoyerMoore(comptime T: type) type {
         }
 
         /// Compute good suffix table
-        fn computeGoodSuffix(pattern: []const T, good_suffix: []usize) void {
+        fn computeGoodSuffix(pattern: []const T, good_suffix: []usize) !void {
             const m = pattern.len;
 
             // Initialize with pattern length (no match)
@@ -181,9 +181,9 @@ pub fn BoyerMoore(comptime T: type) type {
             // Compute shifts for each position
             var i: usize = m;
             var j: usize = m + 1;
-            var border = try std.ArrayList(usize).initCapacity(std.heap.page_allocator, m + 1);
-            defer border.deinit();
-            border.appendNTimesAssumeCapacity(0, m + 1);
+            var border: std.ArrayList(usize) = .{};
+            defer border.deinit(std.heap.page_allocator);
+            try border.appendNTimes(std.heap.page_allocator, 0, m + 1);
 
             border.items[i - 1] = j;
 
@@ -291,8 +291,8 @@ test "BoyerMoore: multiple occurrences" {
     defer bm.deinit();
 
     const text = "ababab";
-    const matches = try bm.findAll(text, testing.allocator);
-    defer matches.deinit();
+    var matches = try bm.findAll(text, testing.allocator);
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(3, matches.items.len);
     try testing.expectEqual(0, matches.items[0]);
@@ -305,8 +305,8 @@ test "BoyerMoore: single character pattern" {
     defer bm.deinit();
 
     const text = "axbxcxd";
-    const matches = try bm.findAll(text, testing.allocator);
-    defer matches.deinit();
+    var matches = try bm.findAll(text, testing.allocator);
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(3, matches.items.len);
     try testing.expectEqual(1, matches.items[0]);
@@ -364,8 +364,8 @@ test "BoyerMoore: convenient search function" {
 }
 
 test "BoyerMoore: convenient searchAll function" {
-    const matches = try searchAll(testing.allocator, "abcabcabc", "abc");
-    defer matches.deinit();
+    var matches = try searchAll(testing.allocator, "abcabcabc", "abc");
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(3, matches.items.len);
     try testing.expectEqual(0, matches.items[0]);

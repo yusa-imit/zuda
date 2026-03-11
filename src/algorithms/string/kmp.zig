@@ -81,8 +81,8 @@ pub fn KMP(comptime T: type) type {
         /// Returns ArrayList of match indices
         /// Time: O(n) | Space: O(k) where k = number of matches
         pub fn findAll(self: *const Self, text: []const T, allocator: Allocator) !std.ArrayList(usize) {
-            var matches = std.ArrayList(usize).init(allocator);
-            errdefer matches.deinit();
+            var matches: std.ArrayList(usize) = .{};
+            errdefer matches.deinit(allocator);
 
             if (text.len < self.pattern.len) return matches;
 
@@ -95,7 +95,7 @@ pub fn KMP(comptime T: type) type {
                     j += 1;
 
                     if (j == self.pattern.len) {
-                        try matches.append(i - j);
+                        try matches.append(allocator, i - j);
                         j = self.failure[j - 1]; // Continue searching for overlapping matches
                     }
                 } else if (j > 0) {
@@ -243,8 +243,8 @@ test "KMP: overlapping occurrences" {
     defer kmp.deinit();
 
     const text = "abababa";
-    const matches = try kmp.findAll(text, testing.allocator);
-    defer matches.deinit();
+    var matches = try kmp.findAll(text, testing.allocator);
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(3, matches.items.len);
     try testing.expectEqual(0, matches.items[0]); // "aba"baba
@@ -257,8 +257,8 @@ test "KMP: single character pattern" {
     defer kmp.deinit();
 
     const text = "axbxcxd";
-    const matches = try kmp.findAll(text, testing.allocator);
-    defer matches.deinit();
+    var matches = try kmp.findAll(text, testing.allocator);
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(3, matches.items.len);
     try testing.expectEqual(1, matches.items[0]);
@@ -319,8 +319,8 @@ test "KMP: repeated pattern" {
     defer kmp.deinit();
 
     const text = "aaaaaaa";
-    const matches = try kmp.findAll(text, testing.allocator);
-    defer matches.deinit();
+    var matches = try kmp.findAll(text, testing.allocator);
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(5, matches.items.len); // 7 - 3 + 1 = 5 overlapping matches
 }
@@ -331,8 +331,8 @@ test "KMP: convenient search function" {
 }
 
 test "KMP: convenient searchAll function" {
-    const matches = try searchAll(testing.allocator, "abcabcabc", "abc");
-    defer matches.deinit();
+    var matches = try searchAll(testing.allocator, "abcabcabc", "abc");
+    defer matches.deinit(testing.allocator);
 
     try testing.expectEqual(3, matches.items.len);
     try testing.expectEqual(0, matches.items[0]);
