@@ -105,6 +105,11 @@ pub const containers = struct {
         pub const HyperLogLog = @import("containers/probabilistic/hyperloglog.zig").HyperLogLog;
         pub const CuckooFilter = @import("containers/probabilistic/cuckoo_filter.zig").CuckooFilter;
     };
+
+    /// Cache eviction strategies
+    pub const cache = struct {
+        pub const LRUCache = @import("containers/cache/lru_cache.zig").LRUCache;
+    };
 };
 
 /// Namespace for algorithms
@@ -253,4 +258,5 @@ test {
     _ = containers.probabilistic.CountMinSketch;
     _ = containers.probabilistic.HyperLogLog;
     _ = containers.probabilistic.CuckooFilter;
+    _ = containers.cache.LRUCache;
 }
