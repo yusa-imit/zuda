@@ -173,7 +173,16 @@ pub const algorithms = struct {
 
     /// Mathematical algorithms
     pub const math = struct {
-        // TODO: GCD, modexp, Miller-Rabin, etc. will be added here
+        pub const gcd = @import("algorithms/math/gcd.zig").gcd;
+        pub const lcm = @import("algorithms/math/gcd.zig").lcm;
+        pub const extendedGcd = @import("algorithms/math/gcd.zig").extendedGcd;
+        pub const binaryGcd = @import("algorithms/math/gcd.zig").binaryGcd;
+        pub const modExp = @import("algorithms/math/modexp.zig").modExp;
+        pub const modInverse = @import("algorithms/math/modexp.zig").modInverse;
+        pub const millerRabin = @import("algorithms/math/primality.zig").millerRabin;
+        pub const millerRabinDeterministic = @import("algorithms/math/primality.zig").millerRabinDeterministic;
+        pub const trialDivision = @import("algorithms/math/primality.zig").trialDivision;
+        pub const fermat = @import("algorithms/math/primality.zig").fermat;
     };
 
     /// Geometric algorithms
@@ -261,4 +270,7 @@ test {
     _ = containers.probabilistic.CuckooFilter;
     _ = containers.cache.LRUCache;
     _ = containers.cache.LFUCache;
+    _ = @import("algorithms/math/gcd.zig");
+    _ = @import("algorithms/math/modexp.zig");
+    _ = @import("algorithms/math/primality.zig");
 }
