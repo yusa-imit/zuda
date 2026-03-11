@@ -197,7 +197,54 @@ pub const algorithms = struct {
 
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
-        // TODO: LIS, LCS, edit distance, knapsack, etc. will be added here
+        // Longest Increasing Subsequence
+        pub const lengthLIS_DP = @import("algorithms/dynamic_programming/lis.zig").lengthDP;
+        pub const lengthLIS = @import("algorithms/dynamic_programming/lis.zig").lengthBinarySearch;
+        pub const findLIS = @import("algorithms/dynamic_programming/lis.zig").findSequence;
+        pub const lengthLIS_WithComparator = @import("algorithms/dynamic_programming/lis.zig").lengthWithComparator;
+        pub const lengthLNDS = @import("algorithms/dynamic_programming/lis.zig").lengthNonDecreasing;
+
+        // Longest Common Subsequence
+        pub const lengthLCS = @import("algorithms/dynamic_programming/lcs.zig").length;
+        pub const lengthLCS_Optimized = @import("algorithms/dynamic_programming/lcs.zig").lengthOptimized;
+        pub const findLCS = @import("algorithms/dynamic_programming/lcs.zig").findSequence;
+        pub const findAllLCS = @import("algorithms/dynamic_programming/lcs.zig").findAllSequences;
+        pub const lengthLCS_String = @import("algorithms/dynamic_programming/lcs.zig").lengthString;
+        pub const findLCS_String = @import("algorithms/dynamic_programming/lcs.zig").findSequenceString;
+
+        // Edit Distance (Levenshtein)
+        pub const EditOp = @import("algorithms/dynamic_programming/edit_distance.zig").EditOp;
+        pub const Edit = @import("algorithms/dynamic_programming/edit_distance.zig").Edit;
+        pub const editDistance = @import("algorithms/dynamic_programming/edit_distance.zig").distance;
+        pub const editDistanceOptimized = @import("algorithms/dynamic_programming/edit_distance.zig").distanceOptimized;
+        pub const editDistanceWithEdits = @import("algorithms/dynamic_programming/edit_distance.zig").distanceWithEdits;
+        pub const stringSimilarity = @import("algorithms/dynamic_programming/edit_distance.zig").similarity;
+        pub const withinEditThreshold = @import("algorithms/dynamic_programming/edit_distance.zig").withinThreshold;
+
+        // Knapsack problems
+        pub const Item = @import("algorithms/dynamic_programming/knapsack.zig").Item;
+        pub const knapsack01 = @import("algorithms/dynamic_programming/knapsack.zig").zeroOne;
+        pub const knapsack01Optimized = @import("algorithms/dynamic_programming/knapsack.zig").zeroOneOptimized;
+        pub const knapsack01WithItems = @import("algorithms/dynamic_programming/knapsack.zig").zeroOneWithItems;
+        pub const knapsackUnbounded = @import("algorithms/dynamic_programming/knapsack.zig").unbounded;
+        pub const knapsackUnboundedWithCounts = @import("algorithms/dynamic_programming/knapsack.zig").unboundedWithCounts;
+        pub const knapsackFractional = @import("algorithms/dynamic_programming/knapsack.zig").fractional;
+        pub const knapsackBounded = @import("algorithms/dynamic_programming/knapsack.zig").bounded;
+
+        // Binary search variants
+        pub const binarySearch = @import("algorithms/dynamic_programming/binary_search.zig").search;
+        pub const lowerBound = @import("algorithms/dynamic_programming/binary_search.zig").lowerBound;
+        pub const upperBound = @import("algorithms/dynamic_programming/binary_search.zig").upperBound;
+        pub const equalRange = @import("algorithms/dynamic_programming/binary_search.zig").equalRange;
+        pub const binarySearchWithComparator = @import("algorithms/dynamic_programming/binary_search.zig").searchWithComparator;
+        pub const findFirst = @import("algorithms/dynamic_programming/binary_search.zig").findFirst;
+        pub const findLast = @import("algorithms/dynamic_programming/binary_search.zig").findLast;
+        pub const countOccurrences = @import("algorithms/dynamic_programming/binary_search.zig").count;
+        pub const searchOnAnswer = @import("algorithms/dynamic_programming/binary_search.zig").searchOnAnswer;
+        pub const searchFloat = @import("algorithms/dynamic_programming/binary_search.zig").searchFloat;
+        pub const searchRotated = @import("algorithms/dynamic_programming/binary_search.zig").searchRotated;
+        pub const findPeak = @import("algorithms/dynamic_programming/binary_search.zig").findPeak;
+        pub const findMinRotated = @import("algorithms/dynamic_programming/binary_search.zig").findMinRotated;
     };
 };
 
