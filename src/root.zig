@@ -157,6 +157,7 @@ pub const algorithms = struct {
         pub const boyerMooreSearchAll = @import("algorithms/string/boyer_moore.zig").searchAll;
         pub const RabinKarp = @import("algorithms/string/rabin_karp.zig").RabinKarp;
         pub const AhoCorasick = @import("algorithms/string/aho_corasick.zig").AhoCorasick;
+        pub const ZAlgorithm = @import("algorithms/string/z_algorithm.zig").ZAlgorithm;
     };
 
     /// Mathematical algorithms
@@ -242,4 +243,5 @@ test {
     _ = algorithms.string.BoyerMoore;
     _ = algorithms.string.RabinKarp;
     _ = algorithms.string.AhoCorasick;
+    _ = algorithms.string.ZAlgorithm;
 }
