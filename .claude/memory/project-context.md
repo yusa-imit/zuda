@@ -2,9 +2,9 @@
 
 ## Current Status
 - **Version**: 0.1.0
-- **Phase**: Phase 3 — Graph Algorithms ✅ **COMPLETE** | Phase 4 ready to start
+- **Phase**: Phase 4 — Algorithms & Probabilistic (In Progress)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (367/367 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (458/458 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -157,14 +157,46 @@
   - Returns total cost and assignment array
   - Consumer: task scheduling, bipartite matching with costs
 
+## Phase 4 Progress — In Progress
+- [ ] **Sorting** (4/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (in-place), BlockSort
+- [ ] **String algorithms**: KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm
+- [ ] **Probabilistic**: BloomFilter, CountMinSketch, HyperLogLog, CuckooFilter, MinHash
+- [ ] **Cache**: LRUCache, LFUCache, ARCCache
+- [ ] **Geometry**: Convex hull, Line intersection, Closest pair, Voronoi
+- [ ] **DP Utilities**: LIS, LCS, Edit distance, Knapsack
+- [ ] **Math**: GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
+
 ## Test Metrics
-- Unit tests: 367 passing / 367 total (100%)
+- Unit tests: 458 passing / 458 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-11 - Hour 09)
+## Recent Progress (Session 2026-03-11 - Hour 13)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented IntroSort hybrid sorting algorithm (0cf5274)
+  - Quicksort + heapsort + insertion sort hybrid
+  - O(n log n) worst case via depth limit (2 * log2(n))
+  - Median-of-three pivot selection, switches to heapsort when depth exceeded
+  - 12 tests passing: empty, sorted, reverse, random, large (triggers heapsort), strings, stress (10k)
+- ✅ Implemented RadixSort (LSD/MSD) non-comparative sorting (453a330)
+  - LSD: iterative byte-by-byte processing, O(d * (n + 256))
+  - MSD: recursive with insertion sort for small subarrays
+  - Handles signed integers via sign bit flipping
+  - 20 tests passing: empty, sorted, large values, signed integers, u8/u64 types, stress (10k)
+  - ⚠️ Fixed: u8 overflow in count array indices (byte + 1) → cast to usize first
+- ✅ Implemented CountingSort linear-time sorting (960335f)
+  - O(n + k) where k = max - min + 1
+  - Stable via backwards iteration, supports negative integers
+  - 17 tests passing: empty, sorted, signed, stability check, stress (10k)
+  - ⚠️ Fixed: Integer overflow in range calculation (i8 range [-100, 100] = 200)
+    - Solution: use wider integer type (2x bit size) for difference: WiderInt = Int(signedness, bitSize * 2)
+- ✅ **MILESTONE**: Phase 4 Sorting 4/6 complete (TimSort, IntroSort, RadixSort, CountingSort)
+- ✅ CI GREEN: All 458 tests passing (100%)
+- 🎯 Next: Remaining sorting (MergeSort in-place, BlockSort) or String algorithms (KMP, Boyer-Moore, Aho-Corasick)
+
+## Previous Progress (Session 2026-03-11 - Hour 09)
 **FEATURE MODE (hour % 4 == 1):**
 - ✅ Implemented Push-Relabel max flow algorithm (02a920b)
   - Preflow-push approach with local push/relabel operations
