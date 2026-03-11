@@ -115,6 +115,7 @@ pub const algorithms = struct {
         pub const MergeSort = @import("algorithms/sorting/mergesort.zig").MergeSort;
         pub const MergeSortBottomUp = @import("algorithms/sorting/mergesort.zig").MergeSortBottomUp;
         pub const NaturalMergeSort = @import("algorithms/sorting/mergesort.zig").NaturalMergeSort;
+        pub const BlockSort = @import("algorithms/sorting/blocksort.zig").BlockSort;
     };
 
     /// Searching algorithms
