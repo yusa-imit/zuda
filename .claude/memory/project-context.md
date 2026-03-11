@@ -159,21 +159,53 @@
 
 ## Phase 4 Progress — In Progress
 - [x] **Sorting** (6/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (3 variants) ✓, BlockSort ✓
-- [ ] **String algorithms** (2/5): KMP ✓, Boyer-Moore ✓, Rabin-Karp, Aho-Corasick, Z-algorithm
-- [ ] **Probabilistic** (0/5): BloomFilter, CountMinSketch, HyperLogLog, CuckooFilter, MinHash
+- [x] **String algorithms** (5/5): KMP ✓, Boyer-Moore ✓, Rabin-Karp ✓, Aho-Corasick ✓, Z-algorithm ✓
+- [x] **Probabilistic** (4/5): BloomFilter ✓, CountMinSketch ✓, HyperLogLog ✓, CuckooFilter ✓, MinHash
 - [ ] **Cache** (0/3): LRUCache, LFUCache, ARCCache
 - [ ] **Geometry** (0/4): Convex hull, Line intersection, Closest pair, Voronoi
 - [ ] **DP Utilities** (0/4): LIS, LCS, Edit distance, Knapsack
 - [ ] **Math** (0/6): GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
 
 ## Test Metrics
-- Unit tests: 527 passing / 527 total (100%)
+- Unit tests: 566 passing / 566 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-11 - Hour 15)
+## Recent Progress (Session 2026-03-11 - Hour 23)
+**FEATURE MODE (hour % 4 == 3):**
+- ✅ Implemented BloomFilter probabilistic set membership (cdc96bc)
+  - Space-efficient with configurable false positive rate (ε, δ)
+  - O(k) add/contains, O(m/64) union/intersection
+  - Formula: m = -n*ln(p)/(ln(2))^2, k = (m/n)*ln(2)
+  - 9 tests passing: basic, FP rate, clear, strings, union, intersection, stress (10k)
+- ✅ Implemented CountMinSketch frequency counter (4add0da)
+  - One-sided error guarantee: never underestimates
+  - Error bounds: Pr[estimate > freq + ε*N] ≤ δ
+  - O(d) add/estimate, O(d*w) merge
+  - Formula: w = ⌈e/ε⌉, d = ⌈ln(1/δ)⌉
+  - 10 tests passing: basic, error bounds, clear, strings, merge, stress (10k)
+- ✅ Implemented HyperLogLog cardinality estimator (512c557)
+  - Logarithmic-space distinct element counting
+  - Standard error: 1.04/√(2^p), p=14: ~0.81% error, 16KB memory
+  - Bias correction: alpha_m, LinearCounting for small ranges
+  - O(1) add, O(m) count where m = 2^p
+  - 11 tests passing: basic, accuracy (10k/100k), duplicates, clear, strings, merge
+- ✅ Implemented CuckooFilter with deletion (bdcc693)
+  - Improves on Bloom: supports remove() while maintaining space/accuracy
+  - Cuckoo hashing with fingerprints, FP rate ≈ 2b/2^f
+  - 8-bit FP, bucket size 4: ~3.1% FP rate
+  - O(1) expected add/contains/remove
+  - 9 tests passing: basic, deletion, duplicates, clear, strings, load, stress (90%)
+- ✅ **MILESTONE**: Phase 4 String Algorithms COMPLETE (5/5) ✓
+  - All implemented: KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm
+- ✅ **MILESTONE**: Phase 4 Probabilistic 4/5 COMPLETE
+  - BloomFilter, CountMinSketch, HyperLogLog, CuckooFilter all implemented
+- ✅ CI GREEN: All 566 tests passing (100%)
+- 🎯 Next: Cache algorithms (LRUCache, LFUCache, ARCCache) or MinHash
+
+## Previous Progress (Session 2026-03-11 - Hour 15)
 **FEATURE MODE (hour % 4 == 3):**
 - ✅ Implemented MergeSort family - three variants (53f6199)
   - **MergeSort**: Classic top-down recursive O(n log n) with O(n) space
