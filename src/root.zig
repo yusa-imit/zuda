@@ -234,4 +234,6 @@ test {
     _ = algorithms.sorting.IntroSort;
     _ = algorithms.sorting.RadixSort;
     _ = algorithms.sorting.CountingSort;
+    _ = algorithms.sorting.MergeSort;
+    _ = algorithms.sorting.BlockSort;
 }

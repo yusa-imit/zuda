@@ -70,7 +70,8 @@ pub fn MergeSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
             i = left;
 
             while (l < mid and r < right) {
-                if (lessThanFn(self.context, aux[l], aux[r])) {
+                // For stability, prefer left when equal
+                if (!lessThanFn(self.context, aux[r], aux[l])) {
                     items[i] = aux[l];
                     l += 1;
                 } else {
@@ -142,7 +143,8 @@ pub fn MergeSortBottomUp(comptime T: type, comptime Context: type, comptime less
             i = left;
 
             while (l < mid and r < right) {
-                if (lessThanFn(self.context, aux[l], aux[r])) {
+                // For stability, prefer left when equal
+                if (!lessThanFn(self.context, aux[r], aux[l])) {
                     items[i] = aux[l];
                     l += 1;
                 } else {
@@ -186,7 +188,7 @@ pub fn NaturalMergeSort(comptime T: type, comptime Context: type, comptime lessT
             defer self.allocator.free(aux);
 
             while (true) {
-                const runs = try self.findRuns(items);
+                var runs = try self.findRuns(items);
                 defer runs.deinit(self.allocator);
 
                 if (runs.items.len <= 1) break; // Already sorted
@@ -234,7 +236,8 @@ pub fn NaturalMergeSort(comptime T: type, comptime Context: type, comptime lessT
             i = left;
 
             while (l < mid and r < right) {
-                if (lessThanFn(self.context, aux[l], aux[r])) {
+                // For stability, prefer left when equal
+                if (!lessThanFn(self.context, aux[r], aux[l])) {
                     items[i] = aux[l];
                     l += 1;
                 } else {

@@ -27,6 +27,7 @@ const Allocator = std.mem.Allocator;
 pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: fn (ctx: Context, a: T, b: T) bool) type {
     return struct {
         context: Context,
+        allocator: Allocator,
 
         const Self = @This();
 
@@ -36,8 +37,8 @@ pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
         /// Block size for block merge
         const BLOCK_SIZE = 16;
 
-        pub fn init(context: Context) Self {
-            return .{ .context = context };
+        pub fn init(allocator: Allocator, context: Context) Self {
+            return .{ .allocator = allocator, .context = context };
         }
 
         /// Sort a slice using block sort
@@ -52,31 +53,31 @@ pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
             }
 
             // Find and extend runs
-            var runs = std.ArrayList(Run).init(std.heap.page_allocator);
-            defer runs.deinit();
+            var runs: std.ArrayList(Run) = .{};
+            defer runs.deinit(self.allocator);
 
             self.findRuns(items, &runs) catch return;
 
             // Merge runs using in-place block merge
             while (runs.items.len > 1) {
-                var new_runs = std.ArrayList(Run).init(std.heap.page_allocator);
-                defer new_runs.deinit();
+                var new_runs: std.ArrayList(Run) = .{};
+                defer new_runs.deinit(self.allocator);
 
                 var i: usize = 0;
                 while (i < runs.items.len) : (i += 2) {
                     if (i + 1 < runs.items.len) {
                         self.mergeRuns(items, runs.items[i], runs.items[i + 1]);
-                        new_runs.append(.{
+                        new_runs.append(self.allocator, .{
                             .start = runs.items[i].start,
                             .end = runs.items[i + 1].end,
                         }) catch continue;
                     } else {
-                        new_runs.append(runs.items[i]) catch continue;
+                        new_runs.append(self.allocator, runs.items[i]) catch continue;
                     }
                 }
 
                 runs.clearRetainingCapacity();
-                runs.appendSlice(new_runs.items) catch return;
+                runs.appendSlice(self.allocator, new_runs.items) catch return;
             }
         }
 
@@ -102,7 +103,7 @@ pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
                     self.insertionSort(items, start, end);
                 }
 
-                try runs.append(.{ .start = start, .end = end });
+                try runs.append(self.allocator, .{ .start = start, .end = end });
                 i = end;
             }
         }
@@ -199,63 +200,63 @@ fn lessThanI32(ctx: void, a: i32, b: i32) bool {
 }
 
 test "BlockSort: empty array" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{};
     sorter.sort(&arr);
     try testing.expectEqual(0, arr.len);
 }
 
 test "BlockSort: single element" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{42};
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{42}, &arr);
 }
 
 test "BlockSort: already sorted" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "BlockSort: reverse sorted" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 8, 7, 6, 5, 4, 3, 2, 1 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "BlockSort: random order" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 3, 1, 4, 1, 5, 9, 2, 6, 5, 3 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 1, 2, 3, 3, 4, 5, 5, 6, 9 }, &arr);
 }
 
 test "BlockSort: small array (triggers insertion sort)" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 5, 2, 8, 1, 9 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 5, 8, 9 }, &arr);
 }
 
 test "BlockSort: duplicates" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 3, 3, 3, 1, 1, 2, 2, 2 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 1, 2, 2, 2, 3, 3, 3 }, &arr);
 }
 
 test "BlockSort: signed integers" {
-    var sorter = BlockSort(i32, void, lessThanI32).init({});
+    var sorter = BlockSort(i32, void, lessThanI32).init(testing.allocator, {});
     var arr = [_]i32{ -5, 3, -2, 0, 8, -10, 4, -1 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(i32, &[_]i32{ -10, -5, -2, -1, 0, 3, 4, 8 }, &arr);
 }
 
 test "BlockSort: partially sorted runs" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 1, 3, 5, 7, 2, 4, 6, 8 }; // Two runs: [1,3,5,7], [2,4,6,8]
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
@@ -272,7 +273,7 @@ test "BlockSort: stability check" {
         }
     };
 
-    var sorter = BlockSort(Item, void, Item.lessThan).init({});
+    var sorter = BlockSort(Item, void, Item.lessThan).init(testing.allocator, {});
     var arr = [_]Item{
         .{ .key = 3, .value = 1 },
         .{ .key = 1, .value = 2 },
@@ -298,7 +299,7 @@ test "BlockSort: stability check" {
 }
 
 test "BlockSort: medium size array" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
 
     const n = 100;
     var arr: [n]u32 = undefined;
@@ -319,7 +320,7 @@ test "BlockSort: medium size array" {
 }
 
 test "BlockSort: stress test (1k elements)" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
 
     const n = 1000;
     var arr: [n]u32 = undefined;
@@ -340,7 +341,7 @@ test "BlockSort: stress test (1k elements)" {
 }
 
 test "BlockSort: rotation correctness" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 1, 2, 3, 4, 5, 6 };
 
     // Rotate [0, 3, 6) -> [3, 6, 0)
@@ -350,7 +351,7 @@ test "BlockSort: rotation correctness" {
 }
 
 test "BlockSort: all equal elements" {
-    var sorter = BlockSort(u32, void, lessThanU32).init({});
+    var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 7, 7, 7, 7, 7, 7, 7, 7 };
     sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 7, 7, 7, 7, 7, 7, 7, 7 }, &arr);
