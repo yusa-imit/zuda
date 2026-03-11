@@ -103,6 +103,7 @@ pub const containers = struct {
         pub const defaultHashSlice = @import("containers/probabilistic/bloom_filter.zig").defaultHashSlice;
         pub const CountMinSketch = @import("containers/probabilistic/count_min_sketch.zig").CountMinSketch;
         pub const HyperLogLog = @import("containers/probabilistic/hyperloglog.zig").HyperLogLog;
+        pub const CuckooFilter = @import("containers/probabilistic/cuckoo_filter.zig").CuckooFilter;
     };
 };
 
@@ -251,4 +252,5 @@ test {
     _ = containers.probabilistic.BloomFilter;
     _ = containers.probabilistic.CountMinSketch;
     _ = containers.probabilistic.HyperLogLog;
+    _ = containers.probabilistic.CuckooFilter;
 }
