@@ -149,7 +149,9 @@ pub const algorithms = struct {
 
     /// String algorithms
     pub const string = struct {
-        // TODO: KMP, Boyer-Moore, etc. will be added here
+        pub const KMP = @import("algorithms/string/kmp.zig").KMP;
+        pub const kmpSearch = @import("algorithms/string/kmp.zig").search;
+        pub const kmpSearchAll = @import("algorithms/string/kmp.zig").searchAll;
     };
 
     /// Mathematical algorithms
