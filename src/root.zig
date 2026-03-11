@@ -98,7 +98,9 @@ pub const containers = struct {
 
     /// Probabilistic data structures
     pub const probabilistic = struct {
-        // TODO: BloomFilter, CuckooFilter, CountMinSketch, HyperLogLog will be added here
+        pub const BloomFilter = @import("containers/probabilistic/bloom_filter.zig").BloomFilter;
+        pub const defaultHashInt = @import("containers/probabilistic/bloom_filter.zig").defaultHashInt;
+        pub const defaultHashSlice = @import("containers/probabilistic/bloom_filter.zig").defaultHashSlice;
     };
 };
 
@@ -244,4 +246,5 @@ test {
     _ = algorithms.string.RabinKarp;
     _ = algorithms.string.AhoCorasick;
     _ = algorithms.string.ZAlgorithm;
+    _ = containers.probabilistic.BloomFilter;
 }
