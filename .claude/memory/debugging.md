@@ -51,3 +51,23 @@ const is_repeated = (node.children.count() >= 2) or
 - Fibonacci heap: consolidate after extract-min, update min pointer
 - B-Tree: split must propagate upward; handle root split as special case
 - Hash table: rehash threshold must account for tombstones in open addressing
+
+### Push-Relabel Infinite Loop (fixed in 02a920b)
+**Symptoms**: Tests hang indefinitely on graphs with no path from source to sink.
+
+**Root Cause**: Without a height bound, vertices with excess that can't reach the sink will have their heights relabeled indefinitely. The discharge function kept relabeling without termination.
+
+**Fix**:
+```zig
+// Add height bound check in discharge()
+const max_height = 2 * vertex_data.count(); // 2V is theoretical upper bound
+
+while (true) {
+    // ...
+    // If height exceeds bound, vertex can't reach sink - stop processing
+    if (u_data.height >= max_height) return;
+    // ...
+}
+```
+
+**Lesson**: Push-Relabel requires a height bound to prevent infinite relabeling. The standard bound is 2V (2 * number of vertices). Vertices that exceed this bound cannot reach the sink and should be skipped. Also, using a current-edge pointer in discharge() is crucial for efficiency and correctness.
