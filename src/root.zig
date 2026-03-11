@@ -108,6 +108,8 @@ pub const algorithms = struct {
     pub const sorting = struct {
         pub const TimSort = @import("algorithms/sorting/timsort.zig").TimSort;
         pub const timsort = @import("algorithms/sorting/timsort.zig").sort;
+        pub const IntroSort = @import("algorithms/sorting/introsort.zig").IntroSort;
+        pub const introsort = @import("algorithms/sorting/introsort.zig").sort;
     };
 
     /// Searching algorithms
@@ -218,4 +220,5 @@ test {
     _ = algorithms.graph.HopcroftKarp;
     _ = algorithms.graph.Hungarian;
     _ = algorithms.sorting.TimSort;
+    _ = algorithms.sorting.IntroSort;
 }
