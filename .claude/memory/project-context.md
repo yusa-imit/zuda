@@ -159,7 +159,7 @@
 
 ## Phase 4 Progress — In Progress
 - [x] **Sorting** (6/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (3 variants) ✓, BlockSort ✓
-- [ ] **String algorithms** (0/5): KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm
+- [ ] **String algorithms** (2/5): KMP ✓, Boyer-Moore ✓, Rabin-Karp, Aho-Corasick, Z-algorithm
 - [ ] **Probabilistic** (0/5): BloomFilter, CountMinSketch, HyperLogLog, CuckooFilter, MinHash
 - [ ] **Cache** (0/3): LRUCache, LFUCache, ARCCache
 - [ ] **Geometry** (0/4): Convex hull, Line intersection, Closest pair, Voronoi
@@ -167,7 +167,7 @@
 - [ ] **Math** (0/6): GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
 
 ## Test Metrics
-- Unit tests: 492 passing / 492 total (100%)
+- Unit tests: 527 passing / 527 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
@@ -188,8 +188,17 @@
   - 14 tests passing: basic, edge cases, stability, rotation unit, stress (1k)
 - ✅ **MILESTONE**: Phase 4 Sorting COMPLETE (6/6) ✓
   - All sorting algorithms implemented: TimSort, IntroSort, RadixSort, CountingSort, MergeSort (3), BlockSort
-- ✅ CI GREEN: All 492 tests passing (100%)
-- 🎯 Next: String algorithms (KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm)
+- ✅ Implemented KMP pattern matching (9e4a978)
+  - O(n + m) linear time, failure function preprocessing
+  - Generic over type T, find/findAll/contains/count methods
+  - 18 tests passing: basic, overlapping matches, failure function validation
+- ✅ Implemented Boyer-Moore pattern matching (b321fbe)
+  - O(n / m) best case (sublinear), O(n * m) worst
+  - Bad character + good suffix rules for efficient skipping
+  - Right-to-left scanning, best for large alphabets
+  - 17 tests passing: basic, long patterns, bad char skip demonstration
+- ✅ CI GREEN: All 527 tests passing (100%)
+- 🎯 Next: String algorithms (Rabin-Karp, Aho-Corasick, Z-algorithm)
 
 ## Previous Progress (Session 2026-03-11 - Hour 13)
 **FEATURE MODE (hour % 4 == 1):**
