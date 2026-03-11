@@ -152,6 +152,9 @@ pub const algorithms = struct {
         pub const KMP = @import("algorithms/string/kmp.zig").KMP;
         pub const kmpSearch = @import("algorithms/string/kmp.zig").search;
         pub const kmpSearchAll = @import("algorithms/string/kmp.zig").searchAll;
+        pub const BoyerMoore = @import("algorithms/string/boyer_moore.zig").BoyerMoore;
+        pub const boyerMooreSearch = @import("algorithms/string/boyer_moore.zig").search;
+        pub const boyerMooreSearchAll = @import("algorithms/string/boyer_moore.zig").searchAll;
     };
 
     /// Mathematical algorithms
