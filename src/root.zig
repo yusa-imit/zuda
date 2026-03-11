@@ -187,7 +187,12 @@ pub const algorithms = struct {
 
     /// Geometric algorithms
     pub const geometry = struct {
-        // TODO: Convex hull, closest pair, etc. will be added here
+        pub const Point = @import("algorithms/geometry/convex_hull.zig").Point;
+        pub const grahamScan = @import("algorithms/geometry/convex_hull.zig").grahamScan;
+        pub const jarvisMarch = @import("algorithms/geometry/convex_hull.zig").jarvisMarch;
+        pub const ClosestPairResult = @import("algorithms/geometry/closest_pair.zig").ClosestPairResult;
+        pub const closestPair = @import("algorithms/geometry/closest_pair.zig").closestPair;
+        pub const closestPairBruteForce = @import("algorithms/geometry/closest_pair.zig").bruteForce;
     };
 
     /// Dynamic programming utilities
@@ -273,4 +278,6 @@ test {
     _ = @import("algorithms/math/gcd.zig");
     _ = @import("algorithms/math/modexp.zig");
     _ = @import("algorithms/math/primality.zig");
+    _ = @import("algorithms/geometry/convex_hull.zig");
+    _ = @import("algorithms/geometry/closest_pair.zig");
 }
