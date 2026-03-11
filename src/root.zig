@@ -134,6 +134,7 @@ pub const algorithms = struct {
         pub const EdmondsKarp = @import("algorithms/graph/edmonds_karp.zig").EdmondsKarp;
         pub const Dinic = @import("algorithms/graph/dinic.zig").Dinic;
         pub const PushRelabel = @import("algorithms/graph/push_relabel.zig").PushRelabel;
+        pub const HopcroftKarp = @import("algorithms/graph/hopcroft_karp.zig").HopcroftKarp;
     };
 
     /// String algorithms
@@ -212,4 +213,5 @@ test {
     _ = algorithms.graph.EdmondsKarp;
     _ = algorithms.graph.Dinic;
     _ = algorithms.graph.PushRelabel;
+    _ = algorithms.graph.HopcroftKarp;
 }
