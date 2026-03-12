@@ -183,6 +183,11 @@ pub const algorithms = struct {
         pub const millerRabinDeterministic = @import("algorithms/math/primality.zig").millerRabinDeterministic;
         pub const trialDivision = @import("algorithms/math/primality.zig").trialDivision;
         pub const fermat = @import("algorithms/math/primality.zig").fermat;
+        pub const sieveOfEratosthenes = @import("algorithms/math/sieve.zig").sieveOfEratosthenes;
+        pub const segmentedSieve = @import("algorithms/math/sieve.zig").segmentedSieve;
+        pub const countPrimes = @import("algorithms/math/sieve.zig").countPrimes;
+        pub const isPrime = @import("algorithms/math/sieve.zig").isPrime;
+        pub const nthPrime = @import("algorithms/math/sieve.zig").nthPrime;
     };
 
     /// Geometric algorithms
@@ -342,6 +347,7 @@ test {
     _ = @import("algorithms/math/gcd.zig");
     _ = @import("algorithms/math/modexp.zig");
     _ = @import("algorithms/math/primality.zig");
+    _ = @import("algorithms/math/sieve.zig");
     _ = @import("algorithms/geometry/convex_hull.zig");
     _ = @import("algorithms/geometry/closest_pair.zig");
     _ = @import("algorithms/geometry/haversine.zig");
