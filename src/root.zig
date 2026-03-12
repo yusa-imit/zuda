@@ -104,6 +104,7 @@ pub const containers = struct {
         pub const CountMinSketch = @import("containers/probabilistic/count_min_sketch.zig").CountMinSketch;
         pub const HyperLogLog = @import("containers/probabilistic/hyperloglog.zig").HyperLogLog;
         pub const CuckooFilter = @import("containers/probabilistic/cuckoo_filter.zig").CuckooFilter;
+        pub const MinHash = @import("containers/probabilistic/minhash.zig").MinHash;
     };
 
     /// Cache eviction strategies
@@ -342,6 +343,7 @@ test {
     _ = containers.probabilistic.CountMinSketch;
     _ = containers.probabilistic.HyperLogLog;
     _ = containers.probabilistic.CuckooFilter;
+    _ = containers.probabilistic.MinHash;
     _ = containers.cache.LRUCache;
     _ = containers.cache.LFUCache;
     _ = @import("algorithms/math/gcd.zig");
