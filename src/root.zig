@@ -72,6 +72,7 @@ pub const containers = struct {
         pub const FenwickTree = @import("containers/trees/fenwick_tree.zig").FenwickTree;
         pub const SparseTable = @import("containers/trees/sparse_table.zig").SparseTable;
         pub const IntervalTree = @import("containers/trees/interval_tree.zig").IntervalTree;
+        pub const VanEmdeBoasTree = @import("containers/trees/van_emde_boas_tree.zig").VanEmdeBoasTree;
     };
 
     /// Graph representations
