@@ -204,6 +204,12 @@ pub const algorithms = struct {
         pub const EARTH_RADIUS_KM = @import("algorithms/geometry/haversine.zig").EARTH_RADIUS_KM;
         pub const EARTH_RADIUS_MI = @import("algorithms/geometry/haversine.zig").EARTH_RADIUS_MI;
         pub const EARTH_RADIUS_M = @import("algorithms/geometry/haversine.zig").EARTH_RADIUS_M;
+        pub const BoundingBox = @import("algorithms/geometry/geohash.zig").BoundingBox;
+        pub const geohashEncode = @import("algorithms/geometry/geohash.zig").encode;
+        pub const geohashDecode = @import("algorithms/geometry/geohash.zig").decode;
+        pub const geohashNeighbor = @import("algorithms/geometry/geohash.zig").neighbor;
+        pub const geohashNeighbors = @import("algorithms/geometry/geohash.zig").neighbors;
+        pub const GeohashDirection = @import("algorithms/geometry/geohash.zig").Direction;
     };
 
     /// Dynamic programming utilities
@@ -339,6 +345,7 @@ test {
     _ = @import("algorithms/geometry/convex_hull.zig");
     _ = @import("algorithms/geometry/closest_pair.zig");
     _ = @import("algorithms/geometry/haversine.zig");
+    _ = @import("algorithms/geometry/geohash.zig");
     _ = @import("algorithms/dynamic_programming/lis.zig");
     _ = @import("algorithms/dynamic_programming/lcs.zig");
     _ = @import("algorithms/dynamic_programming/edit_distance.zig");
