@@ -126,6 +126,11 @@ pub const containers = struct {
         pub const Rope = @import("containers/specialized/rope.zig").Rope;
         pub const BKTree = @import("containers/specialized/bk_tree.zig").BKTree;
     };
+
+    /// Persistent (immutable) data structures
+    pub const persistent = struct {
+        pub const PersistentArray = @import("containers/persistent/persistent_array.zig").PersistentArray;
+    };
 };
 
 /// Namespace for algorithms
