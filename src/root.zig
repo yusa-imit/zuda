@@ -190,6 +190,9 @@ pub const algorithms = struct {
         pub const countPrimes = @import("algorithms/math/sieve.zig").countPrimes;
         pub const isPrime = @import("algorithms/math/sieve.zig").isPrime;
         pub const nthPrime = @import("algorithms/math/sieve.zig").nthPrime;
+        pub const chineseRemainderTheorem = @import("algorithms/math/crt.zig").chineseRemainderTheorem;
+        pub const crtTwo = @import("algorithms/math/crt.zig").crtTwo;
+        pub const CRTResult = @import("algorithms/math/crt.zig").CRTResult;
     };
 
     /// Geometric algorithms
@@ -352,6 +355,7 @@ test {
     _ = @import("algorithms/math/modexp.zig");
     _ = @import("algorithms/math/primality.zig");
     _ = @import("algorithms/math/sieve.zig");
+    _ = @import("algorithms/math/crt.zig");
     _ = @import("algorithms/geometry/convex_hull.zig");
     _ = @import("algorithms/geometry/closest_pair.zig");
     _ = @import("algorithms/geometry/haversine.zig");
