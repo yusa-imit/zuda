@@ -118,6 +118,7 @@ pub const containers = struct {
     pub const specialized = struct {
         pub const DisjointSet = @import("containers/specialized/disjoint_set.zig").DisjointSet;
         pub const Rope = @import("containers/specialized/rope.zig").Rope;
+        pub const BKTree = @import("containers/specialized/bk_tree.zig").BKTree;
     };
 };
 
@@ -363,6 +364,7 @@ test {
     _ = containers.cache.ARCCache;
     _ = containers.specialized.DisjointSet;
     _ = containers.specialized.Rope;
+    _ = containers.specialized.BKTree;
     _ = @import("algorithms/math/gcd.zig");
     _ = @import("algorithms/math/modexp.zig");
     _ = @import("algorithms/math/primality.zig");
