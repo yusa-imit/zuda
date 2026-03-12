@@ -71,3 +71,37 @@ while (true) {
 ```
 
 **Lesson**: Push-Relabel requires a height bound to prevent infinite relabeling. The standard bound is 2V (2 * number of vertices). Vertices that exceed this bound cannot reach the sink and should be skipped. Also, using a current-edge pointer in discharge() is crucial for efficiency and correctness.
+
+### CI Timeout Due to Excessive Test Compilation (Issue #3, fixed in fd8a3cf)
+**Symptoms**: `zig build test` hangs for 30+ minutes, CI times out, builds never complete.
+
+**Root Cause**: Two compounding issues:
+1. **main.zig importing zuda**: The demo executable did `@import("zuda")`, forcing semantic analysis of all 195 imports when compiling the executable. This was unnecessary since main.zig didn't actually use any zuda types.
+2. **Massive test reftest block**: root.zig had a test block with 80+ manual `_ = Container/Algorithm` references. This forced compilation of hundreds of individual test suites into a single compilation unit, overwhelming the compiler.
+
+**Fix**:
+```zig
+// main.zig - remove unused import
+- const zuda = @import("zuda");
++ // NOTE: Import removed to avoid triggering semantic analysis during executable build
+
+// root.zig - simplify test block
+- test {
+-     std.testing.refAllDecls(@This());
+-     _ = containers.trees.BTree;
+-     _ = containers.trees.RedBlackTree;
+-     ... (80+ lines of manual references)
+- }
++ test {
++     // refAllDecls is sufficient; individual module tests run via `zig build test`
++     std.testing.refAllDecls(@This());
++ }
+```
+
+**Result**: Build time reduced from >30min (timeout) to <3min.
+
+**Lesson**:
+- For large Zig libraries with 100+ modules, avoid importing the entire library in binaries that don't use it.
+- Don't manually reference all types in a single test block - `refAllDecls` is sufficient.
+- When `zig build test` hangs, check for: excessive test references, unused imports in executables, or circular test dependencies.
+- Individual module tests are already discovered by `zig build test` - no need to manually aggregate them.
