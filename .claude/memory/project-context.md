@@ -168,7 +168,7 @@
 
 ## Phase 5 Progress — In Progress
 - [ ] **Concurrent**: LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
-- [ ] **Persistent**: PersistentArray, PersistentRBTree, PersistentHashMap (HAMT)
+- [x] **Persistent (1/3)**: PersistentArray ✓ | PersistentRBTree, PersistentHashMap (HAMT)
 - [x] **Exotic (4/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓ | DancingLinks
 - [ ] **C API & FFI**: C header generation, binding examples
 - [ ] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide
@@ -189,21 +189,38 @@
   - Lazy cluster allocation to reduce space usage
   - Consumer: integer-based priority queues, network routing tables with bounded keys
 
+### Persistent Structures (1/3)
+- **PersistentArray(T)** - Immutable vector with structural sharing, 32-way tree
+  - O(log₃₂ n) ≈ O(1) get/set for practical sizes (up to 2³⁰ elements)
+  - Path copying for immutable updates, tail optimization for appends
+  - O(log₃₂ n) space per mutation (structural sharing)
+  - 11 tests: init, push/get, immutability, set, fromSlice/toSlice, large (100 elem), bounds, slice, sharing, leak check, strings
+  - Consumer: functional programming, undo/redo systems, lock-free concurrency, version control
+
 ## Test Metrics
-- Unit tests: 629 passing / 629 total (100%)
+- Unit tests: 640 passing / 640 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-13 - Hour 03)
+## Recent Progress (Session 2026-03-13 - Hour 05)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented PersistentArray with structural sharing (80488d8)
+  - Immutable vector with 32-way tree structure, O(log₃₂ n) ≈ O(1) operations
+  - Path copying for immutable updates, tail optimization for appends
+  - 11 tests passing: init, push/get, immutability, set, fromSlice/toSlice, large (100 elements), bounds checking, slice, structural sharing, memory leak check, strings
+  - Consumer: functional programming patterns, undo/redo systems, concurrent data structures without locks
+- ✅ **MILESTONE**: Phase 5 Persistent 1/3 COMPLETE (PersistentArray)
+- 📊 Test count: 640 passing (629 + 11 PersistentArray)
+- 🎯 Next: PersistentRBTree or PersistentHashMap (HAMT)
+
+## Previous Progress (Session 2026-03-13 - Hour 03)
 **FEATURE MODE (hour % 4 == 3):**
 - ⚠️ Attempted DancingLinks implementation - encountered circular linked list corruption bug
   - Issue #5 created for future work
   - Subtle pointer manipulation in doubly-linked structure needs careful review
   - ColumnHeader/Node memory layout and initialization needs debugging
-- 📊 Test count: 629 passing (unchanged, DancingLinks not committed)
-- 🎯 Next: Phase 5 Persistent or Concurrent structures (simpler than DancingLinks)
 
 ## Previous Progress (Session 2026-03-13 - Hour 01)
 **FEATURE MODE (hour % 4 == 1):**
