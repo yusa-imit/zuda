@@ -327,4 +327,9 @@ test {
     _ = @import("algorithms/math/primality.zig");
     _ = @import("algorithms/geometry/convex_hull.zig");
     _ = @import("algorithms/geometry/closest_pair.zig");
+    _ = @import("algorithms/dynamic_programming/lis.zig");
+    _ = @import("algorithms/dynamic_programming/lcs.zig");
+    _ = @import("algorithms/dynamic_programming/edit_distance.zig");
+    _ = @import("algorithms/dynamic_programming/knapsack.zig");
+    _ = @import("algorithms/dynamic_programming/binary_search.zig");
 }

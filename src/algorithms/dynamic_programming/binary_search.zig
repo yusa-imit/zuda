@@ -147,7 +147,7 @@ pub fn searchOnAnswer(
     var h = high;
 
     while (l < h) {
-        const mid = l + (h - l) / 2;
+        const mid = l + @divTrunc(h - l, 2);
 
         if (predicate(mid)) {
             h = mid;
