@@ -1,10 +1,10 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 0.1.0
-- **Phase**: Phase 4 — Algorithms & Probabilistic (In Progress)
+- **Version**: 0.4.0
+- **Phase**: Phase 5 — Advanced & Polish (In Progress)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (458/458 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (605/605 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -166,29 +166,54 @@
 - [x] **DP Utilities** (4/4): LIS ✓, LCS ✓, Edit distance ✓, Knapsack ✓
 - [x] **Math** (6/6): GCD/LCM ✓, Modexp ✓, Miller-Rabin ✓, Sieve ✓, CRT ✓, NTT ✓
 
+## Phase 5 Progress — In Progress
+- [ ] **Concurrent**: LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
+- [ ] **Persistent**: PersistentArray, PersistentRBTree, PersistentHashMap (HAMT)
+- [x] **Exotic (3/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓ | VanEmdeBoasTree, DancingLinks
+- [ ] **C API & FFI**: C header generation, binding examples
+- [ ] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide
+
+## Implemented Data Structures - Phase 5
+### Exotic Structures (3/5)
+- **DisjointSet(T)** - Union-Find with path compression and union by rank, O(α(n)) amortized operations
+- **Rope(T)** - Efficient string/sequence editing with O(log n) split/concat
+- **BK-Tree(T, Context, distanceFn)** - Metric space search tree for fuzzy matching and spell checking
+  - Triangle inequality pruning for efficient range queries
+  - Supports custom distance functions (Levenshtein, Hamming, etc.)
+  - Time: O(log n) insert/search (average), Space: O(n)
+  - Consumer: spell checkers, fuzzy search, similarity matching
+
 ## Test Metrics
-- Unit tests: 605 passing / 605 total (100%)
+- Unit tests: 614 passing / 614 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-12 - Hour 19)
+## Recent Progress (Session 2026-03-12 - Hour 21)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ **RELEASE**: Published v0.4.0 — Phase 2-4 Complete (71 structures/algorithms) (553b497)
+  - Fixed issue #2: "Completed phase not released"
+  - Phase 2 (19 structures), Phase 3 (19 algorithms), Phase 4 (33 algorithms)
+  - 605/605 tests passing, 6 cross-compilation targets verified
+  - Consumer replacements: zr (DAG, topo sort), silica (B+Tree, LRU), zoltraak (SkipList, HLL, geohash)
+- ✅ Implemented BK-Tree for metric space search (553b497)
+  - Metric space tree for efficient fuzzy matching and spell checking
+  - Supports custom distance functions (Levenshtein, Hamming, etc.)
+  - Triangle inequality pruning for efficient range queries
+  - Time: O(log n) insert/search (average), Space: O(n)
+  - 9 tests passing: basic ops, tolerance search, spell checking, duplicates, validation
+  - Consumer: spell checkers, fuzzy search, similarity matching
+- ✅ **MILESTONE**: Phase 5 Exotic 3/5 COMPLETE
+  - DisjointSet ✓, Rope ✓, BK-Tree ✓
+- 📊 Test count: 614 passing (605 + 9 BK-Tree)
+- 🎯 Next: VanEmdeBoasTree or DancingLinks (Exotic 4-5/5), then Persistent or Concurrent structures
+
+## Previous Progress (Session 2026-03-12 - Hour 19)
 **FEATURE MODE (hour % 4 == 3):**
-- ✅ Implemented NTT (Number Theoretic Transform) for fast polynomial multiplication mod p (this commit)
-  - O(n log n) Cooley-Tukey algorithm for modular FFT
-  - Supports primes p where p-1 = 2^k * d (e.g., 998244353 = 2^23 * 119 + 1)
-  - API: ntt(), intt(), multiply() with primitive roots (3 for common moduli)
-  - Bit-reversal permutation for cache-friendly iteration
-  - 13 tests passing: basic transform/inverse, zero/constant polynomials, multiplication, associativity, commutativity, stress (100 coefficients), alternative modulus 469762049
-  - Consumer: competitive programming (modular arithmetic), cryptography (lattice-based)
-- ✅ **MILESTONE**: Phase 4 Math COMPLETE (6/6) ✓
-  - GCD/LCM ✓, Modexp ✓, Miller-Rabin ✓, Sieve ✓, CRT ✓, NTT ✓
+- ✅ Implemented NTT (Number Theoretic Transform) for fast polynomial multiplication mod p
 - ✅ **MILESTONE**: Phase 4 COMPLETE ✓
-  - Sorting (6/6) ✓, String (5/5) ✓, Probabilistic (5/5) ✓, Cache (3/3) ✓, Geometry (4/6 - Convex/Closest/Haversine/Geohash) ✓, DP (4/4) ✓, Math (6/6) ✓
-  - PRD missing: Line intersection (Bentley-Ottmann), Voronoi diagrams - not in consumer use cases, defer to Phase 5
-- 📊 Test count: 605 passing (592 + 13 NTT)
-- 🎯 Next: Phase 5 - Advanced & Polish (Concurrent, Persistent, Exotic, C API, v1.0)
+  - Sorting (6/6), String (5/5), Probabilistic (5/5), Cache (3/3), Geometry (4/6), DP (4/4), Math (6/6)
 
 ## Previous Progress (Session 2026-03-12 - Hour 13)
 **FEATURE MODE (hour % 4 == 1):**
