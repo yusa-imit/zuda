@@ -20,6 +20,11 @@
 //! const SkipList = zuda.containers.lists.SkipList;
 //! ```
 
+// Increase comptime evaluation budget for large library with many imports
+comptime {
+    @setEvalBranchQuota(100000);
+}
+
 const std = @import("std");
 
 /// Namespace for all container data structures
