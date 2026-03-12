@@ -193,6 +193,17 @@ pub const algorithms = struct {
         pub const ClosestPairResult = @import("algorithms/geometry/closest_pair.zig").ClosestPairResult;
         pub const closestPair = @import("algorithms/geometry/closest_pair.zig").closestPair;
         pub const closestPairBruteForce = @import("algorithms/geometry/closest_pair.zig").bruteForce;
+        pub const Coord = @import("algorithms/geometry/haversine.zig").Coord;
+        pub const haversineDistance = @import("algorithms/geometry/haversine.zig").distance;
+        pub const haversineDistanceKm = @import("algorithms/geometry/haversine.zig").distanceKm;
+        pub const haversineDistanceMi = @import("algorithms/geometry/haversine.zig").distanceMi;
+        pub const haversineDistanceM = @import("algorithms/geometry/haversine.zig").distanceM;
+        pub const initialBearing = @import("algorithms/geometry/haversine.zig").initialBearing;
+        pub const destination = @import("algorithms/geometry/haversine.zig").destination;
+        pub const midpoint = @import("algorithms/geometry/haversine.zig").midpoint;
+        pub const EARTH_RADIUS_KM = @import("algorithms/geometry/haversine.zig").EARTH_RADIUS_KM;
+        pub const EARTH_RADIUS_MI = @import("algorithms/geometry/haversine.zig").EARTH_RADIUS_MI;
+        pub const EARTH_RADIUS_M = @import("algorithms/geometry/haversine.zig").EARTH_RADIUS_M;
     };
 
     /// Dynamic programming utilities
@@ -327,6 +338,7 @@ test {
     _ = @import("algorithms/math/primality.zig");
     _ = @import("algorithms/geometry/convex_hull.zig");
     _ = @import("algorithms/geometry/closest_pair.zig");
+    _ = @import("algorithms/geometry/haversine.zig");
     _ = @import("algorithms/dynamic_programming/lis.zig");
     _ = @import("algorithms/dynamic_programming/lcs.zig");
     _ = @import("algorithms/dynamic_programming/edit_distance.zig");
