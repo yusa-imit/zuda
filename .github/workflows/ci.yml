@@ -19,7 +19,7 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -47,7 +47,7 @@ jobs:
           - x86_64-windows-msvc
           - aarch64-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
