@@ -169,12 +169,12 @@
 ## Phase 5 Progress — In Progress
 - [ ] **Concurrent**: LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
 - [ ] **Persistent**: PersistentArray, PersistentRBTree, PersistentHashMap (HAMT)
-- [x] **Exotic (3/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓ | VanEmdeBoasTree, DancingLinks
+- [x] **Exotic (4/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓ | DancingLinks
 - [ ] **C API & FFI**: C header generation, binding examples
 - [ ] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide
 
 ## Implemented Data Structures - Phase 5
-### Exotic Structures (3/5)
+### Exotic Structures (4/5)
 - **DisjointSet(T)** - Union-Find with path compression and union by rank, O(α(n)) amortized operations
 - **Rope(T)** - Efficient string/sequence editing with O(log n) split/concat
 - **BK-Tree(T, Context, distanceFn)** - Metric space search tree for fuzzy matching and spell checking
@@ -182,32 +182,44 @@
   - Supports custom distance functions (Levenshtein, Hamming, etc.)
   - Time: O(log n) insert/search (average), Space: O(n)
   - Consumer: spell checkers, fuzzy search, similarity matching
+- **VanEmdeBoasTree(u)** - Integer set with O(log log u) operations on universe U = {0, ..., u-1}
+  - Recursive structure with sqrt(u) decomposition, base case u=2
+  - O(log log u) insert/remove/contains/predecessor/successor
+  - O(1) minimum/maximum queries
+  - Lazy cluster allocation to reduce space usage
+  - Consumer: integer-based priority queues, network routing tables with bounded keys
 
 ## Test Metrics
-- Unit tests: 614 passing / 614 total (100%)
+- Unit tests: 629 passing / 629 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-12 - Hour 21)
+## Recent Progress (Session 2026-03-13 - Hour 01)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Fixed CI warning: Updated actions/checkout@v4 → v5 for Node.js 24 support (0f8e3a4)
+  - Closed issue #4 "ci warning confirmed"
+  - Addresses GitHub Actions deprecation (deadline June 2026)
+- ✅ Implemented VanEmdeBoasTree with O(log log u) operations (8cbd9f0)
+  - Integer set operations on bounded universe U = {0, ..., u-1} where u = 2^k
+  - Recursive structure with sqrt(u) decomposition, base case optimization for u=2
+  - O(log log u) insert, remove, contains, predecessor, successor
+  - O(1) minimum, maximum queries
+  - Lazy cluster allocation to reduce space usage from O(u) worst case
+  - High/low index decomposition for efficient navigation
+  - 15 tests passing: basic ops, min/max, pred/succ, base case u=2, larger u=256, stress (100 ops), invariants
+  - Consumer: integer priority queues with bounded keys, network routing tables
+- ✅ **MILESTONE**: Phase 5 Exotic 4/5 COMPLETE
+  - DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓
+- 📊 Test count: 629 passing (614 + 15 VEB)
+- 🎯 Next: DancingLinks (Exotic 5/5), then Persistent or Concurrent structures
+
+## Previous Progress (Session 2026-03-12 - Hour 21)
 **FEATURE MODE (hour % 4 == 1):**
 - ✅ **RELEASE**: Published v0.4.0 — Phase 2-4 Complete (71 structures/algorithms) (553b497)
-  - Fixed issue #2: "Completed phase not released"
-  - Phase 2 (19 structures), Phase 3 (19 algorithms), Phase 4 (33 algorithms)
-  - 605/605 tests passing, 6 cross-compilation targets verified
-  - Consumer replacements: zr (DAG, topo sort), silica (B+Tree, LRU), zoltraak (SkipList, HLL, geohash)
 - ✅ Implemented BK-Tree for metric space search (553b497)
-  - Metric space tree for efficient fuzzy matching and spell checking
-  - Supports custom distance functions (Levenshtein, Hamming, etc.)
-  - Triangle inequality pruning for efficient range queries
-  - Time: O(log n) insert/search (average), Space: O(n)
-  - 9 tests passing: basic ops, tolerance search, spell checking, duplicates, validation
-  - Consumer: spell checkers, fuzzy search, similarity matching
 - ✅ **MILESTONE**: Phase 5 Exotic 3/5 COMPLETE
-  - DisjointSet ✓, Rope ✓, BK-Tree ✓
-- 📊 Test count: 614 passing (605 + 9 BK-Tree)
-- 🎯 Next: VanEmdeBoasTree or DancingLinks (Exotic 4-5/5), then Persistent or Concurrent structures
 
 ## Previous Progress (Session 2026-03-12 - Hour 19)
 **FEATURE MODE (hour % 4 == 3):**
