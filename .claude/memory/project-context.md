@@ -4,7 +4,7 @@
 - **Version**: 0.4.0
 - **Phase**: Phase 5 — Advanced & Polish (In Progress)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (605/605 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (653/653 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -168,7 +168,7 @@
 
 ## Phase 5 Progress — In Progress
 - [ ] **Concurrent**: LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
-- [x] **Persistent (1/3)**: PersistentArray ✓ | PersistentRBTree, PersistentHashMap (HAMT)
+- [x] **Persistent (2/3)**: PersistentArray ✓, PersistentHashMap ✓ | PersistentRBTree
 - [x] **Exotic (4/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓ | DancingLinks
 - [ ] **C API & FFI**: C header generation, binding examples
 - [ ] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide
@@ -189,22 +189,42 @@
   - Lazy cluster allocation to reduce space usage
   - Consumer: integer-based priority queues, network routing tables with bounded keys
 
-### Persistent Structures (1/3)
+### Persistent Structures (2/3)
 - **PersistentArray(T)** - Immutable vector with structural sharing, 32-way tree
   - O(log₃₂ n) ≈ O(1) get/set for practical sizes (up to 2³⁰ elements)
   - Path copying for immutable updates, tail optimization for appends
   - O(log₃₂ n) space per mutation (structural sharing)
   - 11 tests: init, push/get, immutability, set, fromSlice/toSlice, large (100 elem), bounds, slice, sharing, leak check, strings
   - Consumer: functional programming, undo/redo systems, lock-free concurrency, version control
+- **PersistentHashMap(K, V, Context, hashFn, eqlFn)** - Hash Array Mapped Trie (HAMT) with structural sharing
+  - 32-way branching (5-bit chunks of hash), sparse bitmap representation
+  - O(log₃₂ n) ≈ O(1) get/set/remove for practical sizes
+  - Path copying for immutable updates, hash collision handling via buckets
+  - Branch collapsing on removal for space efficiency
+  - 13 tests: init, immutability, update, remove, collisions, multiple keys, fromSlice, stress (100 inserts + 50 removes), validate, sharing, strings, memory leak
+  - Consumer: functional programming, undo/redo systems, concurrent access without locks
 
 ## Test Metrics
-- Unit tests: 640 passing / 640 total (100%)
+- Unit tests: 653 passing / 653 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-13 - Hour 05)
+## Recent Progress (Session 2026-03-13 - Hour 07)
+**FEATURE MODE (hour % 4 == 3):**
+- ✅ Implemented PersistentHashMap (HAMT) with structural sharing (5128ebb)
+  - Hash Array Mapped Trie with 32-way branching, sparse bitmap representation
+  - O(log₃₂ n) ≈ O(1) get/set/remove operations
+  - Path copying for immutable updates, collision handling via buckets
+  - Branch collapsing on removal for space efficiency
+  - 13 tests passing: init, immutability, update, remove, collisions, multiple keys, fromSlice, stress (100 inserts + 50 removes), validate, sharing, strings, memory leak
+  - Consumer: functional programming patterns, undo/redo systems, concurrent data structures without locks
+- ✅ **MILESTONE**: Phase 5 Persistent 2/3 COMPLETE (PersistentArray, PersistentHashMap)
+- 📊 Test count: 653 passing (640 + 13 PersistentHashMap)
+- 🎯 Next: PersistentRBTree or Concurrent structures (LockFreeQueue, LockFreeStack)
+
+## Previous Progress (Session 2026-03-13 - Hour 05)
 **FEATURE MODE (hour % 4 == 1):**
 - ✅ Implemented PersistentArray with structural sharing (80488d8)
   - Immutable vector with 32-way tree structure, O(log₃₂ n) ≈ O(1) operations
