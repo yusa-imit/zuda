@@ -162,8 +162,8 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
     const dist = dp[m][n];
 
     // Backtrack to reconstruct edits
-    var edits = std.ArrayList(Edit).init(allocator);
-    defer edits.deinit();
+    var edits: std.ArrayList(Edit) = .{};
+    defer edits.deinit(allocator);
 
     var i = m;
     var j = n;
@@ -171,7 +171,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
     while (i > 0 or j > 0) {
         if (i > 0 and j > 0 and a[i - 1] == b[j - 1]) {
             // Match
-            try edits.append(.{
+            try edits.append(allocator, .{
                 .op = .match,
                 .pos_a = i - 1,
                 .pos_b = j - 1,
@@ -181,7 +181,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
             i -= 1;
             j -= 1;
         } else {
-            var min_cost = std.math.maxInt(usize);
+            var min_cost: usize = std.math.maxInt(usize);
             var min_op: EditOp = .substitute;
 
             if (i > 0) {
@@ -210,7 +210,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
 
             switch (min_op) {
                 .delete => {
-                    try edits.append(.{
+                    try edits.append(allocator, .{
                         .op = .delete,
                         .pos_a = i - 1,
                         .pos_b = j,
@@ -220,7 +220,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
                     i -= 1;
                 },
                 .insert => {
-                    try edits.append(.{
+                    try edits.append(allocator, .{
                         .op = .insert,
                         .pos_a = i,
                         .pos_b = j - 1,
@@ -230,7 +230,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
                     j -= 1;
                 },
                 .substitute => {
-                    try edits.append(.{
+                    try edits.append(allocator, .{
                         .op = .substitute,
                         .pos_a = i - 1,
                         .pos_b = j - 1,
@@ -248,7 +248,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
     // Reverse to get forward order
     std.mem.reverse(Edit, edits.items);
 
-    return .{ .distance = dist, .edits = try edits.toOwnedSlice() };
+    return .{ .distance = dist, .edits = try edits.toOwnedSlice(allocator) };
 }
 
 /// Compute similarity ratio (0.0 to 1.0, where 1.0 is identical)
@@ -321,8 +321,8 @@ test "Edit distance: completely different strings" {
 }
 
 test "Edit distance: one is substring of other" {
-    try std.testing.expectEqual(2, try distance("test", "testing")); // Insert "ing"
-    try std.testing.expectEqual(2, try distanceOptimized("test", "testing"));
+    try std.testing.expectEqual(3, try distance("test", "testing")); // Insert 'i', 'n', 'g'
+    try std.testing.expectEqual(3, try distanceOptimized("test", "testing"));
 }
 
 test "Edit distance: with edits reconstruction" {
@@ -358,7 +358,7 @@ test "Edit distance: threshold check" {
 }
 
 test "Edit distance: case sensitivity" {
-    try std.testing.expectEqual(4, try distance("Test", "test")); // All different
+    try std.testing.expectEqual(1, try distance("Test", "test")); // Only first char differs
     try std.testing.expectEqual(1, try distance("Test", "Fest"));
 }
 

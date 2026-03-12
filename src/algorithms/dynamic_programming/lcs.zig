@@ -163,8 +163,8 @@ pub fn findAllSequences(comptime T: type, allocator: Allocator, a: []const T, b:
     }
 
     // Reconstruct all LCS using backtracking
-    var results = std.ArrayList([]T).init(allocator);
-    defer results.deinit();
+    var results: std.ArrayList([]T) = .{};
+    defer results.deinit(allocator);
 
     const lcs_len = dp[m][n];
     const current = try allocator.alloc(T, lcs_len);
@@ -172,7 +172,7 @@ pub fn findAllSequences(comptime T: type, allocator: Allocator, a: []const T, b:
 
     try backtrackLCS(T, allocator, a, b, dp, m, n, current, lcs_len, &results);
 
-    return results.toOwnedSlice();
+    return results.toOwnedSlice(allocator);
 }
 
 fn backtrackLCS(
@@ -191,7 +191,7 @@ fn backtrackLCS(
         if (idx == 0) {
             const copy = try allocator.alloc(T, current.len);
             @memcpy(copy, current);
-            try results.append(copy);
+            try results.append(allocator, copy);
         }
         return;
     }
