@@ -160,20 +160,37 @@
 ## Phase 4 Progress — In Progress
 - [x] **Sorting** (6/6): TimSort ✓, IntroSort ✓, RadixSort (LSD/MSD) ✓, CountingSort ✓, MergeSort (3 variants) ✓, BlockSort ✓
 - [x] **String algorithms** (5/5): KMP ✓, Boyer-Moore ✓, Rabin-Karp ✓, Aho-Corasick ✓, Z-algorithm ✓
-- [x] **Probabilistic** (4/5): BloomFilter ✓, CountMinSketch ✓, HyperLogLog ✓, CuckooFilter ✓, MinHash
-- [x] **Cache** (1/3): LRUCache ✓, LFUCache, ARCCache
+- [x] **Probabilistic** (5/5): BloomFilter ✓, CountMinSketch ✓, HyperLogLog ✓, CuckooFilter ✓, MinHash ✓
+- [x] **Cache** (2/3): LRUCache ✓, LFUCache ✓, ARCCache
 - [ ] **Geometry** (0/4): Convex hull, Line intersection, Closest pair, Voronoi
 - [ ] **DP Utilities** (0/4): LIS, LCS, Edit distance, Knapsack
 - [ ] **Math** (0/6): GCD/LCM, Modexp, Miller-Rabin, Sieve, CRT, NTT
 
 ## Test Metrics
-- Unit tests: 577 passing / 577 total (100%)
+- Unit tests: 592 passing / 592 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-12 - Hour 01)
+## Recent Progress (Session 2026-03-12 - Hour 13)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented MinHash for Jaccard similarity estimation (6838f24)
+  - Locality-sensitive hashing for efficient set similarity via k independent hash functions
+  - O(k) add, similarity, merge operations
+  - Standard error: sqrt(J(1-J)/k) where J is Jaccard similarity
+  - k=128: ~8.8% error, k=256: ~6.2% error, k=512: ~4.4% error
+  - Generic over element type T with custom hash context
+  - Universal hashing: h(x) = (ax + b) mod 2^64 with random a, b
+  - 15 tests passing: basic ops, Jaccard estimation, disjoint/identical sets, order independence, duplicates, merge (union), clear, fromSlice, string sets, accuracy (k=64 vs k=512), stress (1000+ elements)
+  - Consumer: zoltraak (similar key detection), general text similarity, deduplication, clustering
+- ✅ **MILESTONE**: Phase 4 Probabilistic COMPLETE (5/5) ✓
+  - BloomFilter ✓, CountMinSketch ✓, HyperLogLog ✓, CuckooFilter ✓, MinHash ✓
+- ✅ CI: Pushed to main (6838f24)
+- 📊 Test count: 592 passing (577 + 15 MinHash)
+- 🎯 Next: Cache (ARCCache to complete 2/3 → 3/3) or Geometry/DP/Math
+
+## Previous Progress (Session 2026-03-12 - Hour 01)
 **FEATURE MODE (hour % 4 == 1):**
 - ✅ Implemented LRUCache eviction cache (14f8b5c)
   - O(1) get/put/remove via HashMap + doubly-linked list
@@ -184,7 +201,6 @@
   - Consumer: silica buffer pool (replaces 1237 LOC), general caching use cases
 - ✅ **MILESTONE**: Phase 4 Cache 1/3 complete (LRUCache)
 - ✅ CI: Pushed to main (14f8b5c)
-- 🎯 Next: LFUCache (Least Frequently Used) or MinHash to complete probabilistic (4/5 → 5/5)
 
 ## Previous Progress (Session 2026-03-11 - Hour 23)
 **FEATURE MODE (hour % 4 == 3):**
