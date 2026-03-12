@@ -111,6 +111,7 @@ pub const containers = struct {
     pub const cache = struct {
         pub const LRUCache = @import("containers/cache/lru_cache.zig").LRUCache;
         pub const LFUCache = @import("containers/cache/lfu_cache.zig").LFUCache;
+        pub const ARCCache = @import("containers/cache/arc_cache.zig").ARCCache;
     };
 };
 
@@ -346,6 +347,7 @@ test {
     _ = containers.probabilistic.MinHash;
     _ = containers.cache.LRUCache;
     _ = containers.cache.LFUCache;
+    _ = containers.cache.ARCCache;
     _ = @import("algorithms/math/gcd.zig");
     _ = @import("algorithms/math/modexp.zig");
     _ = @import("algorithms/math/primality.zig");
