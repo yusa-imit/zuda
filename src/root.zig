@@ -199,6 +199,10 @@ pub const algorithms = struct {
         pub const chineseRemainderTheorem = @import("algorithms/math/crt.zig").chineseRemainderTheorem;
         pub const crtTwo = @import("algorithms/math/crt.zig").crtTwo;
         pub const CRTResult = @import("algorithms/math/crt.zig").CRTResult;
+        pub const Moduli = @import("algorithms/math/ntt.zig").Moduli;
+        pub const ntt = @import("algorithms/math/ntt.zig").ntt;
+        pub const intt = @import("algorithms/math/ntt.zig").intt;
+        pub const nttMultiply = @import("algorithms/math/ntt.zig").multiply;
     };
 
     /// Geometric algorithms
@@ -364,6 +368,7 @@ test {
     _ = @import("algorithms/math/primality.zig");
     _ = @import("algorithms/math/sieve.zig");
     _ = @import("algorithms/math/crt.zig");
+    _ = @import("algorithms/math/ntt.zig");
     _ = @import("algorithms/geometry/convex_hull.zig");
     _ = @import("algorithms/geometry/closest_pair.zig");
     _ = @import("algorithms/geometry/haversine.zig");
