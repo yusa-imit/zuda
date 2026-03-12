@@ -117,6 +117,7 @@ pub const containers = struct {
     /// Specialized data structures
     pub const specialized = struct {
         pub const DisjointSet = @import("containers/specialized/disjoint_set.zig").DisjointSet;
+        pub const Rope = @import("containers/specialized/rope.zig").Rope;
     };
 };
 
@@ -357,6 +358,7 @@ test {
     _ = containers.cache.LFUCache;
     _ = containers.cache.ARCCache;
     _ = containers.specialized.DisjointSet;
+    _ = containers.specialized.Rope;
     _ = @import("algorithms/math/gcd.zig");
     _ = @import("algorithms/math/modexp.zig");
     _ = @import("algorithms/math/primality.zig");
