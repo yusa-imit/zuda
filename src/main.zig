@@ -1,9 +1,12 @@
 const std = @import("std");
-const zuda = @import("zuda");
+// NOTE: We don't import zuda here to avoid triggering semantic analysis of the entire library
+// during executable compilation. This significantly reduces compilation time.
+// const zuda = @import("zuda");
 
 pub fn main() !void {
     std.debug.print("zuda - Zig Universal Datastructures and Algorithms\n", .{});
     std.debug.print("This is a library. Import it with: const zuda = @import(\"zuda\");\n", .{});
+    std.debug.print("Version: 0.4.0\n", .{});
 }
 
 test "simple test" {
