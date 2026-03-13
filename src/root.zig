@@ -41,6 +41,7 @@ pub const containers = struct {
         pub const Deque = @import("containers/queues/deque.zig").Deque;
         pub const WorkStealingDeque = @import("containers/queues/work_stealing_deque.zig").WorkStealingDeque;
         pub const LockFreeQueue = @import("containers/queues/lock_free_queue.zig").LockFreeQueue;
+        pub const LockFreeStack = @import("containers/queues/lock_free_stack.zig").LockFreeStack;
     };
 
     /// Hash-based containers
