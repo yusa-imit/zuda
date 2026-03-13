@@ -334,8 +334,8 @@ pub fn FibonacciHeap(
             @memset(degree_table, null);
 
             // Collect root list nodes
-            var roots = std.ArrayList(*Node).init(self.allocator);
-            defer roots.deinit();
+            var roots: std.ArrayList(*Node) = .{};
+            defer roots.deinit(self.allocator);
 
             const min = self.min_node.?;
             var current = min;
@@ -344,7 +344,7 @@ pub fn FibonacciHeap(
 
             while (first_visit or current != first) {
                 first_visit = false;
-                roots.append(current) catch return;
+                roots.append(self.allocator, current) catch return;
                 current = current.next;
             }
 
