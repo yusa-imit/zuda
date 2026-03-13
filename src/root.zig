@@ -131,6 +131,11 @@ pub const containers = struct {
         pub const BKTree = @import("containers/specialized/bk_tree.zig").BKTree;
     };
 
+    /// Exotic/advanced data structures
+    pub const exotic = struct {
+        pub const DancingLinks = @import("containers/exotic/dancing_links.zig").DancingLinks;
+    };
+
     /// Persistent (immutable) data structures
     pub const persistent = struct {
         pub const PersistentArray = @import("containers/persistent/persistent_array.zig").PersistentArray;
