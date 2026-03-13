@@ -167,7 +167,7 @@
 - [x] **Math** (6/6): GCD/LCM ✓, Modexp ✓, Miller-Rabin ✓, Sieve ✓, CRT ✓, NTT ✓
 
 ## Phase 5 Progress — In Progress
-- [ ] **Concurrent**: LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
+- [x] **Concurrent (1/4)**: WorkStealingDeque ✓ | LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
 - [x] **Persistent (2/3)**: PersistentArray ✓, PersistentHashMap ✓ | PersistentRBTree
 - [x] **Exotic (4/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓ | DancingLinks
 - [ ] **C API & FFI**: C header generation, binding examples
@@ -189,6 +189,20 @@
   - Lazy cluster allocation to reduce space usage
   - Consumer: integer-based priority queues, network routing tables with bounded keys
 
+### Concurrent Structures (1/4)
+- **WorkStealingDeque(T)** - Lock-free work-stealing deque for parallel task distribution
+  - Chase-Lev algorithm with dynamic circular deque
+  - Owner thread: push/pop from bottom (LIFO, cache locality)
+  - Stealer threads: steal from top (FIFO, load balancing)
+  - O(1) push/pop/steal operations (amortized for push on resize)
+  - Lock-free for common case, mutex only on resize
+  - Atomic top/bottom indices with acquire/release semantics
+  - Sequential consistency fences for owner-stealer coordination
+  - CAS for last-element race resolution
+  - 12 tests passing: init, basic push/pop, steal FIFO, resize (100 items), concurrent (1000 items with real thread), owner vs stealer ordering, empty edge cases, last element race, stress (10k), leak check, validate, strings
+  - Consumer: zr task runner (replaces src/exec/workstealing.zig - 130 LOC) - migration issue #22 created
+  - Reference: https://www.dre.vanderbilt.edu/~schmidt/PDF/work-stealing-dequeue.pdf
+
 ### Persistent Structures (2/3)
 - **PersistentArray(T)** - Immutable vector with structural sharing, 32-way tree
   - O(log₃₂ n) ≈ O(1) get/set for practical sizes (up to 2³⁰ elements)
@@ -205,13 +219,29 @@
   - Consumer: functional programming, undo/redo systems, concurrent access without locks
 
 ## Test Metrics
-- Unit tests: 653 passing / 653 total (100%)
+- Unit tests: 665 passing / 665 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-13 - Hour 07)
+## Recent Progress (Session 2026-03-13 - Hour 09)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented WorkStealingDeque (Chase-Lev algorithm) for parallel task distribution (7374bba)
+  - Lock-free work-stealing deque with owner (push/pop bottom LIFO) and stealer (steal top FIFO) operations
+  - Chase-Lev dynamic circular deque with atomic indices and sequential consistency fences
+  - O(1) push/pop/steal operations (amortized O(n) on resize which doubles capacity)
+  - CAS for last-element race resolution between owner and stealers
+  - Dynamic resizing when full, mutex-protected resize operation
+  - 12 tests passing: init, basic push/pop LIFO, steal FIFO, resize (100 items triggering capacity growth), concurrent push/steal with real thread (1000 items), owner vs stealer ordering verification, empty edge cases, last element race simulation, stress (10k items), memory leak check, validate invariants, string type
+  - Consumer: zr task runner (replaces src/exec/workstealing.zig - 130 LOC) - migration issue #22 created on zr repo
+  - Reference: Chase-Lev paper (https://www.dre.vanderbilt.edu/~schmidt/PDF/work-stealing-dequeue.pdf)
+- ✅ **MILESTONE**: Phase 5 Concurrent 1/4 COMPLETE (WorkStealingDeque)
+- ✅ CI: Pushed to main (7374bba), CI GREEN expected
+- 📊 Test count: 665 passing (653 + 12 WorkStealingDeque)
+- 🎯 Next: LockFreeQueue or LockFreeStack (Phase 5 Concurrent 2/4), or PersistentRBTree (Phase 5 Persistent 3/3)
+
+## Previous Progress (Session 2026-03-13 - Hour 07)
 **FEATURE MODE (hour % 4 == 3):**
 - ✅ Implemented PersistentHashMap (HAMT) with structural sharing (5128ebb)
   - Hash Array Mapped Trie with 32-way branching, sparse bitmap representation
