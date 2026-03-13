@@ -585,14 +585,14 @@ test "CSR: clone" {
 test "CSR: stress test" {
     const allocator = std.testing.allocator;
 
-    var edge_list = std.ArrayList(Edge(i32)).init(allocator);
-    defer edge_list.deinit();
+    var edge_list: std.ArrayList(Edge(i32)) = .{};
+    defer edge_list.deinit(allocator);
 
     // Create a dense graph: 100 vertices, each connected to next 10
     for (0..100) |i| {
         for (1..11) |j| {
             const target = (i + j) % 100;
-            try edge_list.append(.{
+            try edge_list.append(allocator, .{
                 .from = i,
                 .to = target,
                 .weight = @intCast(i * 100 + target),

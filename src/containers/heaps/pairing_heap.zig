@@ -217,8 +217,8 @@ pub fn PairingHeap(comptime T: type, comptime Context: type, comptime lessThan: 
             if (first_child == null) return null;
 
             // First pass: pair adjacent siblings
-            var pairs = std.ArrayList(?*Node).init(self.allocator);
-            defer pairs.deinit();
+            var pairs: std.ArrayList(?*Node) = .{};
+            defer pairs.deinit(self.allocator);
 
             var current = first_child;
             while (current) |c| {
@@ -233,10 +233,10 @@ pub fn PairingHeap(comptime T: type, comptime Context: type, comptime lessThan: 
                     n.prev_sibling = null;
                     n.next_sibling = null;
 
-                    pairs.append(self.meld(c, n)) catch unreachable;
+                    pairs.append(self.allocator, self.meld(c, n)) catch unreachable;
                     current = next_next;
                 } else {
-                    pairs.append(c) catch unreachable;
+                    pairs.append(self.allocator, c) catch unreachable;
                     current = null;
                 }
             }
@@ -495,15 +495,15 @@ test "PairingHeap: stress test with decreaseKey" {
     var prng = std.Random.DefaultPrng.init(1337);
     const random = prng.random();
 
-    var nodes = std.ArrayList(*PairingHeap(i32, void, testLessThan).Node).init(testing.allocator);
-    defer nodes.deinit();
+    var nodes: std.ArrayList(*PairingHeap(i32, void, testLessThan).Node) = .{};
+    defer nodes.deinit(testing.allocator);
 
     const n = 500;
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const val = random.intRangeAtMost(i32, 0, 9999);
         const node = try heap.insert(val);
-        try nodes.append(node);
+        try nodes.append(testing.allocator, node);
     }
 
     // Random decreaseKey operations

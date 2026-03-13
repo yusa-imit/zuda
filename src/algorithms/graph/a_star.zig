@@ -87,8 +87,8 @@ pub fn AStar(
                     return null;
                 }
 
-                var path = std.ArrayList(V).init(self.allocator);
-                errdefer path.deinit();
+                var path: std.ArrayList(V) = .{};
+                errdefer path.deinit(self.allocator);
 
                 var current = target;
                 while (true) {
@@ -99,7 +99,7 @@ pub fn AStar(
 
                 // Reverse to get path from start to target
                 std.mem.reverse(V, path.items);
-                return try path.toOwnedSlice();
+                return try path.toOwnedSlice(self.allocator);
             }
         };
 

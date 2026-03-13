@@ -51,7 +51,7 @@ pub fn DaryHeap(
             return .{
                 .allocator = allocator,
                 .context = context,
-                .items = std.ArrayList(T).init(allocator),
+                .items = .{},
             };
         }
 
@@ -59,7 +59,7 @@ pub fn DaryHeap(
         /// Time: O(n) | Space: O(n)
         pub fn initFromSlice(allocator: Allocator, context: Context, slice: []const T) !Self {
             var self = Self.init(allocator, context);
-            try self.items.appendSlice(slice);
+            try self.items.appendSlice(allocator, slice);
 
             // Bottom-up heapify
             if (self.items.items.len > 1) {
@@ -74,7 +74,7 @@ pub fn DaryHeap(
 
         /// Deinitialize the heap.
         pub fn deinit(self: *Self) void {
-            self.items.deinit();
+            self.items.deinit(self.allocator);
             self.* = undefined;
         }
 
@@ -107,7 +107,7 @@ pub fn DaryHeap(
         /// Insert a new element into the heap.
         /// Time: O(log_d n) | Space: O(1) amortized
         pub fn insert(self: *Self, data: T) !void {
-            try self.items.append(data);
+            try self.items.append(self.allocator, data);
             self.siftUp(self.items.items.len - 1);
         }
 
@@ -188,17 +188,17 @@ pub fn DaryHeap(
         /// Convert heap to a sorted slice (heap sort).
         /// Time: O(n * d * log_d n) | Space: O(n)
         pub fn toSortedSlice(self: *Self, allocator: Allocator) ![]T {
-            var sorted = std.ArrayList(T).init(allocator);
-            errdefer sorted.deinit();
+            var sorted: std.ArrayList(T) = .{};
+            errdefer sorted.deinit(allocator);
 
             var temp = try self.clone();
             defer temp.deinit();
 
             while (temp.extractMin()) |min| {
-                try sorted.append(min);
+                try sorted.append(allocator, min);
             }
 
-            return sorted.toOwnedSlice();
+            return sorted.toOwnedSlice(allocator);
         }
 
         // -- Private Helpers --

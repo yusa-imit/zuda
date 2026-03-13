@@ -66,14 +66,14 @@ pub fn ConsistentHashRing(
             return Self{
                 .allocator = allocator,
                 .ctx = ctx,
-                .virtual_nodes = std.ArrayList(VirtualNode).init(allocator),
+                .virtual_nodes = .{},
                 .replicas = replicas,
             };
         }
 
         /// Time: O(1) | Space: O(1)
         pub fn deinit(self: *Self) void {
-            self.virtual_nodes.deinit();
+            self.virtual_nodes.deinit(self.allocator);
             self.* = undefined;
         }
 
@@ -82,7 +82,7 @@ pub fn ConsistentHashRing(
             const new = Self{
                 .allocator = self.allocator,
                 .ctx = self.ctx,
-                .virtual_nodes = try self.virtual_nodes.clone(),
+                .virtual_nodes = try self.virtual_nodes.clone(self.allocator),
                 .replicas = self.replicas,
             };
             return new;
@@ -133,7 +133,7 @@ pub fn ConsistentHashRing(
             var i: usize = 0;
             while (i < self.replicas) : (i += 1) {
                 const vhash = virtualNodeHash(self.ctx, node, i);
-                try self.virtual_nodes.append(VirtualNode{
+                try self.virtual_nodes.append(self.allocator, VirtualNode{
                     .hash = vhash,
                     .node = node,
                 });

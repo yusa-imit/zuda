@@ -88,7 +88,7 @@ pub fn EdgeList(comptime T: type) type {
         pub fn init(allocator: Allocator, vertex_count: usize, directed: bool) Self {
             return .{
                 .allocator = allocator,
-                .edges = std.ArrayList(Edge).init(allocator),
+                .edges = .{},
                 .vertex_count = vertex_count,
                 .directed = directed,
             };
@@ -97,7 +97,7 @@ pub fn EdgeList(comptime T: type) type {
         /// Deinitialize and free all memory
         /// Time: O(1) | Space: O(1)
         pub fn deinit(self: *Self) void {
-            self.edges.deinit();
+            self.edges.deinit(self.allocator);
             self.* = undefined;
         }
 
@@ -125,7 +125,7 @@ pub fn EdgeList(comptime T: type) type {
             if (from >= self.vertex_count or to >= self.vertex_count) {
                 return error.VertexOutOfBounds;
             }
-            try self.edges.append(Edge.init(from, to, weight));
+            try self.edges.append(self.allocator, Edge.init(from, to, weight));
         }
 
         /// Remove first occurrence of edge from u to v
@@ -287,7 +287,7 @@ pub fn EdgeList(comptime T: type) type {
         /// Clone the edge list
         /// Time: O(E) | Space: O(E)
         pub fn clone(self: *const Self) !Self {
-            const new_edges = try self.edges.clone();
+            const new_edges = try self.edges.clone(self.allocator);
             return .{
                 .allocator = self.allocator,
                 .edges = new_edges,
