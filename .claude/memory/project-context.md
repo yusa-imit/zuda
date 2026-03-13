@@ -41,29 +41,22 @@
 - [x] **Concurrent (4/4)**: WorkStealingDeque ✓, LockFreeQueue ✓, LockFreeStack ✓, ConcurrentSkipList ✓ — **COMPLETE**
 - [x] **Persistent (3/3)**: PersistentArray ✓, PersistentHashMap ✓, PersistentRBTree ✓ — **COMPLETE**
 - [x] **Exotic (5/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓, DancingLinks ✓ — **COMPLETE**
-- [ ] **C API & FFI**: C header generation, binding examples
+- [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [ ] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide
 
-## Recent Progress (Session 2026-03-13 - Hour 19)
-**FEATURE MODE (hour % 4 == 3):**
-- ✅ Implemented DancingLinks (Knuth's Algorithm X) for exact cover problems (beb6e0a)
-  - Doubly-linked circular lists with 4-way links (L/R/U/D)
-  - Cover/uncover operations: O(r*c) efficient hide/restore during backtracking
-  - Algorithm X with S heuristic (choose column with minimum size)
-  - Comptime max_solutions parameter for early termination
-  - API: addColumn, addRow, solve, validate
-  - 14 tests: init, columns, rows, simple exact cover, Knuth's example, no solution, multiple solutions, max limit, empty, cover/uncover, validate, memory leak, stress, N-Queens
-  - Applications: Sudoku, N-Queens, Pentomino tiling, graph coloring
-  - Consumer: Combinatorial optimization, constraint satisfaction problems
-- ✅ **MILESTONE**: Phase 5 Exotic 5/5 COMPLETE ✓ (DisjointSet, Rope, BK-Tree, VanEmdeBoasTree, DancingLinks)
-- ✅ **RELEASE v0.5.0**: Phase 5 data structures complete (Concurrent 4/4, Persistent 3/3, Exotic 5/5)
-  - 132 commits since v0.1.0
-  - 701 tests passing, 6 cross-compile targets verified
-  - Release URL: https://github.com/yusa-imit/zuda/releases/tag/v0.5.0
-- ✅ Closed GitHub issue #5 (DancingLinks feature request)
-- ✅ CI: Pushed to main (e030b36)
+## Recent Progress (Session 2026-03-13 - Hour 21)
+**FEATURE MODE (hour % 4 == 1):**
+- ✅ Implemented C API and FFI bindings (92de839)
+  - C API (src/ffi/c_api.zig): HashMap, SkipList, BloomFilter with opaque handles
+  - C header (include/zuda.h): Complete API declarations for FFI consumers
+  - Python bindings (examples/python_bindings.py): ctypes wrappers with auto memory management
+  - Node.js bindings (examples/nodejs_bindings.js): ffi-napi wrappers for HashMap & BloomFilter
+  - FFI README (examples/FFI_README.md): Usage examples, troubleshooting, extension guide
+  - Build system: `-Dshared=true` option to generate libzuda.a + header install
+  - Zig 0.15 compatibility: Updated to unmanaged ArrayList API (allocator-per-call)
+- ✅ **MILESTONE**: Phase 5 C API & FFI COMPLETE ✓
 - 📊 Test count: 701 total (100% passing)
-- 🎯 Next: C API & FFI or Documentation & v1.0 (Phase 5 completion)
+- 🎯 Next: Documentation & v1.0 (final Phase 5 item)
 
 ## Test Metrics
 - Unit tests: 701 passing / 701 total (100%)
