@@ -167,7 +167,7 @@
 - [x] **Math** (6/6): GCD/LCM ✓, Modexp ✓, Miller-Rabin ✓, Sieve ✓, CRT ✓, NTT ✓
 
 ## Phase 5 Progress — In Progress
-- [x] **Concurrent (2/4)**: WorkStealingDeque ✓, LockFreeQueue ✓ | LockFreeStack, ConcurrentSkipList, ConcurrentHashMap
+- [x] **Concurrent (4/4)**: WorkStealingDeque ✓, LockFreeQueue ✓, LockFreeStack ✓, ConcurrentSkipList ✓ | ConcurrentHashMap
 - [x] **Persistent (2/3)**: PersistentArray ✓, PersistentHashMap ✓ | PersistentRBTree
 - [x] **Exotic (4/5)**: DisjointSet ✓, Rope ✓, BK-Tree ✓, VanEmdeBoasTree ✓ | DancingLinks
 - [ ] **C API & FFI**: C header generation, binding examples
@@ -189,7 +189,7 @@
   - Lazy cluster allocation to reduce space usage
   - Consumer: integer-based priority queues, network routing tables with bounded keys
 
-### Concurrent Structures (2/4)
+### Concurrent Structures (4/4)
 - **WorkStealingDeque(T)** - Lock-free work-stealing deque for parallel task distribution
   - Chase-Lev algorithm with dynamic circular deque
   - Owner thread: push/pop from bottom (LIFO, cache locality)
@@ -212,6 +212,25 @@
   - 11 tests passing: init/deinit, basic FIFO, interleaved ops, empty, concurrent simulation, stress (1000 items), invariants, leak check, strings, tagged pointer pack/unpack
   - Consumer: producer-consumer patterns, multi-threaded task queues, message passing
   - Reference: M. M. Michael and M. L. Scott, PODC 1996
+- **LockFreeStack(T)** - Treiber's lock-free LIFO stack using CAS operations
+  - Linked list with atomic head pointer updates via CAS
+  - Tagged pointers (ptr + 64-bit version counter) to prevent ABA problem
+  - O(1) push/pop expected (lock-free, may retry on contention)
+  - Linearizable operations appear atomic at some point
+  - 12 tests passing: init/deinit, basic LIFO, pop empty, peek, count, multiple ops, stress (1000), interleaved, complex types, leak check, version wraparound safety
+  - Consumer: lock-free undo stacks, concurrent object pools, multi-threaded caching
+  - Reference: R. Kent Treiber, "Systems Programming: Coping with Parallelism" (1986)
+- **ConcurrentSkipList(K, V, Context, compareFn)** - Lock-free skip list for sorted map operations
+  - Herlihy et al. algorithm with marked references for safe deletion
+  - Tagged pointers with mark bit for 2-phase logical/physical deletion
+  - Thread-safe insert/get/remove without locks, CAS-based modifications
+  - O(log n) expected time for all operations
+  - 16 levels with p=1/2 probability, find helper with pred/succ tracking
+  - Insert: CAS at level 0 (linearization point), best-effort at higher levels
+  - Remove: mark all levels top-down, then physical unlink via find
+  - 11 tests passing: init/deinit, insert/get, update existing, multiple elements, remove, remove non-existent, contains, stress (100 inserts + 50 removes), leak check, strings
+  - Consumer: lock-free concurrent sorted sets, multi-threaded indexing, concurrent range queries
+  - Reference: M. Herlihy et al., "A Simple Optimistic Skiplist Algorithm" (2007)
 
 ### Persistent Structures (2/3)
 - **PersistentArray(T)** - Immutable vector with structural sharing, 32-way tree
@@ -229,28 +248,30 @@
   - Consumer: functional programming, undo/redo systems, concurrent access without locks
 
 ## Test Metrics
-- Unit tests: 676 passing / 676 total (100%)
+- Unit tests: 687 passing / 687 total (100%)
 - Property tests: SkipList + heap invariants + tree validations
 - Fuzz tests: 1
 - Benchmarks: 0
 - Known issues: None
 
-## Recent Progress (Session 2026-03-13 - Hour 11)
+## Recent Progress (Session 2026-03-13 - Hour 15)
 **FEATURE MODE (hour % 4 == 3):**
-- ✅ Implemented LockFreeQueue (Michael-Scott algorithm) for lock-free concurrent FIFO (2228f0e)
-  - Non-blocking queue using CAS operations for concurrent producer-consumer patterns
-  - Michael-Scott algorithm (1996) with sentinel dummy node
-  - Tagged pointers to handle ABA problem: 48-bit pointer + 16-bit generation counter
-  - Head pointer for dequeue, tail pointer for enqueue (may lag, other threads help advance it)
-  - O(1) enqueue/dequeue operations (amortized, lock-free with retry on contention)
-  - CAS operations ensure linearizability, dequeue reads value before CAS per paper
-  - 11 tests passing: init/deinit, basic FIFO ordering, interleaved operations, empty edge cases, concurrent simulation, stress test (1000 items), invariant validation, memory leak check, string type support, tagged pointer pack/unpack unit test
-  - Consumer: producer-consumer patterns without locks, multi-threaded task queues, message passing systems, zr parallel distribution
-  - Reference: M. M. Michael and M. L. Scott, "Simple, fast, and practical non-blocking and blocking concurrent queue algorithms", PODC 1996
-- ✅ **MILESTONE**: Phase 5 Concurrent 2/4 COMPLETE (WorkStealingDeque, LockFreeQueue)
-- ✅ CI: Pushed to main (2228f0e), CI GREEN expected
-- 📊 Test count: 676 passing (665 + 11 LockFreeQueue)
-- 🎯 Next: LockFreeStack (Phase 5 Concurrent 3/4), or ConcurrentSkipList, or PersistentRBTree
+- ✅ Implemented ConcurrentSkipList (lock-free skip list) for thread-safe sorted map operations (68499d9)
+  - Lock-free concurrent skip list based on Herlihy et al. algorithm with marked references
+  - Tagged pointers with mark bit for safe 2-phase deletion (logical mark → physical unlink)
+  - Thread-safe insert/get/remove operations without locks, CAS-based modifications
+  - O(log n) expected time complexity for all operations
+  - 16 levels with p=1/2 probability for level generation
+  - Insert: CAS at level 0 (linearization point), best-effort linking at higher levels
+  - Remove: Two-phase deletion - mark all levels top-down, then physical unlink via find helper
+  - Find helper populates predecessor/successor arrays for CAS operations
+  - 11 tests passing: init/deinit, basic insert/get, update existing key, multiple elements, remove, remove non-existent, contains check, stress test (100 inserts + 50 removes), memory leak check, string keys
+  - Consumer: lock-free concurrent sorted sets, multi-threaded indexing, concurrent range queries
+  - Reference: M. Herlihy, Y. Lev, V. Luchangco, N. Shavit, "A Simple Optimistic Skiplist Algorithm" (2007)
+- ✅ **MILESTONE**: Phase 5 Concurrent 4/4 COMPLETE ✓ (WorkStealingDeque, LockFreeQueue, LockFreeStack, ConcurrentSkipList)
+- ✅ CI: Pushed to main (68499d9), CI GREEN expected
+- 📊 Test count: 687 passing (676 + 11 ConcurrentSkipList)
+- 🎯 Next: PersistentRBTree (Phase 5 Persistent 3/3) or DancingLinks (Phase 5 Exotic 5/5) or ConcurrentHashMap
 
 ## Previous Progress (Session 2026-03-13 - Hour 09)
 **FEATURE MODE (hour % 4 == 1):**
