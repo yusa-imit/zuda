@@ -115,6 +115,29 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    // Shared library with C API for FFI
+    const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
+    if (shared) {
+        const lib = b.addLibrary(.{
+            .name = "zuda",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/ffi/c_api.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        lib.linkLibC();
+        b.installArtifact(lib);
+
+        // Install C header
+        const install_header = b.addInstallFileWithDir(
+            b.path("include/zuda.h"),
+            .header,
+            "zuda.h",
+        );
+        b.getInstallStep().dependOn(&install_header.step);
+    }
+
     // Creates an executable that will run `test` blocks from the provided module.
     // Here `mod` needs to define a target, which is why earlier we made sure to
     // set the releative field.
