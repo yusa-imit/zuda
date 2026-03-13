@@ -1,10 +1,10 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 0.4.0
+- **Version**: 0.5.0 (released 2026-03-13)
 - **Phase**: Phase 5 — Advanced & Polish (In Progress)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (676/676 tests passing - 100%)
+- **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -56,9 +56,13 @@
   - Applications: Sudoku, N-Queens, Pentomino tiling, graph coloring
   - Consumer: Combinatorial optimization, constraint satisfaction problems
 - ✅ **MILESTONE**: Phase 5 Exotic 5/5 COMPLETE ✓ (DisjointSet, Rope, BK-Tree, VanEmdeBoasTree, DancingLinks)
+- ✅ **RELEASE v0.5.0**: Phase 5 data structures complete (Concurrent 4/4, Persistent 3/3, Exotic 5/5)
+  - 132 commits since v0.1.0
+  - 701 tests passing, 6 cross-compile targets verified
+  - Release URL: https://github.com/yusa-imit/zuda/releases/tag/v0.5.0
 - ✅ Closed GitHub issue #5 (DancingLinks feature request)
-- ✅ CI: Pushed to main (beb6e0a), awaiting CI run
-- 📊 Test count: 687 + 14 DancingLinks = 701 total
+- ✅ CI: Pushed to main (e030b36)
+- 📊 Test count: 701 total (100% passing)
 - 🎯 Next: C API & FFI or Documentation & v1.0 (Phase 5 completion)
 
 ## Test Metrics
