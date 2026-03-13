@@ -87,8 +87,8 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
             return .{
                 .allocator = allocator,
                 .header = header,
-                .columns = std.ArrayList(*ColumnNode).init(allocator),
-                .nodes = std.ArrayList(*Node).init(allocator),
+                .columns = .{},
+                .nodes = .{},
                 .current_row = 0,
             };
         }
@@ -103,8 +103,8 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
                 self.allocator.destroy(node);
             }
             self.allocator.destroy(self.header);
-            self.columns.deinit();
-            self.nodes.deinit();
+            self.columns.deinit(self.allocator);
+            self.nodes.deinit(self.allocator);
         }
 
         /// Add a constraint column to the problem
@@ -120,7 +120,7 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
             last.right = &col.node;
             self.header.node.left = &col.node;
 
-            try self.columns.append(col);
+            try self.columns.append(self.allocator, col);
         }
 
         /// Add a constraint row (subset) to the problem
@@ -157,7 +157,7 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
                 }
                 prev = node;
 
-                try self.nodes.append(node);
+                try self.nodes.append(self.allocator, node);
             }
 
             // Close the row circle
@@ -233,9 +233,9 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
         /// Returns a list of solutions, where each solution is a list of row indices
         /// Time: O(b^d) exponential worst-case | Space: O(d*s) where s = solution count
         pub fn solve(self: *Self) !std.ArrayList(std.ArrayList(usize)) {
-            var solutions = std.ArrayList(std.ArrayList(usize)).init(self.allocator);
-            var partial = std.ArrayList(usize).init(self.allocator);
-            defer partial.deinit();
+            var solutions: std.ArrayList(std.ArrayList(usize)) = .{};
+            var partial: std.ArrayList(usize) = .{};
+            defer partial.deinit(self.allocator);
 
             try self.search(&solutions, &partial);
             return solutions;
@@ -252,8 +252,8 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
                 if (max_solutions) |max| {
                     if (solutions.items.len >= max) return;
                 }
-                const solution = try partial.clone();
-                try solutions.append(solution);
+                const solution = try partial.clone(self.allocator);
+                try solutions.append(self.allocator, solution);
                 return;
             }
 
@@ -264,7 +264,7 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
             // Try each row that covers this column
             var r = c.node.down;
             while (r != &c.node) : (r = r.down) {
-                try partial.append(r.row_id);
+                try partial.append(self.allocator, r.row_id);
 
                 // Cover all other columns in this row
                 var j = r.right;
@@ -422,10 +422,10 @@ test "DancingLinks: simple exact cover" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     try testing.expectEqual(@as(usize, 1), solutions.items.len);
@@ -471,10 +471,10 @@ test "DancingLinks: Knuth example" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     try testing.expect(solutions.items.len > 0);
@@ -501,7 +501,7 @@ test "DancingLinks: no solution" {
     try dlx.addRow(&[_]usize{ 0, 1 }); // A = {1, 2}
 
     var solutions = try dlx.solve();
-    defer solutions.deinit();
+    defer solutions.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), solutions.items.len);
 }
@@ -521,10 +521,10 @@ test "DancingLinks: multiple solutions" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     try testing.expectEqual(@as(usize, 2), solutions.items.len);
@@ -562,10 +562,10 @@ test "DancingLinks: max solutions limit" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     try testing.expectEqual(@as(usize, 1), solutions.items.len);
@@ -578,10 +578,10 @@ test "DancingLinks: empty problem" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     try testing.expectEqual(@as(usize, 1), solutions.items.len);
@@ -631,10 +631,10 @@ test "DancingLinks: memory leak check" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     // std.testing.allocator will catch leaks
@@ -662,10 +662,10 @@ test "DancingLinks: stress test" {
     // This probably has no exact cover, but exercise the algorithm
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     // No assertion on solution count, just checking it doesn't crash
@@ -711,10 +711,10 @@ test "DancingLinks: N-Queens as exact cover (N=4)" {
 
     var solutions = try dlx.solve();
     defer {
-        for (solutions.items) |sol| {
-            sol.deinit();
+        for (solutions.items) |*sol| {
+            sol.deinit(testing.allocator);
         }
-        solutions.deinit();
+        solutions.deinit(testing.allocator);
     }
 
     // 4-Queens has 2 solutions (row+col only, no diagonal check)
