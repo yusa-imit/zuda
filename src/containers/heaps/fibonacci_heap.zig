@@ -72,41 +72,47 @@ pub fn FibonacciHeap(
         /// Destroy the heap and free all nodes.
         /// Time: O(n) | Space: O(n)
         pub fn deinit(self: *Self) void {
-            if (self.min_node) |min| {
-                var nodes_to_free: std.ArrayList(*Node) = .{};
-                defer nodes_to_free.deinit(self.allocator);
+            if (self.min_node == null) return;
 
-                self.collectAllNodes(min, &nodes_to_free) catch {
-                    // If collection fails, we still free what we collected
-                    for (nodes_to_free.items) |node| {
-                        self.allocator.destroy(node);
+            // Two-phase approach to avoid use-after-free:
+            // Phase 1: Collect all nodes (reusing 'marked' field to track visited nodes)
+            // Phase 2: Free all collected nodes
+
+            var nodes_to_free: std.ArrayList(*Node) = .{};
+            defer nodes_to_free.deinit(self.allocator);
+
+            // Collect all nodes using DFS with explicit stack
+            var stack: std.ArrayList(*Node) = .{};
+            defer stack.deinit(self.allocator);
+
+            // Start with root list
+            const min = self.min_node.?;
+            stack.append(self.allocator, min) catch return;
+
+            while (stack.popOrNull()) |node| {
+                // Skip if already visited (prevents infinite loops in circular structures)
+                if (node.marked) continue;
+                node.marked = true;
+
+                // Add to free list
+                nodes_to_free.append(self.allocator, node) catch {};
+
+                // Add next sibling in circular list (will be processed later)
+                if (node.next != node and !node.next.marked) {
+                    stack.append(self.allocator, node.next) catch {};
+                }
+
+                // Add children
+                if (node.child) |child| {
+                    if (!child.marked) {
+                        stack.append(self.allocator, child) catch {};
                     }
-                    return;
-                };
-
-                // Free all collected nodes
-                for (nodes_to_free.items) |node| {
-                    self.allocator.destroy(node);
                 }
             }
-        }
 
-        fn collectAllNodes(self: *Self, start: *Node, nodes: *std.ArrayList(*Node)) !void {
-            var current = start;
-            const first = start;
-            var first_visit = true;
-
-            // Traverse the root list (circular doubly-linked list)
-            while (first_visit or current != first) {
-                first_visit = false;
-                try nodes.append(self.allocator, current);
-
-                // Collect all children recursively
-                if (current.child) |child| {
-                    try self.collectAllNodes(child, nodes);
-                }
-
-                current = current.next;
+            // Phase 2: Free all nodes
+            for (nodes_to_free.items) |node| {
+                self.allocator.destroy(node);
             }
         }
 
