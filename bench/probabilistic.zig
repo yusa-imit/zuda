@@ -74,11 +74,13 @@ pub fn main() !void {
 
         const result = try benchmark.run(benchBloomFilterLookup, .{allocator});
 
-        const ns_per_op = @divFloor(result.mean_ns, 10_000_000);
-        const ops_per_sec = @divFloor(1_000_000_000, ns_per_op);
+        // Calculate ops/sec directly to avoid integer division precision loss
+        // Total ops = 10M, time = result.mean_ns nanoseconds
+        // ops/sec = (10M ops * 1B ns/sec) / mean_ns
+        const ops_per_sec = @divFloor(10_000_000 * 1_000_000_000, result.mean_ns);
         const million_ops_per_sec = @divFloor(ops_per_sec, 1_000_000);
 
-        std.debug.print("  Result: {d} ns/op, {d}M ops/sec (mean over {d} iterations)\n", .{ ns_per_op, million_ops_per_sec, result.iterations });
+        std.debug.print("  Result: {d}M ops/sec ({d} ns total, mean over {d} iterations)\n", .{ million_ops_per_sec, result.mean_ns, result.iterations });
 
         if (million_ops_per_sec >= 100) {
             std.debug.print("  ✓ PASS: meets target of ≥ 100M ops/sec\n", .{});
