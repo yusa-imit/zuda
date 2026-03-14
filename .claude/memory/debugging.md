@@ -105,3 +105,25 @@ while (true) {
 - Don't manually reference all types in a single test block - `refAllDecls` is sufficient.
 - When `zig build test` hangs, check for: excessive test references, unused imports in executables, or circular test dependencies.
 - Individual module tests are already discovered by `zig build test` - no need to manually aggregate them.
+
+## Performance Issues
+
+### RedBlackTree Performance Below Target (identified 2026-03-14, commit 232f2ad)
+**Symptoms**: Benchmark shows insert at 269 ns/op (target ≤ 200 ns/op, 34.5% over) and lookup at 552 ns/op (target ≤ 150 ns/op, 268% over) for 1M random keys.
+
+**Status**: Under investigation
+
+**Potential Causes**:
+1. Lookup performance particularly concerning (268% over) - suggests algorithmic issue or cache inefficiency
+2. Random key distribution may cause poor cache locality during tree traversal
+3. Possible excessive allocator overhead in node allocation
+4. Tree rotations during insert may be more frequent than expected
+5. Context comparison function overhead (though simple integer comparison should be fast)
+
+**Next Steps**:
+- Profile the hot path with perf/Instruments
+- Compare against C++ std::map with same workload
+- Test with sequential keys vs random to measure cache impact
+- Consider node pooling instead of individual allocations
+- Check if pointer chasing patterns can be optimized
+- Verify tree height stays within expected O(log n) bounds
