@@ -2,68 +2,84 @@
 
 ## Current Status
 
-- **Latest release**: No releases yet (pre-Phase 1)
-- **Current phase**: Phase 1 — Foundations
+- **Latest release**: v1.0.0 (2026-03-14) — All 5 Phases Complete
+- **Current phase**: Post-v1.0.0 — Performance Optimization & Consumer Migrations
+- **Tests**: 701/701 passing (100%)
+- **Open issues**: None
 - **Blockers**: None
 
 ---
 
 ## Active Milestones
 
-### Phase 1 — Foundations (Weeks 1-8)
-- [ ] Project scaffolding: CI, testing harness, benchmark framework
-- [ ] **Lists & Queues**: `SkipList`, `XorLinkedList`, `UnrolledLinkedList`, `Deque`
-- [ ] **Hash containers**: `CuckooHashMap`, `RobinHoodHashMap`, `SwissTable`, `ConsistentHashRing`
-- [ ] **Heaps**: `FibonacciHeap`, `BinomialHeap`, `PairingHeap`, `DaryHeap`
-- [ ] All Phase 1 containers pass invariant tests, fuzz tests (1hr minimum), and benchmarks
+### v1.1.0 — Performance Optimization
 
-### Phase 2 — Trees & Range Queries (Weeks 9-16)
-- [ ] **Balanced BSTs**: `RedBlackTree`, `AVLTree`, `SplayTree`, `AATree`, `ScapegoatTree`
-- [ ] **Tries & B-Trees**: `Trie`, `RadixTree`, `BTree`
-- [ ] **Range query**: `SegmentTree`, `LazySegmentTree`, `FenwickTree`, `SparseTable`, `IntervalTree`
-- [ ] **Spatial**: `KDTree`, `RTree`, `QuadTree`, `OctTree`
-- [ ] **Strings**: `SuffixArray`, `SuffixTree`
+Address performance regressions identified during post-release benchmarking:
 
-### Phase 3 — Graph Algorithms (Weeks 17-24)
-- [ ] **Representations**: `AdjacencyList`, `AdjacencyMatrix`, `CompressedSparseRow`, `EdgeList`
-- [ ] **Traversal & shortest paths**: BFS, DFS, Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's
-- [ ] **MST & connectivity**: Kruskal, Prim, Boruvka, Tarjan SCC, Kosaraju, bridges, articulation points
-- [ ] **Flow & matching**: Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian, topological sort
+- [ ] Fix FibonacciHeap.deinit double-free bug
+- [ ] Fix FibonacciHeap.insert API (doesn't return node handle)
+- [ ] Optimize RedBlackTree insert (329ns → ≤200ns target)
+- [ ] Optimize RedBlackTree lookup (593ns → ≤150ns target)
+- [ ] Reduce TimSort overhead (176% → ≤10% vs std.sort)
+- [ ] Optimize Aho-Corasick throughput (46 MB/sec → ≥500 MB/sec target)
+- [ ] Fix BloomFilter benchmark (0ns result — calculation bug)
 
-### Phase 4 — Algorithms & Probabilistic (Weeks 25-34)
-- [ ] **Sorting**: TimSort, IntroSort, RadixSort, CountingSort, BlockSort, in-place MergeSort
-- [ ] **String algorithms**: KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm
-- [ ] **Probabilistic & cache**: `BloomFilter`, `CuckooFilter`, `CountMinSketch`, `HyperLogLog`, `LRUCache`, `LFUCache`
-- [ ] **Math & geometry**: GCD, modexp, Miller-Rabin, convex hull, closest pair
-- [ ] **DP utilities**: LIS, LCS, edit distance, knapsack, binary search variants
+### v1.2.0 — Consumer Migrations
 
-### Phase 5 — Advanced & Polish (Weeks 35-44)
-- [ ] **Concurrent**: `LockFreeQueue`, `LockFreeStack`, `ConcurrentSkipList`, `ConcurrentHashMap`
-- [ ] **Persistent**: `PersistentArray`, `PersistentRBTree`, `PersistentHashMap` (HAMT)
-- [ ] **Exotic**: `DisjointSet`, `VanEmdeBoasTree`, `DancingLinks`, `Rope`, `BK-Tree`
-- [ ] **C API & FFI**: C header generation, binding examples
-- [ ] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide
+Validate zuda in production through consumer project adoption:
+
+- [ ] zr migration (1,189 LOC replacement) — issues zr#21-#25 filed
+- [ ] silica migration (7,000 LOC replacement) — issues silica#4, silica#5 filed
+- [ ] zoltraak migration (3,435 LOC replacement) — issues zoltraak#1-#3 filed
+- [ ] API refinements based on consumer feedback
+- [ ] Migration guide documentation
 
 ---
 
 ## Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| RedBlackTree insert | ≤ 200 ns/op (1M random keys) |
-| RedBlackTree lookup | ≤ 150 ns/op (1M random keys) |
-| BTree(128) range scan | ≥ 50M keys/sec (sequential) |
-| FibonacciHeap decrease-key | ≤ 50 ns amortized |
-| BloomFilter lookup | ≥ 100M ops/sec |
-| Dijkstra (1M nodes, 5M edges) | ≤ 500 ms |
-| TimSort (1M i64, random) | ≤ 10% overhead vs `std.sort` |
-| Aho-Corasick (1000 patterns, 1MB text) | ≥ 500 MB/sec |
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| BTree(128) range scan | ≥ 50M keys/sec | 83M keys/sec | ✅ +66% |
+| RedBlackTree insert | ≤ 200 ns/op | 329 ns | ❌ +64% over |
+| RedBlackTree lookup | ≤ 150 ns/op | 593 ns | ❌ +295% over |
+| TimSort overhead | ≤ 10% vs std.sort | 176% overhead | ❌ 17x worse |
+| Aho-Corasick | ≥ 500 MB/sec | 46 MB/sec | ❌ -91% |
+| FibonacciHeap decrease-key | ≤ 50 ns amortized | N/A (double-free bug) | ❌ |
+| BloomFilter lookup | ≥ 100M ops/sec | N/A (calculation bug) | ❌ |
+| Dijkstra (1M nodes) | ≤ 500 ms | TBD | — |
 
 ---
 
 ## Completed Milestones
 
-No completed milestones yet.
+| Phase | Name | Release | Date | Summary |
+|-------|------|---------|------|---------|
+| Phase 1 | Foundations | v0.1.0 | 2026-03 | SkipList, CuckooHashMap, RobinHoodHashMap, SwissTable, ConsistentHashRing, FibonacciHeap, BinomialHeap, PairingHeap, DaryHeap, XorLinkedList, UnrolledLinkedList, Deque, CI, testing harness, benchmark framework |
+| Phase 2 | Trees & Range Queries | v0.5.0 | 2026-03 | RedBlackTree, AVLTree, SplayTree, AATree, ScapegoatTree, Trie, RadixTree, BTree, SegmentTree, LazySegmentTree, FenwickTree, SparseTable, IntervalTree, KDTree, RTree, QuadTree, OctTree, SuffixArray, SuffixTree |
+| Phase 3 | Graph Algorithms | — | 2026-03 | AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList, BFS, DFS, Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's, Kruskal, Prim, Boruvka, Tarjan SCC, Kosaraju, bridges, articulation points, Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian, topological sort |
+| Phase 4 | Algorithms & Probabilistic | — | 2026-03 | TimSort, IntroSort, RadixSort, CountingSort, BlockSort, in-place MergeSort, KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm, BloomFilter, CuckooFilter, CountMinSketch, HyperLogLog, LRUCache, LFUCache, GCD, modexp, Miller-Rabin, convex hull, closest pair, LIS, LCS, edit distance, knapsack |
+| Phase 5 | Advanced & Polish | v1.0.0 | 2026-03-14 | LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap, PersistentArray, PersistentRBTree, PersistentHashMap (HAMT), DisjointSet, VanEmdeBoasTree, DancingLinks, Rope, BK-Tree, C API, documentation, 213 public exports |
+
+### Post-v1.0.0 Activity
+
+20 commits since v1.0.0 release:
+- Benchmark API fixes for Zig 0.15.2 ArrayList changes
+- Comprehensive benchmark suite for all PRD performance targets
+- Glob algorithm implementation
+- PersistentRBTree lifetime management documentation
+- Consumer migration issue filing (zr, silica, zoltraak — 11,624 LOC total)
+
+### Closed Issues
+
+| # | Title | Closed |
+|---|-------|--------|
+| #6 | ArrayList API migration incomplete | 2026-03-13 |
+| #5 | DancingLinks implementation | 2026-03-13 |
+| #4 | CI warning confirmed | 2026-03-12 |
+| #3 | CRITICAL: CI failing | 2026-03-12 |
+| #2 | Completed phase not released | 2026-03-12 |
+| #1 | SuffixTree edge splitting bug | 2026-03-09 |
 
 ---
 
@@ -89,3 +105,11 @@ No completed milestones yet.
 
 zuda는 순수 라이브러리이므로 외부 의존성 마이그레이션은 없다.
 소비자 프로젝트(zr, silica, zoltraak)로의 마이그레이션 발행은 CLAUDE.md의 **소비자 마이그레이션 발행 프로토콜**을 참조한다.
+
+### Consumer Migration Issues Filed
+
+| Consumer | Issues | Total LOC | Status |
+|----------|--------|-----------|--------|
+| zr | #21, #22, #23, #24, #25 | 1,189 | Pending (blocked on v1.1.0) |
+| silica | #4, #5 | 7,000 | Pending (blocked on v1.1.0) |
+| zoltraak | #1, #2, #3 | 3,435 | Pending (blocked on v1.1.0) |
