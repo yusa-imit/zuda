@@ -132,9 +132,10 @@ pub fn FibonacciHeap(
 
         // -- Modification --
 
-        /// Insert a new element into the heap.
+        /// Insert a new element into the heap and return a handle to the node.
+        /// The returned handle can be used with decreaseKey().
         /// Time: O(1) amortized | Space: O(1)
-        pub fn insert(self: *Self, value: T) !void {
+        pub fn insert(self: *Self, value: T) !*Node {
             const node = try self.allocator.create(Node);
             node.* = Node.init(value);
             // Fix up circular pointers to point to the allocated node
@@ -152,6 +153,7 @@ pub fn FibonacciHeap(
             }
 
             self.node_count += 1;
+            return node;
         }
 
         /// Remove and return the minimum element.
@@ -480,10 +482,10 @@ test "FibonacciHeap: basic insert and extract" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(5);
-    try heap.insert(3);
-    try heap.insert(7);
-    try heap.insert(1);
+    _ = try heap.insert(5);
+    _ = try heap.insert(3);
+    _ = try heap.insert(7);
+    _ = try heap.insert(1);
 
     try std.testing.expectEqual(@as(usize, 4), heap.count());
     try std.testing.expectEqual(@as(i32, 1), heap.peekMin().?);
@@ -522,7 +524,7 @@ test "FibonacciHeap: single element" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(42);
+    _ = try heap.insert(42);
     try std.testing.expectEqual(@as(usize, 1), heap.count());
     try std.testing.expectEqual(@as(i32, 42), heap.peekMin().?);
     try std.testing.expectEqual(@as(i32, 42), heap.extractMin().?);
@@ -539,10 +541,10 @@ test "FibonacciHeap: duplicate values" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(5);
-    try heap.insert(5);
-    try heap.insert(3);
-    try heap.insert(3);
+    _ = try heap.insert(5);
+    _ = try heap.insert(5);
+    _ = try heap.insert(3);
+    _ = try heap.insert(3);
 
     try std.testing.expectEqual(@as(i32, 3), heap.extractMin().?);
     try std.testing.expectEqual(@as(i32, 3), heap.extractMin().?);
@@ -563,10 +565,10 @@ test "FibonacciHeap: merge two heaps" {
     var heap2 = IntHeap.init(std.testing.allocator, {});
     defer heap2.deinit();
 
-    try heap1.insert(5);
-    try heap1.insert(10);
-    try heap2.insert(3);
-    try heap2.insert(7);
+    _ = try heap1.insert(5);
+    _ = try heap1.insert(10);
+    _ = try heap2.insert(3);
+    _ = try heap2.insert(7);
 
     heap1.merge(&heap2);
 
@@ -592,7 +594,7 @@ test "FibonacciHeap: merge with empty heap" {
     var heap2 = IntHeap.init(std.testing.allocator, {});
     defer heap2.deinit();
 
-    try heap1.insert(5);
+    _ = try heap1.insert(5);
     heap1.merge(&heap2);
 
     try std.testing.expectEqual(@as(usize, 1), heap1.count());
@@ -616,7 +618,7 @@ test "FibonacciHeap: stress test with 1000 insertions" {
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
         const value = random.intRangeAtMost(i32, 0, 10000);
-        try heap.insert(value);
+        _ = try heap.insert(value);
     }
 
     try std.testing.expectEqual(@as(usize, 1000), heap.count());
@@ -643,9 +645,9 @@ test "FibonacciHeap: memory leak detection" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(1);
-    try heap.insert(2);
-    try heap.insert(3);
+    _ = try heap.insert(1);
+    _ = try heap.insert(2);
+    _ = try heap.insert(3);
     _ = heap.extractMin();
     _ = heap.extractMin();
 }
@@ -660,16 +662,16 @@ test "FibonacciHeap: validate invariants after insertions" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(10);
+    _ = try heap.insert(10);
     try heap.validate();
 
-    try heap.insert(5);
+    _ = try heap.insert(5);
     try heap.validate();
 
-    try heap.insert(15);
+    _ = try heap.insert(15);
     try heap.validate();
 
-    try heap.insert(3);
+    _ = try heap.insert(3);
     try heap.validate();
 }
 
@@ -683,11 +685,11 @@ test "FibonacciHeap: validate invariants after extractions" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(10);
-    try heap.insert(5);
-    try heap.insert(15);
-    try heap.insert(3);
-    try heap.insert(20);
+    _ = try heap.insert(10);
+    _ = try heap.insert(5);
+    _ = try heap.insert(15);
+    _ = try heap.insert(3);
+    _ = try heap.insert(20);
 
     _ = heap.extractMin();
     try heap.validate();
@@ -709,11 +711,11 @@ test "FibonacciHeap: descending order insertion" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(100);
-    try heap.insert(90);
-    try heap.insert(80);
-    try heap.insert(70);
-    try heap.insert(60);
+    _ = try heap.insert(100);
+    _ = try heap.insert(90);
+    _ = try heap.insert(80);
+    _ = try heap.insert(70);
+    _ = try heap.insert(60);
 
     try std.testing.expectEqual(@as(i32, 60), heap.extractMin().?);
     try std.testing.expectEqual(@as(i32, 70), heap.extractMin().?);
@@ -730,11 +732,11 @@ test "FibonacciHeap: ascending order insertion" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(1);
-    try heap.insert(2);
-    try heap.insert(3);
-    try heap.insert(4);
-    try heap.insert(5);
+    _ = try heap.insert(1);
+    _ = try heap.insert(2);
+    _ = try heap.insert(3);
+    _ = try heap.insert(4);
+    _ = try heap.insert(5);
 
     try std.testing.expectEqual(@as(i32, 1), heap.extractMin().?);
     try std.testing.expectEqual(@as(i32, 2), heap.extractMin().?);
@@ -751,10 +753,10 @@ test "FibonacciHeap: negative values" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(-5);
-    try heap.insert(0);
-    try heap.insert(-10);
-    try heap.insert(5);
+    _ = try heap.insert(-5);
+    _ = try heap.insert(0);
+    _ = try heap.insert(-10);
+    _ = try heap.insert(5);
 
     try std.testing.expectEqual(@as(i32, -10), heap.extractMin().?);
     try std.testing.expectEqual(@as(i32, -5), heap.extractMin().?);
@@ -772,10 +774,10 @@ test "FibonacciHeap: max heap with custom comparator" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(5);
-    try heap.insert(3);
-    try heap.insert(7);
-    try heap.insert(1);
+    _ = try heap.insert(5);
+    _ = try heap.insert(3);
+    _ = try heap.insert(7);
+    _ = try heap.insert(1);
 
     try std.testing.expectEqual(@as(i32, 7), heap.extractMin().?); // Max element
     try std.testing.expectEqual(@as(i32, 5), heap.extractMin().?);
@@ -799,8 +801,8 @@ test "FibonacciHeap: large merge operation" {
     // Insert 100 elements in each heap
     var i: i32 = 0;
     while (i < 100) : (i += 1) {
-        try heap1.insert(i * 2);
-        try heap2.insert(i * 2 + 1);
+        _ = try heap1.insert(i * 2);
+        _ = try heap2.insert(i * 2 + 1);
     }
 
     heap1.merge(&heap2);
@@ -824,19 +826,56 @@ test "FibonacciHeap: interleaved insert and extract" {
     var heap = IntHeap.init(std.testing.allocator, {});
     defer heap.deinit();
 
-    try heap.insert(10);
-    try heap.insert(5);
+    _ = try heap.insert(10);
+    _ = try heap.insert(5);
     try std.testing.expectEqual(@as(i32, 5), heap.extractMin().?);
 
-    try heap.insert(15);
-    try heap.insert(3);
+    _ = try heap.insert(15);
+    _ = try heap.insert(3);
     try std.testing.expectEqual(@as(i32, 3), heap.extractMin().?);
 
-    try heap.insert(8);
+    _ = try heap.insert(8);
     try std.testing.expectEqual(@as(i32, 8), heap.extractMin().?);
     try std.testing.expectEqual(@as(i32, 10), heap.extractMin().?);
     try std.testing.expectEqual(@as(i32, 15), heap.extractMin().?);
 
+    try std.testing.expect(heap.isEmpty());
+}
+
+test "FibonacciHeap: decreaseKey with node handle" {
+    const IntHeap = FibonacciHeap(i32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    var heap = IntHeap.init(std.testing.allocator, {});
+    defer heap.deinit();
+
+    // Insert values and keep handles
+    _ = try heap.insert(10);
+    const node_20 = try heap.insert(20);
+    _ = try heap.insert(5);
+    const node_30 = try heap.insert(30);
+
+    // Min should be 5
+    try std.testing.expectEqual(@as(i32, 5), heap.peekMin().?);
+
+    // Decrease 20 to 3 - it should become the new minimum
+    try heap.decreaseKey(node_20, 3);
+    try std.testing.expectEqual(@as(i32, 3), heap.peekMin().?);
+
+    // Extract min (3, was 20)
+    try std.testing.expectEqual(@as(i32, 3), heap.extractMin().?);
+
+    // Decrease 30 to 4
+    try heap.decreaseKey(node_30, 4);
+    try std.testing.expectEqual(@as(i32, 4), heap.peekMin().?);
+
+    // Verify remaining extraction order: 4, 5, 10
+    try std.testing.expectEqual(@as(i32, 4), heap.extractMin().?);
+    try std.testing.expectEqual(@as(i32, 5), heap.extractMin().?);
+    try std.testing.expectEqual(@as(i32, 10), heap.extractMin().?);
     try std.testing.expect(heap.isEmpty());
 }
 
@@ -855,7 +894,7 @@ test "FibonacciHeap: double-free bug during deinit after consolidation" {
     // This creates a deeply nested tree structure with many consolidation rounds
     var i: i32 = 0;
     while (i < 100000) : (i += 1) {
-        try heap.insert(i);
+        _ = try heap.insert(i);
     }
 
     // Extract many elements to trigger numerous consolidate() calls
