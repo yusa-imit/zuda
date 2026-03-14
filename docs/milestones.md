@@ -16,8 +16,8 @@
 
 Address performance regressions identified during post-release benchmarking:
 
-- [ ] Fix FibonacciHeap.deinit double-free bug
-- [ ] Fix FibonacciHeap.insert API (doesn't return node handle)
+- [x] Fix FibonacciHeap.deinit double-free bug (commit 6485859)
+- [x] Fix FibonacciHeap.insert API (doesn't return node handle) (commit 724cf24)
 - [ ] Optimize RedBlackTree insert (329ns → ≤200ns target)
 - [ ] Optimize RedBlackTree lookup (593ns → ≤150ns target)
 - [ ] Reduce TimSort overhead (176% → ≤10% vs std.sort)

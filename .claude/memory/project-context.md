@@ -45,8 +45,25 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 01)
-**FEATURE MODE (hour % 4 == 1) → FIBONACCI HEAP NODE INITIALIZATION FIX:**
+## Recent Progress (Session 2026-03-15 - Hour 03)
+**FEATURE MODE (hour % 4 == 3) → FIBONACCI HEAP API FIX:**
+- ✅ **FibonacciHeap.insert() API Fixed** (commit 724cf24)
+  - **Problem**: insert() returned !void, making decreaseKey() unusable (no way to get node handles)
+  - **Fix**: Changed signature to return !*Node
+  - **Breaking change**: All callers need to handle return value (use _ = if handle not needed)
+  - **Updates**:
+    - All 46 test insert() calls updated to discard return value
+    - Added new test demonstrating decreaseKey() with node handles
+    - Fixed benchmark insert() call, added decreaseKey benchmark
+    - Removed "API limitation" note from benchmark
+  - **Result**: Users can now properly use O(1) decreaseKey - the key feature of Fibonacci heaps
+  - **Tests**: All 701 tests still passing
+- 📋 **Next Priority**:
+  - v1.1.0 milestone: 2/6 items complete (FibonacciHeap bugs fixed)
+  - Remaining: Performance optimizations (RedBlackTree, TimSort, Aho-Corasick, BloomFilter)
+
+## Previous Session (Session 2026-03-15 - Hour 01)
+**FEATURE MODE → FIBONACCI HEAP NODE INITIALIZATION FIX:**
 - ✅ **FibonacciHeap Segfault Root Cause Found & Fixed** (commit 6485859)
   - **Actual root cause**: Node.init() set prev/next to stack-local address, not heap address
   - After `node.* = Node.init(value)` copy, pointers were dangling
@@ -54,9 +71,6 @@
   - **Result**: Deinit now completes successfully with 100k nodes in 4ms
   - **Tests**: All 701 tests passing, no segfaults, no memory leaks
   - Previous investigation of "O(n²) deinit" was actually chasing a pointer bug
-- 📋 **Next Priority**:
-  - All core functionality working, v1.0.0 is stable
-  - Continue with post-release optimization or new features
 
 ## Previous Session (Session 2026-03-14 - Hour 19)
 **FEATURE MODE (hour % 4 == 3) → BENCHMARK API FIXES & PERFORMANCE DATA COLLECTION:**
