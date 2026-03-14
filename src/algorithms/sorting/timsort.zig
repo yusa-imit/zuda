@@ -55,6 +55,10 @@ pub fn TimSort(
 
             const min_run = minRunLength(items.len);
 
+            // Allocate merge buffer ONCE for the entire sort operation
+            const merge_buffer = try allocator.alloc(T, items.len / 2);
+            defer allocator.free(merge_buffer);
+
             var run_stack: [MAX_MERGE_PENDING]Run = undefined;
             var run_count: usize = 0;
 
@@ -76,11 +80,11 @@ pub fn TimSort(
                 pos += run_len;
 
                 // Merge runs on stack to maintain invariants
-                try mergeCollapse(allocator, items, run_stack[0..run_count], &run_count, context);
+                try mergeCollapse(merge_buffer, items, run_stack[0..run_count], &run_count, context);
             }
 
             // Force merge all remaining runs
-            try mergeForceCollapse(allocator, items, run_stack[0..run_count], &run_count, context);
+            try mergeForceCollapse(merge_buffer, items, run_stack[0..run_count], &run_count, context);
         }
 
         /// Compute minimum run length for merge sort.
@@ -158,7 +162,7 @@ pub fn TimSort(
         ///   1. run_len[i-2] > run_len[i-1] + run_len[i]
         ///   2. run_len[i-1] > run_len[i]
         fn mergeCollapse(
-            allocator: Allocator,
+            buffer: []T,
             items: []T,
             runs: []Run,
             run_count: *usize,
@@ -177,9 +181,9 @@ pub fn TimSort(
                     if (len_i2 <= len_i1 + len_i) {
                         // Merge smaller of (i-2, i-1) with i
                         if (len_i2 < len_i) {
-                            try mergeAt(allocator, items, runs, n - 3, context);
+                            try mergeAt(buffer, items, runs, n - 3, context);
                         } else {
-                            try mergeAt(allocator, items, runs, n - 2, context);
+                            try mergeAt(buffer, items, runs, n - 2, context);
                         }
                         run_count.* -= 1;
                         continue;
@@ -192,7 +196,7 @@ pub fn TimSort(
 
                     // Invariant 2 violated?
                     if (len_i1 <= len_i) {
-                        try mergeAt(allocator, items, runs, n - 2, context);
+                        try mergeAt(buffer, items, runs, n - 2, context);
                         run_count.* -= 1;
                         continue;
                     }
@@ -204,7 +208,7 @@ pub fn TimSort(
 
         /// Force merge all remaining runs.
         fn mergeForceCollapse(
-            allocator: Allocator,
+            buffer: []T,
             items: []T,
             runs: []Run,
             run_count: *usize,
@@ -214,9 +218,9 @@ pub fn TimSort(
                 const n = run_count.*;
 
                 if (n >= 3 and runs[n - 3].len < runs[n - 1].len) {
-                    try mergeAt(allocator, items, runs, n - 3, context);
+                    try mergeAt(buffer, items, runs, n - 3, context);
                 } else {
-                    try mergeAt(allocator, items, runs, n - 2, context);
+                    try mergeAt(buffer, items, runs, n - 2, context);
                 }
 
                 run_count.* -= 1;
@@ -226,7 +230,7 @@ pub fn TimSort(
         /// Merge run at index i with run at index i+1.
         /// Updates run[i] to represent the merged run and shifts subsequent runs.
         fn mergeAt(
-            allocator: Allocator,
+            buffer: []T,
             items: []T,
             runs: []Run,
             i: usize,
@@ -236,7 +240,7 @@ pub fn TimSort(
             const run2 = runs[i + 1];
 
             // Merge run1 and run2
-            try mergeRuns(allocator, items, run1.start, run1.len, run2.len, context);
+            try mergeRuns(buffer, items, run1.start, run1.len, run2.len, context);
 
             // Update run stack
             runs[i].len = run1.len + run2.len;
@@ -250,19 +254,18 @@ pub fn TimSort(
             }
         }
 
-        /// Merge two consecutive runs.
+        /// Merge two consecutive runs using pre-allocated buffer.
         /// items[start..start+len1] and items[start+len1..start+len1+len2]
         fn mergeRuns(
-            allocator: Allocator,
+            buffer: []T,
             items: []T,
             start: usize,
             len1: usize,
             len2: usize,
             context: Context,
         ) !void {
-            // Allocate temporary buffer for merge
-            const temp = try allocator.alloc(T, len1);
-            defer allocator.free(temp);
+            // Use pre-allocated buffer (already sized for max needed)
+            const temp = buffer[0..len1];
 
             // Copy first run to temp
             @memcpy(temp, items[start .. start + len1]);
