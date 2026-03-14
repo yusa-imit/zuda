@@ -8,6 +8,25 @@ const testing = std.testing;
 /// the original version. This provides efficient immutable operations with
 /// O(log n) space per mutation.
 ///
+/// IMPORTANT - Version Lifetime Management:
+/// Due to structural sharing without reference counting, versions must be managed
+/// carefully to avoid double-free or use-after-free errors:
+///
+/// SAFE pattern (single active version):
+///   var tree = Tree.init(allocator);
+///   defer tree.deinit();
+///   tree = try tree.insert(1, 10);  // Old version released, new version active
+///   tree = try tree.insert(2, 20);  // Old version released, new version active
+///
+/// UNSAFE pattern (multiple concurrent versions):
+///   var v1 = try tree.insert(1, 10);
+///   var v2 = try tree.insert(2, 20);  // v1 and v2 share nodes
+///   v1.deinit();  // Frees shared nodes
+///   v2.deinit();  // ERROR: Double-free of shared nodes!
+///
+/// For applications requiring multiple concurrent versions, use an arena allocator
+/// for the version set and free the entire arena when all versions are done.
+///
 /// Time Complexity:
 /// - insert: O(log n) with path copying
 /// - remove: O(log n) with path copying

@@ -73,9 +73,11 @@
 - Benchmarks: 0
 - Known issues: PersistentRBTree memory leak with concurrent versions (needs ref-counting)
 
-## Known Issues
-1. **PersistentRBTree**: Memory leak when multiple versions are kept alive concurrently
-   - Root cause: Shared nodes between versions without reference counting
-   - Workaround: Deinit old version immediately after creating new version
-   - Proper fix: Implement reference counting or use arena allocator for version sets
-   - Priority: Medium (functional but limited usage pattern)
+## Known Limitations
+1. **PersistentRBTree**: Multiple concurrent versions require careful lifetime management
+   - Design: Uses structural sharing without reference counting for simplicity/performance
+   - Safe pattern: Deinit old version immediately after creating new version (single active version)
+   - Unsafe pattern: Keeping multiple versions alive concurrently leads to double-free
+   - Mitigation: Use arena allocator for version sets, clear documentation in doc comments
+   - Future enhancement: Reference-counted variant for applications needing concurrent versions
+   - Priority: Low (current design is intentional trade-off, well-documented)
