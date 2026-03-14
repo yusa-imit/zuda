@@ -35,7 +35,7 @@ fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
     }
 
     // Build Aho-Corasick automaton
-    var ac = try AhoCorasick.init(allocator, patterns.items);
+    var ac = try AhoCorasick(u8).init(allocator, patterns.items);
     defer ac.deinit();
 
     // Generate 1MB random text
@@ -48,10 +48,8 @@ fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
     }
 
     // Search for patterns in text
-    var matches = std.ArrayList(AhoCorasick.Match){};
+    var matches = try ac.findAll(text, allocator);
     defer matches.deinit(allocator);
-
-    try ac.search(text, &matches);
 }
 
 /// Run all string algorithm benchmarks and output markdown table

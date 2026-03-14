@@ -8,7 +8,7 @@ const zuda = @import("zuda");
 const bench = zuda.internal.bench;
 
 const AdjacencyList = zuda.containers.graphs.AdjacencyList;
-const dijkstra = zuda.algorithms.graph.dijkstra;
+const Dijkstra = zuda.algorithms.graph.Dijkstra;
 
 /// Context for u32 comparisons
 const U32Context = struct {
@@ -31,7 +31,7 @@ fn benchDijkstra(allocator: std.mem.Allocator) !void {
     const edge_count = 5_000_000;
 
     // Create graph with adjacency list
-    var graph = AdjacencyList(u32, u32, U32Context, U32Context.hash, U32Context.eql).init(allocator, .{});
+    var graph = AdjacencyList(u32, u32, U32Context, U32Context.hash, U32Context.eql).init(allocator, .{}, true);
     defer graph.deinit();
 
     // Add nodes
@@ -57,13 +57,13 @@ fn benchDijkstra(allocator: std.mem.Allocator) !void {
     }
 
     // Run Dijkstra from node 0
-    const distances = try dijkstra(u32, u32, U32Context).shortestPaths(
+    const result = try Dijkstra(u32, u32, U32Context).run(
         allocator,
         &graph,
         0,
         .{},
     );
-    defer allocator.free(distances.items);
+    defer result.deinit();
 }
 
 /// Run all graph benchmarks and output markdown table

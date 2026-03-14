@@ -30,7 +30,7 @@ fn benchBTreeRangeScan(allocator: std.mem.Allocator) !void {
     }
 
     // Range scan from 0 to count-1
-    var iter = tree.iterator();
+    var iter = try tree.iterator();
     var scanned: usize = 0;
     while (iter.next()) |_| {
         scanned += 1;

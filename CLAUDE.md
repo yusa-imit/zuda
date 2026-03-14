@@ -476,10 +476,10 @@ zuda에서 데이터 구조/알고리즘을 구현할 때 다음을 따른다:
 zuda에서 소비자 프로젝트의 자료구조를 대체할 수 있는 구현이 완료되면:
 
 ```bash
-# 소비자 프로젝트에 마이그레이션 가능 알림
+# 소비자 프로젝트에 마이그레이션 이슈 발행
 gh issue create --repo yusa-imit/<consumer> \
-  --title "feat: migrate to zuda for <data-structure>" \
-  --label "feature-request,from:zuda" \
+  --title "chore: migrate to zuda for <data-structure>" \
+  --label "migration,from:zuda" \
   --body "## zuda 대체 가능 알림
 
 zuda에서 \`<DataStructure>\`가 구현 완료되었습니다.
@@ -593,3 +593,35 @@ rm -rf zig-out .zig-cache
 10. **Invariant validation** — 모든 컨테이너에 `validate()` 메서드 구현
 11. **Respect CI** — CI 파이프라인 호환성 유지
 12. **Never force push** — 파괴적 git 명령어 금지
+13. **Agent activity logging** — Subagent/Team 호출 시 반드시 `.claude/logs/agent-activity.jsonl`에 로그 기록 (아래 Agent Activity Logging 섹션 참조)
+
+---
+
+## Agent Activity Logging
+
+Subagent(Task 도구) 또는 Team(TeamCreate)을 호출할 때마다 `.claude/logs/agent-activity.jsonl`에 로그를 기록한다.
+
+**로그 형식** (JSON Lines — 한 줄에 하나의 JSON 객체):
+```json
+{"timestamp":"2026-03-14T12:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement BTree insert","project":"zuda"}
+{"timestamp":"2026-03-14T12:05:00Z","action":"team_create","team_name":"btree-impl","members":["zig-developer","test-writer"],"task":"Implement BTree module","project":"zuda"}
+{"timestamp":"2026-03-14T13:00:00Z","action":"team_delete","team_name":"btree-impl","project":"zuda"}
+```
+
+**필드**:
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `timestamp` | ✅ | ISO 8601 형식 (UTC) |
+| `action` | ✅ | `subagent` \| `team_create` \| `team_delete` |
+| `agent_type` | subagent 시 | 에이전트 타입 (`zig-developer`, `code-reviewer`, `Explore` 등) |
+| `team_name` | team 시 | 팀 이름 |
+| `members` | team_create 시 | 팀 멤버 이름 배열 |
+| `task` | ✅ | 작업 설명 (Task 도구의 description 또는 prompt 요약) |
+| `project` | ✅ | 프로젝트 이름 (`zuda`) |
+
+**규칙**:
+1. `.claude/logs/` 디렉토리가 없으면 생성
+2. 파일에 append (기존 로그 유지)
+3. 로그는 git에 커밋+push 필수 — 커밋 메시지: `chore: update agent activity log`
+4. 세션 종료 전 미커밋 로그가 있으면 반드시 커밋+push
