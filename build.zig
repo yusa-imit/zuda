@@ -178,10 +178,102 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const bench_heaps = b.addExecutable(.{
+        .name = "bench_heaps",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/heaps.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_btrees = b.addExecutable(.{
+        .name = "bench_btrees",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/btrees.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_probabilistic = b.addExecutable(.{
+        .name = "bench_probabilistic",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/probabilistic.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_graphs = b.addExecutable(.{
+        .name = "bench_graphs",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/graphs.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_sorting = b.addExecutable(.{
+        .name = "bench_sorting",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/sorting.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_strings = b.addExecutable(.{
+        .name = "bench_strings",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/strings.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench_trees = b.addRunArtifact(bench_trees);
+    const run_bench_heaps = b.addRunArtifact(bench_heaps);
+    const run_bench_btrees = b.addRunArtifact(bench_btrees);
+    const run_bench_probabilistic = b.addRunArtifact(bench_probabilistic);
+    const run_bench_graphs = b.addRunArtifact(bench_graphs);
+    const run_bench_sorting = b.addRunArtifact(bench_sorting);
+    const run_bench_strings = b.addRunArtifact(bench_strings);
+
     bench_step.dependOn(&run_bench_trees.step);
+    bench_step.dependOn(&run_bench_heaps.step);
+    bench_step.dependOn(&run_bench_btrees.step);
+    bench_step.dependOn(&run_bench_probabilistic.step);
+    bench_step.dependOn(&run_bench_graphs.step);
+    bench_step.dependOn(&run_bench_sorting.step);
+    bench_step.dependOn(&run_bench_strings.step);
+
     run_bench_trees.step.dependOn(b.getInstallStep());
+    run_bench_heaps.step.dependOn(b.getInstallStep());
+    run_bench_btrees.step.dependOn(b.getInstallStep());
+    run_bench_probabilistic.step.dependOn(b.getInstallStep());
+    run_bench_graphs.step.dependOn(b.getInstallStep());
+    run_bench_sorting.step.dependOn(b.getInstallStep());
+    run_bench_strings.step.dependOn(b.getInstallStep());
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
