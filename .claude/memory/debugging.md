@@ -52,6 +52,23 @@ const is_repeated = (node.children.count() >= 2) or
 - B-Tree: split must propagate upward; handle root split as special case
 - Hash table: rehash threshold must account for tombstones in open addressing
 
+### FibonacciHeap Node Initialization Bug (fixed in 6485859)
+**Symptoms**: Segfault during deinit, "Invalid free" panics, crashes even with 5 nodes. Previous investigation focused on O(n²) complexity was misleading.
+
+**Root Cause**: Node.init() returns a stack-allocated struct with self-referential pointers (`node.prev = &node`). After copying this value to heap via `node.* = Node.init(value)`, the prev/next pointers still pointed to the stack copy, creating dangling pointers.
+
+**Fix**:
+```zig
+// In insert():
+const node = try self.allocator.create(Node);
+node.* = Node.init(value);
+// CRITICAL: Fix up circular pointers to point to allocated node
+node.prev = node;
+node.next = node;
+```
+
+**Lesson**: When a struct initializer returns a value with self-referential pointers, those pointers MUST be updated after copying to the heap. The stack address becomes invalid immediately. This is a subtle bug because it works initially but corrupts memory on traversal.
+
 ### Push-Relabel Infinite Loop (fixed in 02a920b)
 **Symptoms**: Tests hang indefinitely on graphs with no path from source to sink.
 
