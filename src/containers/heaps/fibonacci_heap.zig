@@ -89,7 +89,7 @@ pub fn FibonacciHeap(
             const min = self.min_node.?;
             stack.append(self.allocator, min) catch return;
 
-            while (stack.popOrNull()) |node| {
+            while (stack.pop()) |node| {
                 // Skip if already visited (prevents infinite loops in circular structures)
                 if (node.marked) continue;
                 node.marked = true;
@@ -137,6 +137,9 @@ pub fn FibonacciHeap(
         pub fn insert(self: *Self, value: T) !void {
             const node = try self.allocator.create(Node);
             node.* = Node.init(value);
+            // Fix up circular pointers to point to the allocated node
+            node.prev = node;
+            node.next = node;
 
             if (self.min_node == null) {
                 self.min_node = node;
