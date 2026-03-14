@@ -12,6 +12,7 @@ zig-out
 .claude/teams/
 .claude/tasks/
 .claude/projects/
+.claude/scratchpad.md
 
 # zr
 .zr_history
