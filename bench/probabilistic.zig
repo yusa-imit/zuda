@@ -9,10 +9,26 @@ const bench = zuda.internal.bench;
 
 const BloomFilter = zuda.containers.probabilistic.BloomFilter;
 
+/// Context for u64 hashing
+const U64Context = struct {
+    pub fn hash(_: U64Context, key: u64, seed: u64) u64 {
+        var h = key +% seed;
+        h ^= h >> 33;
+        h *%= 0xff51afd7ed558ccd;
+        h ^= h >> 33;
+        h *%= 0xc4ceb9fe1a85ec53;
+        h ^= h >> 33;
+        return h;
+    }
+};
+
 /// Benchmark: BloomFilter lookup with 10M operations
 fn benchBloomFilterLookup(allocator: std.mem.Allocator) !void {
-    // Create bloom filter with 1M capacity, 0.01 false positive rate
-    var filter = try BloomFilter(u64).init(allocator, 1_000_000, 0.01);
+    // Create bloom filter with 1M bits, 7 hash functions
+    // For 1M elements with k=7: p ≈ 0.01 false positive rate
+    const m = 1_000_000 * 10; // 10 bits per element
+    const k = 7;
+    var filter = try BloomFilter(u64, U64Context, U64Context.hash).init(allocator, m, k, .{});
     defer filter.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);
@@ -23,7 +39,7 @@ fn benchBloomFilterLookup(allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     while (i < insert_count) : (i += 1) {
         const value = random.int(u64);
-        filter.insert(value);
+        filter.add(value);
     }
 
     // Perform 10M lookups (mix of present and absent keys)

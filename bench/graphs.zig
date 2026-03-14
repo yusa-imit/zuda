@@ -19,6 +19,10 @@ const U32Context = struct {
     pub fn hash(_: U32Context, key: u32) u64 {
         return key;
     }
+
+    pub fn eql(_: U32Context, a: u32, b: u32) bool {
+        return a == b;
+    }
 };
 
 /// Benchmark: Dijkstra on 1M nodes, 5M edges
@@ -27,7 +31,7 @@ fn benchDijkstra(allocator: std.mem.Allocator) !void {
     const edge_count = 5_000_000;
 
     // Create graph with adjacency list
-    var graph = AdjacencyList(u32, u32).init(allocator);
+    var graph = AdjacencyList(u32, u32, U32Context, U32Context.hash, U32Context.eql).init(allocator, .{});
     defer graph.deinit();
 
     // Add nodes

@@ -19,14 +19,14 @@ const U64Context = struct {
 /// Benchmark: BTree(128) range scan on 1M sequential keys
 fn benchBTreeRangeScan(allocator: std.mem.Allocator) !void {
     const order = 128;
-    var tree = BTree(u64, u64, U64Context, U64Context.compare, order).init(allocator, .{});
+    var tree = BTree(u64, u64, order, U64Context).init(allocator, .{});
     defer tree.deinit();
 
     // Insert 1M sequential keys
     const count = 1_000_000;
     var i: u64 = 0;
     while (i < count) : (i += 1) {
-        try tree.insert(i, i);
+        _ = try tree.insert(i, i);
     }
 
     // Range scan from 0 to count-1

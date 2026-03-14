@@ -38,7 +38,7 @@ fn benchTimSort(allocator: std.mem.Allocator) !void {
         item.* = random.int(i64);
     }
 
-    try TimSort(i64).sort(allocator, data, {}, std.sort.asc(i64));
+    try TimSort(i64, void, struct { fn cmp(_: void, a: i64, b: i64) std.math.Order { return std.math.order(a, b); } }.cmp).sort(allocator, data, {});
 }
 
 /// Run all sorting benchmarks and output markdown table

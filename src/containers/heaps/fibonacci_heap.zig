@@ -26,7 +26,7 @@ pub fn FibonacciHeap(
     return struct {
         const Self = @This();
 
-        const Node = struct {
+        pub const Node = struct {
             value: T,
             degree: usize,
             marked: bool,

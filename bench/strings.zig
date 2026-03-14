@@ -16,12 +16,12 @@ fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
 
     // Generate 1000 random patterns (5-15 bytes each)
     const pattern_count = 1000;
-    var patterns = std.ArrayList([]const u8).init(allocator);
+    var patterns = std.ArrayList([]const u8){};
     defer {
         for (patterns.items) |pattern| {
             allocator.free(pattern);
         }
-        patterns.deinit();
+        patterns.deinit(allocator);
     }
 
     var i: usize = 0;
@@ -31,7 +31,7 @@ fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
         for (pattern) |*byte| {
             byte.* = random.intRangeAtMost(u8, 'a', 'z');
         }
-        try patterns.append(pattern);
+        try patterns.append(allocator, pattern);
     }
 
     // Build Aho-Corasick automaton
@@ -48,8 +48,8 @@ fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
     }
 
     // Search for patterns in text
-    var matches = std.ArrayList(AhoCorasick.Match).init(allocator);
-    defer matches.deinit();
+    var matches = std.ArrayList(AhoCorasick.Match){};
+    defer matches.deinit(allocator);
 
     try ac.search(text, &matches);
 }
