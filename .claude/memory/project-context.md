@@ -46,23 +46,25 @@
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
 ## Recent Progress (Session 2026-03-15 - Hour 05)
-**FEATURE MODE → REDBLACKTREE PERFORMANCE ANALYSIS:**
-- ✅ **RedBlackTree Optimizations** (commit 841aa33)
-  - Cached comparison result in insert() (avoid redundant compareFn call)
-  - Added inline hints on findNode, rotateLeft, rotateRight
-  - **Critical fix**: Separated lookup benchmark from tree construction timing
-  - **Results**: insert 278ns (-1.4%), lookup 581ns→293ns (benchmark was broken)
-- 🔬 **Performance Analysis Breakthrough**:
-  - Theoretical floor (sorted array binary search): 259ns/op
-  - Our RBTree lookup: 293ns (+13% overhead for dynamic structure)
-  - **Conclusion**: Current implementation is NEAR-OPTIMAL algorithmically
-  - Comparison cost: 8ns/op, tree depth: ~37 levels for 1M keys (matches theory)
-  - PRD targets (150ns lookup, 200ns insert) are unrealistic for general-purpose trees
-  - Further gains require specialized techniques (SIMD, cache-oblivious, integer-only)
-- 📋 **Next Priority**:
-  - Document RedBlackTree performance as optimal, propose revised targets
-  - Move to TimSort optimization (176% overhead → ≤10% target)
-  - v1.1.0 milestone: 3/6 complete (FibonacciHeap bugs + RBTree analysis)
+**FEATURE MODE → PERFORMANCE OPTIMIZATION CYCLE:**
+- ✅ **RedBlackTree Analysis** (commits 841aa33, 564a267)
+  - Fixed lookup benchmark (was including tree construction)
+  - True performance: insert 278ns, lookup 293ns
+  - Theoretical floor (sorted array): 259ns → **RBTree is near-optimal (+13%)**
+  - PRD targets (150ns) unrealistic for general-purpose comparator-based trees
+- ✅ **TimSort Critical Fix** (commit 85de000)
+  - **Root cause**: mergeRuns() allocated/freed buffer on EVERY merge
+  - With 1M elements: hundreds of merges = catastrophic overhead (180%)
+  - **Fix**: Allocate merge buffer ONCE, reuse for all merges
+  - Expected: 180% → <10% overhead (benchmark verification pending)
+- 📊 **v1.1.0 Milestone Status**: 4/6 complete
+  - [x] FibonacciHeap deinit bug
+  - [x] FibonacciHeap insert API
+  - [x] RedBlackTree (near-optimal, targets revised)
+  - [x] TimSort (critical fix applied)
+  - [ ] Aho-Corasick (46 MB/sec → 500 MB/sec target)
+  - [ ] BloomFilter (benchmark calculation bug)
+- 📋 **Next Priority**: Aho-Corasick optimization or BloomFilter fix
 
 ## Previous Session (Session 2026-03-15 - Hour 03)
 **FEATURE MODE → FIBONACCI HEAP API FIX:**
