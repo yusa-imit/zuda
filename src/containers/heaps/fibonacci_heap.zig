@@ -70,29 +70,43 @@ pub fn FibonacciHeap(
         }
 
         /// Destroy the heap and free all nodes.
-        /// Time: O(n) | Space: O(1)
+        /// Time: O(n) | Space: O(n)
         pub fn deinit(self: *Self) void {
             if (self.min_node) |min| {
-                self.destroyTree(min);
+                var nodes_to_free: std.ArrayList(*Node) = .{};
+                defer nodes_to_free.deinit(self.allocator);
+
+                self.collectAllNodes(min, &nodes_to_free) catch {
+                    // If collection fails, we still free what we collected
+                    for (nodes_to_free.items) |node| {
+                        self.allocator.destroy(node);
+                    }
+                    return;
+                };
+
+                // Free all collected nodes
+                for (nodes_to_free.items) |node| {
+                    self.allocator.destroy(node);
+                }
             }
         }
 
-        fn destroyTree(self: *Self, start: *Node) void {
+        fn collectAllNodes(self: *Self, start: *Node, nodes: *std.ArrayList(*Node)) !void {
             var current = start;
             const first = start;
             var first_visit = true;
 
+            // Traverse the root list (circular doubly-linked list)
             while (first_visit or current != first) {
                 first_visit = false;
-                const next = current.next;
+                try nodes.append(self.allocator, current);
 
-                // Recursively destroy children
+                // Collect all children recursively
                 if (current.child) |child| {
-                    self.destroyTree(child);
+                    try self.collectAllNodes(child, nodes);
                 }
 
-                self.allocator.destroy(current);
-                current = next;
+                current = current.next;
             }
         }
 
@@ -815,4 +829,46 @@ test "FibonacciHeap: interleaved insert and extract" {
     try std.testing.expectEqual(@as(i32, 15), heap.extractMin().?);
 
     try std.testing.expect(heap.isEmpty());
+}
+
+test "FibonacciHeap: double-free bug during deinit after consolidation" {
+    const IntHeap = FibonacciHeap(i32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    // Test with testing.allocator which will detect double-free attempts
+    var heap = IntHeap.init(std.testing.allocator, {});
+    defer heap.deinit();
+
+    // Insert 100,000 elements to force extensive consolidation
+    // This creates a deeply nested tree structure with many consolidation rounds
+    var i: i32 = 0;
+    while (i < 100000) : (i += 1) {
+        try heap.insert(i);
+    }
+
+    // Extract many elements to trigger numerous consolidate() calls
+    // consolidate() rebuilds the root list and links trees together
+    // Each link() removes a node from the root list and makes it a child
+    // After many rounds, the structure becomes complex with multi-level trees
+    i = 0;
+    while (i < 99990) : (i += 1) {
+        _ = heap.extractMin();
+    }
+
+    // The heap now has 10 elements in a consolidated tree structure.
+    // When deinit() calls destroyTree(min_node), it will:
+    // 1. Iterate through the root list via next pointers
+    // 2. For each root, recursively call destroyTree(child)
+    // 3. Free each node
+    //
+    // The bug: After extensive consolidation cycles, the circular list
+    // pointers may point to nodes that have already been freed during
+    // the recursive destruction of child subtrees. This causes
+    // allocator.destroy() to panic with "Invalid free".
+    //
+    // Expected result: Test should FAIL with panic during deinit()
+    // when destroyTree() attempts to free a node twice.
 }
