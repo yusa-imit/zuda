@@ -125,8 +125,11 @@ pub fn AhoCorasick(comptime T: type) type {
 
         /// Build failure links using BFS (similar to KMP preprocessing)
         fn buildFailureLinks(self: *Self) !void {
-            var queue: std.ArrayList(*Node) = .{};
-            defer queue.deinit(self.allocator);
+            // Use Deque for O(1) queue operations
+            // (ArrayList.orderedRemove(0) is O(n) and was the bottleneck)
+            const Deque = @import("../../containers/queues/deque.zig").Deque;
+            var queue = Deque(*Node).init(self.allocator);
+            defer queue.deinit();
 
             // Initialize: root's children have failure link to root
             self.root.failure = self.root;
@@ -135,19 +138,19 @@ pub fn AhoCorasick(comptime T: type) type {
             while (it.next()) |entry| {
                 const child = entry.value_ptr.*;
                 child.failure = self.root;
-                try queue.append(self.allocator, child);
+                try queue.push_back(child);
             }
 
             // BFS to compute failure links for all other nodes
-            while (queue.items.len > 0) {
-                const current = queue.orderedRemove(0);
+            while (queue.count() > 0) {
+                const current = try queue.pop_front();
 
                 var child_it = current.children.iterator();
                 while (child_it.next()) |entry| {
                     const ch = entry.key_ptr.*;
                     const child = entry.value_ptr.*;
 
-                    try queue.append(self.allocator, child);
+                    try queue.push_back(child);
 
                     // Find failure link by following parent's failure chain
                     var failure_candidate = current.failure;
