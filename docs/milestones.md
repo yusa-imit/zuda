@@ -25,8 +25,15 @@ Address performance regressions identified during post-release benchmarking:
   - Root cause: per-merge alloc/free causing 180% overhead
   - Fix: Single buffer allocation reused for all merges
   - Verification pending (benchmark infrastructure issue)
-- [ ] Optimize Aho-Corasick throughput (46 MB/sec → ≥500 MB/sec target)
-- [ ] Fix BloomFilter benchmark (0ns result — calculation bug)
+- [x] Fix BloomFilter benchmark (0ns result — calculation bug) (commit af00cb3)
+  - Integer division precision loss in throughput calculation
+  - Fixed: Direct calculation (10M × 1B) ÷ mean_ns → ops/sec
+  - Result: 1445M ops/sec ✅ PASS (target ≥100M, +1345%)
+- [ ] Optimize Aho-Corasick throughput (24 MB/sec → ≥500 MB/sec target)
+  - [x] Build optimization: BFS queue O(n²) → O(n) with Deque (commit e3b88f2)
+    - Build time: 3ms → 2ms (33% improvement)
+  - [ ] Search optimization: Need ASCII fast-path with array transitions
+    - Current bottleneck: 39ms search time (HashMap lookups)
 
 ### v1.2.0 — Consumer Migrations
 
