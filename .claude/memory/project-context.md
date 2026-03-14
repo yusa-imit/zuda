@@ -45,7 +45,24 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-14 - Hour 19)
+## Recent Progress (Session 2026-03-14 - Hour 23)
+**FEATURE MODE (hour % 4 == 3) → FIBONACCI HEAP DEINIT BUG FIX (WIP):**
+- 🔧 **FibonacciHeap.deinit Double-Free Investigation**
+  - Root cause: Circular list structures after consolidation can be visited multiple times
+  - Previous fix (480f0c6): Used ArrayList to collect nodes, but still had duplication issue
+  - Attempted fixes:
+    1. HashSet for visited tracking → too slow (GPA overhead for 100k nodes)
+    2. Visited field in Node → still slow (O(n²) from circular list iteration)
+    3. Current WIP: Use `marked` field + DFS stack traversal
+  - **Status**: Tests pass (701/701), but benchmark still hangs on 100k inserts
+  - **Blocker**: Need to identify why deinit is O(n²) or has infinite loop
+  - Commit: 3c1d9fa (WIP - not production ready)
+- 📋 **Next Session Priority**:
+  - Profile/debug why benchmark hangs during deinit with 100k nodes
+  - Consider alternative: break circular links before freeing
+  - May need to restructure deinit algorithm entirely
+
+## Previous Session (Session 2026-03-14 - Hour 19)
 **FEATURE MODE (hour % 4 == 3) → BENCHMARK API FIXES & PERFORMANCE DATA COLLECTION:**
 - ✅ **Benchmark API Fixes** (commits fa233a8, 0206059)
   - Fixed ALL compilation errors from Zig 0.15.2 API changes
