@@ -164,12 +164,14 @@ pub fn RedBlackTree(
                 return null;
             }
 
-            // Find insertion point
+            // Find insertion point - cache last comparison to avoid redundant compareFn call
             var current = self.root.?;
             var parent: *Node = undefined;
+            var last_order: std.math.Order = undefined;
             while (true) {
                 parent = current;
                 const order = compareFn(self.context, key, current.key);
+                last_order = order;
                 switch (order) {
                     .eq => {
                         // Update existing value
@@ -194,13 +196,12 @@ pub fn RedBlackTree(
                 }
             }
 
-            // Insert new node
+            // Insert new node - use cached comparison result
             const node = try self.allocator.create(Node);
             node.* = Node.init(key, value);
             node.parent = parent;
 
-            const order = compareFn(self.context, key, parent.key);
-            if (order == .lt) {
+            if (last_order == .lt) {
                 parent.left = node;
             } else {
                 parent.right = node;
@@ -423,7 +424,7 @@ pub fn RedBlackTree(
             }
         }
 
-        fn rotateLeft(self: *Self, node: *Node) void {
+        inline fn rotateLeft(self: *Self, node: *Node) void {
             const right = node.right orelse return;
 
             node.right = right.left;
@@ -446,7 +447,7 @@ pub fn RedBlackTree(
             node.parent = right;
         }
 
-        fn rotateRight(self: *Self, node: *Node) void {
+        inline fn rotateRight(self: *Self, node: *Node) void {
             const left = node.left orelse return;
 
             node.left = left.right;
@@ -484,7 +485,7 @@ pub fn RedBlackTree(
             return self.findNode(key) != null;
         }
 
-        fn findNode(self: *const Self, key: K) ?*Node {
+        inline fn findNode(self: *const Self, key: K) ?*Node {
             var current = self.root;
             while (current) |node| {
                 const order = compareFn(self.context, key, node.key);
