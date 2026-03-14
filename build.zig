@@ -165,6 +165,24 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
+    // Benchmark executables
+    const bench_trees = b.addExecutable(.{
+        .name = "bench_trees",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/trees.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_step = b.step("bench", "Run benchmarks");
+    const run_bench_trees = b.addRunArtifact(bench_trees);
+    bench_step.dependOn(&run_bench_trees.step);
+    run_bench_trees.step.dependOn(b.getInstallStep());
+
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
     // The Zig build system is entirely implemented in userland, which means

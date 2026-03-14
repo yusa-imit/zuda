@@ -85,7 +85,7 @@ pub const Benchmark = struct {
         return Benchmark{
             .config = config,
             .timer = try Timer.start(),
-            .times = .empty,
+            .times = std.ArrayList(u64){},
             .allocator = allocator,
         };
     }
@@ -227,7 +227,8 @@ pub fn benchmark(
     comptime func: anytype,
     args: anytype,
 ) !void {
-    const stdout = std.io.getStdOut().writer();
+    const stdout_file = std.io.getStdOut();
+    const stdout = stdout_file.writer();
 
     var bench = try Benchmark.init(allocator, .{});
     defer bench.deinit();
