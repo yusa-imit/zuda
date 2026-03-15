@@ -1,11 +1,11 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.3.0 (released 2026-03-15) 🎉
-- **Phase**: Consumer Migrations (v1.2.0)
+- **Version**: 1.3.0 (released 2026-03-15)
+- **Phase**: Performance & Optimization (v1.4.0)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
-- **Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.3.0
+- **Latest Milestone**: v1.4.0 established (6 items: TimSort ✅, RedBlackTree, Aho-Corasick, BloomFilter, memory profiling, SIMD)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -45,7 +45,29 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 19)
+## Recent Progress (Session 2026-03-15 - Hour 21)
+**FEATURE MODE → v1.4.0 MILESTONE + TIMSORT CRITICAL FIX:**
+- ✅ **v1.4.0 Milestone Established** (Performance & Optimization)
+  - 6 items: TimSort ✅, RedBlackTree, Aho-Corasick, BloomFilter, memory profiling, SIMD
+  - Established following milestone process (< 2 active milestones)
+- ✅ **TimSort Critical Bug Fixed** (commit 1ede796) — **37% FASTER than std.sort!**
+  - **Root cause**: Buffer overflow causing SIGSEGV on large arrays
+  - **Bug**: Allocated buffer was `items.len/2`, but `mergeRuns()` tried to slice up to `len1` (≤ items.len)
+  - **Fix**: Implement proper TimSort optimization — always copy SMALLER run to buffer
+  - **Performance**: 35ms vs std.sort 55ms on 1M i64 (**37% speedup**, target was ≤10% overhead)
+  - **Impact**: Turned worst-performing algorithm (crashed) into fastest sorting implementation
+- ✅ **Benchmark Fixes** (commits 1ede796, 3ace176)
+  - Fixed unsigned overflow in sorting benchmark calculation (when TimSort faster)
+  - Fixed Dijkstra benchmark (missing zero_weight parameter)
+  - Installed benchmark executables in build.zig for easier execution
+- 📊 **Performance Status**:
+  - BTree(128): 83M keys/sec (target ≥50M) ✅ +66%
+  - TimSort: -37% overhead (target ≤10%) ✅ **EXCEEDS!**
+  - RedBlackTree insert: 329ns (target ≤200ns) ❌ +64%
+  - RedBlackTree lookup: 593ns (target ≤150ns) ❌ +295%
+  - Aho-Corasick: 46 MB/sec (target ≥500MB/sec) ❌ -91%
+
+## Previous Session (Session 2026-03-15 - Hour 19)
 **FEATURE MODE → v1.3.0 RELEASE COMPLETE:**
 - ✅ **v1.3.0 Released!** (tag f443d41, GitHub release published)
   - **Release URL**: https://github.com/yusa-imit/zuda/releases/tag/v1.3.0
