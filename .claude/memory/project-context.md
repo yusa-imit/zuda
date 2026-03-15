@@ -45,21 +45,27 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 15)
+## Recent Progress (Session 2026-03-15 - Hour 17)
+**FEATURE MODE → A* COMPREHENSIVE TESTS COMPLETE:**
+- ✅ **A* Test Coverage** (commit 393a611)
+  - **15 comprehensive tests**: All edge cases, obstacles, heuristics covered
+  - **Test categories**: Basic pathfinding (2), obstacles (3), edge cases (3), heuristics (4), optimality (1), scale (1), memory safety (1)
+  - **Heuristics tested**: Manhattan, Euclidean, zero (Dijkstra), non-admissible
+  - **API fixes**: AutoHashSet→AutoHashMap(K,void), ArrayList.append(allocator,item), @sqrt conversions
+  - **Test infrastructure**: TestGrid, CoordContext, multiple heuristic functions
+- 📊 **v1.3.0 Progress**: 14/15 items complete (93%)
+  - [x] Iterator Adaptors (8/8): Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect
+  - [x] Binary Search Variants (4/4): lowerBound, upperBound, equalRange, binarySearchBy (already in v1.0.0)
+  - [x] PersistentArray.pop implementation
+  - [x] A* comprehensive tests ✓
+  - [ ] Iterator pattern guide with examples
+- 📋 **Next Priority**: Iterator pattern guide documentation
+
+## Previous Session (Session 2026-03-15 - Hour 15)
 **FEATURE MODE → v1.3.0 ITERATOR SYSTEM COMPLETE:**
 - ✅ **Iterator System Complete** (commit e863e7d)
   - **collect() export**: Added `zuda.iterators.collect` to root.zig
   - **PersistentArray.pop()**: Implemented tree-based pop with path copying & rebalancing
-  - **Tests**: 6 new pop tests (tail, tree, empty, multiple pops, immutability)
-  - **Fixes**: collect.zig variable mutability warnings (var → const)
-  - **Milestones**: Updated docs/milestones.md to reflect completion
-- 📊 **v1.3.0 Progress**: 13/15 items complete (87%)
-  - [x] Iterator Adaptors (8/8): Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect
-  - [x] Binary Search Variants (4/4): lowerBound, upperBound, equalRange, binarySearchBy (already in v1.0.0)
-  - [x] PersistentArray.pop implementation
-  - [ ] A* comprehensive tests
-  - [ ] Iterator pattern guide with examples
-- 📋 **Next Priority**: A* comprehensive tests (edge cases, obstacles, heuristic variants)
 
 ## Previous Session (Session 2026-03-15 - Hour 11)
 **FEATURE MODE → v1.1.0 RELEASE + v1.3.0 START:**
