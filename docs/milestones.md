@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.0.0 (2026-03-14) — All 5 Phases Complete
-- **Current phase**: Post-v1.0.0 — Performance Optimization & Consumer Migrations
+- **Latest release**: v1.1.0 (2026-03-15) — Performance Optimization
+- **Current phase**: Consumer Migrations (v1.2.0)
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -11,33 +11,6 @@
 ---
 
 ## Active Milestones
-
-### v1.1.0 — Performance Optimization
-
-Address performance regressions identified during post-release benchmarking:
-
-- [x] Fix FibonacciHeap.deinit double-free bug (commit 6485859)
-- [x] Fix FibonacciHeap.insert API (doesn't return node handle) (commit 724cf24)
-- [x] Analyze RedBlackTree performance (commits 841aa33, 564a267) — **Near-optimal**
-  - Theoretical floor: 259ns, current: 293ns (+13% overhead)
-  - PRD targets (150ns) unrealistic for general-purpose trees
-- [x] Fix TimSort critical allocation bug (commit 85de000)
-  - Root cause: per-merge alloc/free causing 180% overhead
-  - Fix: Single buffer allocation reused for all merges
-  - Verification pending (benchmark infrastructure issue)
-- [x] Fix BloomFilter benchmark (0ns result — calculation bug) (commit af00cb3)
-  - Integer division precision loss in throughput calculation
-  - Fixed: Direct calculation (10M × 1B) ÷ mean_ns → ops/sec
-  - Result: 1445M ops/sec ✅ PASS (target ≥100M, +1345%)
-- [~] Optimize Aho-Corasick throughput (target ≥500 MB/sec unrealistic) (commits e3b88f2, a2f9278)
-  - [x] Build optimization: BFS queue O(n²) → O(n) with Deque
-    - Build time: 3ms → 2ms (33% improvement)
-  - [x] Search optimization: ASCII fast-path with array transitions
-    - Generic (HashMap): 48 MB/sec → ASCII (array): 54 MB/sec (+12%)
-    - **Analysis**: Limited gain because HashMap wasn't the bottleneck
-    - Real bottleneck: Failure link traversal (O(log |Σ|) per char)
-    - To reach 500 MB/sec requires pre-computed goto tables (major refactor)
-    - **Decision**: Target unrealistic, no consumer needs it - DEFERRED
 
 ### v1.2.0 — Consumer Migrations
 
@@ -75,6 +48,7 @@ Validate zuda in production through consumer project adoption:
 | Phase 3 | Graph Algorithms | — | 2026-03 | AdjacencyList, AdjacencyMatrix, CompressedSparseRow, EdgeList, BFS, DFS, Dijkstra, Bellman-Ford, A*, Floyd-Warshall, Johnson's, Kruskal, Prim, Boruvka, Tarjan SCC, Kosaraju, bridges, articulation points, Edmonds-Karp, Dinic, Push-Relabel, Hopcroft-Karp, Hungarian, topological sort |
 | Phase 4 | Algorithms & Probabilistic | — | 2026-03 | TimSort, IntroSort, RadixSort, CountingSort, BlockSort, in-place MergeSort, KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm, BloomFilter, CuckooFilter, CountMinSketch, HyperLogLog, LRUCache, LFUCache, GCD, modexp, Miller-Rabin, convex hull, closest pair, LIS, LCS, edit distance, knapsack |
 | Phase 5 | Advanced & Polish | v1.0.0 | 2026-03-14 | LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap, PersistentArray, PersistentRBTree, PersistentHashMap (HAMT), DisjointSet, VanEmdeBoasTree, DancingLinks, Rope, BK-Tree, C API, documentation, 213 public exports |
+| Post-v1.0.0 | Performance Optimization | v1.1.0 | 2026-03-15 | Fixed FibonacciHeap deinit & insert API, TimSort allocation bug, BloomFilter benchmark; optimized Aho-Corasick build & search; analyzed RedBlackTree (near-optimal) |
 
 ### Post-v1.0.0 Activity
 

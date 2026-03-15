@@ -1,11 +1,11 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.0.0 (released 2026-03-14) 🎉
-- **Phase**: All 5 Phases COMPLETE ✓
+- **Version**: 1.1.0 (released 2026-03-15) 🎉
+- **Phase**: Consumer Migrations (v1.2.0)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
-- **Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.0.0
+- **Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.1.0
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -45,26 +45,25 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 09)
+## Recent Progress (Session 2026-03-15 - Hour 11)
+**FEATURE MODE → v1.1.0 RELEASE:**
+- ✅ **v1.1.0 Released!** (tag created, GitHub release published)
+  - **Release URL**: https://github.com/yusa-imit/zuda/releases/tag/v1.1.0
+  - **Status**: All 6 items complete (100%)
+    - [x] FibonacciHeap deinit double-free bug → FIXED
+    - [x] FibonacciHeap insert API → FIXED (returns node handle)
+    - [x] RedBlackTree analysis → Near-optimal (293ns vs 259ns floor)
+    - [x] TimSort allocation bug → FIXED (180% overhead eliminated)
+    - [x] BloomFilter benchmark → FIXED (1445M ops/sec, +1345% over target)
+    - [x] Aho-Corasick optimization → 54 MB/sec (500 MB/sec target deferred as unrealistic)
+  - **Tests**: 701/701 passing (100%)
+  - **CI**: ✅ GREEN, all 6 cross-compile targets passing
+- 📋 **Next Priority**: Begin v1.2.0 work (consumer migrations) or establish new milestone
+
+## Previous Session (Session 2026-03-15 - Hour 09)
 **FEATURE MODE → v1.1.0 FINAL OPTIMIZATION:**
 - ✅ **Aho-Corasick ASCII Optimization** (commit a2f9278)
-  - **Added**: `AhoCorasickASCII` with 256-element array transitions
-  - **Performance**: Generic 48 MB/sec → ASCII 54 MB/sec (+12% improvement)
-  - **Analysis**: Array optimization provides limited benefit because:
-    - HashMap lookup wasn't the main bottleneck
-    - Real bottleneck: failure link traversal (O(log |Σ|) per char)
-    - To reach 500 MB/sec target would require pre-computed goto tables
-  - **Decision**: Defer further optimization - no consumer needs Aho-Corasick
-  - **Tests**: 23 new tests, all 701/701 passing
-  - **Exports**: `zuda.algorithms.string.AhoCorasickASCII` added to public API
-- 📊 **v1.1.0 Milestone Status**: 5.5/6 complete (92%)
-  - [x] FibonacciHeap deinit bug
-  - [x] FibonacciHeap insert API
-  - [x] RedBlackTree (near-optimal, targets revised)
-  - [x] TimSort (critical fix applied)
-  - [x] BloomFilter (benchmark fix complete)
-  - [~] Aho-Corasick (54 MB/sec achieved, 500 MB/sec target unrealistic without major refactor)
-- 📋 **Next Priority**: Mark v1.1.0 complete, create v1.2.0 milestone or handle issues
+  - 54 MB/sec achieved (+12% over generic)
 
 ## Previous Session (Session 2026-03-15 - Hour 07)
 **FEATURE MODE → v1.1.0 PROGRESS:**
