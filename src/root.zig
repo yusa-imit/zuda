@@ -318,6 +318,7 @@ pub const iterators = struct {
     pub const Chain = @import("iterators/chain.zig").Chain;
     pub const Zip = @import("iterators/zip.zig").Zip;
     pub const Take = @import("iterators/take.zig").Take;
+    pub const Skip = @import("iterators/skip.zig").Skip;
 };
 
 /// Internal utilities (not part of public API)
