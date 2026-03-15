@@ -23,28 +23,15 @@ const U64Context = struct {
 };
 
 /// Benchmark: BloomFilter lookup with 10M operations
-fn benchBloomFilterLookup(allocator: std.mem.Allocator) !void {
-    // Create bloom filter with 1M bits, 7 hash functions
-    // For 1M elements with k=7: p ≈ 0.01 false positive rate
-    const m = 1_000_000 * 10; // 10 bits per element
-    const k = 7;
-    var filter = try BloomFilter(u64, U64Context, U64Context.hash).init(allocator, m, k, .{});
-    defer filter.deinit();
-
+/// This closure captures the pre-populated filter and only times the lookups
+fn benchBloomFilterLookup(filter: *BloomFilter(u64, U64Context, U64Context.hash)) void {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
-    // Insert 1M elements
-    const insert_count = 1_000_000;
-    var i: usize = 0;
-    while (i < insert_count) : (i += 1) {
-        const value = random.int(u64);
-        filter.add(value);
-    }
-
     // Perform 10M lookups (mix of present and absent keys)
+    // This is the ONLY operation being timed
     const lookup_count = 10_000_000;
-    i = 0;
+    var i: usize = 0;
     while (i < lookup_count) : (i += 1) {
         const value = random.int(u64);
         _ = filter.contains(value);
@@ -65,6 +52,25 @@ pub fn main() !void {
     {
         std.debug.print("Running BloomFilter lookup (10M ops)...\n", .{});
 
+        // Setup: Create and populate filter BEFORE benchmark
+        const m = 1_000_000 * 10; // 10 bits per element
+        const k = 7;
+        var filter = try BloomFilter(u64, U64Context, U64Context.hash).init(allocator, m, k, .{});
+        defer filter.deinit();
+
+        var prng = std.Random.DefaultPrng.init(42);
+        const random = prng.random();
+
+        // Insert 1M elements (NOT timed)
+        std.debug.print("  Populating filter with 1M elements...\n", .{});
+        const insert_count = 1_000_000;
+        var i: usize = 0;
+        while (i < insert_count) : (i += 1) {
+            const value = random.int(u64);
+            filter.add(value);
+        }
+
+        // Now run benchmark on lookups only
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
@@ -72,15 +78,15 @@ pub fn main() !void {
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchBloomFilterLookup, .{allocator});
+        const result = try benchmark.run(benchBloomFilterLookup, .{&filter});
 
         // Calculate ops/sec directly to avoid integer division precision loss
-        // Total ops = 10M, time = result.mean_ns nanoseconds
+        // Total ops = 10M, time = result.mean_ns nanoseconds per iteration
         // ops/sec = (10M ops * 1B ns/sec) / mean_ns
         const ops_per_sec = @divFloor(10_000_000 * 1_000_000_000, result.mean_ns);
         const million_ops_per_sec = @divFloor(ops_per_sec, 1_000_000);
 
-        std.debug.print("  Result: {d}M ops/sec ({d} ns total, mean over {d} iterations)\n", .{ million_ops_per_sec, result.mean_ns, result.iterations });
+        std.debug.print("  Result: {d}M ops/sec ({d} ns per iteration, mean over {d} iterations)\n", .{ million_ops_per_sec, result.mean_ns, result.iterations });
 
         if (million_ops_per_sec >= 100) {
             std.debug.print("  ✓ PASS: meets target of ≥ 100M ops/sec\n", .{});

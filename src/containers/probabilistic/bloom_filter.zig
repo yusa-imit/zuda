@@ -383,3 +383,35 @@ test "BloomFilter - empty and edge cases" {
     filter.add(1);
     try testing.expect(filter.contains(1));
 }
+
+test "BloomFilter - benchmark calculation verification" {
+    // This test verifies that lookups can be timed independently
+    // Simulating the benchmark fix: pre-populate filter, then time lookups only
+    const Filter = BloomFilter(u64, void, defaultHashInt(u64));
+
+    var filter = try Filter.init(testing.allocator, 100_000, 7, {});
+    defer filter.deinit();
+
+    // Pre-populate with 1000 items (setup, NOT timed)
+    for (0..1000) |i| {
+        filter.add(@intCast(i));
+    }
+
+    // Time 100K lookup operations
+    var timer = try std.time.Timer.start();
+    for (0..100_000) |i| {
+        _ = filter.contains(@intCast(i % 2000)); // Mix of present and absent
+    }
+    const elapsed_ns = timer.read();
+
+    // Verify we get meaningful timing
+    try testing.expect(elapsed_ns > 0);
+
+    // Verify ops/sec calculation works
+    const ops_per_sec = @divFloor(100_000 * 1_000_000_000, elapsed_ns);
+    try testing.expect(ops_per_sec > 0);
+
+    // For a simple lookup, should be at least 1M ops/sec on modern hardware
+    const million_ops_per_sec = @divFloor(ops_per_sec, 1_000_000);
+    try testing.expect(million_ops_per_sec >= 1);
+}
