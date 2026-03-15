@@ -250,6 +250,15 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Install benchmark executables
+    b.installArtifact(bench_trees);
+    b.installArtifact(bench_heaps);
+    b.installArtifact(bench_btrees);
+    b.installArtifact(bench_probabilistic);
+    b.installArtifact(bench_graphs);
+    b.installArtifact(bench_sorting);
+    b.installArtifact(bench_strings);
+
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench_trees = b.addRunArtifact(bench_trees);
     const run_bench_heaps = b.addRunArtifact(bench_heaps);

@@ -92,12 +92,18 @@ pub fn main() !void {
 
     std.debug.print("\n## Comparison\n\n", .{});
 
-    const overhead_percent = @divFloor((timsort_ns - std_sort_ns) * 100, std_sort_ns);
-    std.debug.print("TimSort overhead: {d}%\n", .{overhead_percent});
+    // Calculate relative performance (can be negative if TimSort is faster)
+    const diff: i64 = @as(i64, @intCast(timsort_ns)) - @as(i64, @intCast(std_sort_ns));
+    const overhead_percent = @divFloor(diff * 100, @as(i64, @intCast(std_sort_ns)));
 
-    if (overhead_percent <= 10) {
+    if (overhead_percent < 0) {
+        std.debug.print("TimSort speedup: {d}% faster than std.sort\n", .{-overhead_percent});
+        std.debug.print("✓ PASS: faster than std.sort (exceeds target!)\n", .{});
+    } else if (overhead_percent <= 10) {
+        std.debug.print("TimSort overhead: {d}%\n", .{overhead_percent});
         std.debug.print("✓ PASS: meets target of ≤ 10%% overhead\n", .{});
     } else {
+        std.debug.print("TimSort overhead: {d}%\n", .{overhead_percent});
         std.debug.print("✗ FAIL: exceeds target of ≤ 10%% overhead\n", .{});
     }
 

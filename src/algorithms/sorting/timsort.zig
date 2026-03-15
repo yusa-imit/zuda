@@ -264,37 +264,65 @@ pub fn TimSort(
             len2: usize,
             context: Context,
         ) !void {
-            // Use pre-allocated buffer (already sized for max needed)
-            const temp = buffer[0..len1];
+            // TimSort optimization: copy the SMALLER run to temp buffer
+            // This reduces memory bandwidth and cache pressure
+            if (len1 <= len2) {
+                // Copy first run to temp buffer
+                const temp = buffer[0..len1];
+                @memcpy(temp, items[start .. start + len1]);
 
-            // Copy first run to temp
-            @memcpy(temp, items[start .. start + len1]);
+                var i: usize = 0; // Index in temp
+                var j: usize = start + len1; // Index in second run
+                var k: usize = start; // Index in result
 
-            var i: usize = 0; // Index in temp
-            var j: usize = start + len1; // Index in second run
-            var k: usize = start; // Index in result
+                const end2 = start + len1 + len2;
 
-            const end2 = start + len1 + len2;
-
-            // Merge temp and second run back into items
-            while (i < len1 and j < end2) {
-                if (compareFn(context, temp[i], items[j]) != .gt) {
-                    items[k] = temp[i];
-                    i += 1;
-                } else {
-                    items[k] = items[j];
-                    j += 1;
+                // Merge temp and second run back into items
+                while (i < len1 and j < end2) {
+                    if (compareFn(context, temp[i], items[j]) != .gt) {
+                        items[k] = temp[i];
+                        i += 1;
+                    } else {
+                        items[k] = items[j];
+                        j += 1;
+                    }
+                    k += 1;
                 }
-                k += 1;
-            }
 
-            // Copy remaining elements from temp
-            while (i < len1) : (i += 1) {
-                items[k] = temp[i];
-                k += 1;
-            }
+                // Copy remaining elements from temp
+                while (i < len1) : (i += 1) {
+                    items[k] = temp[i];
+                    k += 1;
+                }
+            } else {
+                // Copy second run to temp buffer and merge backwards
+                const temp = buffer[0..len2];
+                @memcpy(temp, items[start + len1 .. start + len1 + len2]);
 
-            // No need to copy remaining from second run - they're already in place
+                var i: usize = len1; // Index in first run (going backwards)
+                var j: usize = len2; // Index in temp (going backwards)
+                var k: usize = start + len1 + len2; // Index in result (going backwards)
+
+                // Merge first run and temp backwards into items
+                while (i > 0 and j > 0) {
+                    k -= 1;
+                    if (compareFn(context, items[start + i - 1], temp[j - 1]) == .gt) {
+                        items[k] = items[start + i - 1];
+                        i -= 1;
+                    } else {
+                        items[k] = temp[j - 1];
+                        j -= 1;
+                    }
+                }
+
+                // Copy remaining elements from temp
+                while (j > 0) {
+                    k -= 1;
+                    j -= 1;
+                    items[k] = temp[j];
+                }
+                // No need to copy remaining from first run - they're already in place
+            }
         }
     };
 }

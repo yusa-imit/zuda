@@ -57,11 +57,12 @@ fn benchDijkstra(allocator: std.mem.Allocator) !void {
     }
 
     // Run Dijkstra from node 0
-    const result = try Dijkstra(u32, u32, U32Context).run(
+    var result = try Dijkstra(u32, u32, U32Context).run(
         allocator,
         &graph,
         0,
         .{},
+        0, // zero_weight
     );
     defer result.deinit();
 }
