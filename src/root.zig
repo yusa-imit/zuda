@@ -315,7 +315,8 @@ pub const algorithms = struct {
 pub const iterators = struct {
     pub const Map = @import("iterators/map.zig").Map;
     pub const Filter = @import("iterators/filter.zig").Filter;
-    // TODO: Chain, Zip, etc. will be added here
+    pub const Chain = @import("iterators/chain.zig").Chain;
+    // TODO: Zip, etc. will be added here
 };
 
 /// Internal utilities (not part of public API)
