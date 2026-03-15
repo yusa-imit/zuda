@@ -556,3 +556,602 @@ test "AhoCorasick - unicode support" {
 
     try std.testing.expectEqual(@as(usize, 2), matches.items.len);
 }
+
+// ===== AhoCorasickASCII Tests =====
+
+/// ASCII-optimized variant using array transitions instead of HashMap
+/// Uses 256-element array for O(1) transition lookup
+pub const AhoCorasickASCII = struct {
+    allocator: Allocator,
+    root: *NodeASCII,
+    patterns: []const []const u8,
+
+    const Self = @This();
+
+    const NodeASCII = struct {
+        /// Transition table: 256 entries for all u8 values
+        /// null indicates no transition
+        children: [256]?*NodeASCII,
+        failure: ?*NodeASCII,
+        output: ?*NodeASCII,
+        pattern_indices: std.ArrayList(usize),
+        depth: usize,
+
+        fn init(allocator: Allocator) !*NodeASCII {
+            const node = try allocator.create(NodeASCII);
+            node.* = .{
+                .children = [_]?*NodeASCII{null} ** 256,
+                .failure = null,
+                .output = null,
+                .pattern_indices = .{},
+                .depth = 0,
+            };
+            return node;
+        }
+
+        fn deinit(self: *NodeASCII, allocator: Allocator) void {
+            for (self.children) |child_opt| {
+                if (child_opt) |child| {
+                    child.deinit(allocator);
+                }
+            }
+            self.pattern_indices.deinit(allocator);
+            allocator.destroy(self);
+        }
+    };
+
+    pub const Match = struct {
+        pattern_index: usize,
+        position: usize,
+    };
+
+    /// Initialize ASCII-optimized Aho-Corasick automaton
+    /// Time: O(∑mᵢ) | Space: O(256 × number of nodes)
+    pub fn init(allocator: Allocator, patterns: []const []const u8) !Self {
+        if (patterns.len == 0) return error.EmptyPatternSet;
+
+        for (patterns) |pattern| {
+            if (pattern.len == 0) return error.EmptyPattern;
+        }
+
+        const root = try NodeASCII.init(allocator);
+        errdefer root.deinit(allocator);
+
+        var self = Self{
+            .allocator = allocator,
+            .root = root,
+            .patterns = patterns,
+        };
+
+        try self.buildTrie();
+        try self.buildFailureLinks();
+
+        return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.root.deinit(self.allocator);
+    }
+
+    fn buildTrie(self: *Self) !void {
+        for (self.patterns, 0..) |pattern, pattern_idx| {
+            var current = self.root;
+
+            for (pattern) |ch| {
+                const idx = @as(usize, ch);
+                if (current.children[idx] == null) {
+                    const new_node = try NodeASCII.init(self.allocator);
+                    new_node.depth = current.depth + 1;
+                    current.children[idx] = new_node;
+                }
+                current = current.children[idx].?;
+            }
+
+            try current.pattern_indices.append(self.allocator, pattern_idx);
+        }
+    }
+
+    fn buildFailureLinks(self: *Self) !void {
+        const Deque = @import("../../containers/queues/deque.zig").Deque;
+        var queue = Deque(*NodeASCII).init(self.allocator);
+        defer queue.deinit();
+
+        self.root.failure = self.root;
+
+        for (self.root.children) |child_opt| {
+            if (child_opt) |child| {
+                child.failure = self.root;
+                try queue.push_back(child);
+            }
+        }
+
+        while (queue.count() > 0) {
+            const current = try queue.pop_front();
+
+            for (current.children, 0..) |child_opt, ch_idx| {
+                if (child_opt) |child| {
+                    try queue.push_back(child);
+
+                    const ch = @as(u8, @intCast(ch_idx));
+                    var failure_candidate = current.failure;
+
+                    while (failure_candidate != null) {
+                        const fc = failure_candidate.?;
+                        if (fc.children[@as(usize, ch)] != null) {
+                            child.failure = fc.children[@as(usize, ch)];
+                            break;
+                        }
+                        if (fc == self.root) {
+                            child.failure = self.root;
+                            break;
+                        }
+                        failure_candidate = fc.failure;
+                    }
+
+                    if (child.failure) |fail_node| {
+                        if (fail_node.pattern_indices.items.len > 0) {
+                            child.output = fail_node;
+                        } else {
+                            child.output = fail_node.output;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Find first occurrence of any pattern in text
+    /// Time: O(n) | Space: O(1)
+    pub fn findFirst(self: *const Self, text: []const u8) ?Match {
+        if (text.len == 0) return null;
+
+        var current = self.root;
+
+        for (text, 0..) |ch, i| {
+            const idx = @as(usize, ch);
+
+            while (true) {
+                if (current.children[idx]) |child| {
+                    current = child;
+                    break;
+                }
+                if (current == self.root) break;
+                current = current.failure.?;
+            }
+
+            if (current.pattern_indices.items.len > 0) {
+                const pattern_idx = current.pattern_indices.items[0];
+                return Match{
+                    .pattern_index = pattern_idx,
+                    .position = i + 1 - self.patterns[pattern_idx].len,
+                };
+            }
+
+            var output_node = current.output;
+            while (output_node) |node| {
+                if (node.pattern_indices.items.len > 0) {
+                    const pattern_idx = node.pattern_indices.items[0];
+                    return Match{
+                        .pattern_index = pattern_idx,
+                        .position = i + 1 - self.patterns[pattern_idx].len,
+                    };
+                }
+                output_node = node.output;
+            }
+        }
+
+        return null;
+    }
+
+    /// Find all occurrences of all patterns in text
+    /// Time: O(n + z) | Space: O(z)
+    pub fn findAll(self: *const Self, text: []const u8, allocator: Allocator) !std.ArrayList(Match) {
+        var matches: std.ArrayList(Match) = .{};
+        errdefer matches.deinit(allocator);
+
+        if (text.len == 0) return matches;
+
+        var current = self.root;
+
+        for (text, 0..) |ch, i| {
+            const idx = @as(usize, ch);
+
+            while (true) {
+                if (current.children[idx]) |child| {
+                    current = child;
+                    break;
+                }
+                if (current == self.root) break;
+                current = current.failure.?;
+            }
+
+            for (current.pattern_indices.items) |pattern_idx| {
+                try matches.append(allocator, .{
+                    .pattern_index = pattern_idx,
+                    .position = i + 1 - self.patterns[pattern_idx].len,
+                });
+            }
+
+            var output_node = current.output;
+            while (output_node) |node| {
+                for (node.pattern_indices.items) |pattern_idx| {
+                    try matches.append(allocator, .{
+                        .pattern_index = pattern_idx,
+                        .position = i + 1 - self.patterns[pattern_idx].len,
+                    });
+                }
+                output_node = node.output;
+            }
+        }
+
+        return matches;
+    }
+
+    /// Check if text contains any of the patterns
+    /// Time: O(n) | Space: O(1)
+    pub fn contains(self: *const Self, text: []const u8) bool {
+        return self.findFirst(text) != null;
+    }
+
+    /// Count total occurrences of all patterns in text
+    /// Time: O(n + z) | Space: O(1)
+    pub fn count(self: *const Self, text: []const u8) usize {
+        var total: usize = 0;
+        if (text.len == 0) return total;
+
+        var current = self.root;
+
+        for (text) |ch| {
+            const idx = @as(usize, ch);
+
+            while (true) {
+                if (current.children[idx]) |child| {
+                    current = child;
+                    break;
+                }
+                if (current == self.root) break;
+                current = current.failure.?;
+            }
+
+            total += current.pattern_indices.items.len;
+
+            var output_node = current.output;
+            while (output_node) |node| {
+                total += node.pattern_indices.items.len;
+                output_node = node.output;
+            }
+        }
+
+        return total;
+    }
+};
+
+test "AhoCorasickASCII - basic match" {
+    const patterns = [_][]const u8{ "he", "she", "his", "hers" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "ushers";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), matches.items.len);
+
+    try std.testing.expectEqual(@as(usize, 1), matches.items[0].pattern_index); // "she"
+    try std.testing.expectEqual(@as(usize, 1), matches.items[0].position);
+
+    try std.testing.expectEqual(@as(usize, 0), matches.items[1].pattern_index); // "he"
+    try std.testing.expectEqual(@as(usize, 2), matches.items[1].position);
+
+    try std.testing.expectEqual(@as(usize, 3), matches.items[2].pattern_index); // "hers"
+    try std.testing.expectEqual(@as(usize, 2), matches.items[2].position);
+}
+
+test "AhoCorasickASCII - single pattern" {
+    const patterns = [_][]const u8{"pattern"};
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "this is a pattern in text pattern";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), matches.items.len);
+    try std.testing.expectEqual(@as(usize, 10), matches.items[0].position);
+    try std.testing.expectEqual(@as(usize, 26), matches.items[1].position);
+}
+
+test "AhoCorasickASCII - no matches" {
+    const patterns = [_][]const u8{ "foo", "bar", "baz" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "hello world";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), matches.items.len);
+}
+
+test "AhoCorasickASCII - overlapping patterns" {
+    const patterns = [_][]const u8{ "abc", "bcd", "cde" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "abcde";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), matches.items.len);
+}
+
+test "AhoCorasickASCII - pattern at beginning" {
+    const patterns = [_][]const u8{"hello"};
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "hello world";
+    const match = ac.findFirst(text);
+    try std.testing.expect(match != null);
+    try std.testing.expectEqual(@as(usize, 0), match.?.position);
+}
+
+test "AhoCorasickASCII - pattern at end" {
+    const patterns = [_][]const u8{"world"};
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "hello world";
+    const match = ac.findFirst(text);
+    try std.testing.expect(match != null);
+    try std.testing.expectEqual(@as(usize, 6), match.?.position);
+}
+
+test "AhoCorasickASCII - contains" {
+    const patterns = [_][]const u8{ "needle", "hay" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    try std.testing.expect(ac.contains("needle in haystack"));
+    try std.testing.expect(!ac.contains("nothing here"));
+}
+
+test "AhoCorasickASCII - count occurrences" {
+    const patterns = [_][]const u8{ "a", "aa" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "aaaa";
+    const total = ac.count(text);
+    // "a" appears at 0,1,2,3 (4 times)
+    // "aa" appears at 0,1,2 (3 times)
+    // Total: 7
+    try std.testing.expectEqual(@as(usize, 7), total);
+}
+
+test "AhoCorasickASCII - empty text" {
+    const patterns = [_][]const u8{"test"};
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), matches.items.len);
+}
+
+test "AhoCorasickASCII - error: empty pattern set" {
+    const patterns: []const []const u8 = &[_][]const u8{};
+    const result = AhoCorasickASCII.init(std.testing.allocator, patterns);
+    try std.testing.expectError(error.EmptyPatternSet, result);
+}
+
+test "AhoCorasickASCII - error: empty pattern" {
+    const patterns = [_][]const u8{ "valid", "" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    const result = AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    try std.testing.expectError(error.EmptyPattern, result);
+}
+
+test "AhoCorasickASCII - multiple repeated patterns" {
+    const patterns = [_][]const u8{ "ab", "ab", "ab" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "xabx";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), matches.items.len);
+}
+
+test "AhoCorasickASCII - case sensitive" {
+    const patterns = [_][]const u8{"Hello"};
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    try std.testing.expect(ac.contains("Hello world"));
+    try std.testing.expect(!ac.contains("hello world"));
+}
+
+test "AhoCorasickASCII - prefix patterns" {
+    const patterns = [_][]const u8{ "a", "ab", "abc" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "abc";
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), matches.items.len);
+}
+
+test "AhoCorasickASCII - stress test" {
+    const patterns = [_][]const u8{ "test", "stress", "data", "structure" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    var text_buf: [10000]u8 = undefined;
+    var i: usize = 0;
+    while (i < 10000) : (i += 5) {
+        const remaining = 10000 - i;
+        if (remaining >= 4) {
+            @memcpy(text_buf[i .. i + 4], "test");
+        } else {
+            @memcpy(text_buf[i..10000], "test"[0..remaining]);
+            break;
+        }
+    }
+
+    const text = text_buf[0..10000];
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    try std.testing.expect(matches.items.len > 1000);
+}
+
+test "AhoCorasickASCII - findFirst returns earliest match" {
+    const patterns = [_][]const u8{ "world", "or" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    const text = "hello world";
+    const match = ac.findFirst(text);
+    try std.testing.expect(match != null);
+    // "or" appears at position 7, "world" at position 6
+    // findFirst should find "world" as it ends first
+    try std.testing.expectEqual(@as(usize, 0), match.?.pattern_index);
+    try std.testing.expectEqual(@as(usize, 6), match.?.position);
+}
+
+test "AhoCorasickASCII - memory cleanup on early return" {
+    const patterns = [_][]const u8{"abc"};
+    const patterns_slice: []const []const u8 = &patterns;
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ac.deinit();
+
+    // Allocator detects leaks if deinit doesn't properly clean up
+    _ = ac.findFirst("abc");
+    _ = ac.contains("xyz");
+}
+
+test "AhoCorasickASCII vs AhoCorasick(u8) - same behavior" {
+    const patterns = [_][]const u8{ "test", "best", "rest" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    // Generic version
+    const AC = AhoCorasick(u8);
+    var generic_ac = try AC.init(std.testing.allocator, patterns_slice);
+    defer generic_ac.deinit();
+
+    // ASCII version
+    var ascii_ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ascii_ac.deinit();
+
+    const text = "test best rest contest";
+
+    // Compare findAll results
+    var generic_matches = try generic_ac.findAll(text, std.testing.allocator);
+    defer generic_matches.deinit(std.testing.allocator);
+
+    var ascii_matches = try ascii_ac.findAll(text, std.testing.allocator);
+    defer ascii_matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(generic_matches.items.len, ascii_matches.items.len);
+
+    for (generic_matches.items, ascii_matches.items) |g, a| {
+        try std.testing.expectEqual(g.pattern_index, a.pattern_index);
+        try std.testing.expectEqual(g.position, a.position);
+    }
+
+    // Compare contains
+    const test1 = "test";
+    try std.testing.expectEqual(generic_ac.contains(test1), ascii_ac.contains(test1));
+
+    const test2 = "xyz";
+    try std.testing.expectEqual(generic_ac.contains(test2), ascii_ac.contains(test2));
+
+    // Compare count
+    try std.testing.expectEqual(generic_ac.count(text), ascii_ac.count(text));
+}
+
+test "AhoCorasickASCII vs AhoCorasick(u8) - overlapping patterns" {
+    const patterns = [_][]const u8{ "aa", "aaa", "aaaa" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    const AC = AhoCorasick(u8);
+    var generic_ac = try AC.init(std.testing.allocator, patterns_slice);
+    defer generic_ac.deinit();
+
+    var ascii_ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ascii_ac.deinit();
+
+    const text = "aaaaaa";
+
+    var generic_matches = try generic_ac.findAll(text, std.testing.allocator);
+    defer generic_matches.deinit(std.testing.allocator);
+
+    var ascii_matches = try ascii_ac.findAll(text, std.testing.allocator);
+    defer ascii_matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(generic_matches.items.len, ascii_matches.items.len);
+
+    for (generic_matches.items, ascii_matches.items) |g, a| {
+        try std.testing.expectEqual(g.pattern_index, a.pattern_index);
+        try std.testing.expectEqual(g.position, a.position);
+    }
+}
+
+test "AhoCorasickASCII vs AhoCorasick(u8) - single character patterns" {
+    const patterns = [_][]const u8{ "a", "b", "c" };
+    const patterns_slice: []const []const u8 = &patterns;
+
+    const AC = AhoCorasick(u8);
+    var generic_ac = try AC.init(std.testing.allocator, patterns_slice);
+    defer generic_ac.deinit();
+
+    var ascii_ac = try AhoCorasickASCII.init(std.testing.allocator, patterns_slice);
+    defer ascii_ac.deinit();
+
+    const text = "abcabc";
+
+    var generic_matches = try generic_ac.findAll(text, std.testing.allocator);
+    defer generic_matches.deinit(std.testing.allocator);
+
+    var ascii_matches = try ascii_ac.findAll(text, std.testing.allocator);
+    defer ascii_matches.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(generic_matches.items.len, ascii_matches.items.len);
+    try std.testing.expectEqual(generic_ac.count(text), ascii_ac.count(text));
+}

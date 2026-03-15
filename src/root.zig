@@ -199,6 +199,7 @@ pub const algorithms = struct {
         pub const boyerMooreSearchAll = @import("algorithms/string/boyer_moore.zig").searchAll;
         pub const RabinKarp = @import("algorithms/string/rabin_karp.zig").RabinKarp;
         pub const AhoCorasick = @import("algorithms/string/aho_corasick.zig").AhoCorasick;
+        pub const AhoCorasickASCII = @import("algorithms/string/aho_corasick.zig").AhoCorasickASCII;
         pub const ZAlgorithm = @import("algorithms/string/z_algorithm.zig").ZAlgorithm;
         pub const globMatch = @import("algorithms/string/glob_match.zig").match;
         pub const globMatchCaseInsensitive = @import("algorithms/string/glob_match.zig").matchCaseInsensitive;

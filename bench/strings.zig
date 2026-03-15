@@ -8,8 +8,9 @@ const zuda = @import("zuda");
 const bench = zuda.internal.bench;
 
 const AhoCorasick = zuda.algorithms.string.AhoCorasick;
+const AhoCorasickASCII = zuda.algorithms.string.AhoCorasickASCII;
 
-/// Benchmark: Aho-Corasick with 1000 patterns on 1MB text
+/// Benchmark: Aho-Corasick (generic) with 1000 patterns on 1MB text
 fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
@@ -52,6 +53,49 @@ fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
     defer matches.deinit(allocator);
 }
 
+/// Benchmark: Aho-Corasick (ASCII-optimized) with 1000 patterns on 1MB text
+fn benchAhoCorasickASCII(allocator: std.mem.Allocator) !void {
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate 1000 random patterns (5-15 bytes each)
+    const pattern_count = 1000;
+    var patterns = std.ArrayList([]const u8){};
+    defer {
+        for (patterns.items) |pattern| {
+            allocator.free(pattern);
+        }
+        patterns.deinit(allocator);
+    }
+
+    var i: usize = 0;
+    while (i < pattern_count) : (i += 1) {
+        const len = random.intRangeAtMost(usize, 5, 15);
+        const pattern = try allocator.alloc(u8, len);
+        for (pattern) |*byte| {
+            byte.* = random.intRangeAtMost(u8, 'a', 'z');
+        }
+        try patterns.append(allocator, pattern);
+    }
+
+    // Build ASCII-optimized Aho-Corasick automaton
+    var ac = try AhoCorasickASCII.init(allocator, patterns.items);
+    defer ac.deinit();
+
+    // Generate 1MB random text
+    const text_size = 1024 * 1024;
+    const text = try allocator.alloc(u8, text_size);
+    defer allocator.free(text);
+
+    for (text) |*byte| {
+        byte.* = random.intRangeAtMost(u8, 'a', 'z');
+    }
+
+    // Search for patterns in text
+    var matches = try ac.findAll(text, allocator);
+    defer matches.deinit(allocator);
+}
+
 /// Run all string algorithm benchmarks and output markdown table
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -62,9 +106,9 @@ pub fn main() !void {
     std.debug.print("Validating PRD performance targets:\n", .{});
     std.debug.print("- Aho-Corasick: target ≥ 500 MB/sec (1000 patterns, 1MB text)\n\n", .{});
 
-    // Aho-Corasick benchmark
+    // Aho-Corasick (generic) benchmark
     {
-        std.debug.print("Running Aho-Corasick (1000 patterns, 1MB text)...\n", .{});
+        std.debug.print("Running Aho-Corasick (generic, HashMap transitions) (1000 patterns, 1MB text)...\n", .{});
 
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
@@ -74,6 +118,26 @@ pub fn main() !void {
         defer benchmark.deinit();
 
         const result = try benchmark.run(benchAhoCorasick, .{allocator});
+
+        const text_size_mb = 1; // 1MB
+        const mb_per_sec = @divFloor(1_000_000_000, @divFloor(result.mean_ns, text_size_mb));
+
+        std.debug.print("  Result: {d} MB/sec (mean over {d} iterations)\n", .{ mb_per_sec, result.iterations });
+        std.debug.print("  (Baseline for comparison)\n", .{});
+    }
+
+    // Aho-Corasick ASCII-optimized benchmark
+    {
+        std.debug.print("\nRunning AhoCorasickASCII (array transitions) (1000 patterns, 1MB text)...\n", .{});
+
+        var benchmark = try bench.Benchmark.init(allocator, .{
+            .warmup_iterations = 2,
+            .min_iterations = 5,
+            .max_iterations = 10,
+        });
+        defer benchmark.deinit();
+
+        const result = try benchmark.run(benchAhoCorasickASCII, .{allocator});
 
         const text_size_mb = 1; // 1MB
         const mb_per_sec = @divFloor(1_000_000_000, @divFloor(result.mean_ns, text_size_mb));
