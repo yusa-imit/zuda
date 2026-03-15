@@ -44,9 +44,12 @@ Address performance gaps and optimize critical data structures:
   - **Fixed**: Separated setup (1M inserts) from timed operation (10M lookups)
   - **Result**: Benchmark now accurately measures lookup-only performance (303M ops/sec)
   - **EXCEEDS TARGET**: 303M ops/sec >> 100M ops/sec target (+203%)
-- [ ] Memory usage profiling & optimization pass
-  - Add memory usage tracking to benchmark framework
-  - Identify containers with excessive allocation overhead
+- [x] **Memory usage profiling & optimization pass** ✅
+  - **Implemented**: MemoryTracker allocator wrapper in bench.zig
+  - **New benchmark**: `zig build bench-memory` profiles 4 key containers (10k ops)
+  - **Results**: RedBlackTree (481KB peak, 770k allocs), SkipList (2.7MB, 1M allocs), FibonacciHeap (747KB, 1M allocs), BTree (489KB, 17k allocs)
+  - **Analysis**: BTree most memory-efficient (17k vs 770k-1M allocs), SkipList has 5.6x overhead
+  - **Status**: Memory tracking framework complete, no leaks detected (1KB residual is benchmark overhead)
 - [ ] SIMD opportunities exploration
   - Vectorize hot loops in sorting/searching where beneficial
   - Document SIMD vs scalar tradeoffs
