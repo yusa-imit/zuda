@@ -45,7 +45,23 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 11)
+## Recent Progress (Session 2026-03-15 - Hour 15)
+**FEATURE MODE → v1.3.0 ITERATOR SYSTEM COMPLETE:**
+- ✅ **Iterator System Complete** (commit e863e7d)
+  - **collect() export**: Added `zuda.iterators.collect` to root.zig
+  - **PersistentArray.pop()**: Implemented tree-based pop with path copying & rebalancing
+  - **Tests**: 6 new pop tests (tail, tree, empty, multiple pops, immutability)
+  - **Fixes**: collect.zig variable mutability warnings (var → const)
+  - **Milestones**: Updated docs/milestones.md to reflect completion
+- 📊 **v1.3.0 Progress**: 13/15 items complete (87%)
+  - [x] Iterator Adaptors (8/8): Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect
+  - [x] Binary Search Variants (4/4): lowerBound, upperBound, equalRange, binarySearchBy (already in v1.0.0)
+  - [x] PersistentArray.pop implementation
+  - [ ] A* comprehensive tests
+  - [ ] Iterator pattern guide with examples
+- 📋 **Next Priority**: A* comprehensive tests (edge cases, obstacles, heuristic variants)
+
+## Previous Session (Session 2026-03-15 - Hour 11)
 **FEATURE MODE → v1.1.0 RELEASE + v1.3.0 START:**
 - ✅ **v1.1.0 Released!** (tag created, GitHub release published)
   - **Release URL**: https://github.com/yusa-imit/zuda/releases/tag/v1.1.0
@@ -59,13 +75,6 @@
   - **Tests**: 19 comprehensive tests (all passing)
   - **Features**: Type transformation, chaining support, zero-cost abstraction
   - **API**: `zuda.iterators.Map` exported from root.zig
-  - **Next**: Implement filter, chain, zip adaptors
-- 📊 **v1.3.0 Progress**: 1/15 items complete (7%)
-  - [x] map(T, U) iterator adaptor
-  - [ ] filter, chain, zip, take, skip, enumerate, collect
-  - [ ] Binary search variants (lowerBound, upperBound, equalRange, binarySearchBy)
-  - [ ] Completeness items (A* tests, DFS cycle detection, PersistentArray.pop)
-- 📋 **Next Priority**: Continue v1.3.0 iterator adaptors (filter next)
 
 ## Previous Session (Session 2026-03-15 - Hour 09)
 **FEATURE MODE → v1.1.0 FINAL OPTIMIZATION:**
