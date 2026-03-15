@@ -45,7 +45,26 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 23)
+## Recent Progress (Session 2026-03-16 - Hour 01)
+**FEATURE MODE → v1.4.0 AHO-CORASICK OPTIMIZATION:**
+- ✅ **Aho-Corasick Goto Function Completion** (commit 2e6ef04)
+  - **Optimization**: Implemented standard goto completion — pre-compute all state transitions
+  - **Implementation**: Added `real_children` tracking to distinguish allocated vs filled transitions
+  - **Search simplification**: Eliminated runtime failure link following (direct array lookup)
+  - **Performance**: 58 MB/sec → 63 MB/sec (+9% improvement)
+  - **Gap analysis**: Still 87% below 500 MB/sec target (+433 MB/sec gap)
+  - **Bottleneck identified**: Fundamental memory access limits
+    - Current: ~3-4 memory accesses/char (near-optimal for pointer-based traversal)
+    - Target: 500 MB/sec = 6 CPU cycles/char (extremely tight budget)
+    - Remaining gap likely requires algorithmic rethinking (SIMD, precomputed tables)
+- 📊 **Performance Status**:
+  - BTree(128): 83M keys/sec (target ≥50M) ✅ +66%
+  - TimSort: -37% overhead (target ≤10%) ✅ **EXCEEDS!**
+  - RedBlackTree insert: 255ns (target ≤200ns) ⚠️ +28%
+  - RedBlackTree lookup: 258ns (target ≤150ns) ⚠️ +72%
+  - Aho-Corasick: 63 MB/sec (target ≥500MB/sec) ❌ -87%
+
+## Previous Session (Session 2026-03-15 - Hour 23)
 **FEATURE MODE → v1.4.0 REDBLACKTREE OPTIMIZATION:**
 - ✅ **RedBlackTree Performance Optimization** (commit 30c4c8e)
   - **Baseline**: insert 329ns, lookup 593ns (original measurements)
