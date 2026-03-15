@@ -40,8 +40,10 @@ Address performance gaps and optimize critical data structures:
     Current implementation: ~3-4 memory accesses/char (near-optimal for pointer-based traversal).
   - **Status**: Further gains require algorithmic rethinking (SIMD vectorization, precomputed
     match tables, or relaxed target based on memory bandwidth constraints).
-- [ ] BloomFilter benchmark calculation fix
-  - Shows 0 ns/op due to calculation bug, needs correction
+- [x] **BloomFilter benchmark calculation fix** ✅
+  - **Fixed**: Separated setup (1M inserts) from timed operation (10M lookups)
+  - **Result**: Benchmark now accurately measures lookup-only performance (303M ops/sec)
+  - **EXCEEDS TARGET**: 303M ops/sec >> 100M ops/sec target (+203%)
 - [ ] Memory usage profiling & optimization pass
   - Add memory usage tracking to benchmark framework
   - Identify containers with excessive allocation overhead
@@ -72,7 +74,7 @@ Validate zuda in production through consumer project adoption:
 | TimSort overhead | ≤ 10% vs std.sort | **-37% (faster!)** | ✅ EXCEEDS! |
 | Aho-Corasick | ≥ 500 MB/sec | 63 MB/sec | ❌ -87% (improved from 58) |
 | FibonacciHeap decrease-key | ≤ 50 ns amortized | N/A (double-free bug) | ❌ |
-| BloomFilter lookup | ≥ 100M ops/sec | N/A (calculation bug) | ❌ |
+| BloomFilter lookup | ≥ 100M ops/sec | 303M ops/sec | ✅ +203% |
 | Dijkstra (1M nodes) | ≤ 500 ms | TBD | — |
 
 ---

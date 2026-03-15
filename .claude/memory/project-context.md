@@ -45,7 +45,23 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 01)
+## Recent Progress (Session 2026-03-16 - Hour 03)
+**FEATURE MODE → v1.4.0 BLOOMFILTER BENCHMARK FIX:**
+- ✅ **BloomFilter Benchmark Calculation Fix** (commit a62d119)
+  - **Root cause**: Benchmark timed both 1M inserts + 10M lookups, but ops/sec assumed only lookups
+  - **Fix**: Separated setup from timed operation — filter creation/inserts happen before benchmark.run()
+  - **Implementation**: Refactored benchBloomFilterLookup() to accept pre-populated filter pointer
+  - **Result**: 303M ops/sec (target ≥100M) ✅ **EXCEEDS by +203%!**
+  - **Impact**: BloomFilter now has accurate performance metrics, validates PRD target
+- 📊 **Performance Status**:
+  - BTree(128): 83M keys/sec (target ≥50M) ✅ +66%
+  - TimSort: -37% overhead (target ≤10%) ✅ **EXCEEDS!**
+  - BloomFilter: 303M ops/sec (target ≥100M) ✅ **EXCEEDS +203%!**
+  - RedBlackTree insert: 255ns (target ≤200ns) ⚠️ +28%
+  - RedBlackTree lookup: 258ns (target ≤150ns) ⚠️ +72%
+  - Aho-Corasick: 63 MB/sec (target ≥500MB/sec) ❌ -87%
+
+## Previous Session (Session 2026-03-16 - Hour 01)
 **FEATURE MODE → v1.4.0 AHO-CORASICK OPTIMIZATION:**
 - ✅ **Aho-Corasick Goto Function Completion** (commit 2e6ef04)
   - **Optimization**: Implemented standard goto completion — pre-compute all state transitions
