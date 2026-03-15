@@ -317,6 +317,7 @@ pub const iterators = struct {
     pub const Filter = @import("iterators/filter.zig").Filter;
     pub const Chain = @import("iterators/chain.zig").Chain;
     pub const Zip = @import("iterators/zip.zig").Zip;
+    pub const Take = @import("iterators/take.zig").Take;
 };
 
 /// Internal utilities (not part of public API)
