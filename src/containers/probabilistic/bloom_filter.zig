@@ -84,7 +84,7 @@ pub fn BloomFilter(
             for (0..self.k) |i| {
                 const hash = hashFn(self.ctx, item, i);
                 const bit_index = hash % self.m;
-                const word_index = bit_index / 64;
+                const word_index: usize = @intCast(bit_index / 64);
                 const bit_offset = @as(u6, @intCast(bit_index % 64));
                 self.bits[word_index] |= @as(u64, 1) << bit_offset;
             }
@@ -99,7 +99,7 @@ pub fn BloomFilter(
             for (0..self.k) |i| {
                 const hash = hashFn(self.ctx, item, i);
                 const bit_index = hash % self.m;
-                const word_index = bit_index / 64;
+                const word_index: usize = @intCast(bit_index / 64);
                 const bit_offset = @as(u6, @intCast(bit_index % 64));
                 const bit_set = (self.bits[word_index] & (@as(u64, 1) << bit_offset)) != 0;
                 if (!bit_set) return false;
