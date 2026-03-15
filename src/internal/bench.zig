@@ -17,6 +17,34 @@ pub const Config = struct {
     target_duration_ns: u64 = 100_000_000, // 100ms
 };
 
+/// Memory usage statistics
+pub const MemoryStats = struct {
+    /// Peak bytes allocated during benchmark
+    peak_bytes: usize,
+    /// Total bytes allocated (sum of all allocations)
+    total_allocated: usize,
+    /// Total bytes freed
+    total_freed: usize,
+    /// Number of allocation calls
+    allocation_count: usize,
+    /// Number of free calls
+    free_count: usize,
+    /// Current bytes allocated (not freed yet)
+    current_bytes: usize,
+
+    pub fn format(
+        self: MemoryStats,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try writer.print(
+            "peak: {d}B | current: {d}B | allocs: {d} | frees: {d}",
+            .{ self.peak_bytes, self.current_bytes, self.allocation_count, self.free_count },
+        );
+    }
+};
+
 /// Benchmark result statistics
 pub const Result = struct {
     /// Total number of iterations performed
@@ -33,6 +61,8 @@ pub const Result = struct {
     median_ns: u64,
     /// Standard deviation in nanoseconds
     std_dev_ns: u64,
+    /// Memory usage statistics (null if not tracked)
+    memory: ?MemoryStats,
 
     /// Format the result as a human-readable string
     pub fn format(
@@ -45,6 +75,9 @@ pub const Result = struct {
             "{d} iterations | mean: {d}ns | median: {d}ns | min: {d}ns | max: {d}ns | σ: {d}ns",
             .{ self.iterations, self.mean_ns, self.median_ns, self.min_ns, self.max_ns, self.std_dev_ns },
         );
+        if (self.memory) |mem| {
+            try writer.print(" | mem: {}", .{mem});
+        }
     }
 
     /// Format as ops/sec
@@ -63,15 +96,128 @@ pub const Result = struct {
         else
             0;
 
-        try writer.print(
-            "| {s} | {d} | {d} | {d} | {d} | {d} |\n",
-            .{ name, self.mean_ns, self.median_ns, self.min_ns, self.max_ns, ops_per_sec },
-        );
+        if (self.memory) |mem| {
+            try writer.print(
+                "| {s} | {d} | {d} | {d} | {d} | {d} | {d} | {d} |\n",
+                .{ name, self.mean_ns, self.median_ns, self.min_ns, self.max_ns, ops_per_sec, mem.peak_bytes, mem.current_bytes },
+            );
+        } else {
+            try writer.print(
+                "| {s} | {d} | {d} | {d} | {d} | {d} |\n",
+                .{ name, self.mean_ns, self.median_ns, self.min_ns, self.max_ns, ops_per_sec },
+            );
+        }
     }
 };
 
 /// Timer for high-precision benchmarking
 const Timer = std.time.Timer;
+
+/// Memory tracking allocator for benchmarking
+pub const MemoryTracker = struct {
+    parent_allocator: std.mem.Allocator,
+    peak_bytes: usize,
+    total_allocated: usize,
+    total_freed: usize,
+    allocation_count: usize,
+    free_count: usize,
+    current_bytes: usize,
+
+    pub fn init(parent: std.mem.Allocator) MemoryTracker {
+        return .{
+            .parent_allocator = parent,
+            .peak_bytes = 0,
+            .total_allocated = 0,
+            .total_freed = 0,
+            .allocation_count = 0,
+            .free_count = 0,
+            .current_bytes = 0,
+        };
+    }
+
+    pub fn allocator(self: *MemoryTracker) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .free = free,
+                .remap = remap,
+            },
+        };
+    }
+
+    pub fn reset(self: *MemoryTracker) void {
+        self.peak_bytes = 0;
+        self.total_allocated = 0;
+        self.total_freed = 0;
+        self.allocation_count = 0;
+        self.free_count = 0;
+        self.current_bytes = 0;
+    }
+
+    pub fn stats(self: *const MemoryTracker) MemoryStats {
+        return .{
+            .peak_bytes = self.peak_bytes,
+            .total_allocated = self.total_allocated,
+            .total_freed = self.total_freed,
+            .allocation_count = self.allocation_count,
+            .free_count = self.free_count,
+            .current_bytes = self.current_bytes,
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *MemoryTracker = @ptrCast(@alignCast(ctx));
+        const result = self.parent_allocator.rawAlloc(len, ptr_align, ret_addr);
+        if (result != null) {
+            self.total_allocated += len;
+            self.allocation_count += 1;
+            self.current_bytes += len;
+            if (self.current_bytes > self.peak_bytes) {
+                self.peak_bytes = self.current_bytes;
+            }
+        }
+        return result;
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *MemoryTracker = @ptrCast(@alignCast(ctx));
+        const result = self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
+        if (result) {
+            if (new_len > buf.len) {
+                const added = new_len - buf.len;
+                self.total_allocated += added;
+                self.current_bytes += added;
+                if (self.current_bytes > self.peak_bytes) {
+                    self.peak_bytes = self.current_bytes;
+                }
+            } else {
+                const removed = buf.len - new_len;
+                self.total_freed += removed;
+                self.current_bytes -= removed;
+            }
+        }
+        return result;
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
+        const self: *MemoryTracker = @ptrCast(@alignCast(ctx));
+        self.parent_allocator.rawFree(buf, buf_align, ret_addr);
+        self.total_freed += buf.len;
+        self.free_count += 1;
+        self.current_bytes -= buf.len;
+    }
+
+    fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        _ = ctx;
+        _ = buf;
+        _ = buf_align;
+        _ = new_len;
+        _ = ret_addr;
+        return null; // Don't support remap, fall back to alloc+free
+    }
+};
 
 /// Benchmark context
 pub const Benchmark = struct {
@@ -79,6 +225,7 @@ pub const Benchmark = struct {
     timer: Timer,
     times: std.ArrayList(u64),
     allocator: std.mem.Allocator,
+    memory_tracker: ?*MemoryTracker,
 
     /// Initialize a new benchmark with the given configuration
     pub fn init(allocator: std.mem.Allocator, config: Config) !Benchmark {
@@ -87,6 +234,18 @@ pub const Benchmark = struct {
             .timer = try Timer.start(),
             .times = std.ArrayList(u64){},
             .allocator = allocator,
+            .memory_tracker = null,
+        };
+    }
+
+    /// Initialize a new benchmark with memory tracking
+    pub fn initWithMemoryTracking(allocator: std.mem.Allocator, config: Config, tracker: *MemoryTracker) !Benchmark {
+        return Benchmark{
+            .config = config,
+            .timer = try Timer.start(),
+            .times = std.ArrayList(u64){},
+            .allocator = allocator,
+            .memory_tracker = tracker,
         };
     }
 
@@ -123,6 +282,11 @@ pub const Benchmark = struct {
 
     /// Run benchmark with auto-iteration count
     pub fn run(self: *Benchmark, comptime func: anytype, args: anytype) !Result {
+        // Reset memory tracker if present
+        if (self.memory_tracker) |tracker| {
+            tracker.reset();
+        }
+
         // Warmup
         try self.warmup(func, args);
 
@@ -156,6 +320,11 @@ pub const Benchmark = struct {
 
     /// Run benchmark with fixed iteration count
     pub fn runIterations(self: *Benchmark, comptime func: anytype, args: anytype, iterations: usize) !Result {
+        // Reset memory tracker if present
+        if (self.memory_tracker) |tracker| {
+            tracker.reset();
+        }
+
         // Warmup
         try self.warmup(func, args);
 
@@ -180,6 +349,7 @@ pub const Benchmark = struct {
                 .mean_ns = 0,
                 .median_ns = 0,
                 .std_dev_ns = 0,
+                .memory = null,
             };
         }
 
@@ -208,6 +378,8 @@ pub const Benchmark = struct {
         const variance = @divFloor(variance_sum, times.len);
         const std_dev = @as(u64, @intCast(std.math.sqrt(variance)));
 
+        const memory_stats = if (self.memory_tracker) |tracker| tracker.stats() else null;
+
         return Result{
             .iterations = times.len,
             .total_ns = total,
@@ -216,6 +388,7 @@ pub const Benchmark = struct {
             .mean_ns = mean,
             .median_ns = median,
             .std_dev_ns = std_dev,
+            .memory = memory_stats,
         };
     }
 };
@@ -254,14 +427,24 @@ pub fn compare(name_a: []const u8, result_a: Result, name_b: []const u8, result_
 /// Markdown table formatter for benchmark results
 pub const MarkdownTable = struct {
     writer: std.io.AnyWriter,
+    track_memory: bool,
 
     pub fn init(writer: std.io.AnyWriter) MarkdownTable {
-        return .{ .writer = writer };
+        return .{ .writer = writer, .track_memory = false };
+    }
+
+    pub fn initWithMemory(writer: std.io.AnyWriter) MarkdownTable {
+        return .{ .writer = writer, .track_memory = true };
     }
 
     pub fn writeHeader(self: MarkdownTable) !void {
-        try self.writer.writeAll("| Benchmark | Mean (ns) | Median (ns) | Min (ns) | Max (ns) | Ops/sec |\n");
-        try self.writer.writeAll("|-----------|-----------|-------------|----------|----------|---------|\n");
+        if (self.track_memory) {
+            try self.writer.writeAll("| Benchmark | Mean (ns) | Median (ns) | Min (ns) | Max (ns) | Ops/sec | Peak Mem (B) | Current Mem (B) |\n");
+            try self.writer.writeAll("|-----------|-----------|-------------|----------|----------|---------|--------------|----------------|\n");
+        } else {
+            try self.writer.writeAll("| Benchmark | Mean (ns) | Median (ns) | Min (ns) | Max (ns) | Ops/sec |\n");
+            try self.writer.writeAll("|-----------|-----------|-------------|----------|----------|---------|\n");
+        }
     }
 
     pub fn writeRow(self: MarkdownTable, name: []const u8, result: Result) !void {
@@ -294,4 +477,37 @@ test "benchmark with fixed iterations" {
     const result = try bench.runIterations(addNumbers, .{ @as(i64, 42), @as(i64, 58) }, 50);
 
     try std.testing.expectEqual(50, result.iterations);
+}
+
+// Function that allocates memory for testing
+fn allocateAndFree(allocator: std.mem.Allocator, size: usize) !void {
+    const buffer = try allocator.alloc(u8, size);
+    defer allocator.free(buffer);
+    @memset(buffer, 0);
+}
+
+test "benchmark with memory tracking" {
+    var tracker = MemoryTracker.init(std.testing.allocator);
+    var bench = try Benchmark.initWithMemoryTracking(tracker.allocator(), .{
+        .min_iterations = 10,
+        .max_iterations = 100,
+    }, &tracker);
+    defer bench.deinit();
+
+    const result = try bench.runIterations(allocateAndFree, .{ tracker.allocator(), @as(usize, 1024) }, 10);
+
+    try std.testing.expectEqual(10, result.iterations);
+    try std.testing.expect(result.memory != null);
+
+    if (result.memory) |mem| {
+        // Should have allocated 10 * 1024 bytes total
+        try std.testing.expectEqual(@as(usize, 10 * 1024), mem.total_allocated);
+        try std.testing.expectEqual(@as(usize, 10 * 1024), mem.total_freed);
+        try std.testing.expectEqual(@as(usize, 10), mem.allocation_count);
+        try std.testing.expectEqual(@as(usize, 10), mem.free_count);
+        // Peak should be 1024 (since we free after each iteration)
+        try std.testing.expectEqual(@as(usize, 1024), mem.peak_bytes);
+        // Current should be 0 (all freed)
+        try std.testing.expectEqual(@as(usize, 0), mem.current_bytes);
+    }
 }

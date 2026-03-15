@@ -250,6 +250,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const bench_memory = b.addExecutable(.{
+        .name = "bench_memory",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/memory_profile.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
     // Install benchmark executables
     b.installArtifact(bench_trees);
     b.installArtifact(bench_heaps);
@@ -258,6 +270,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_graphs);
     b.installArtifact(bench_sorting);
     b.installArtifact(bench_strings);
+    b.installArtifact(bench_memory);
 
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench_trees = b.addRunArtifact(bench_trees);
@@ -283,6 +296,12 @@ pub fn build(b: *std.Build) void {
     run_bench_graphs.step.dependOn(b.getInstallStep());
     run_bench_sorting.step.dependOn(b.getInstallStep());
     run_bench_strings.step.dependOn(b.getInstallStep());
+
+    // Memory profiling benchmark (separate step)
+    const bench_memory_step = b.step("bench-memory", "Run memory profiling benchmarks");
+    const run_bench_memory = b.addRunArtifact(bench_memory);
+    bench_memory_step.dependOn(&run_bench_memory.step);
+    run_bench_memory.step.dependOn(b.getInstallStep());
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
