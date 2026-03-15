@@ -1,11 +1,11 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.1.0 (released 2026-03-15) 🎉
+- **Version**: 1.3.0 (released 2026-03-15) 🎉
 - **Phase**: Consumer Migrations (v1.2.0)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
-- **Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.1.0
+- **Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.3.0
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -45,21 +45,24 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 17)
-**FEATURE MODE → A* COMPREHENSIVE TESTS COMPLETE:**
-- ✅ **A* Test Coverage** (commit 393a611)
-  - **15 comprehensive tests**: All edge cases, obstacles, heuristics covered
-  - **Test categories**: Basic pathfinding (2), obstacles (3), edge cases (3), heuristics (4), optimality (1), scale (1), memory safety (1)
-  - **Heuristics tested**: Manhattan, Euclidean, zero (Dijkstra), non-admissible
-  - **API fixes**: AutoHashSet→AutoHashMap(K,void), ArrayList.append(allocator,item), @sqrt conversions
-  - **Test infrastructure**: TestGrid, CoordContext, multiple heuristic functions
-- 📊 **v1.3.0 Progress**: 14/15 items complete (93%)
-  - [x] Iterator Adaptors (8/8): Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect
-  - [x] Binary Search Variants (4/4): lowerBound, upperBound, equalRange, binarySearchBy (already in v1.0.0)
-  - [x] PersistentArray.pop implementation
+## Recent Progress (Session 2026-03-15 - Hour 19)
+**FEATURE MODE → v1.3.0 RELEASE COMPLETE:**
+- ✅ **v1.3.0 Released!** (tag f443d41, GitHub release published)
+  - **Release URL**: https://github.com/yusa-imit/zuda/releases/tag/v1.3.0
+  - **Status**: All 15 items complete (100%)
+  - **Tests**: 701/701 passing (100%), CI green
+  - **Cross-compilation**: 6/6 targets verified
+- ✅ **Iterator Pattern Guide** (commit f443d41)
+  - **Added to**: docs/GUIDE.md (267 lines of comprehensive documentation)
+  - **Content**: Iterator protocol, 8 adaptor examples, chaining, real-world examples, performance notes, best practices
+  - **Examples**: SliceIterator, sensor data processing, zero-cost abstraction benchmarks
+- 📊 **v1.3.0 Complete**: 15/15 items (100%)
+  - [x] Iterator Adaptors (8/8): Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect ✓
+  - [x] Binary Search Variants (4/4): lowerBound, upperBound, equalRange, binarySearchBy ✓
+  - [x] PersistentArray.pop implementation ✓
   - [x] A* comprehensive tests ✓
-  - [ ] Iterator pattern guide with examples
-- 📋 **Next Priority**: Iterator pattern guide documentation
+  - [x] Iterator pattern guide with examples ✓
+- 📋 **Next Priority**: Consumer migrations (v1.2.0) or new features
 
 ## Previous Session (Session 2026-03-15 - Hour 15)
 **FEATURE MODE → v1.3.0 ITERATOR SYSTEM COMPLETE:**

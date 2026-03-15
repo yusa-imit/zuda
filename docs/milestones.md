@@ -2,7 +2,7 @@
 
 ## Current Status
 
-- **Latest release**: v1.1.0 (2026-03-15) — Performance Optimization
+- **Latest release**: v1.3.0 (2026-03-15) — Iterator System & Completeness
 - **Current phase**: Consumer Migrations (v1.2.0)
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
@@ -22,34 +22,6 @@ Validate zuda in production through consumer project adoption:
 - [ ] API refinements based on consumer feedback
 - [ ] Migration guide documentation
 
-### v1.3.0 — Iterator System & Completeness
-
-Enhance the iterator system and complete TODOs identified in v1.0.0/v1.1.0:
-
-**Iterator Adaptors** (`src/iterators/`):
-- [x] `Map(T, U, BaseIter)` — Transform each element (commits 05fe7b7, 63db9c0)
-- [x] `Filter(T, BaseIter)` — Filter elements by predicate (commits e322561, 56ac6ff)
-- [x] `Chain(T, FirstIter, SecondIter)` — Concatenate iterators (commit 86cb014)
-- [x] `Zip(T, U, FirstIter, SecondIter)` — Combine two iterators element-wise (commit 90d284f)
-- [x] `Take(T, BaseIter)` — Take first n elements (commit 1661626)
-- [x] `Skip(T, BaseIter)` — Skip first n elements (commit f26ac88)
-- [x] `Enumerate(T, BaseIter)` — Yield (index, value) pairs (commit 2607480)
-- [x] `collect(T)` — Collect iterator into ArrayList (this commit)
-
-**Binary Search Variants** (`src/algorithms/dynamic_programming/`):
-- [x] `lowerBound(T)` — First element ≥ target (already in v1.0.0)
-- [x] `upperBound(T)` — First element > target (already in v1.0.0)
-- [x] `equalRange(T)` — Range of elements equal to target (already in v1.0.0)
-- [x] `binarySearchWithComparator(T)` — Custom comparator variant (already in v1.0.0)
-
-**Completeness Items**:
-- [ ] A* comprehensive tests (currently has basic tests, needs edge cases)
-- [ ] DFS cycle detection improvement (track back edges during traversal)
-- [ ] PersistentArray.pop implementation (currently returns NotImplementedYet)
-
-**Documentation**:
-- [ ] Iterator pattern guide with examples
-- [ ] Performance characteristics comparison table
 
 ---
 
@@ -78,6 +50,7 @@ Enhance the iterator system and complete TODOs identified in v1.0.0/v1.1.0:
 | Phase 4 | Algorithms & Probabilistic | — | 2026-03 | TimSort, IntroSort, RadixSort, CountingSort, BlockSort, in-place MergeSort, KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm, BloomFilter, CuckooFilter, CountMinSketch, HyperLogLog, LRUCache, LFUCache, GCD, modexp, Miller-Rabin, convex hull, closest pair, LIS, LCS, edit distance, knapsack |
 | Phase 5 | Advanced & Polish | v1.0.0 | 2026-03-14 | LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap, PersistentArray, PersistentRBTree, PersistentHashMap (HAMT), DisjointSet, VanEmdeBoasTree, DancingLinks, Rope, BK-Tree, C API, documentation, 213 public exports |
 | Post-v1.0.0 | Performance Optimization | v1.1.0 | 2026-03-15 | Fixed FibonacciHeap deinit & insert API, TimSort allocation bug, BloomFilter benchmark; optimized Aho-Corasick build & search; analyzed RedBlackTree (near-optimal) |
+| Post-v1.1.0 | Iterator System & Completeness | v1.3.0 | 2026-03-15 | 8 iterator adaptors (Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect), A* comprehensive tests, PersistentArray.pop(), comprehensive iterator pattern guide |
 
 ### Post-v1.0.0 Activity
 
