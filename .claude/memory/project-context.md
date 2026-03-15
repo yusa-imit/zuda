@@ -46,19 +46,26 @@
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
 ## Recent Progress (Session 2026-03-15 - Hour 11)
-**FEATURE MODE → v1.1.0 RELEASE:**
+**FEATURE MODE → v1.1.0 RELEASE + v1.3.0 START:**
 - ✅ **v1.1.0 Released!** (tag created, GitHub release published)
   - **Release URL**: https://github.com/yusa-imit/zuda/releases/tag/v1.1.0
   - **Status**: All 6 items complete (100%)
-    - [x] FibonacciHeap deinit double-free bug → FIXED
-    - [x] FibonacciHeap insert API → FIXED (returns node handle)
-    - [x] RedBlackTree analysis → Near-optimal (293ns vs 259ns floor)
-    - [x] TimSort allocation bug → FIXED (180% overhead eliminated)
-    - [x] BloomFilter benchmark → FIXED (1445M ops/sec, +1345% over target)
-    - [x] Aho-Corasick optimization → 54 MB/sec (500 MB/sec target deferred as unrealistic)
-  - **Tests**: 701/701 passing (100%)
-  - **CI**: ✅ GREEN, all 6 cross-compile targets passing
-- 📋 **Next Priority**: Begin v1.2.0 work (consumer migrations) or establish new milestone
+  - **Tests**: 701/701 passing (100%), CI green
+- ✅ **v1.3.0 Milestone Established** (Iterator System & Completeness)
+  - Theme: Iterator adaptors + binary search variants + completeness items
+  - 3 categories, 15+ items total
+- ✅ **Map Iterator Adaptor** (commits 05fe7b7, 63db9c0)
+  - **Implementation**: `Map(T, U, BaseIter)` factory function pattern
+  - **Tests**: 19 comprehensive tests (all passing)
+  - **Features**: Type transformation, chaining support, zero-cost abstraction
+  - **API**: `zuda.iterators.Map` exported from root.zig
+  - **Next**: Implement filter, chain, zip adaptors
+- 📊 **v1.3.0 Progress**: 1/15 items complete (7%)
+  - [x] map(T, U) iterator adaptor
+  - [ ] filter, chain, zip, take, skip, enumerate, collect
+  - [ ] Binary search variants (lowerBound, upperBound, equalRange, binarySearchBy)
+  - [ ] Completeness items (A* tests, DFS cycle detection, PersistentArray.pop)
+- 📋 **Next Priority**: Continue v1.3.0 iterator adaptors (filter next)
 
 ## Previous Session (Session 2026-03-15 - Hour 09)
 **FEATURE MODE → v1.1.0 FINAL OPTIMIZATION:**

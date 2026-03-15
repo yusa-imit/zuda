@@ -27,7 +27,7 @@ Validate zuda in production through consumer project adoption:
 Enhance the iterator system and complete TODOs identified in v1.0.0/v1.1.0:
 
 **Iterator Adaptors** (`src/iterators/`):
-- [ ] `map(T, U)` — Transform each element (e.g., `iter.map(x => x * 2)`)
+- [x] `Map(T, U, BaseIter)` — Transform each element (commits 05fe7b7, 63db9c0)
 - [ ] `filter(T)` — Filter elements by predicate
 - [ ] `chain(T)` — Concatenate iterators
 - [ ] `zip(T, U)` — Combine two iterators element-wise
