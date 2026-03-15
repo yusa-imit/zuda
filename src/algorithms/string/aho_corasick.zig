@@ -570,8 +570,11 @@ pub const AhoCorasickASCII = struct {
 
     const NodeASCII = struct {
         /// Transition table: 256 entries for all u8 values
-        /// null indicates no transition
+        /// After goto completion, all entries are non-null
         children: [256]?*NodeASCII,
+        /// Real children allocated during trie construction
+        /// Used to track which children to free in deinit
+        real_children: [256]bool,
         failure: ?*NodeASCII,
         output: ?*NodeASCII,
         pattern_indices: std.ArrayList(usize),
@@ -581,6 +584,7 @@ pub const AhoCorasickASCII = struct {
             const node = try allocator.create(NodeASCII);
             node.* = .{
                 .children = [_]?*NodeASCII{null} ** 256,
+                .real_children = [_]bool{false} ** 256,
                 .failure = null,
                 .output = null,
                 .pattern_indices = .{},
@@ -590,9 +594,10 @@ pub const AhoCorasickASCII = struct {
         }
 
         fn deinit(self: *NodeASCII, allocator: Allocator) void {
-            for (self.children) |child_opt| {
-                if (child_opt) |child| {
-                    child.deinit(allocator);
+            // Only free children that were actually allocated (real_children = true)
+            for (self.children, self.real_children) |child_opt, is_real| {
+                if (is_real and child_opt != null) {
+                    child_opt.?.deinit(allocator);
                 }
             }
             self.pattern_indices.deinit(allocator);
@@ -643,6 +648,7 @@ pub const AhoCorasickASCII = struct {
                     const new_node = try NodeASCII.init(self.allocator);
                     new_node.depth = current.depth + 1;
                     current.children[idx] = new_node;
+                    current.real_children[idx] = true; // Mark as real child
                 }
                 current = current.children[idx].?;
             }
@@ -658,42 +664,69 @@ pub const AhoCorasickASCII = struct {
 
         self.root.failure = self.root;
 
-        for (self.root.children) |child_opt| {
-            if (child_opt) |child| {
+        // Initialize root's children — missing ones point to root
+        for (&self.root.children) |*child_opt| {
+            if (child_opt.*) |child| {
                 child.failure = self.root;
                 try queue.push_back(child);
+            } else {
+                child_opt.* = self.root;
             }
         }
 
+        // BFS to compute failure links and complete goto function
         while (queue.count() > 0) {
             const current = try queue.pop_front();
 
-            for (current.children, 0..) |child_opt, ch_idx| {
-                if (child_opt) |child| {
+            // Skip root self-loops
+            if (current == self.root) continue;
+
+            // Process each character transition
+            for (&current.children, 0..) |*child_opt, ch_idx| {
+                if (child_opt.*) |child| {
+                    // Real child exists — compute its failure link
+                    if (child == self.root) continue; // Skip root self-loops
+
                     try queue.push_back(child);
 
                     const ch = @as(u8, @intCast(ch_idx));
-                    var failure_candidate = current.failure;
 
-                    while (failure_candidate != null) {
-                        const fc = failure_candidate.?;
-                        if (fc.children[@as(usize, ch)] != null) {
-                            child.failure = fc.children[@as(usize, ch)];
+                    // Find failure link
+                    var fail = current.failure;
+                    while (fail) |f| {
+                        if (f.children[@as(usize, ch)]) |target| {
+                            child.failure = target;
                             break;
                         }
-                        if (fc == self.root) {
+                        if (f == self.root) {
                             child.failure = self.root;
                             break;
                         }
-                        failure_candidate = fc.failure;
+                        fail = f.failure;
                     }
 
+                    // Build output link
                     if (child.failure) |fail_node| {
                         if (fail_node.pattern_indices.items.len > 0) {
                             child.output = fail_node;
                         } else {
                             child.output = fail_node.output;
                         }
+                    }
+                } else {
+                    // Missing transition — fill with goto(failure, ch)
+                    // This is the KEY OPTIMIZATION: goto function completion
+                    const ch = @as(u8, @intCast(ch_idx));
+
+                    // Follow failure link to find target, default to root
+                    child_opt.* = self.root; // Default fallback
+                    var fail = current.failure;
+                    while (fail) |f| {
+                        if (f.children[@as(usize, ch)]) |target| {
+                            child_opt.* = target;
+                            break;
+                        }
+                        fail = f.failure;
                     }
                 }
             }
@@ -710,14 +743,8 @@ pub const AhoCorasickASCII = struct {
         for (text, 0..) |ch, i| {
             const idx = @as(usize, ch);
 
-            while (true) {
-                if (current.children[idx]) |child| {
-                    current = child;
-                    break;
-                }
-                if (current == self.root) break;
-                current = current.failure.?;
-            }
+            // Direct transition lookup — all transitions are guaranteed filled
+            current = current.children[idx].?;
 
             if (current.pattern_indices.items.len > 0) {
                 const pattern_idx = current.pattern_indices.items[0];
@@ -751,20 +778,18 @@ pub const AhoCorasickASCII = struct {
 
         if (text.len == 0) return matches;
 
+        // Pre-allocate capacity estimate: assume sparse matches (0.1% hit rate)
+        try matches.ensureTotalCapacity(allocator, text.len / 1000);
+
         var current = self.root;
 
         for (text, 0..) |ch, i| {
             const idx = @as(usize, ch);
 
-            while (true) {
-                if (current.children[idx]) |child| {
-                    current = child;
-                    break;
-                }
-                if (current == self.root) break;
-                current = current.failure.?;
-            }
+            // Direct transition lookup — all transitions are guaranteed filled
+            current = current.children[idx].?;
 
+            // Emit all patterns ending at current node
             for (current.pattern_indices.items) |pattern_idx| {
                 try matches.append(allocator, .{
                     .pattern_index = pattern_idx,
@@ -772,6 +797,7 @@ pub const AhoCorasickASCII = struct {
                 });
             }
 
+            // Emit all overlapping patterns via output links
             var output_node = current.output;
             while (output_node) |node| {
                 for (node.pattern_indices.items) |pattern_idx| {
@@ -804,14 +830,8 @@ pub const AhoCorasickASCII = struct {
         for (text) |ch| {
             const idx = @as(usize, ch);
 
-            while (true) {
-                if (current.children[idx]) |child| {
-                    current = child;
-                    break;
-                }
-                if (current == self.root) break;
-                current = current.failure.?;
-            }
+            // Direct transition lookup — all transitions are guaranteed filled
+            current = current.children[idx].?;
 
             total += current.pattern_indices.items.len;
 
@@ -1154,4 +1174,47 @@ test "AhoCorasickASCII vs AhoCorasick(u8) - single character patterns" {
 
     try std.testing.expectEqual(generic_matches.items.len, ascii_matches.items.len);
     try std.testing.expectEqual(generic_ac.count(text), ascii_ac.count(text));
+}
+
+test "AhoCorasickASCII - large random patterns (benchmark simulation)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate 100 random patterns (smaller than benchmark's 1000)
+    const pattern_count = 100;
+    var patterns = std.ArrayList([]const u8){};
+    defer {
+        for (patterns.items) |pattern| {
+            std.testing.allocator.free(pattern);
+        }
+        patterns.deinit(std.testing.allocator);
+    }
+
+    var i: usize = 0;
+    while (i < pattern_count) : (i += 1) {
+        const len = random.intRangeAtMost(usize, 5, 15);
+        const pattern = try std.testing.allocator.alloc(u8, len);
+        for (pattern) |*byte| {
+            byte.* = random.intRangeAtMost(u8, 'a', 'z');
+        }
+        try patterns.append(std.testing.allocator, pattern);
+    }
+
+    var ac = try AhoCorasickASCII.init(std.testing.allocator, patterns.items);
+    defer ac.deinit();
+
+    // Generate 10KB text (smaller than benchmark's 1MB)
+    const text_size = 10 * 1024;
+    const text = try std.testing.allocator.alloc(u8, text_size);
+    defer std.testing.allocator.free(text);
+
+    for (text) |*byte| {
+        byte.* = random.intRangeAtMost(u8, 'a', 'z');
+    }
+
+    var matches = try ac.findAll(text, std.testing.allocator);
+    defer matches.deinit(std.testing.allocator);
+
+    // Just verify it doesn't crash
+    _ = matches.items.len;
 }

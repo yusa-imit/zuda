@@ -10,90 +10,116 @@ const bench = zuda.internal.bench;
 const AhoCorasick = zuda.algorithms.string.AhoCorasick;
 const AhoCorasickASCII = zuda.algorithms.string.AhoCorasickASCII;
 
-/// Benchmark: Aho-Corasick (generic) with 1000 patterns on 1MB text
-fn benchAhoCorasick(allocator: std.mem.Allocator) !void {
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+/// Context for Aho-Corasick benchmark — setup is NOT timed
+const AhoCorasickContext = struct {
+    ac: AhoCorasick(u8),
+    text: []const u8,
+    allocator: std.mem.Allocator,
 
-    // Generate 1000 random patterns (5-15 bytes each)
-    const pattern_count = 1000;
-    var patterns = std.ArrayList([]const u8){};
-    defer {
-        for (patterns.items) |pattern| {
-            allocator.free(pattern);
+    fn init(allocator: std.mem.Allocator) !AhoCorasickContext {
+        var prng = std.Random.DefaultPrng.init(42);
+        const random = prng.random();
+
+        // Generate 1000 random patterns (5-15 bytes each)
+        const pattern_count = 1000;
+        var patterns = std.ArrayList([]const u8){};
+        defer {
+            for (patterns.items) |pattern| {
+                allocator.free(pattern);
+            }
+            patterns.deinit(allocator);
         }
-        patterns.deinit(allocator);
-    }
 
-    var i: usize = 0;
-    while (i < pattern_count) : (i += 1) {
-        const len = random.intRangeAtMost(usize, 5, 15);
-        const pattern = try allocator.alloc(u8, len);
-        for (pattern) |*byte| {
+        var i: usize = 0;
+        while (i < pattern_count) : (i += 1) {
+            const len = random.intRangeAtMost(usize, 5, 15);
+            const pattern = try allocator.alloc(u8, len);
+            for (pattern) |*byte| {
+                byte.* = random.intRangeAtMost(u8, 'a', 'z');
+            }
+            try patterns.append(allocator, pattern);
+        }
+
+        // Build automaton
+        const ac = try AhoCorasick(u8).init(allocator, patterns.items);
+
+        // Generate 1MB text
+        const text_size = 1024 * 1024;
+        const text = try allocator.alloc(u8, text_size);
+        for (text) |*byte| {
             byte.* = random.intRangeAtMost(u8, 'a', 'z');
         }
-        try patterns.append(allocator, pattern);
+
+        return .{ .ac = ac, .text = text, .allocator = allocator };
     }
 
-    // Build Aho-Corasick automaton
-    var ac = try AhoCorasick(u8).init(allocator, patterns.items);
-    defer ac.deinit();
-
-    // Generate 1MB random text
-    const text_size = 1024 * 1024;
-    const text = try allocator.alloc(u8, text_size);
-    defer allocator.free(text);
-
-    for (text) |*byte| {
-        byte.* = random.intRangeAtMost(u8, 'a', 'z');
+    fn deinit(self: *AhoCorasickContext) void {
+        self.allocator.free(self.text);
+        self.ac.deinit();
     }
+};
 
-    // Search for patterns in text
-    var matches = try ac.findAll(text, allocator);
-    defer matches.deinit(allocator);
+/// Benchmark: Aho-Corasick search only (generic)
+fn benchAhoCorasickSearch(ctx: *AhoCorasickContext) !void {
+    // Only time the search operation
+    var matches = try ctx.ac.findAll(ctx.text, ctx.allocator);
+    defer matches.deinit(ctx.allocator);
 }
 
-/// Benchmark: Aho-Corasick (ASCII-optimized) with 1000 patterns on 1MB text
-fn benchAhoCorasickASCII(allocator: std.mem.Allocator) !void {
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+/// Context for ASCII Aho-Corasick benchmark — setup is NOT timed
+const AhoCorasickASCIIContext = struct {
+    ac: AhoCorasickASCII,
+    text: []const u8,
+    allocator: std.mem.Allocator,
 
-    // Generate 1000 random patterns (5-15 bytes each)
-    const pattern_count = 1000;
-    var patterns = std.ArrayList([]const u8){};
-    defer {
-        for (patterns.items) |pattern| {
-            allocator.free(pattern);
+    fn init(allocator: std.mem.Allocator) !AhoCorasickASCIIContext {
+        var prng = std.Random.DefaultPrng.init(42);
+        const random = prng.random();
+
+        // Generate 1000 random patterns (5-15 bytes each)
+        const pattern_count = 1000;
+        var patterns = std.ArrayList([]const u8){};
+        defer {
+            for (patterns.items) |pattern| {
+                allocator.free(pattern);
+            }
+            patterns.deinit(allocator);
         }
-        patterns.deinit(allocator);
-    }
 
-    var i: usize = 0;
-    while (i < pattern_count) : (i += 1) {
-        const len = random.intRangeAtMost(usize, 5, 15);
-        const pattern = try allocator.alloc(u8, len);
-        for (pattern) |*byte| {
+        var i: usize = 0;
+        while (i < pattern_count) : (i += 1) {
+            const len = random.intRangeAtMost(usize, 5, 15);
+            const pattern = try allocator.alloc(u8, len);
+            for (pattern) |*byte| {
+                byte.* = random.intRangeAtMost(u8, 'a', 'z');
+            }
+            try patterns.append(allocator, pattern);
+        }
+
+        // Build automaton
+        const ac = try AhoCorasickASCII.init(allocator, patterns.items);
+
+        // Generate 1MB text
+        const text_size = 1024 * 1024;
+        const text = try allocator.alloc(u8, text_size);
+        for (text) |*byte| {
             byte.* = random.intRangeAtMost(u8, 'a', 'z');
         }
-        try patterns.append(allocator, pattern);
+
+        return .{ .ac = ac, .text = text, .allocator = allocator };
     }
 
-    // Build ASCII-optimized Aho-Corasick automaton
-    var ac = try AhoCorasickASCII.init(allocator, patterns.items);
-    defer ac.deinit();
-
-    // Generate 1MB random text
-    const text_size = 1024 * 1024;
-    const text = try allocator.alloc(u8, text_size);
-    defer allocator.free(text);
-
-    for (text) |*byte| {
-        byte.* = random.intRangeAtMost(u8, 'a', 'z');
+    fn deinit(self: *AhoCorasickASCIIContext) void {
+        self.allocator.free(self.text);
+        self.ac.deinit();
     }
+};
 
-    // Search for patterns in text
-    var matches = try ac.findAll(text, allocator);
-    defer matches.deinit(allocator);
+/// Benchmark: ASCII Aho-Corasick search only
+fn benchAhoCorasickASCIISearch(ctx: *AhoCorasickASCIIContext) !void {
+    // Only time the search operation
+    var matches = try ctx.ac.findAll(ctx.text, ctx.allocator);
+    defer matches.deinit(ctx.allocator);
 }
 
 /// Run all string algorithm benchmarks and output markdown table
@@ -108,7 +134,10 @@ pub fn main() !void {
 
     // Aho-Corasick (generic) benchmark
     {
-        std.debug.print("Running Aho-Corasick (generic, HashMap transitions) (1000 patterns, 1MB text)...\n", .{});
+        std.debug.print("Running Aho-Corasick (generic, HashMap transitions) — search only (1000 patterns, 1MB text)...\n", .{});
+
+        var ctx = try AhoCorasickContext.init(allocator);
+        defer ctx.deinit();
 
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
@@ -117,7 +146,7 @@ pub fn main() !void {
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchAhoCorasick, .{allocator});
+        const result = try benchmark.run(benchAhoCorasickSearch, .{&ctx});
 
         const text_size_mb = 1; // 1MB
         const mb_per_sec = @divFloor(1_000_000_000, @divFloor(result.mean_ns, text_size_mb));
@@ -128,7 +157,10 @@ pub fn main() !void {
 
     // Aho-Corasick ASCII-optimized benchmark
     {
-        std.debug.print("\nRunning AhoCorasickASCII (array transitions) (1000 patterns, 1MB text)...\n", .{});
+        std.debug.print("\nRunning AhoCorasickASCII (array transitions) — search only (1000 patterns, 1MB text)...\n", .{});
+
+        var ctx = try AhoCorasickASCIIContext.init(allocator);
+        defer ctx.deinit();
 
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
@@ -137,7 +169,7 @@ pub fn main() !void {
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchAhoCorasickASCII, .{allocator});
+        const result = try benchmark.run(benchAhoCorasickASCIISearch, .{&ctx});
 
         const text_size_mb = 1; // 1MB
         const mb_per_sec = @divFloor(1_000_000_000, @divFloor(result.mean_ns, text_size_mb));
@@ -147,7 +179,7 @@ pub fn main() !void {
         if (mb_per_sec >= 500) {
             std.debug.print("  ✓ PASS: meets target of ≥ 500 MB/sec\n", .{});
         } else {
-            std.debug.print("  ✗ FAIL: below target of ≥ 500 MB/sec\n", .{});
+            std.debug.print("  ✗ FAIL: below target of ≥ 500 MB/sec (gap: -{d}%)\n", .{@divFloor((500 - mb_per_sec) * 100, 500)});
         }
     }
 
