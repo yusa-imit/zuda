@@ -3,7 +3,7 @@
 ## Current Status
 
 - **Latest release**: v1.3.0 (2026-03-15) — Iterator System & Completeness
-- **Current phase**: Consumer Migrations (v1.2.0)
+- **Current phase**: Performance & Optimization (v1.4.0)
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -11,6 +11,28 @@
 ---
 
 ## Active Milestones
+
+### v1.4.0 — Performance & Optimization
+
+Address performance gaps and optimize critical data structures:
+
+- [ ] RedBlackTree optimization (target: insert ≤200ns, lookup ≤150ns)
+  - Current: insert 329ns (+64% over), lookup 593ns (+295% over)
+  - Approach: Cache locality improvements, inline hot paths, reduce pointer chasing
+- [ ] TimSort investigation & fix (target: ≤10% overhead vs std.sort)
+  - Current: 176% overhead (17x worse than target!)
+  - Root cause analysis needed — likely algorithmic issue or excessive allocation
+- [ ] Aho-Corasick optimization (target: ≥500 MB/sec)
+  - Current: 46 MB/sec (-91% under target)
+  - Already improved build phase (+12%), need search phase optimization
+- [ ] BloomFilter benchmark calculation fix
+  - Shows 0 ns/op due to calculation bug, needs correction
+- [ ] Memory usage profiling & optimization pass
+  - Add memory usage tracking to benchmark framework
+  - Identify containers with excessive allocation overhead
+- [ ] SIMD opportunities exploration
+  - Vectorize hot loops in sorting/searching where beneficial
+  - Document SIMD vs scalar tradeoffs
 
 ### v1.2.0 — Consumer Migrations
 
