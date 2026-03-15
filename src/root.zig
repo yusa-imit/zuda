@@ -313,7 +313,8 @@ pub const algorithms = struct {
 
 /// Iterator adaptors and utilities
 pub const iterators = struct {
-    // TODO: Map, Filter, Chain, Zip, etc. will be added here
+    pub const Map = @import("iterators/map.zig").Map;
+    // TODO: Filter, Chain, Zip, etc. will be added here
 };
 
 /// Internal utilities (not part of public API)
