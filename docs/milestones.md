@@ -29,11 +29,15 @@ Address performance regressions identified during post-release benchmarking:
   - Integer division precision loss in throughput calculation
   - Fixed: Direct calculation (10M × 1B) ÷ mean_ns → ops/sec
   - Result: 1445M ops/sec ✅ PASS (target ≥100M, +1345%)
-- [ ] Optimize Aho-Corasick throughput (24 MB/sec → ≥500 MB/sec target)
-  - [x] Build optimization: BFS queue O(n²) → O(n) with Deque (commit e3b88f2)
+- [~] Optimize Aho-Corasick throughput (target ≥500 MB/sec unrealistic) (commits e3b88f2, a2f9278)
+  - [x] Build optimization: BFS queue O(n²) → O(n) with Deque
     - Build time: 3ms → 2ms (33% improvement)
-  - [ ] Search optimization: Need ASCII fast-path with array transitions
-    - Current bottleneck: 39ms search time (HashMap lookups)
+  - [x] Search optimization: ASCII fast-path with array transitions
+    - Generic (HashMap): 48 MB/sec → ASCII (array): 54 MB/sec (+12%)
+    - **Analysis**: Limited gain because HashMap wasn't the bottleneck
+    - Real bottleneck: Failure link traversal (O(log |Σ|) per char)
+    - To reach 500 MB/sec requires pre-computed goto tables (major refactor)
+    - **Decision**: Target unrealistic, no consumer needs it - DEFERRED
 
 ### v1.2.0 — Consumer Migrations
 
