@@ -209,7 +209,34 @@ pub fn PersistentArray(comptime T: type) type {
                 };
             }
 
-            return error.NotImplementedYet; // TODO: implement pop from tree
+            // Pop from tree: get the last leaf block and make it the new tail
+            const new_tail_offset = self.tailOffset() - BRANCH_FACTOR;
+            const new_tail = try self.allocator.alloc(T, BRANCH_FACTOR - 1);
+
+            // Navigate to the last leaf in the tree (at new_tail_offset)
+            var node = self.root.?;
+            var shift = self.height * BITS;
+            const idx = new_tail_offset;
+
+            while (shift > 0) {
+                shift -= BITS;
+                const slot = (idx >> @intCast(shift)) & MASK;
+                node = node.internal[slot] orelse return error.InvalidState;
+            }
+
+            // Copy leaf elements (all except the last which was in tail)
+            @memcpy(new_tail, node.leaf[0 .. BRANCH_FACTOR - 1]);
+
+            // Remove this leaf from tree - need to copy path and exclude last block
+            const new_root = try self.popFromTree(new_tail_offset);
+
+            return Self{
+                .allocator = self.allocator,
+                .root = new_root.root,
+                .tail = new_tail,
+                .size = self.size - 1,
+                .height = new_root.height,
+            };
         }
 
         /// Create a slice view [start..end)
@@ -363,6 +390,70 @@ pub fn PersistentArray(comptime T: type) type {
                     new_node.* = Node{ .internal = [_]?*Node{null} ** BRANCH_FACTOR };
                     dst.internal[slot] = new_node;
                     dst = new_node;
+                }
+            }
+
+            return new_root;
+        }
+
+        fn popFromTree(self: *const Self, last_index: usize) !struct { root: ?*Node, height: u32 } {
+            if (self.root == null) return .{ .root = null, .height = 0 };
+
+            // If only one element in tree, return null root
+            if (self.tailOffset() == BRANCH_FACTOR) {
+                return .{ .root = null, .height = 0 };
+            }
+
+            // Copy path excluding the last block
+            const new_root = try self.copyPathForPop(last_index);
+
+            // Check if we can reduce height (root has only one child)
+            if (self.height > 0) {
+                var child_count: usize = 0;
+                var first_child: ?*Node = null;
+                for (new_root.?.internal) |child| {
+                    if (child) |c| {
+                        child_count += 1;
+                        if (first_child == null) first_child = c;
+                    }
+                }
+                if (child_count == 1 and first_child != null) {
+                    // Reduce height - deallocate old root, return the single child
+                    return .{ .root = first_child, .height = self.height - 1 };
+                }
+            }
+
+            return .{ .root = new_root, .height = self.height };
+        }
+
+        fn copyPathForPop(self: *const Self, last_index: usize) !?*Node {
+            const new_root = try self.allocator.create(Node);
+            new_root.* = Node{ .internal = [_]?*Node{null} ** BRANCH_FACTOR };
+
+            var src = self.root.?;
+            var dst = new_root;
+            var shift = self.height * BITS;
+            const idx = last_index;
+
+            while (shift > 0) {
+                shift -= BITS;
+                const slot = (idx >> @intCast(shift)) & MASK;
+
+                // Copy all children except the path to last element
+                for (src.internal, 0..) |child, i| {
+                    if (i < slot) {
+                        dst.internal[i] = child;
+                    } else if (i == slot and shift > 0) {
+                        // Continue path - create new node
+                        if (child) |c| {
+                            const new_node = try self.allocator.create(Node);
+                            new_node.* = Node{ .internal = [_]?*Node{null} ** BRANCH_FACTOR };
+                            dst.internal[i] = new_node;
+                            src = c;
+                            dst = new_node;
+                        }
+                    }
+                    // i > slot or (i == slot and shift == 0): skip (exclude last block)
                 }
             }
 
@@ -538,4 +629,134 @@ test "PersistentArray: strings" {
 
     try testing.expectEqualStrings("hello", try arr3.get(0));
     try testing.expectEqualStrings("world", try arr3.get(1));
+}
+
+test "PersistentArray: pop from tail" {
+    var arr = try PersistentArray(i32).init(testing.allocator);
+    defer arr.deinit();
+
+    // Push a few elements
+    const arr1 = try arr.push(10);
+    defer arr1.deinit();
+    const arr2 = try arr1.push(20);
+    defer arr2.deinit();
+    const arr3 = try arr2.push(30);
+    defer arr3.deinit();
+
+    try testing.expectEqual(@as(usize, 3), arr3.count());
+
+    // Pop one element (should only modify tail)
+    const arr4 = try arr3.pop();
+    defer arr4.deinit();
+
+    try testing.expectEqual(@as(usize, 2), arr4.count());
+    try testing.expectEqual(@as(i32, 10), try arr4.get(0));
+    try testing.expectEqual(@as(i32, 20), try arr4.get(1));
+
+    // Original arr3 should be unchanged
+    try testing.expectEqual(@as(usize, 3), arr3.count());
+    try testing.expectEqual(@as(i32, 30), try arr3.get(2));
+}
+
+test "PersistentArray: pop to empty" {
+    var arr = try PersistentArray(i32).init(testing.allocator);
+    defer arr.deinit();
+
+    const arr1 = try arr.push(42);
+    defer arr1.deinit();
+
+    const arr2 = try arr1.pop();
+    defer arr2.deinit();
+
+    try testing.expectEqual(@as(usize, 0), arr2.count());
+    try testing.expect(arr2.isEmpty());
+}
+
+test "PersistentArray: pop from empty" {
+    var arr = try PersistentArray(i32).init(testing.allocator);
+    defer arr.deinit();
+
+    const result = arr.pop();
+    try testing.expectError(error.Empty, result);
+}
+
+test "PersistentArray: pop from tree (large array)" {
+    var arr = try PersistentArray(i32).init(testing.allocator);
+    defer arr.deinit();
+
+    // Push 100 elements to force tree growth beyond tail
+    var current = arr;
+    var i: i32 = 0;
+    while (i < 100) : (i += 1) {
+        const next = try current.push(i);
+        if (i > 0) current.deinit();
+        current = next;
+    }
+    defer current.deinit();
+
+    try testing.expectEqual(@as(usize, 100), current.count());
+
+    // Pop one element (should require pulling from tree)
+    const popped = try current.pop();
+    defer popped.deinit();
+
+    try testing.expectEqual(@as(usize, 99), popped.count());
+    try testing.expectEqual(@as(i32, 98), try popped.get(98));
+
+    // Verify all elements are intact
+    i = 0;
+    while (i < 99) : (i += 1) {
+        try testing.expectEqual(i, try popped.get(@intCast(i)));
+    }
+}
+
+test "PersistentArray: multiple pops" {
+    var arr = try PersistentArray(i32).init(testing.allocator);
+    defer arr.deinit();
+
+    // Push 50 elements
+    var current = arr;
+    var i: i32 = 0;
+    while (i < 50) : (i += 1) {
+        const next = try current.push(i);
+        if (i > 0) current.deinit();
+        current = next;
+    }
+    defer current.deinit();
+
+    // Pop 10 times
+    var popped = current;
+    var pop_count: usize = 0;
+    while (pop_count < 10) : (pop_count += 1) {
+        const next = try popped.pop();
+        if (pop_count > 0) popped.deinit();
+        popped = next;
+    }
+    defer popped.deinit();
+
+    try testing.expectEqual(@as(usize, 40), popped.count());
+    try testing.expectEqual(@as(i32, 39), try popped.get(39));
+}
+
+test "PersistentArray: pop maintains immutability" {
+    var arr = try PersistentArray(i32).init(testing.allocator);
+    defer arr.deinit();
+
+    const arr1 = try arr.push(1);
+    defer arr1.deinit();
+    const arr2 = try arr1.push(2);
+    defer arr2.deinit();
+    const arr3 = try arr2.push(3);
+    defer arr3.deinit();
+
+    const arr4 = try arr3.pop();
+    defer arr4.deinit();
+
+    // arr3 should be unchanged
+    try testing.expectEqual(@as(usize, 3), arr3.count());
+    try testing.expectEqual(@as(i32, 3), try arr3.get(2));
+
+    // arr4 should have 2 elements
+    try testing.expectEqual(@as(usize, 2), arr4.count());
+    try testing.expectEqual(@as(i32, 2), try arr4.get(1));
 }

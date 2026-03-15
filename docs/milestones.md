@@ -28,19 +28,19 @@ Enhance the iterator system and complete TODOs identified in v1.0.0/v1.1.0:
 
 **Iterator Adaptors** (`src/iterators/`):
 - [x] `Map(T, U, BaseIter)` — Transform each element (commits 05fe7b7, 63db9c0)
-- [ ] `filter(T)` — Filter elements by predicate
-- [ ] `chain(T)` — Concatenate iterators
-- [ ] `zip(T, U)` — Combine two iterators element-wise
-- [ ] `take(T, n)` — Take first n elements
-- [ ] `skip(T, n)` — Skip first n elements
-- [ ] `enumerate(T)` — Yield (index, value) pairs
-- [ ] `collect(T)` — Collect iterator into ArrayList
+- [x] `Filter(T, BaseIter)` — Filter elements by predicate (commits e322561, 56ac6ff)
+- [x] `Chain(T, FirstIter, SecondIter)` — Concatenate iterators (commit 86cb014)
+- [x] `Zip(T, U, FirstIter, SecondIter)` — Combine two iterators element-wise (commit 90d284f)
+- [x] `Take(T, BaseIter)` — Take first n elements (commit 1661626)
+- [x] `Skip(T, BaseIter)` — Skip first n elements (commit f26ac88)
+- [x] `Enumerate(T, BaseIter)` — Yield (index, value) pairs (commit 2607480)
+- [x] `collect(T)` — Collect iterator into ArrayList (this commit)
 
-**Binary Search Variants** (`src/algorithms/searching/`):
-- [ ] `lowerBound(T)` — First element ≥ target
-- [ ] `upperBound(T)` — First element > target
-- [ ] `equalRange(T)` — Range of elements equal to target
-- [ ] `binarySearchBy(T)` — Custom comparator variant
+**Binary Search Variants** (`src/algorithms/dynamic_programming/`):
+- [x] `lowerBound(T)` — First element ≥ target (already in v1.0.0)
+- [x] `upperBound(T)` — First element > target (already in v1.0.0)
+- [x] `equalRange(T)` — Range of elements equal to target (already in v1.0.0)
+- [x] `binarySearchWithComparator(T)` — Custom comparator variant (already in v1.0.0)
 
 **Completeness Items**:
 - [ ] A* comprehensive tests (currently has basic tests, needs edge cases)

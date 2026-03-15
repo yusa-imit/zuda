@@ -320,6 +320,7 @@ pub const iterators = struct {
     pub const Take = @import("iterators/take.zig").Take;
     pub const Skip = @import("iterators/skip.zig").Skip;
     pub const Enumerate = @import("iterators/enumerate.zig").Enumerate;
+    pub const collect = @import("iterators/collect.zig").collect;
 };
 
 /// Internal utilities (not part of public API)
