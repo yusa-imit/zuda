@@ -319,6 +319,7 @@ pub const iterators = struct {
     pub const Zip = @import("iterators/zip.zig").Zip;
     pub const Take = @import("iterators/take.zig").Take;
     pub const Skip = @import("iterators/skip.zig").Skip;
+    pub const Enumerate = @import("iterators/enumerate.zig").Enumerate;
 };
 
 /// Internal utilities (not part of public API)
