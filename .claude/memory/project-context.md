@@ -45,7 +45,33 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-15 - Hour 21)
+## Recent Progress (Session 2026-03-15 - Hour 23)
+**FEATURE MODE → v1.4.0 REDBLACKTREE OPTIMIZATION:**
+- ✅ **RedBlackTree Performance Optimization** (commit 30c4c8e)
+  - **Baseline**: insert 329ns, lookup 593ns (original measurements)
+  - **After optimization**: insert 255ns, lookup 258ns
+  - **Improvements**: insert -22%, lookup -56% from baseline
+  - **Techniques**:
+    1. Inlined hot-path functions (findNode, get, contains)
+    2. Reordered Node struct fields for cache locality (left/right after key/value)
+    3. Added prefetching for child nodes during traversal
+  - **Benchmark results** (1M random i64 keys, ReleaseFast):
+    - Insert: 280ns → 255ns (9% improvement from previous run)
+    - Lookup: 306ns → 258ns (16% improvement from previous run)
+  - **Status**: Partial completion — significant gains but still over targets
+    - Insert: 255ns vs 200ns target (+28% over)
+    - Lookup: 258ns vs 150ns target (+72% over)
+  - **Analysis**: Remaining gap likely due to fundamental pointer-based tree overhead.
+    Further optimization would require structural changes (color bit packing, parent
+    pointer elimination) with significant complexity trade-offs.
+- 📊 **Performance Status Update**:
+  - BTree(128): 83M keys/sec (target ≥50M) ✅ +66%
+  - TimSort: -37% overhead (target ≤10%) ✅ **EXCEEDS!**
+  - RedBlackTree insert: 255ns (target ≤200ns) ⚠️ +28% (improved from +64%)
+  - RedBlackTree lookup: 258ns (target ≤150ns) ⚠️ +72% (improved from +295%)
+  - Aho-Corasick: 57 MB/sec (target ≥500MB/sec) ❌ -89%
+
+## Previous Session (Session 2026-03-15 - Hour 21)
 **FEATURE MODE → v1.4.0 MILESTONE + TIMSORT CRITICAL FIX:**
 - ✅ **v1.4.0 Milestone Established** (Performance & Optimization)
   - 6 items: TimSort ✅, RedBlackTree, Aho-Corasick, BloomFilter, memory profiling, SIMD
