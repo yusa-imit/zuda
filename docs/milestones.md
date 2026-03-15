@@ -22,6 +22,35 @@ Validate zuda in production through consumer project adoption:
 - [ ] API refinements based on consumer feedback
 - [ ] Migration guide documentation
 
+### v1.3.0 — Iterator System & Completeness
+
+Enhance the iterator system and complete TODOs identified in v1.0.0/v1.1.0:
+
+**Iterator Adaptors** (`src/iterators/`):
+- [ ] `map(T, U)` — Transform each element (e.g., `iter.map(x => x * 2)`)
+- [ ] `filter(T)` — Filter elements by predicate
+- [ ] `chain(T)` — Concatenate iterators
+- [ ] `zip(T, U)` — Combine two iterators element-wise
+- [ ] `take(T, n)` — Take first n elements
+- [ ] `skip(T, n)` — Skip first n elements
+- [ ] `enumerate(T)` — Yield (index, value) pairs
+- [ ] `collect(T)` — Collect iterator into ArrayList
+
+**Binary Search Variants** (`src/algorithms/searching/`):
+- [ ] `lowerBound(T)` — First element ≥ target
+- [ ] `upperBound(T)` — First element > target
+- [ ] `equalRange(T)` — Range of elements equal to target
+- [ ] `binarySearchBy(T)` — Custom comparator variant
+
+**Completeness Items**:
+- [ ] A* comprehensive tests (currently has basic tests, needs edge cases)
+- [ ] DFS cycle detection improvement (track back edges during traversal)
+- [ ] PersistentArray.pop implementation (currently returns NotImplementedYet)
+
+**Documentation**:
+- [ ] Iterator pattern guide with examples
+- [ ] Performance characteristics comparison table
+
 ---
 
 ## Performance Targets
