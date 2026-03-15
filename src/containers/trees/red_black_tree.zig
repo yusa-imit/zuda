@@ -30,19 +30,19 @@ pub fn RedBlackTree(
         const Node = struct {
             key: K,
             value: V,
-            color: Color,
-            parent: ?*Node,
             left: ?*Node,
             right: ?*Node,
+            parent: ?*Node,
+            color: Color,
 
             fn init(key: K, value: V) Node {
                 return .{
                     .key = key,
                     .value = value,
-                    .color = .red, // New nodes are always red
-                    .parent = null,
                     .left = null,
                     .right = null,
+                    .parent = null,
+                    .color = .red, // New nodes are always red
                 };
             }
         };
@@ -170,9 +170,13 @@ pub fn RedBlackTree(
             var last_order: std.math.Order = undefined;
             while (true) {
                 parent = current;
-                const order = compareFn(self.context, key, current.key);
-                last_order = order;
-                switch (order) {
+
+                // Prefetch children to reduce cache miss latency
+                if (current.left) |left| @prefetch(left, .{ .rw = .read, .locality = 3, .cache = .data });
+                if (current.right) |right| @prefetch(right, .{ .rw = .read, .locality = 3, .cache = .data });
+
+                // Inline comparison for hot path
+                switch (compareFn(self.context, key, current.key)) {
                     .eq => {
                         // Update existing value
                         const old = current.value;
@@ -180,6 +184,7 @@ pub fn RedBlackTree(
                         return old;
                     },
                     .lt => {
+                        last_order = .lt;
                         if (current.left) |left| {
                             current = left;
                         } else {
@@ -187,6 +192,7 @@ pub fn RedBlackTree(
                         }
                     },
                     .gt => {
+                        last_order = .gt;
                         if (current.right) |right| {
                             current = right;
                         } else {
@@ -474,22 +480,26 @@ pub fn RedBlackTree(
 
         /// Find the value associated with a key.
         /// Time: O(log n) | Space: O(1)
-        pub fn get(self: *const Self, key: K) ?V {
+        pub inline fn get(self: *const Self, key: K) ?V {
             const node = self.findNode(key) orelse return null;
             return node.value;
         }
 
         /// Check if a key exists in the tree.
         /// Time: O(log n) | Space: O(1)
-        pub fn contains(self: *const Self, key: K) bool {
+        pub inline fn contains(self: *const Self, key: K) bool {
             return self.findNode(key) != null;
         }
 
         inline fn findNode(self: *const Self, key: K) ?*Node {
             var current = self.root;
             while (current) |node| {
-                const order = compareFn(self.context, key, node.key);
-                switch (order) {
+                // Prefetch children to reduce cache miss latency
+                if (node.left) |left| @prefetch(left, .{ .rw = .read, .locality = 3, .cache = .data });
+                if (node.right) |right| @prefetch(right, .{ .rw = .read, .locality = 3, .cache = .data });
+
+                // Inline comparison to reduce function call overhead
+                switch (compareFn(self.context, key, node.key)) {
                     .eq => return node,
                     .lt => current = node.left,
                     .gt => current = node.right,
