@@ -45,22 +45,32 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 17)
+## Recent Progress (Session 2026-03-16 - Hour 19)
+**FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
+- ✅ **Tree Container Test Quality Improvement** (commit d236d8e)
+  - **Scanned**: 9 tree containers (AATree, AVLTree, BTree, IntervalTree, RedBlackTree, ScapegoatTree, SplayTree, Trie, VanEmdeBoasTree)
+  - **Found**: 19 tests with no assertions (same pattern as previous categories)
+  - **Pattern**: Memory leak + validate invariants tests rely on implicit validation only
+  - **Fixed**: Added explicit assertions to all 19 tests:
+    - AATree (2): validate invariants with AutoArrayHashMap tracking, memory leak with count checks
+    - AVLTree (1): memory leak with count + value verification
+    - BTree (3): validate empty with isEmpty(), validate after ops with count checks, memory leak
+    - IntervalTree (1): validate with isEmpty + count (validate() commented due to RB tree issues)
+    - RedBlackTree (2): validate with count + value checks, stress test with HashMap tracking
+    - ScapegoatTree (2): validate with count + get() verification, memory leak
+    - SplayTree (2): validate with HashMap tracking, memory leak with count checks
+    - Trie (2): validate with count + isEmpty, memory leak with removed key verification
+    - VanEmdeBoasTree (1): validate with isEmpty + count + contains at each stage
+  - **Impact**: Tests now verify actual behavior instead of just checking "doesn't crash"
+- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~50% complete — 5/10 categories done: hash, heap, list, queue, trees)
+- 📋 **Next**: Continue with remaining categories (spatial, probabilistic, cache, persistent, exotic)
+
+## Previous Progress (Session 2026-03-16 - Hour 17)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
 - ✅ **Queue Container Test Quality Improvement** (commit 7e382ba)
   - **Scanned**: 4 queue containers (Deque, LockFreeQueue, LockFreeStack, WorkStealingDeque)
   - **Found**: 6 tests with no assertions (same pattern as hash/heap/list containers)
-  - **Pattern**: Memory leak + validate invariants tests rely on implicit validation only
-  - **Fixed**: Added explicit assertions to all 6 tests:
-    - Deque memory leak: count + FIFO order verification (0-99 sequence)
-    - LockFreeQueue validate: isEmpty + peek + count checks after each op
-    - LockFreeQueue memory leak: peek + dequeue value verification
-    - LockFreeStack memory leak: LIFO order + pop count verification
-    - WorkStealingDeque memory leak: pop count tracking per round
-    - WorkStealingDeque validate: isEmpty + value + resize cycle checks
   - **Impact**: Tests now verify actual behavior instead of just checking "doesn't crash"
-- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~40% complete — 4/10 categories done)
-- 📋 **Next**: Continue with remaining categories (trees, spatial, probabilistic, cache, persistent, exotic)
 
 ## Previous Progress (Session 2026-03-16 - Hour 15)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
