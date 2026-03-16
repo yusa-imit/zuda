@@ -45,7 +45,7 @@ jobs:
           - x86_64-macos-none
           - aarch64-macos-none
           - x86_64-windows-msvc
-          - aarch64-windows-msvc
+          - wasm32-wasi
     steps:
       - uses: actions/checkout@v5
 
