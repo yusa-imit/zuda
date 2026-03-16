@@ -436,11 +436,19 @@ test "WorkStealingDeque: memory leak check" {
         while (i < 100) : (i += 1) {
             try deque.push(i);
         }
-        while (deque.pop()) |_| {}
+
+        // Verify all pushed values can be popped
+        var pop_count: u32 = 0;
+        var last_val: ?u32 = null;
+        while (deque.pop()) |val| {
+            pop_count += 1;
+            last_val = val;
+        }
+        try testing.expectEqual(@as(u32, 100), pop_count);
     }
 
+    try testing.expectEqual(true, deque.isEmpty());
     try deque.validate();
-    // If there's a memory leak, testing.allocator will fail
 }
 
 test "WorkStealingDeque: validate invariants" {
@@ -448,20 +456,33 @@ test "WorkStealingDeque: validate invariants" {
     var deque = try WorkStealingDeque(u32).init(testing.allocator);
     defer deque.deinit();
 
+    try testing.expectEqual(true, deque.isEmpty());
     try deque.validate();
 
     try deque.push(1);
+    try testing.expectEqual(false, deque.isEmpty());
     try deque.validate();
 
-    _ = deque.pop();
+    const val = deque.pop();
+    try testing.expectEqual(@as(?u32, 1), val);
+    try testing.expectEqual(true, deque.isEmpty());
     try deque.validate();
 
-    // Trigger resize
+    // Trigger resize and verify count
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
         try deque.push(i);
     }
+    try testing.expectEqual(false, deque.isEmpty());
     try deque.validate();
+
+    // Pop all and verify they're accessible
+    var pop_count: u32 = 0;
+    while (deque.pop()) |_| {
+        pop_count += 1;
+    }
+    try testing.expectEqual(@as(u32, 100), pop_count);
+    try testing.expectEqual(true, deque.isEmpty());
 }
 
 test "WorkStealingDeque: string type" {

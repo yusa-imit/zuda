@@ -386,16 +386,28 @@ test "LockFreeStack: memory leak detection" {
     while (i < 100) : (i += 1) {
         try stack.push(@intCast(i));
     }
+    try testing.expectEqual(false, stack.isEmpty());
 
+    // Verify LIFO order: last pushed (99) should pop first
+    var j: i32 = 99;
     while (!stack.isEmpty()) {
-        _ = stack.pop();
+        const val = stack.pop();
+        try testing.expectEqual(@as(i32, j), val);
+        j -= 1;
     }
+    try testing.expectEqual(@as(i32, -1), j);
+    try testing.expectEqual(true, stack.isEmpty());
 
-    // Second round
+    // Second round: verify similar LIFO behavior
     i = 0;
     while (i < 100) : (i += 1) {
         try stack.push(@intCast(i));
     }
+    try testing.expectEqual(false, stack.isEmpty());
+
+    // Verify we can pop at least one item from round 2
+    const last_val = stack.pop();
+    try testing.expectEqual(@as(i32, 99), last_val);
 }
 
 test "LockFreeStack: version counter wraparound safety" {

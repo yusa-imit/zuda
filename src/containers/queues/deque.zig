@@ -695,10 +695,16 @@ test "Deque: memory leak check" {
     while (i < 100) : (i += 1) {
         try deque.push_back(i);
     }
+    try testing.expectEqual(@as(usize, 100), deque.count());
 
+    i = 0;
     while (!deque.isEmpty()) {
-        _ = try deque.pop_front();
+        const val = try deque.pop_front();
+        try testing.expectEqual(@as(i32, i), val);
+        i += 1;
     }
+    try testing.expectEqual(@as(i32, 100), i);
+    try testing.expectEqual(@as(usize, 0), deque.count());
 
     try deque.validate();
 }

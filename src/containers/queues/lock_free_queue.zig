@@ -391,18 +391,29 @@ test "LockFreeQueue: validate invariants" {
     var q = try Q.init(testing.allocator);
     defer q.deinit();
 
+    try testing.expectEqual(true, q.isEmpty());
     try q.validate();
 
     try q.enqueue(1);
+    try testing.expectEqual(false, q.isEmpty());
+    try testing.expectEqual(@as(?i32, 1), q.peek());
     try q.validate();
 
     try q.enqueue(2);
+    try testing.expectEqual(false, q.isEmpty());
+    try testing.expectEqual(@as(?i32, 1), q.peek());
     try q.validate();
 
-    _ = q.dequeue();
+    const val1 = q.dequeue();
+    try testing.expectEqual(@as(?i32, 1), val1);
+    try testing.expectEqual(false, q.isEmpty());
+    try testing.expectEqual(@as(?i32, 2), q.peek());
     try q.validate();
 
-    _ = q.dequeue();
+    const val2 = q.dequeue();
+    try testing.expectEqual(@as(?i32, 2), val2);
+    try testing.expectEqual(true, q.isEmpty());
+    try testing.expectEqual(@as(?i32, null), q.peek());
     try q.validate();
 }
 
@@ -412,10 +423,24 @@ test "LockFreeQueue: memory leak check" {
     defer q.deinit();
 
     try q.enqueue(42);
+    try testing.expectEqual(@as(?i32, 42), q.peek());
+
     try q.enqueue(99);
-    _ = q.dequeue();
+    try testing.expectEqual(@as(?i32, 42), q.peek());
+
+    const val1 = q.dequeue();
+    try testing.expectEqual(@as(?i32, 42), val1);
+    try testing.expectEqual(@as(?i32, 99), q.peek());
+
     try q.enqueue(100);
-    // Deinit will drain remaining items and free all nodes
+    try testing.expectEqual(@as(?i32, 99), q.peek());
+
+    // Verify final state before deinit
+    const val2 = q.dequeue();
+    try testing.expectEqual(@as(?i32, 99), val2);
+    const val3 = q.dequeue();
+    try testing.expectEqual(@as(?i32, 100), val3);
+    try testing.expectEqual(true, q.isEmpty());
 }
 
 test "LockFreeQueue: string type" {
