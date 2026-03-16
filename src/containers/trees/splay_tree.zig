@@ -565,20 +565,29 @@ test "SplayTree: validate invariants after random operations" {
     var prng = std.Random.DefaultPrng.init(67890);
     const random = prng.random();
 
+    var inserted_keys = std.AutoArrayHashMap(i64, bool).init(testing.allocator);
+    defer inserted_keys.deinit();
+
     for (0..200) |_| {
         const op = random.intRangeAtMost(u8, 0, 2);
         const key = random.intRangeAtMost(i64, 1, 50);
 
         if (op == 0) {
             _ = try tree.insert(key, key * 10);
+            try inserted_keys.put(key, true);
         } else if (op == 1) {
             _ = tree.remove(key);
+            _ = inserted_keys.remove(key);
         } else {
-            _ = tree.get(key);
+            const val = tree.get(key);
+            if (inserted_keys.contains(key)) {
+                try testing.expectEqual(key * 10, val.?);
+            }
         }
 
         // Validate after every operation
         try tree.validate();
+        try testing.expectEqual(inserted_keys.count(), tree.count());
     }
 }
 
@@ -589,9 +598,19 @@ test "SplayTree: memory leak detection" {
     for (1..51) |i| {
         _ = try tree.insert(@intCast(i), @intCast(i * 10));
     }
+    try testing.expectEqual(@as(usize, 50), tree.count());
 
     for (1..26) |i| {
         _ = tree.remove(@intCast(i));
+    }
+    try testing.expectEqual(@as(usize, 25), tree.count());
+
+    // Verify removed items are gone and remaining are intact
+    for (1..26) |i| {
+        try testing.expectEqual(@as(?i64, null), tree.get(@intCast(i)));
+    }
+    for (26..51) |i| {
+        try testing.expectEqual(@as(?i64, @intCast(i * 10)), tree.get(@intCast(i)));
     }
 
     // Allocator will detect leaks when tree.deinit() is called

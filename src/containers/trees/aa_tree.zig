@@ -637,20 +637,32 @@ test "AATree: validate invariants after mixed operations" {
     var prng = std.Random.DefaultPrng.init(67890);
     const random = prng.random();
 
+    var inserted_keys = std.AutoArrayHashMap(i64, bool).init(testing.allocator);
+    defer inserted_keys.deinit();
+
     for (0..300) |_| {
         const op = random.intRangeAtMost(u8, 0, 2);
         const key = random.intRangeAtMost(i64, 1, 50);
 
         if (op == 0) {
             _ = try tree.insert(key, key * 10);
+            try inserted_keys.put(key, true);
         } else if (op == 1) {
             _ = tree.remove(key);
+            _ = inserted_keys.remove(key);
         } else {
-            _ = tree.get(key);
+            const val = tree.get(key);
+            if (inserted_keys.contains(key)) {
+                try testing.expectEqual(key * 10, val.?);
+            } else {
+                try testing.expectEqual(@as(?i64, null), val);
+            }
         }
 
         // Validate after every operation
         try tree.validate();
+        // Verify count matches expected
+        try testing.expectEqual(inserted_keys.count(), tree.count());
     }
 }
 
@@ -661,9 +673,16 @@ test "AATree: memory leak detection" {
     for (1..101) |i| {
         _ = try tree.insert(@intCast(i), @intCast(i * 10));
     }
+    try testing.expectEqual(@as(usize, 100), tree.count());
 
     for (1..51) |i| {
         _ = tree.remove(@intCast(i));
+    }
+    try testing.expectEqual(@as(usize, 50), tree.count());
+
+    // Verify remaining values
+    for (51..101) |i| {
+        try testing.expectEqual(@as(?i64, @intCast(i * 10)), tree.get(@intCast(i)));
     }
 
     // Allocator will detect leaks when tree.deinit() is called

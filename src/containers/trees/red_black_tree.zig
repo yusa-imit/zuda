@@ -804,6 +804,8 @@ test "RedBlackTree: validate invariants" {
     while (i < 100) : (i += 1) {
         _ = try tree.insert(i, i * 10);
         try tree.validate();
+        try std.testing.expectEqual(@as(usize, @intCast(i + 1)), tree.count());
+        try std.testing.expectEqual(@as(?i32, i * 10), tree.get(i));
     }
 
     // Remove elements and validate
@@ -811,6 +813,17 @@ test "RedBlackTree: validate invariants" {
     while (i < 50) : (i += 1) {
         _ = tree.remove(i);
         try tree.validate();
+        try std.testing.expectEqual(@as(usize, @intCast(100 - i - 1)), tree.count());
+    }
+
+    // Verify removed items are gone and remaining are intact
+    i = 0;
+    while (i < 50) : (i += 1) {
+        try std.testing.expectEqual(@as(?i32, null), tree.get(i));
+    }
+    i = 50;
+    while (i < 100) : (i += 1) {
+        try std.testing.expectEqual(@as(?i32, i * 10), tree.get(i));
     }
 }
 
@@ -830,31 +843,44 @@ test "RedBlackTree: stress test with random operations" {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
+    var inserted_keys = std.AutoArrayHashMap(i32, bool).init(std.testing.allocator);
+    defer inserted_keys.deinit();
+
     // Insert 1000 random elements
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
         const key = random.intRangeAtMost(i32, 0, 999);
         _ = try tree.insert(key, key * 2);
+        try inserted_keys.put(key, true);
 
         if (i % 100 == 0) {
             try tree.validate();
+            try std.testing.expectEqual(inserted_keys.count(), tree.count());
         }
     }
 
     try tree.validate();
+    try std.testing.expectEqual(inserted_keys.count(), tree.count());
 
     // Remove half of them
+    var removed_count: usize = 0;
     i = 0;
     while (i < 500) : (i += 1) {
         const key = random.intRangeAtMost(i32, 0, 999);
-        _ = tree.remove(key);
+        if (tree.get(key) != null) {
+            _ = tree.remove(key);
+            _ = inserted_keys.remove(key);
+            removed_count += 1;
+        }
 
         if (i % 100 == 0) {
             try tree.validate();
+            try std.testing.expectEqual(inserted_keys.count(), tree.count());
         }
     }
 
     try tree.validate();
+    try std.testing.expectEqual(inserted_keys.count(), tree.count());
 }
 
 test "RedBlackTree: clone" {

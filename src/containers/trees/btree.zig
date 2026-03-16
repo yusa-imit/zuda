@@ -810,6 +810,8 @@ test "BTree: validate empty tree" {
     var tree = Tree.init(testing.allocator, .{});
     defer tree.deinit();
 
+    try testing.expect(tree.isEmpty());
+    try testing.expectEqual(@as(usize, 0), tree.count());
     try tree.validate();
 }
 
@@ -818,14 +820,29 @@ test "BTree: validate after operations" {
     var tree = Tree.init(testing.allocator, .{});
     defer tree.deinit();
 
-    for (0..100) |i| {
-        _ = try tree.insert(@intCast(i), @intCast(i));
+    for (0..100) |idx| {
+        const i: i32 = @intCast(idx);
+        _ = try tree.insert(i, i);
         try tree.validate();
+        try testing.expectEqual(@as(usize, idx + 1), tree.count());
+        try testing.expectEqual(@as(?i32, i), tree.get(i));
     }
 
-    for (0..50) |i| {
-        _ = tree.remove(@intCast(i));
+    for (0..50) |idx| {
+        const i: i32 = @intCast(idx);
+        _ = tree.remove(i);
         try tree.validate();
+        try testing.expectEqual(@as(usize, 100 - idx - 1), tree.count());
+    }
+
+    // Verify removed items are gone and remaining are intact
+    for (0..50) |idx| {
+        const i: i32 = @intCast(idx);
+        try testing.expectEqual(@as(?i32, null), tree.get(i));
+    }
+    for (50..100) |idx| {
+        const i: i32 = @intCast(idx);
+        try testing.expectEqual(@as(?i32, i), tree.get(i));
     }
 }
 
@@ -837,9 +854,18 @@ test "BTree: memory leak check" {
     for (0..1000) |i| {
         _ = try tree.insert(@intCast(i), @intCast(i * 2));
     }
+    try testing.expectEqual(@as(usize, 1000), tree.count());
 
+    var removed_count: usize = 0;
     for (0..500) |i| {
         _ = tree.remove(@intCast(i * 2));
+        removed_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 1000 - removed_count), tree.count());
+
+    // Verify removed items are gone
+    for (0..500) |i| {
+        try testing.expectEqual(@as(?i32, null), tree.get(@intCast(i * 2)));
     }
 
     // Allocator will detect leaks at deinit

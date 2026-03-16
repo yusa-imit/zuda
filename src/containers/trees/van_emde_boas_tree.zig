@@ -763,20 +763,34 @@ test "VanEmdeBoasTree: validate invariants" {
     var tree = try VEB.init(std.testing.allocator);
     defer tree.deinit();
 
+    try std.testing.expect(tree.isEmpty());
+    try std.testing.expectEqual(@as(usize, 0), tree.count());
     try tree.validate(); // Empty tree
 
     _ = try tree.insert(5);
     try tree.validate();
+    try std.testing.expectEqual(@as(usize, 1), tree.count());
+    try std.testing.expect(tree.contains(5));
 
     _ = try tree.insert(3);
     _ = try tree.insert(7);
     try tree.validate();
+    try std.testing.expectEqual(@as(usize, 3), tree.count());
+    try std.testing.expect(tree.contains(3));
+    try std.testing.expect(tree.contains(5));
+    try std.testing.expect(tree.contains(7));
 
     _ = try tree.remove(3);
     try tree.validate();
+    try std.testing.expectEqual(@as(usize, 2), tree.count());
+    try std.testing.expect(!tree.contains(3));
+    try std.testing.expect(tree.contains(5));
+    try std.testing.expect(tree.contains(7));
 
     tree.clear();
     try tree.validate();
+    try std.testing.expect(tree.isEmpty());
+    try std.testing.expectEqual(@as(usize, 0), tree.count());
 }
 
 test "VanEmdeBoasTree: bounds checking" {

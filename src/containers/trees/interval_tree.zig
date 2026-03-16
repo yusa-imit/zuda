@@ -657,10 +657,14 @@ test "IntervalTree: validate invariants" {
     var tree = IT.init(std.testing.allocator, {});
     defer tree.deinit();
 
+    try std.testing.expect(tree.isEmpty());
     for (0..10) |i| {
         const i_i32: i32 = @intCast(i);
         _ = try tree.insert(.{ .low = i_i32 * 2, .high = i_i32 * 2 + 5 }, @intCast(i));
     }
+
+    try std.testing.expectEqual(@as(usize, 10), tree.count());
+    try std.testing.expect(!tree.isEmpty());
 
     // Skip validation for now - the RB tree insertion has issues
     // try tree.validate();

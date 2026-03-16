@@ -701,12 +701,19 @@ test "ScapegoatTree: validate invariants" {
     for (keys) |key| {
         _ = try tree.insert(key, "value");
         try tree.validate();
+        try testing.expect(tree.get(key) != null);
     }
+
+    try testing.expectEqual(keys.len, tree.count());
 
     for (keys) |key| {
         _ = tree.remove(key);
         try tree.validate();
+        try testing.expectEqual(@as(?[]const u8, null), tree.get(key));
     }
+
+    try testing.expect(tree.isEmpty());
+    try testing.expectEqual(@as(usize, 0), tree.count());
 }
 
 test "ScapegoatTree: memory leak detection" {
@@ -718,11 +725,23 @@ test "ScapegoatTree: memory leak detection" {
     while (i < n) : (i += 1) {
         _ = try tree.insert(i, "value");
     }
+    try testing.expectEqual(100, tree.count());
 
+    var removed_count: i32 = 0;
     i = 0;
     while (i < n) : (i += 2) {
         _ = tree.remove(i);
+        removed_count += 1;
+    }
+    try testing.expectEqual(n - removed_count, tree.count());
+
+    // Verify removed items are gone
+    i = 0;
+    while (i < n) : (i += 2) {
+        try testing.expectEqual(@as(?[]const u8, null), tree.get(i));
     }
 
     tree.clear();
+    try testing.expect(tree.isEmpty());
+    try testing.expectEqual(@as(usize, 0), tree.count());
 }

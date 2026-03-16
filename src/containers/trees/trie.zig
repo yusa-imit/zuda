@@ -663,12 +663,19 @@ test "Trie: validate invariants" {
     _ = try trie.insert("cat", "feline");
     _ = try trie.insert("car", "vehicle");
     try trie.validate();
+    try testing.expectEqual(@as(usize, 2), trie.count());
+    try testing.expectEqual(@as(?[]const u8, "feline"), trie.get("cat"));
 
     _ = trie.remove("cat");
     try trie.validate();
+    try testing.expectEqual(@as(usize, 1), trie.count());
+    try testing.expectEqual(@as(?[]const u8, null), trie.get("cat"));
+    try testing.expectEqual(@as(?[]const u8, "vehicle"), trie.get("car"));
 
     trie.clear();
     try trie.validate();
+    try testing.expect(trie.isEmpty());
+    try testing.expectEqual(@as(usize, 0), trie.count());
 }
 
 test "Trie: memory leak detection" {
@@ -682,13 +689,27 @@ test "Trie: memory leak detection" {
         const key = try std.fmt.bufPrint(&key_buf, "key_{d}", .{i});
         _ = try trie.insert(key, "value");
     }
+    try testing.expectEqual(n, trie.count());
 
+    var removed_count: usize = 0;
     i = 0;
     while (i < n) : (i += 2) {
         var key_buf: [20]u8 = undefined;
         const key = try std.fmt.bufPrint(&key_buf, "key_{d}", .{i});
         _ = trie.remove(key);
+        removed_count += 1;
+    }
+    try testing.expectEqual(n - removed_count, trie.count());
+
+    // Verify removed items are gone
+    i = 0;
+    while (i < n) : (i += 2) {
+        var key_buf: [20]u8 = undefined;
+        const key = try std.fmt.bufPrint(&key_buf, "key_{d}", .{i});
+        try testing.expectEqual(@as(?[]const u8, null), trie.get(key));
     }
 
     trie.clear();
+    try testing.expect(trie.isEmpty());
+    try testing.expectEqual(@as(usize, 0), trie.count());
 }

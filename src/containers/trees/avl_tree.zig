@@ -786,10 +786,18 @@ test "AVLTree: memory leak detection" {
     while (i < 100) : (i += 1) {
         _ = try tree.insert(i, i * 10);
     }
+    try testing.expectEqual(@as(usize, 100), tree.count());
 
     i = 0;
     while (i < 50) : (i += 1) {
         _ = tree.remove(i);
+    }
+    try testing.expectEqual(@as(usize, 50), tree.count());
+
+    // Verify remaining values
+    i = 50;
+    while (i < 100) : (i += 1) {
+        try testing.expectEqual(@as(?i32, i * 10), tree.get(i));
     }
 
     // testing.allocator will detect leaks automatically
