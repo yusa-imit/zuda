@@ -282,6 +282,8 @@ pub fn AdjacencyList(
         pub const VertexIterator = struct {
             it: std.HashMap(V, Adjacency, Context, std.hash_map.default_max_load_percentage).KeyIterator,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *VertexIterator) ?V {
                 const ptr = self.it.next() orelse return null;
                 return ptr.*;
@@ -349,11 +351,17 @@ pub fn AdjacencyList(
 
 // -- Helper for common integer vertex graphs --
 
+/// Creates a graph type for integer vertices.
+/// Time: O(1) | Space: O(1)
 pub fn IntGraph(comptime W: type) type {
     const Context = struct {
+        /// Computes hash for the key.
+        /// Time: O(1) | Space: O(1)
         pub fn hash(_: @This(), key: u32) u64 {
             return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
         }
+        /// Checks equality of two keys.
+        /// Time: O(1) | Space: O(1)
         pub fn eql(_: @This(), a: u32, b: u32) bool {
             return a == b;
         }

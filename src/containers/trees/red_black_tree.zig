@@ -72,6 +72,8 @@ pub fn RedBlackTree(
                 return result;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator); // Zig 0.15 API
             }
@@ -84,6 +86,8 @@ pub fn RedBlackTree(
 
         // -- Lifecycle --
 
+        /// Initializes an empty tree.
+        /// Time: O(1) | Space: O(1)
         pub fn init(allocator: std.mem.Allocator, context: Context) Self {
             return .{
                 .allocator = allocator,
@@ -93,6 +97,8 @@ pub fn RedBlackTree(
             };
         }
 
+        /// Frees all allocated memory. Invalidates all iterators.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             if (self.root) |root| {
                 self.destroySubtree(root);
@@ -142,10 +148,14 @@ pub fn RedBlackTree(
 
         // -- Capacity --
 
+        /// Returns number of elements.
+        /// Time: O(1) | Space: O(1)
         pub fn count(self: *const Self) usize {
             return self.size;
         }
 
+        /// Returns true if empty.
+        /// Time: O(1) | Space: O(1)
         pub fn isEmpty(self: *const Self) bool {
             return self.size == 0;
         }
@@ -626,6 +636,8 @@ pub fn RedBlackTree(
             return left_black_height + (if (node.color == .black) @as(usize, 1) else 0);
         }
 
+        /// Formats tree for debugging output.
+        /// Time: O(n) | Space: O(n)
         pub fn format(
             self: *const Self,
             comptime fmt: []const u8,

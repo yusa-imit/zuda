@@ -68,6 +68,8 @@ pub fn BKTree(
             results: std.ArrayList(SearchResult),
             index: usize,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) ?SearchResult {
                 if (self.index >= self.results.items.len) return null;
                 const result = self.results.items[self.index];
@@ -75,6 +77,8 @@ pub fn BKTree(
                 return result;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator, allocator: std.mem.Allocator) void {
                 self.results.deinit(allocator);
             }

@@ -48,6 +48,8 @@ pub fn ScapegoatTree(
             stack: std.ArrayList(*Node),
             allocator: std.mem.Allocator,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) !?Entry {
                 while (self.stack.items.len > 0) {
                     const node = self.stack.pop() orelse break;
@@ -67,6 +69,8 @@ pub fn ScapegoatTree(
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
             }
@@ -88,6 +92,8 @@ pub fn ScapegoatTree(
 
         // -- Lifecycle --
 
+        /// Initializes an empty tree.
+        /// Time: O(1) | Space: O(1)
         pub fn init(allocator: std.mem.Allocator, context: Context) Self {
             return Self{
                 .allocator = allocator,
@@ -95,6 +101,8 @@ pub fn ScapegoatTree(
             };
         }
 
+        /// Frees all allocated memory. Invalidates all iterators.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             self.destroySubtree(self.root);
             self.* = undefined;
@@ -108,6 +116,8 @@ pub fn ScapegoatTree(
             }
         }
 
+        /// Creates a deep copy of the tree.
+        /// Time: O(n log n) | Space: O(n)
         pub fn clone(self: *const Self) !Self {
             var new_tree = Self.init(self.allocator, self.context);
             new_tree.root = try self.cloneSubtree(self.root);
@@ -132,10 +142,14 @@ pub fn ScapegoatTree(
 
         // -- Capacity --
 
+        /// Returns number of elements.
+        /// Time: O(1) | Space: O(1)
         pub fn count(self: *const Self) usize {
             return self.node_count;
         }
 
+        /// Returns true if empty.
+        /// Time: O(1) | Space: O(1)
         pub fn isEmpty(self: *const Self) bool {
             return self.node_count == 0;
         }
@@ -375,10 +389,14 @@ pub fn ScapegoatTree(
             return null;
         }
 
+        /// Checks if a key exists in the tree.
+        /// Time: O(log n) | Space: O(1)
         pub fn contains(self: *const Self, key: K) bool {
             return self.get(key) != null;
         }
 
+        /// Returns the minimum entry.
+        /// Time: O(log n) | Space: O(1)
         pub fn min(self: *const Self) ?Entry {
             if (self.root) |root| {
                 const node = self.findMinNodeConst(root);
@@ -387,6 +405,8 @@ pub fn ScapegoatTree(
             return null;
         }
 
+        /// Returns the maximum entry.
+        /// Time: O(log n) | Space: O(1)
         pub fn max(self: *const Self) ?Entry {
             var current = self.root;
             while (current) |node| {
@@ -401,6 +421,8 @@ pub fn ScapegoatTree(
 
         // -- Iteration --
 
+        /// Creates an iterator for the container.
+        /// Time: O(log n) amortized | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
             var stack = std.ArrayList(*Node){};
             if (self.root) |root| {
@@ -414,6 +436,8 @@ pub fn ScapegoatTree(
 
         // -- Bulk --
 
+        /// Removes all elements from the container.
+        /// Time: O(n) | Space: O(1)
         pub fn clear(self: *Self) void {
             self.destroySubtree(self.root);
             self.root = null;
@@ -423,6 +447,8 @@ pub fn ScapegoatTree(
 
         // -- Debug --
 
+        /// Formats tree for debugging output.
+        /// Time: O(1) | Space: O(1)
         pub fn format(
             self: *const Self,
             comptime fmt: []const u8,

@@ -52,6 +52,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
                 char: ?K,
             };
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) !?Entry {
                 while (self.stack.items.len > 0) {
                     const frame_idx = self.stack.items.len - 1;
@@ -93,6 +95,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
                 self.current_key.deinit(self.allocator);
@@ -111,6 +115,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
                 yielded_self: bool,
             };
 
+            /// Returns next element with the prefix or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *PrefixIterator) !?Entry {
                 while (self.stack.items.len > 0) {
                     const frame_idx = self.stack.items.len - 1;
@@ -152,6 +158,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *PrefixIterator) void {
                 self.stack.deinit(self.allocator);
                 self.current_key.deinit(self.allocator);
@@ -164,6 +172,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
 
         // -- Lifecycle --
 
+        /// Initializes an empty container.
+        /// Time: O(1) | Space: O(1)
         pub fn init(allocator: std.mem.Allocator) Self {
             return Self{
                 .allocator = allocator,
@@ -171,11 +181,15 @@ pub fn Trie(comptime K: type, comptime V: type) type {
             };
         }
 
+        /// Frees all allocated memory. Invalidates all iterators.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             self.root.deinit(self.allocator);
             self.* = undefined;
         }
 
+        /// Creates a deep copy of the container.
+        /// Time: O(n log n) | Space: O(n)
         pub fn clone(self: *const Self) !Self {
             var new_trie = Self.init(self.allocator);
             try self.cloneNode(&self.root, &new_trie.root);
@@ -202,10 +216,14 @@ pub fn Trie(comptime K: type, comptime V: type) type {
 
         // -- Capacity --
 
+        /// Returns number of elements.
+        /// Time: O(1) | Space: O(1)
         pub fn count(self: *const Self) usize {
             return self.size;
         }
 
+        /// Returns true if empty.
+        /// Time: O(1) | Space: O(1)
         pub fn isEmpty(self: *const Self) bool {
             return self.size == 0;
         }
@@ -306,6 +324,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
             return null;
         }
 
+        /// Checks if a key exists in the container.
+        /// Time: O(m) where m = key.len | Space: O(1)
         pub fn contains(self: *const Self, key: []const K) bool {
             return self.get(key) != null;
         }
@@ -346,6 +366,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
 
         // -- Iteration --
 
+        /// Creates an iterator for the container.
+        /// Time: O(log n) amortized | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
             var stack = std.ArrayList(Iterator.StackFrame){};
             const current_key = std.ArrayList(K){};
@@ -399,6 +421,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
 
         // -- Bulk --
 
+        /// Removes all elements from the container.
+        /// Time: O(n) | Space: O(1)
         pub fn clear(self: *Self) void {
             self.root.deinit(self.allocator);
             self.root = Node.init(self.allocator);
@@ -407,6 +431,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
 
         // -- Debug --
 
+        /// Formats container for debugging output.
+        /// Time: O(n) | Space: O(n)
         pub fn format(
             self: *const Self,
             comptime fmt: []const u8,

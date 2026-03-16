@@ -432,6 +432,8 @@ pub fn RTree(
             leaf_idx: usize,
             allocator: Allocator,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) ?Data {
                 while (self.stack.items.len > 0) {
                     const node = self.stack.items[self.stack.items.len - 1];
@@ -459,6 +461,8 @@ pub fn RTree(
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
             }
@@ -524,6 +528,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
         min: [k]T,
         max: [k]T,
 
+        /// Checks if the bounding box is valid.
+        /// Time: O(1) | Space: O(1)
         pub fn isValid(self: Self) bool {
             for (0..k) |i| {
                 if (self.min[i] > self.max[i]) return false;
@@ -531,6 +537,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
             return true;
         }
 
+        /// Checks if two bounding boxes overlap.
+        /// Time: O(1) | Space: O(1)
         pub fn overlaps(self: Self, other: Self) bool {
             for (0..k) |i| {
                 if (self.max[i] < other.min[i] or self.min[i] > other.max[i]) {
@@ -540,6 +548,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
             return true;
         }
 
+        /// Checks if a point is contained in the region.
+        /// Time: O(k) | Space: O(1)
         pub fn contains(self: Self, other: Self) bool {
             for (0..k) |i| {
                 if (other.min[i] < self.min[i] or other.max[i] > self.max[i]) {
@@ -549,6 +559,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
             return true;
         }
 
+        /// Merges two bounding boxes.
+        /// Time: O(k) | Space: O(1)
         pub fn merge(self: Self, other: Self) Self {
             var result: Self = undefined;
             for (0..k) |i| {
@@ -558,6 +570,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
             return result;
         }
 
+        /// Calculates the area of the bounding box.
+        /// Time: O(k) | Space: O(1)
         pub fn area(self: Self) T {
             var result: T = 1;
             for (0..k) |i| {
@@ -566,6 +580,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
             return result;
         }
 
+        /// Calculates minimum distance to a point.
+        /// Time: O(k) | Space: O(1)
         pub fn minDistanceToPoint(self: Self, point: [k]T) T {
             var dist_sq: T = 0;
             for (0..k) |i| {
@@ -580,6 +596,8 @@ pub fn BoundingBox(comptime T: type, comptime k: comptime_int) type {
             return @sqrt(dist_sq);
         }
 
+        /// Calculates distance from center to a point.
+        /// Time: O(k) | Space: O(1)
         pub fn centerDistanceToPoint(self: Self, point: [k]T) T {
             var center: [k]T = undefined;
             for (0..k) |i| {

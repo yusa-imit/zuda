@@ -25,6 +25,8 @@ pub fn OctTree(comptime T: type, comptime capacity: usize) type {
             y: f64,
             z: f64,
 
+            /// Checks if two objects are equal.
+            /// Time: O(1) | Space: O(1)
             pub fn equals(self: Point3D, other: Point3D) bool {
                 const epsilon = 1e-9;
                 return @abs(self.x - other.x) < epsilon and
@@ -42,18 +44,24 @@ pub fn OctTree(comptime T: type, comptime capacity: usize) type {
             min: Point3D,
             max: Point3D,
 
+            /// Checks if a point is contained in the region.
+            /// Time: O(1) | Space: O(1)
             pub fn contains(self: AABB, point: Point3D) bool {
                 return point.x >= self.min.x and point.x <= self.max.x and
                     point.y >= self.min.y and point.y <= self.max.y and
                     point.z >= self.min.z and point.z <= self.max.z;
             }
 
+            /// Checks if two regions intersect.
+            /// Time: O(1) | Space: O(1)
             pub fn intersects(self: AABB, other: AABB) bool {
                 return self.min.x <= other.max.x and self.max.x >= other.min.x and
                     self.min.y <= other.max.y and self.max.y >= other.min.y and
                     self.min.z <= other.max.z and self.max.z >= other.min.z;
             }
 
+            /// Returns the center point of the region.
+            /// Time: O(1) | Space: O(1)
             pub fn center(self: AABB) Point3D {
                 return .{
                     .x = (self.min.x + self.max.x) / 2.0,
@@ -309,6 +317,8 @@ pub fn OctTree(comptime T: type, comptime capacity: usize) type {
             stack: std.ArrayList(*const Node),
             current_index: usize,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator, allocator: Allocator) ?Entry {
                 while (self.stack.items.len > 0) {
                     const node = self.stack.items[self.stack.items.len - 1];
@@ -333,6 +343,8 @@ pub fn OctTree(comptime T: type, comptime capacity: usize) type {
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator, allocator: Allocator) void {
                 self.stack.deinit(allocator);
             }

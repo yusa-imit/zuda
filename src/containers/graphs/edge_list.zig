@@ -28,6 +28,8 @@ pub fn EdgeList(comptime T: type) type {
             to: usize,
             weight: ?T,
 
+            /// Initializes an empty container.
+            /// Time: O(1) | Space: O(1)
             pub fn init(from: usize, to: usize, weight: ?T) Edge {
                 return .{ .from = from, .to = to, .weight = weight };
             }

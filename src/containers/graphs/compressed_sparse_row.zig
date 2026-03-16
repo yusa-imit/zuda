@@ -386,6 +386,7 @@ pub fn CompressedSparseRow(comptime T: type) type {
 }
 
 /// Edge representation for building CSR from edge list
+/// Time: O(1) | Space: O(1)
 pub fn Edge(comptime T: type) type {
     return struct {
         from: usize,

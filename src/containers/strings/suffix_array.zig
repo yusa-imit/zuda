@@ -258,6 +258,8 @@ pub fn SuffixArray(comptime T: type) type {
             }
         }
 
+        /// Formats container for debugging output.
+        /// Time: O(n) | Space: O(n)
         pub fn format(
             self: *const Self,
             comptime fmt: []const u8,

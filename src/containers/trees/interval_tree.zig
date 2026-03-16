@@ -73,6 +73,8 @@ pub fn IntervalTree(
             index: usize,
             allocator: Allocator,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) ?Entry {
                 if (self.index >= self.results.items.len) return null;
                 const entry = self.results.items[self.index];
@@ -80,6 +82,8 @@ pub fn IntervalTree(
                 return entry;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.results.deinit(self.allocator);
             }
@@ -459,8 +463,12 @@ pub fn IntervalTree(
 // Default Context for Numeric Types
 // ============================================================================
 
+/// Creates a default context for numeric types.
+/// Time: O(1) | Space: O(1)
 pub fn defaultContext(comptime T: type) type {
     return struct {
+        /// Compares two keys.
+        /// Time: O(1) | Space: O(1)
         pub fn compare(_: @This(), a: T, b: T) std.math.Order {
             return std.math.order(a, b);
         }

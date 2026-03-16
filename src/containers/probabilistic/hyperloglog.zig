@@ -60,6 +60,8 @@ pub fn HyperLogLog(
             };
         }
 
+        /// Frees all allocated memory. Invalidates all iterators.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             self.allocator.free(self.registers);
             self.* = undefined;
@@ -150,6 +152,8 @@ pub fn HyperLogLog(
 }
 
 // Default hash function for integers
+/// Default hash function for integers.
+/// Time: O(1) | Space: O(1)
 pub fn defaultHashInt(comptime T: type) fn (void, T) u64 {
     return struct {
         fn hash(_: void, key: T) u64 {
@@ -162,6 +166,8 @@ pub fn defaultHashInt(comptime T: type) fn (void, T) u64 {
 }
 
 // Default hash function for slices
+/// Default hash function for slices.
+/// Time: O(n) | Space: O(1)
 pub fn defaultHashSlice(comptime T: type) fn (void, []const T) u64 {
     return struct {
         fn hash(_: void, key: []const T) u64 {

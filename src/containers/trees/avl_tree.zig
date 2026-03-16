@@ -81,6 +81,8 @@ pub fn AVLTree(
                 return result;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
             }
@@ -93,6 +95,8 @@ pub fn AVLTree(
 
         // -- Lifecycle --
 
+        /// Initializes an empty tree.
+        /// Time: O(1) | Space: O(1)
         pub fn init(allocator: std.mem.Allocator, context: Context) Self {
             return .{
                 .allocator = allocator,
@@ -102,6 +106,8 @@ pub fn AVLTree(
             };
         }
 
+        /// Frees all allocated memory. Invalidates all iterators.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             if (self.root) |root| {
                 self.destroySubtree(root);
@@ -115,6 +121,8 @@ pub fn AVLTree(
             self.allocator.destroy(node);
         }
 
+        /// Creates a deep copy of the tree.
+        /// Time: O(n log n) | Space: O(n)
         pub fn clone(self: *const Self) !Self {
             var new_tree = Self.init(self.allocator, self.context);
             errdefer new_tree.deinit();
@@ -150,10 +158,14 @@ pub fn AVLTree(
 
         // -- Capacity --
 
+        /// Returns number of elements.
+        /// Time: O(1) | Space: O(1)
         pub fn count(self: *const Self) usize {
             return self.size;
         }
 
+        /// Returns true if empty.
+        /// Time: O(1) | Space: O(1)
         pub fn isEmpty(self: *const Self) bool {
             return self.size == 0;
         }
@@ -409,6 +421,8 @@ pub fn AVLTree(
             return null;
         }
 
+        /// Checks if a key exists in the tree.
+        /// Time: O(log n) | Space: O(1)
         pub fn contains(self: *const Self, key: K) bool {
             return self.get(key) != null;
         }
@@ -540,6 +554,8 @@ pub fn AVLTree(
             return node.height;
         }
 
+        /// Formats tree for debugging output.
+        /// Time: O(1) | Space: O(1)
         pub fn format(
             self: *const Self,
             comptime fmt: []const u8,

@@ -509,6 +509,8 @@ pub fn BTree(
             indices: std.ArrayList(usize),
             allocator: std.mem.Allocator,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) ?Entry {
                 while (self.stack.items.len > 0) {
                     const node = self.stack.items[self.stack.items.len - 1];
@@ -556,6 +558,8 @@ pub fn BTree(
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
                 self.indices.deinit(self.allocator);

@@ -136,6 +136,8 @@ pub fn KDTree(
             // Sort points by current dimension
             const Context = struct {
                 dimension: usize,
+                /// Determines if a < b.
+                /// Time: O(1) | Space: O(1)
                 pub fn lessThan(ctx: @This(), a: T, b: T) bool {
                     return getCoord(a, ctx.dimension) < getCoord(b, ctx.dimension);
                 }
@@ -287,6 +289,8 @@ pub fn KDTree(
             allocator: Allocator,
             current: ?*Node,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *Iterator) ?T {
                 while (self.current != null or self.stack.items.len > 0) {
                     if (self.current) |node| {
@@ -303,6 +307,8 @@ pub fn KDTree(
                 return null;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
             }

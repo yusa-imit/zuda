@@ -51,6 +51,8 @@ pub fn AdjacencyMatrix(
             source_idx: usize,
             current_idx: usize,
 
+            /// Returns next element or null when exhausted.
+            /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *NeighborIterator) ?Neighbor {
                 while (self.current_idx < self.matrix.capacity) : (self.current_idx += 1) {
                     if (self.matrix.getEdgeByIndex(self.source_idx, self.current_idx)) |info| {

@@ -99,6 +99,8 @@ pub fn CuckooFilter(
             };
         }
 
+        /// Frees all allocated memory. Invalidates all iterators.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             self.allocator.free(self.buckets);
             self.* = undefined;
@@ -228,6 +230,8 @@ pub fn CuckooFilter(
 }
 
 // Default hash function for integers
+/// Default hash function for integers.
+/// Time: O(1) | Space: O(1)
 pub fn defaultHashInt(comptime T: type) fn (void, T) u64 {
     return struct {
         fn hash(_: void, key: T) u64 {
@@ -240,6 +244,8 @@ pub fn defaultHashInt(comptime T: type) fn (void, T) u64 {
 }
 
 // Default fingerprint function (8-bit)
+/// Default fingerprint function for integers.
+/// Time: O(1) | Space: O(1)
 pub fn defaultFingerprintInt(comptime T: type) fn (void, T) u32 {
     return struct {
         fn fingerprint(_: void, key: T) u32 {
@@ -255,6 +261,8 @@ pub fn defaultFingerprintInt(comptime T: type) fn (void, T) u32 {
 }
 
 // Default hash function for slices
+/// Default hash function for slices.
+/// Time: O(n) | Space: O(1)
 pub fn defaultHashSlice(comptime T: type) fn (void, []const T) u64 {
     return struct {
         fn hash(_: void, key: []const T) u64 {
@@ -269,6 +277,8 @@ pub fn defaultHashSlice(comptime T: type) fn (void, []const T) u64 {
 }
 
 // Default fingerprint for slices
+/// Default fingerprint function for slices.
+/// Time: O(n) | Space: O(1)
 pub fn defaultFingerprintSlice(comptime T: type) fn (void, []const T) u32 {
     return struct {
         fn fingerprint(_: void, key: []const T) u32 {

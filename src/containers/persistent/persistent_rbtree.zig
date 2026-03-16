@@ -95,6 +95,8 @@ pub fn PersistentRBTree(
                 return result;
             }
 
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *Iterator) void {
                 self.stack.deinit(self.allocator);
             }
