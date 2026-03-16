@@ -3,7 +3,7 @@
 ## Current Status
 
 - **Latest release**: v1.5.0 (2026-03-17) — Code Quality & Maintainability
-- **Current phase**: Post-v1.5.0 (next milestone TBD)
+- **Current phase**: v1.6.0 — Performance Benchmarking & Real-World Optimization
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -12,7 +12,32 @@
 
 ## Active Milestones
 
-### v1.4.0 — Performance & Optimization
+### v1.6.0 — Performance Benchmarking & Real-World Optimization
+
+Systematic performance measurement and targeted optimization based on benchmark data:
+
+- [x] **Update Performance Table** ✅ (commit TBD)
+  - Ran all benchmarks except Aho-Corasick (benchmark crash — needs investigation)
+  - Updated FibonacciHeap entries: insert 16ns, decreaseKey 18ns (both ✅)
+  - Dijkstra: 422ms ✅ (-16% under 500ms target)
+  - Fresh measurements: 8/9 targets verified (Aho-Corasick benchmark needs fix)
+- [ ] **RedBlackTree Deep Dive** — Analyze remaining +28%/+72% gap vs targets
+  - Profile with perf/Instruments to identify actual bottleneck
+  - Evaluate if targets are realistic for pointer-based trees (vs array-based)
+  - Document findings: either close gap or recommend target adjustment with justification
+- [ ] **Aho-Corasick Benchmark Fix & Investigation** — Benchmark crashes during automaton build
+  - Fix bench/strings.zig crash (likely ArrayList API or OOM on 1000 patterns)
+  - Re-measure performance once benchmark is stable
+  - Profile real-world text corpus (not synthetic benchmarks)
+  - Evaluate SIMD vectorization feasibility (based on v1.4.0 SIMD_ANALYSIS.md)
+  - If memory-bound: document bottleneck, recommend target adjustment
+  - If CPU-bound: implement SIMD path or algorithmic improvement
+- [ ] **Benchmark Suite Completeness** — Ensure all PRD containers have benchmarks
+  - Add missing benchmarks for containers without performance data
+  - Create comparative benchmarks (zuda vs std vs C++ STL where applicable)
+  - Document methodology in docs/BENCHMARKING.md
+
+### v1.4.0 — Performance & Optimization ✅ COMPLETE
 
 Address performance gaps and optimize critical data structures:
 
@@ -114,16 +139,17 @@ Validate zuda in production through consumer project adoption:
 
 ## Performance Targets
 
-| Metric | Target | Actual | Status |
+| Metric | Target | Actual (v1.5.0) | Status |
 |--------|--------|--------|--------|
 | BTree(128) range scan | ≥ 50M keys/sec | 83M keys/sec | ✅ +66% |
-| RedBlackTree insert | ≤ 200 ns/op | 255 ns | ⚠️ +28% over (improved from 329) |
-| RedBlackTree lookup | ≤ 150 ns/op | 258 ns | ⚠️ +72% over (improved from 593) |
+| RedBlackTree insert | ≤ 200 ns/op | 256 ns/op | ⚠️ +28% over |
+| RedBlackTree lookup | ≤ 150 ns/op | 264 ns/op | ⚠️ +76% over |
 | TimSort overhead | ≤ 10% vs std.sort | **-37% (faster!)** | ✅ EXCEEDS! |
-| Aho-Corasick | ≥ 500 MB/sec | 63 MB/sec | ❌ -87% (improved from 58) |
-| FibonacciHeap decrease-key | ≤ 50 ns amortized | N/A (double-free bug) | ❌ |
-| BloomFilter lookup | ≥ 100M ops/sec | 303M ops/sec | ✅ +203% |
-| Dijkstra (1M nodes) | ≤ 500 ms | TBD | — |
+| Aho-Corasick | ≥ 500 MB/sec | ⚠️ Benchmark crash | ❌ Unable to measure |
+| FibonacciHeap insert | ≤ 100 ns amortized | 16 ns/op | ✅ -84% under target |
+| FibonacciHeap decrease-key | ≤ 50 ns amortized | 18 ns/op | ✅ -64% under target |
+| BloomFilter lookup | ≥ 100M ops/sec | 1.25B ops/sec | ✅ +1150% |
+| Dijkstra (1M nodes) | ≤ 500 ms | 422 ms | ✅ -16% under target |
 
 ---
 
