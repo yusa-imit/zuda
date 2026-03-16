@@ -609,8 +609,16 @@ test "PersistentArray: structural sharing" {
 
 test "PersistentArray: memory leak check" {
     var arr1 = try PersistentArray(i32).fromSlice(testing.allocator, &[_]i32{ 1, 2, 3, 4, 5 });
+    try testing.expectEqual(@as(usize, 5), arr1.count());
+    try testing.expectEqual(@as(i32, 1), try arr1.get(0));
+
     var arr2 = try arr1.push(6);
+    try testing.expectEqual(@as(usize, 6), arr2.count());
+    try testing.expectEqual(@as(i32, 6), try arr2.get(5));
+
     var arr3 = try arr2.set(2, 99);
+    try testing.expectEqual(@as(usize, 6), arr3.count());
+    try testing.expectEqual(@as(i32, 99), try arr3.get(2));
 
     arr1.deinit();
     arr2.deinit();

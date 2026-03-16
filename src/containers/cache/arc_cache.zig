@@ -602,9 +602,19 @@ test "ARCCache: memory leak check" {
     var cache = Cache.init(testing.allocator, 10);
     defer cache.deinit();
 
+    // Fill cache with 100 items (capacity=10, so many will be evicted)
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
         _ = try cache.put(i, i);
     }
+
+    // Verify final state: cache should have evicted most items
+    try testing.expectEqual(@as(usize, 10), cache.count());
+
+    // Verify we can still get items that were in cache
+    if (cache.get(99)) |val| {
+        try testing.expectEqual(@as(u32, 99), val);
+    }
+
     // All allocations should be freed on deinit
 }

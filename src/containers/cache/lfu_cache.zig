@@ -672,8 +672,17 @@ test "LFUCache: memory leak check" {
     var cache = Cache.init(testing.allocator, 10);
     defer cache.deinit();
 
+    // Fill cache with 100 items (capacity=10, so many will be evicted)
     for (0..100) |i| {
         _ = try cache.put(@intCast(i), @intCast(i * 2));
+    }
+
+    // Verify final state: cache should contain exactly 10 items
+    try testing.expectEqual(@as(usize, 10), cache.count());
+
+    // Verify items are still retrievable
+    if (cache.get(99)) |val| {
+        try testing.expectEqual(@as(i32, 99 * 2), val);
     }
 
     try cache.validate();

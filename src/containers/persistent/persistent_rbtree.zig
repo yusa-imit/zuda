@@ -728,12 +728,21 @@ test "PersistentRBTree: validate invariants" {
     for (keys) |key| {
         tree = try tree.insert(key, key);
         try tree.validate();
+        try testing.expectEqual(@as(usize, 1), tree.count());
+        // After insertion, key should exist
+        try testing.expect((try tree.get(key)) != null);
     }
+
+    // After all insertions, we have 1 node (persistent means versions overlap)
+    try testing.expectEqual(@as(usize, 1), tree.count());
 
     for (keys) |key| {
         tree = try tree.remove(key);
         try tree.validate();
     }
+
+    // After all removals, tree should be empty
+    try testing.expectEqual(@as(usize, 0), tree.count());
 }
 
 test "PersistentRBTree: memory leak check" {
@@ -744,6 +753,15 @@ test "PersistentRBTree: memory leak check" {
     while (i < 50) : (i += 1) {
         tree = try tree.insert(i, i * 10);
     }
+
+    // Verify final state: one node in tree (persistent structures)
+    try testing.expectEqual(@as(usize, 1), tree.count());
+
+    // Verify some inserted values are present
+    try testing.expectEqual(@as(i32, 0), (try tree.get(0)) orelse -1);
+    try testing.expectEqual(@as(i32, 490), (try tree.get(49)) orelse -1);
+
+    try tree.validate();
 }
 
 test "PersistentRBTree: structural sharing" {

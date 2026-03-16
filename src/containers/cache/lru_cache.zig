@@ -511,6 +511,17 @@ test "LRUCache: memory leak detection" {
     for (0..100) |i| {
         _ = try cache.put(@intCast(i), @intCast(i));
     }
+
+    // Verify final state: cache should have exactly 10 items
+    try std.testing.expectEqual(@as(usize, 10), cache.count());
+
+    // Verify most recent item is present
+    try std.testing.expect(cache.contains(99));
+
+    // Verify oldest items were evicted (LRU behavior)
+    try std.testing.expect(!cache.contains(0));
+    try std.testing.expect(!cache.contains(10));
+
     try cache.validate();
     // std.testing.allocator will detect leaks automatically
 }

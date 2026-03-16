@@ -344,11 +344,12 @@ test "MinHash: different seeds = different hash functions" {
         mh_b.add(@intCast(i));
     }
 
-    // Same set, different hash functions → similarity likely < 1.0
+    // Same set, different hash functions → similarity should differ
     const sim = mh_a.similarity(&mh_b);
-    // Signatures will differ due to different hash functions
-    // (This is expected behavior — for comparison, use same seed)
-    _ = sim; // Just verify it doesn't crash
+    // With different seeds, signatures will differ, so similarity < 1.0
+    // (For comparison, same seed should give sim ≈ 1.0)
+    try std.testing.expect(sim < 1.0);
+    try std.testing.expect(sim >= 0.0);
 }
 
 test "MinHash: accuracy with varying k" {

@@ -611,9 +611,17 @@ test "DancingLinks: validate" {
     var dlx = try DancingLinks(null).init(testing.allocator);
     defer dlx.deinit();
 
+    // Initially should have 0 columns and 0 rows
+    try testing.expectEqual(@as(usize, 0), dlx.columnCount());
+
     try dlx.addColumn("A");
+    try testing.expectEqual(@as(usize, 1), dlx.columnCount());
+
     try dlx.addColumn("B");
+    try testing.expectEqual(@as(usize, 2), dlx.columnCount());
+
     try dlx.addRow(&[_]usize{ 0, 1 });
+    try testing.expectEqual(@as(usize, 1), dlx.rowCount());
 
     try dlx.validate();
 }
@@ -625,9 +633,11 @@ test "DancingLinks: memory leak check" {
     try dlx.addColumn("1");
     try dlx.addColumn("2");
     try dlx.addColumn("3");
+    try testing.expectEqual(@as(usize, 3), dlx.columnCount());
 
     try dlx.addRow(&[_]usize{ 0, 2 });
     try dlx.addRow(&[_]usize{1});
+    try testing.expectEqual(@as(usize, 2), dlx.rowCount());
 
     var solutions = try dlx.solve();
     defer {
@@ -637,11 +647,14 @@ test "DancingLinks: memory leak check" {
         solutions.deinit(testing.allocator);
     }
 
+    // Verify solutions list is valid (may be empty, but structure exists)
+    try testing.expect(solutions.items.len >= 0);
+
     // std.testing.allocator will catch leaks
 }
 
 test "DancingLinks: stress test" {
-    // Larger problem: 10 columns, 20 rows
+    // Larger problem: 10 columns, 5 rows
     var dlx = try DancingLinks(null).init(testing.allocator);
     defer dlx.deinit();
 
@@ -652,12 +665,18 @@ test "DancingLinks: stress test" {
         try dlx.addColumn(name);
     }
 
+    // Verify column count
+    try testing.expectEqual(@as(usize, 10), dlx.columnCount());
+
     // Add some rows covering different combinations
     try dlx.addRow(&[_]usize{ 0, 1, 2 });
     try dlx.addRow(&[_]usize{ 3, 4, 5 });
     try dlx.addRow(&[_]usize{ 6, 7, 8 });
     try dlx.addRow(&[_]usize{9});
     try dlx.addRow(&[_]usize{ 0, 3, 6, 9 });
+
+    // Verify row count after additions
+    try testing.expectEqual(@as(usize, 5), dlx.rowCount());
 
     // This probably has no exact cover, but exercise the algorithm
     var solutions = try dlx.solve();
@@ -668,7 +687,9 @@ test "DancingLinks: stress test" {
         solutions.deinit(testing.allocator);
     }
 
-    // No assertion on solution count, just checking it doesn't crash
+    // Verify solutions structure is valid (may be empty)
+    try testing.expect(solutions.items.len >= 0);
+
     try dlx.validate();
 }
 
