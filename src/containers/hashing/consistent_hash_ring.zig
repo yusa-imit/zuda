@@ -427,11 +427,23 @@ test "ConsistentHashRing: validate sorted ring" {
     var ring = try ConsistentHashRing(u32, []const u8, void, testKeyHash, testNodeEql).init(testing.allocator, {}, 5);
     defer ring.deinit();
 
-    try ring.addNode("node1");
-    try ring.addNode("node2");
-    try ring.addNode("node3");
-
     try ring.validate();
+    try testing.expectEqual(@as(usize, 0), ring.count());
+
+    try ring.addNode("node1");
+    try ring.validate();
+    try testing.expectEqual(@as(usize, 1), ring.count());
+    try testing.expectEqual(@as(usize, 5), ring.virtual_nodes.items.len);
+
+    try ring.addNode("node2");
+    try ring.validate();
+    try testing.expectEqual(@as(usize, 2), ring.count());
+    try testing.expectEqual(@as(usize, 10), ring.virtual_nodes.items.len);
+
+    try ring.addNode("node3");
+    try ring.validate();
+    try testing.expectEqual(@as(usize, 3), ring.count());
+    try testing.expectEqual(@as(usize, 15), ring.virtual_nodes.items.len);
 }
 
 test "ConsistentHashRing: high replica count" {
@@ -486,6 +498,14 @@ test "ConsistentHashRing: memory leak check" {
 
     try ring.addNode("node1");
     try ring.addNode("node2");
+    try testing.expectEqual(@as(usize, 2), ring.count());
+    try testing.expectEqual(@as(usize, 20), ring.virtual_nodes.items.len);
+
+    // Verify both nodes are accessible
+    const node1 = ring.getNode(1) orelse unreachable;
+    const node2 = ring.getNode(2) orelse unreachable;
+    try testing.expect(std.mem.eql(u8, node1, "node1") or std.mem.eql(u8, node1, "node2"));
+    try testing.expect(std.mem.eql(u8, node2, "node1") or std.mem.eql(u8, node2, "node2"));
 
     // std.testing.allocator will detect leaks automatically
 }

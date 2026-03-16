@@ -571,12 +571,19 @@ test "RobinHoodHashMap: memory leak test" {
         const key = @as(u32, @intCast(i));
         _ = try map.insert(key, key);
     }
+    try testing.expectEqual(@as(usize, 100), map.count());
 
     for (0..50) |i| {
         const key = @as(u32, @intCast(i));
         _ = map.remove(key);
     }
+    try testing.expectEqual(@as(usize, 50), map.count());
 
+    // Verify remaining keys are correct
+    for (50..100) |i| {
+        const key = @as(u32, @intCast(i));
+        try testing.expectEqual(@as(?u32, key), map.get(key));
+    }
     // Allocator will detect leaks on deinit
 }
 
@@ -585,15 +592,23 @@ test "RobinHoodHashMap: validate invariants" {
     defer map.deinit();
 
     try map.validate();
+    try testing.expectEqual(@as(usize, 0), map.count());
 
     _ = try map.insert(1, 100);
     try map.validate();
+    try testing.expectEqual(@as(usize, 1), map.count());
+    try testing.expectEqual(@as(?u32, 100), map.get(1));
 
     _ = try map.insert(2, 200);
     try map.validate();
+    try testing.expectEqual(@as(usize, 2), map.count());
+    try testing.expectEqual(@as(?u32, 200), map.get(2));
 
     _ = map.remove(1);
     try map.validate();
+    try testing.expectEqual(@as(usize, 1), map.count());
+    try testing.expectEqual(@as(?u32, null), map.get(1));
+    try testing.expectEqual(@as(?u32, 200), map.get(2));
 }
 
 test "RobinHoodHashMap: empty operations" {

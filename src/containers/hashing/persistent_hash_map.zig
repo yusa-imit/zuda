@@ -702,10 +702,24 @@ test "PersistentHashMap: stress test" {
 test "PersistentHashMap: validate detects errors" {
     const Map = PersistentHashMap(u32, u32, AutoContext, AutoContext.hash, AutoContext.eql);
 
-    const m = Map.init(testing.allocator, .{});
-    defer m.deinit();
+    const m0 = Map.init(testing.allocator, .{});
+    defer m0.deinit();
 
-    try m.validate(); // Empty map is valid
+    try m0.validate();
+    try testing.expectEqual(@as(usize, 0), m0.count());
+
+    const m1 = try m0.set(1, 100);
+    defer m1.deinit();
+    try m1.validate();
+    try testing.expectEqual(@as(usize, 1), m1.count());
+    try testing.expectEqual(@as(?u32, 100), m1.get(1));
+
+    const m2 = try m1.set(2, 200);
+    defer m2.deinit();
+    try m2.validate();
+    try testing.expectEqual(@as(usize, 2), m2.count());
+    try testing.expectEqual(@as(?u32, 100), m2.get(1));
+    try testing.expectEqual(@as(?u32, 200), m2.get(2));
 }
 
 test "PersistentHashMap: structural sharing" {
@@ -764,11 +778,18 @@ test "PersistentHashMap: memory leak check" {
     const Map = PersistentHashMap(u32, u32, AutoContext, AutoContext.hash, AutoContext.eql);
 
     var m = Map.init(testing.allocator, .{});
+    try testing.expectEqual(@as(usize, 0), m.count());
 
     for (0..20) |i| {
         const new_m = try m.set(@intCast(i), @intCast(i));
         m.deinit();
         m = new_m;
+        try testing.expectEqual(@as(usize, i + 1), m.count());
+    }
+
+    // Verify all keys are accessible in final version
+    for (0..20) |i| {
+        try testing.expectEqual(@as(?u32, @intCast(i)), m.get(@intCast(i)));
     }
 
     m.deinit();

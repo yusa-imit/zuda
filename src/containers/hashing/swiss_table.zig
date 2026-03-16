@@ -570,6 +570,12 @@ test "SwissTable: memory leak check" {
     for (0..100) |i| {
         _ = try table.insert(@intCast(i), @intCast(i));
     }
+    try testing.expectEqual(@as(usize, 100), table.count());
+
+    // Verify all keys are accessible
+    for (0..100) |i| {
+        try testing.expectEqual(@as(?u32, @intCast(i)), table.get(@intCast(i)));
+    }
 
     // std.testing.allocator will detect leaks automatically
 }
