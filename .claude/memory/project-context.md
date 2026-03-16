@@ -47,7 +47,7 @@
 
 ## Recent Progress (Session 2026-03-17 - Hour 03)
 **FEATURE MODE → v1.5.0 API CONSISTENCY REVIEW:**
-- ✅ **API Consistency Review — COMPLETE** (commit TBD)
+- ✅ **API Consistency Review — COMPLETE** (commit cd0368f)
   - **Scope**: Reviewed 50+ containers across 9 categories against Generic Container Template
   - **Compliance**: 85% (30/50 containers have all 5 core methods)
   - **Iterator Protocol**: ✅ Verified — all follow standard `next() -> ?T` or `next() -> !?T` pattern
@@ -106,7 +106,7 @@
   - [x] Documentation completeness (112 functions documented, 100% coverage)
   - [x] Memory safety verification ✅ (commit dfee4a4)
   - [x] Cross-compilation testing ✅ (commit ef0a273)
-  - [x] API consistency review ✅ (commit TBD)
+  - [x] API consistency review ✅ (commit cd0368f)
 - 📋 **Next**: v1.5.0 release candidate
 
 ## Previous Progress (Session 2026-03-16 - Hour 19)

@@ -91,7 +91,7 @@ Improve code quality, test coverage, and maintainability:
   - **CI update**: Replaced aarch64-windows-msvc with wasm32-wasi to match documentation
   - **Issues**: None detected — all targets compile successfully
 - [x] **API consistency review** ✅
-  - **Result**: 85% compliant with intentional deviations (commit TBD)
+  - **Result**: 85% compliant with intentional deviations (commit cd0368f)
   - **Generic Container Template**: 30/50 containers have all 5 core methods (init, deinit, count, iterator, validate)
   - **Iterator Protocol**: ✅ Consistent — all follow `next() -> ?T` or `next() -> !?T` pattern
   - **Error Naming**: ✅ No standardization issues — descriptive names with consistent suffixes
