@@ -522,10 +522,23 @@ test "KDTree: validate" {
     var tree = KDTree(Point2D, 2, f64, Point2D.getCoord).init(testing.allocator);
     defer tree.deinit();
 
-    try tree.insert(.{ .x = 1.0, .y = 2.0 });
-    try tree.insert(.{ .x = 3.0, .y = 4.0 });
+    try testing.expectEqual(@as(usize, 0), tree.count());
+    try testing.expect(tree.isEmpty());
 
+    try tree.insert(.{ .x = 1.0, .y = 2.0 });
+    try testing.expectEqual(@as(usize, 1), tree.count());
+    try testing.expect(!tree.isEmpty());
     try tree.validate();
+
+    try tree.insert(.{ .x = 3.0, .y = 4.0 });
+    try testing.expectEqual(@as(usize, 2), tree.count());
+    try tree.validate();
+
+    // Verify nearest neighbor returns correct point after inserts
+    const nearest = tree.nearestNeighbor(.{ .x = 1.5, .y = 2.5 });
+    try testing.expect(nearest != null);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), nearest.?.x, 0.001);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), nearest.?.y, 0.001);
 }
 
 test "KDTree: memory leak check" {
