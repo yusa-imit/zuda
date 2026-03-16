@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.3.0 (2026-03-15) — Iterator System & Completeness
-- **Current phase**: Performance & Optimization (v1.4.0)
+- **Latest release**: v1.4.0 (2026-03-16) — Performance & Optimization
+- **Current phase**: Post-v1.4.0 (next milestone TBD)
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -50,9 +50,13 @@ Address performance gaps and optimize critical data structures:
   - **Results**: RedBlackTree (481KB peak, 770k allocs), SkipList (2.7MB, 1M allocs), FibonacciHeap (747KB, 1M allocs), BTree (489KB, 17k allocs)
   - **Analysis**: BTree most memory-efficient (17k vs 770k-1M allocs), SkipList has 5.6x overhead
   - **Status**: Memory tracking framework complete, no leaks detected (1KB residual is benchmark overhead)
-- [ ] SIMD opportunities exploration
-  - Vectorize hot loops in sorting/searching where beneficial
-  - Document SIMD vs scalar tradeoffs
+- [x] **SIMD opportunities exploration** ✅
+  - **Document**: 425-line analysis in docs/SIMD_ANALYSIS.md (commit c1296ee)
+  - **Coverage**: 6 hot-loop algorithms (TimSort, Aho-Corasick, BloomFilter, RadixSort, KMP/Boyer-Moore, sorting primitives)
+  - **Key Finding**: Most zuda algorithms are memory-bound, not compute-bound
+  - **Platform support**: SSE2/AVX2/AVX-512/NEON/RISC-V/WASM analysis
+  - **Best candidates**: Sorting networks, RadixSort (AVX-512), string matching (16-byte chunks)
+  - **Recommendation**: Defer SIMD implementation to v1.5.0+ (benchmark-driven, user demand)
 
 ### v1.2.0 — Consumer Migrations
 

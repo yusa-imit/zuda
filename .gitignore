@@ -6,6 +6,7 @@ zig-out
 *.a
 *.so
 *.dylib
+test_*
 
 # Claude Code
 .claude/settings.local.json
