@@ -45,7 +45,20 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 11)
+## Recent Progress (Session 2026-03-16 - Hour 13)
+**FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
+- ✅ **Heap Container Test Quality Improvement** (commit 1b8ec8c)
+  - **Scanned**: 4 heap containers (FibonacciHeap, BinomialHeap, PairingHeap, DaryHeap)
+  - **Found**: 7 tests with no assertions (same anti-pattern as hash containers)
+  - **Pattern**: Memory leak tests + validate invariants tests had no assertions
+  - **Fixed**: Added explicit assertions to all 7 tests:
+    - Memory leak: count checks + value verification for extracted elements
+    - Validate invariants: count + peekMin() assertions after each operation
+  - **Impact**: Tests now verify actual behavior instead of just checking "doesn't crash"
+- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~20% complete — 2/10 categories done)
+- 📋 **Next**: Continue with remaining categories (lists, queues, trees, spatial, probabilistic, etc.)
+
+## Previous Progress (Session 2026-03-16 - Hour 11)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
 - ✅ **Hash Container Test Quality Improvement** (commit d7267eb)
   - **Scanned**: 5 hash containers (CuckooHashMap, RobinHoodHashMap, SwissTable, ConsistentHashRing, PersistentHashMap)
@@ -57,8 +70,6 @@
     - Validate: count + get() assertions after each operation
   - **Impact**: Tests now fail when behavior is wrong, not just when code panics
   - **Documented**: Added "Test Quality Anti-Patterns" section to patterns.md
-- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~10% complete)
-- 📋 **Next**: Continue with other container categories (lists, queues, trees, heaps)
 
 ## Previous Progress (Session 2026-03-16 - Hour 09)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT START:**
