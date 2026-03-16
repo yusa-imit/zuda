@@ -123,7 +123,7 @@ pub fn DaryHeap(
                 return min;
             }
 
-            self.items.items[0] = self.items.pop();
+            self.items.items[0] = self.items.pop() orelse unreachable;
             self.siftDown(0);
 
             return min;

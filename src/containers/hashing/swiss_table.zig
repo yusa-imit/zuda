@@ -314,7 +314,7 @@ pub fn SwissTable(
         }
 
         /// Time: O(n) | Space: O(n)
-        fn grow(self: *Self, new_capacity: usize) !void {
+        fn grow(self: *Self, new_capacity: usize) (std.mem.Allocator.Error || error{TableFull})!void {
             var new_table = try initCapacity(self.allocator, self.ctx, new_capacity);
             errdefer new_table.deinit();
 

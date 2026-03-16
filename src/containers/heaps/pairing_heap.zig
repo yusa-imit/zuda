@@ -242,9 +242,9 @@ pub fn PairingHeap(comptime T: type, comptime Context: type, comptime lessThan: 
             }
 
             // Second pass: meld pairs right-to-left
-            var result = pairs.pop();
+            var result = pairs.pop() orelse null;
             while (pairs.items.len > 0) {
-                const pair = pairs.pop();
+                const pair = pairs.pop() orelse continue;
                 result = self.meld(result, pair);
             }
 

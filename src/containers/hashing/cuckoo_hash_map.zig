@@ -180,7 +180,7 @@ pub fn CuckooHashMap(
             return try self.insertInternal(key, value);
         }
 
-        fn insertInternal(self: *Self, key: K, value: V) !?V {
+        fn insertInternal(self: *Self, key: K, value: V) std.mem.Allocator.Error!?V {
             const idx1 = hashToIndex(self.getHash1(key), self.table1.len);
             const idx2 = hashToIndex(self.getHash2(key), self.table2.len);
 
