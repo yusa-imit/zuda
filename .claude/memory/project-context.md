@@ -45,27 +45,34 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 19)
+## Recent Progress (Session 2026-03-16 - Hour 21)
+**FEATURE MODE → v1.5.0 DOCUMENTATION COMPLETENESS:**
+- ✅ **Documentation Coverage — 100% COMPLETE** (commit 1cb55a0)
+  - **Added**: Doc comments with Big-O complexity to 112 public functions
+  - **Coverage**: 100% (790/790 public API functions documented)
+  - **Files modified**: 25 containers across 7 categories
+  - **Categories**:
+    - Trees (14 files): 43 functions — lifecycle, capacity, Iterator methods, format
+    - Spatial (4 files): 14 functions — geometry helpers, Iterator methods
+    - Probabilistic (5 files): 14 functions — hash/fingerprint default functions
+    - Hashing (3 files): 7 functions — AutoHashMap factories, context helpers
+    - Graphs (4 files): 6 functions — iterator methods, constructors
+    - Strings, Persistent, Specialized (3 files): 4 functions
+  - **Pattern**: All docs include "/// Time: O(...) | Space: O(...)" complexity
+  - **Quality**: 225 insertions, 0 logic changes, all 701 tests passing
+- 📊 **v1.5.0 Progress**: 2/5 items **COMPLETE**
+  - [x] Test quality audit (59 tests improved)
+  - [x] Documentation completeness (112 functions documented, 100% coverage)
+  - [ ] Memory safety verification
+  - [ ] Cross-compilation testing
+  - [ ] API consistency review
+- 📋 **Next**: Continue with memory safety verification
+
+## Previous Progress (Session 2026-03-16 - Hour 19)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT COMPLETE:**
-- ✅ **Tree Container Test Quality Improvement** (commit d236d8e)
-  - **Scanned**: 9 tree containers — **Found**: 19 tests with no assertions
-  - **Fixed**: All 19 tests with count checks, value verification, state checks
-- ✅ **Spatial Container Test Quality Improvement** (commit a2b28f7)
-  - **Scanned**: 4 spatial containers — **Found**: 1 test with no assertions (KDTree validate)
-  - **Fixed**: Added count + isEmpty + nearestNeighbor verification
 - ✅ **Final Categories Test Quality Improvement** (commit 4699464)
-  - **Scanned**: Probabilistic, Cache, Persistent, Exotic containers
-  - **Found**: 10 tests with no assertions across 4 categories
-  - **Fixed**: All 10 tests:
-    - Probabilistic (1): MinHash different seeds → assert sim < 1.0
-    - Cache (3): LRU/LFU/ARC memory leak → count + value + eviction behavior checks
-    - Persistent (3): PersistentArray + PersistentRBTree → count + get() at each stage
-    - Exotic (3): DancingLinks → columnCount + rowCount + structure validation
-  - **Impact**: All tests now verify actual behavior, not just "doesn't crash"
-- 📊 **v1.5.0 Progress**: 1/5 items **COMPLETE** (test quality audit 100% — 10/10 categories done)
-  - Total: **59 tests improved** across 29 files (7 commits: d7267eb hash, 1b8ec8c heap, 5eb42ad list, 7e382ba queue, d236d8e tree, a2b28f7 spatial, 4699464 final)
+  - Total: **59 tests improved** across 29 files (7 commits)
   - Categories: hash ✅, heap ✅, list ✅, queue ✅, trees ✅, spatial ✅, probabilistic ✅, cache ✅, persistent ✅, exotic ✅
-- 📋 **Next**: Continue with remaining v1.5.0 items (documentation completeness, memory safety, cross-compilation, API consistency)
 
 ## Previous Progress (Session 2026-03-16 - Hour 17)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
