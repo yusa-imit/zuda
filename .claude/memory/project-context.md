@@ -45,7 +45,19 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 07)
+## Recent Progress (Session 2026-03-16 - Hour 09)
+**FEATURE MODE → v1.5.0 TEST QUALITY AUDIT START:**
+- ✅ **v1.5.0 Milestone Established** (commit 6f46d68)
+  - 5 focus areas: test quality audit, documentation completeness, memory safety, cross-compilation, API consistency
+- ✅ **Test Quality Audit: Sorting Algorithms** (commit bc8b34c)
+  - **Found**: 5 empty array tests with NO assertions (TimSort, IntroSort, CountingSort, RadixSort LSD/MSD)
+  - **Fixed**: Added `expectEqual(0, items.len)` assertion to each test
+  - **Impact**: Tests now actually verify behavior instead of just checking "doesn't crash"
+  - **Pattern**: Tests that call a function but don't check output are meaningless
+- 📊 **v1.5.0 Progress**: 1/5 items started (test quality audit in progress)
+- 📋 **Next**: Continue scanning containers for weak tests, add failure scenarios
+
+## Previous Progress (Session 2026-03-16 - Hour 07)
 **FEATURE MODE → v1.4.0 RELEASE COMPLETE:**
 - ✅ **SIMD Opportunities Exploration** (commit c1296ee)
   - **Document**: 425-line analysis in `docs/SIMD_ANALYSIS.md`
