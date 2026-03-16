@@ -358,21 +358,29 @@ test "XorLinkedList: validate" {
     var list = XorLinkedList(i32).init(allocator);
     defer list.deinit();
 
+    try std.testing.expectEqual(0, list.len);
     try list.validate();
 
     try list.pushBack(1);
     try list.pushBack(2);
     try list.pushBack(3);
+    try std.testing.expectEqual(3, list.len);
 
     try list.validate();
 
-    _ = list.popFront();
+    const first = list.popFront();
+    try std.testing.expectEqual(1, first);
+    try std.testing.expectEqual(2, list.len);
     try list.validate();
 
-    _ = list.popBack();
+    const last = list.popBack();
+    try std.testing.expectEqual(3, last);
+    try std.testing.expectEqual(1, list.len);
     try list.validate();
 
-    _ = list.popFront();
+    const only = list.popFront();
+    try std.testing.expectEqual(2, only);
+    try std.testing.expectEqual(0, list.len);
     try list.validate();
 }
 
@@ -419,6 +427,16 @@ test "XorLinkedList: memory leak detection" {
     try list.pushBack(3);
     try list.pushBack(4);
     try list.pushBack(5);
+    try std.testing.expectEqual(5, list.len);
+
+    // Verify all values are present
+    var iter = list.iterator();
+    var expected: i32 = 1;
+    while (iter.next()) |value| {
+        try std.testing.expectEqual(expected, value);
+        expected += 1;
+    }
+    try std.testing.expectEqual(6, expected);
 
     // deinit will be called by defer, which should free all nodes
 }

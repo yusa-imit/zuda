@@ -660,9 +660,32 @@ test "ConcurrentSkipList: memory leak check" {
         _ = try list.insert(i, i);
     }
 
+    // Verify all elements are present
+    i = 0;
+    while (i < 50) : (i += 1) {
+        const value = list.get(i);
+        try testing.expect(value != null);
+        try testing.expectEqual(i, value.?);
+    }
+
     i = 0;
     while (i < 50) : (i += 2) {
         _ = list.remove(i);
+    }
+
+    // Verify remaining elements are the odd numbers
+    i = 1;
+    while (i < 50) : (i += 2) {
+        const value = list.get(i);
+        try testing.expect(value != null);
+        try testing.expectEqual(i, value.?);
+    }
+
+    // Verify even numbers are removed
+    i = 0;
+    while (i < 50) : (i += 2) {
+        const value = list.get(i);
+        try testing.expectEqual(@as(?i32, null), value);
     }
 }
 

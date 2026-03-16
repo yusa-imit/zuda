@@ -664,6 +664,7 @@ test "skip list: validate" {
     for (0..100) |i| {
         _ = try list.insert(@intCast(i), @intCast(i * 10));
     }
+    try testing.expectEqual(100, list.count());
 
     try list.validate();
 
@@ -671,8 +672,16 @@ test "skip list: validate" {
     for (0..50) |i| {
         _ = list.remove(@intCast(i));
     }
+    try testing.expectEqual(50, list.count());
 
     try list.validate();
+
+    // Verify remaining elements are 50-99
+    for (50..100) |i| {
+        const value = list.get(@intCast(i));
+        try testing.expect(value != null);
+        try testing.expectEqual(@as(i32, @intCast(i * 10)), value.?);
+    }
 }
 
 test "skip list: stress test with random operations" {

@@ -733,10 +733,16 @@ test "UnrolledLinkedList: memory leak check" {
     while (i < 50) : (i += 1) {
         try list.append(i);
     }
+    try testing.expectEqual(@as(usize, 50), list.count());
 
+    var expected: i32 = 0;
     while (!list.isEmpty()) {
-        _ = try list.popFirst();
+        const value = try list.popFirst();
+        try testing.expectEqual(expected, value);
+        expected += 1;
     }
+    try testing.expectEqual(50, expected);
+    try testing.expectEqual(@as(usize, 0), list.count());
 
     try list.validate();
 }
