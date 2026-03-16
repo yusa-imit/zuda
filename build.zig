@@ -280,6 +280,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const bench_rbtree_micro = b.addExecutable(.{
+        .name = "bench_rbtree_micro",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/rbtree_micro.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
     // Install benchmark executables
     b.installArtifact(bench_trees);
     b.installArtifact(bench_heaps);
@@ -289,6 +301,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_sorting);
     b.installArtifact(bench_strings);
     b.installArtifact(bench_memory);
+    b.installArtifact(bench_rbtree_micro);
 
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench_trees = b.addRunArtifact(bench_trees);
