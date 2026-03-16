@@ -45,7 +45,24 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 15)
+## Recent Progress (Session 2026-03-16 - Hour 17)
+**FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
+- ✅ **Queue Container Test Quality Improvement** (commit 7e382ba)
+  - **Scanned**: 4 queue containers (Deque, LockFreeQueue, LockFreeStack, WorkStealingDeque)
+  - **Found**: 6 tests with no assertions (same pattern as hash/heap/list containers)
+  - **Pattern**: Memory leak + validate invariants tests rely on implicit validation only
+  - **Fixed**: Added explicit assertions to all 6 tests:
+    - Deque memory leak: count + FIFO order verification (0-99 sequence)
+    - LockFreeQueue validate: isEmpty + peek + count checks after each op
+    - LockFreeQueue memory leak: peek + dequeue value verification
+    - LockFreeStack memory leak: LIFO order + pop count verification
+    - WorkStealingDeque memory leak: pop count tracking per round
+    - WorkStealingDeque validate: isEmpty + value + resize cycle checks
+  - **Impact**: Tests now verify actual behavior instead of just checking "doesn't crash"
+- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~40% complete — 4/10 categories done)
+- 📋 **Next**: Continue with remaining categories (trees, spatial, probabilistic, cache, persistent, exotic)
+
+## Previous Progress (Session 2026-03-16 - Hour 15)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
 - ✅ **List Container Test Quality Improvement** (commit 5eb42ad)
   - **Scanned**: 4 list containers (ConcurrentSkipList, SkipList, UnrolledLinkedList, XorLinkedList)
@@ -58,8 +75,6 @@
     - XorLinkedList validate: count at each step (0→3→2→1→0) + value verification
     - XorLinkedList memory leak: count + iterator value verification (1-5 sequence)
   - **Impact**: Tests now fail when behavior is wrong, not just when code panics
-- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~30% complete — 3/10 categories done)
-- 📋 **Next**: Continue with remaining categories (queues, trees, spatial, probabilistic, cache, persistent, exotic)
 
 ## Previous Progress (Session 2026-03-16 - Hour 13)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
