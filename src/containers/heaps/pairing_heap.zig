@@ -312,32 +312,32 @@ test "PairingHeap: basic operations" {
     defer heap.deinit();
 
     try testing.expect(heap.isEmpty());
-    try testing.expectEqual(@as(usize, 0), heap.count());
-    try testing.expectEqual(@as(?i32, null), heap.findMin());
+    try std.testing.expectEqual(@as(usize, 0), heap.count());
+    try std.testing.expectEqual(@as(?i32, null), heap.findMin());
 
     _ = try heap.insert(5);
     try testing.expect(!heap.isEmpty());
-    try testing.expectEqual(@as(usize, 1), heap.count());
-    try testing.expectEqual(@as(?i32, 5), heap.findMin());
+    try std.testing.expectEqual(@as(usize, 1), heap.count());
+    try std.testing.expectEqual(@as(?i32, 5), heap.findMin());
     try heap.validate();
 
     _ = try heap.insert(3);
-    try testing.expectEqual(@as(?i32, 3), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.findMin());
     try heap.validate();
 
     _ = try heap.insert(7);
-    try testing.expectEqual(@as(?i32, 3), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.findMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 3), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.findMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 7), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.findMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 7), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -349,23 +349,23 @@ test "PairingHeap: decreaseKey" {
     const n2 = try heap.insert(20);
     const n3 = try heap.insert(30);
 
-    try testing.expectEqual(@as(?i32, 10), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 10), heap.findMin());
 
     heap.decreaseKey(n3, 5);
-    try testing.expectEqual(@as(?i32, 5), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.findMin());
     try heap.validate();
 
     heap.decreaseKey(n2, 3);
-    try testing.expectEqual(@as(?i32, 3), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.findMin());
     try heap.validate();
 
     heap.decreaseKey(n1, 1);
-    try testing.expectEqual(@as(?i32, 1), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 1), heap.findMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 1), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 3), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 1), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -385,16 +385,16 @@ test "PairingHeap: merge" {
     _ = try heap2.insert(6);
 
     heap1.merge(&heap2);
-    try testing.expectEqual(@as(usize, 6), heap1.count());
-    try testing.expectEqual(@as(usize, 0), heap2.count());
+    try std.testing.expectEqual(@as(usize, 6), heap1.count());
+    try std.testing.expectEqual(@as(usize, 0), heap2.count());
     try heap1.validate();
 
-    try testing.expectEqual(@as(?i32, 1), heap1.extractMin());
-    try testing.expectEqual(@as(?i32, 2), heap1.extractMin());
-    try testing.expectEqual(@as(?i32, 3), heap1.extractMin());
-    try testing.expectEqual(@as(?i32, 4), heap1.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap1.extractMin());
-    try testing.expectEqual(@as(?i32, 6), heap1.extractMin());
+    try std.testing.expectEqual(@as(?i32, 1), heap1.extractMin());
+    try std.testing.expectEqual(@as(?i32, 2), heap1.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap1.extractMin());
+    try std.testing.expectEqual(@as(?i32, 4), heap1.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap1.extractMin());
+    try std.testing.expectEqual(@as(?i32, 6), heap1.extractMin());
     try testing.expect(heap1.isEmpty());
 }
 
@@ -408,12 +408,12 @@ test "PairingHeap: sorted insertion" {
         _ = try heap.insert(i);
     }
 
-    try testing.expectEqual(@as(usize, n), heap.count());
+    try std.testing.expectEqual(@as(usize, n), heap.count());
     try heap.validate();
 
     i = 0;
     while (i < n) : (i += 1) {
-        try testing.expectEqual(@as(?i32, i), heap.extractMin());
+        try std.testing.expectEqual(@as(?i32, i), heap.extractMin());
     }
     try testing.expect(heap.isEmpty());
 }
@@ -428,12 +428,12 @@ test "PairingHeap: reverse sorted insertion" {
         _ = try heap.insert(i);
     }
 
-    try testing.expectEqual(@as(usize, n), heap.count());
+    try std.testing.expectEqual(@as(usize, n), heap.count());
     try heap.validate();
 
     i = 0;
     while (i < n) : (i += 1) {
-        try testing.expectEqual(@as(?i32, i), heap.extractMin());
+        try std.testing.expectEqual(@as(?i32, i), heap.extractMin());
     }
     try testing.expect(heap.isEmpty());
 }
@@ -452,7 +452,7 @@ test "PairingHeap: random insertion" {
         _ = try heap.insert(val);
     }
 
-    try testing.expectEqual(@as(usize, n), heap.count());
+    try std.testing.expectEqual(@as(usize, n), heap.count());
     try heap.validate();
 
     var prev: i32 = -1;
@@ -474,18 +474,18 @@ test "PairingHeap: clone" {
     var cloned = try heap.clone();
     defer cloned.deinit();
 
-    try testing.expectEqual(heap.count(), cloned.count());
-    try testing.expectEqual(heap.findMin(), cloned.findMin());
+    try std.testing.expectEqual(heap.count(), cloned.count());
+    try std.testing.expectEqual(heap.findMin(), cloned.findMin());
     try cloned.validate();
 
-    try testing.expectEqual(@as(?i32, 3), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 3), cloned.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), cloned.extractMin());
 
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), cloned.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), cloned.extractMin());
 
-    try testing.expectEqual(@as(?i32, 7), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 7), cloned.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), cloned.extractMin());
 }
 
 test "PairingHeap: stress test with decreaseKey" {
@@ -529,8 +529,8 @@ test "PairingHeap: empty operations" {
     var heap = PairingHeap(i32, void, testLessThan).init(testing.allocator, {});
     defer heap.deinit();
 
-    try testing.expectEqual(@as(?i32, null), heap.extractMin());
-    try testing.expectEqual(@as(?i32, null), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, null), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, null), heap.findMin());
     try heap.validate();
 }
 
@@ -539,10 +539,10 @@ test "PairingHeap: single element" {
     defer heap.deinit();
 
     _ = try heap.insert(42);
-    try testing.expectEqual(@as(?i32, 42), heap.findMin());
+    try std.testing.expectEqual(@as(?i32, 42), heap.findMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 42), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 42), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -554,12 +554,12 @@ test "PairingHeap: duplicates" {
     _ = try heap.insert(5);
     _ = try heap.insert(5);
 
-    try testing.expectEqual(@as(usize, 3), heap.count());
+    try std.testing.expectEqual(@as(usize, 3), heap.count());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -586,8 +586,8 @@ test "PairingHeap: merge with empty" {
     _ = try heap1.insert(3);
 
     heap1.merge(&heap2);
-    try testing.expectEqual(@as(usize, 2), heap1.count());
-    try testing.expectEqual(@as(?i32, 3), heap1.findMin());
+    try std.testing.expectEqual(@as(usize, 2), heap1.count());
+    try std.testing.expectEqual(@as(?i32, 3), heap1.findMin());
 }
 
 test "PairingHeap: memory leak detection" {
@@ -598,10 +598,15 @@ test "PairingHeap: memory leak detection" {
     while (i < 100) : (i += 1) {
         _ = try heap.insert(@intCast(i));
     }
+    try std.testing.expectEqual(@as(usize, 100), heap.count());
 
+    var expected: i32 = 0;
     while (!heap.isEmpty()) {
-        _ = heap.extractMin();
+        const min = heap.extractMin();
+        try std.testing.expectEqual(@as(?i32, expected), min);
+        expected += 1;
     }
+    try std.testing.expectEqual(@as(usize, 0), heap.count());
 }
 
 test "PairingHeap: power of two insertion" {
@@ -613,11 +618,11 @@ test "PairingHeap: power of two insertion" {
         _ = try heap.insert(@intCast(i));
     }
 
-    try testing.expectEqual(@as(usize, 16), heap.count());
+    try std.testing.expectEqual(@as(usize, 16), heap.count());
     try heap.validate();
 
     i = 0;
     while (i < 16) : (i += 1) {
-        try testing.expectEqual(@as(?i32, @intCast(i)), heap.extractMin());
+        try std.testing.expectEqual(@as(?i32, @intCast(i)), heap.extractMin());
     }
 }

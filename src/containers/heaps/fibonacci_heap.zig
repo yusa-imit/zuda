@@ -648,8 +648,15 @@ test "FibonacciHeap: memory leak detection" {
     _ = try heap.insert(1);
     _ = try heap.insert(2);
     _ = try heap.insert(3);
-    _ = heap.extractMin();
-    _ = heap.extractMin();
+    try std.testing.expectEqual(@as(usize, 3), heap.count());
+
+    const min1 = heap.extractMin();
+    try std.testing.expectEqual(@as(?i32, 1), min1);
+    try std.testing.expectEqual(@as(usize, 2), heap.count());
+
+    const min2 = heap.extractMin();
+    try std.testing.expectEqual(@as(?i32, 2), min2);
+    try std.testing.expectEqual(@as(usize, 1), heap.count());
 }
 
 test "FibonacciHeap: validate invariants after insertions" {
@@ -664,15 +671,23 @@ test "FibonacciHeap: validate invariants after insertions" {
 
     _ = try heap.insert(10);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 1), heap.count());
+    try std.testing.expectEqual(@as(?i32, 10), heap.peekMin());
 
     _ = try heap.insert(5);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 2), heap.count());
+    try std.testing.expectEqual(@as(?i32, 5), heap.peekMin());
 
     _ = try heap.insert(15);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 3), heap.count());
+    try std.testing.expectEqual(@as(?i32, 5), heap.peekMin());
 
     _ = try heap.insert(3);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 4), heap.count());
+    try std.testing.expectEqual(@as(?i32, 3), heap.peekMin());
 }
 
 test "FibonacciHeap: validate invariants after extractions" {
@@ -690,15 +705,22 @@ test "FibonacciHeap: validate invariants after extractions" {
     _ = try heap.insert(15);
     _ = try heap.insert(3);
     _ = try heap.insert(20);
+    try std.testing.expectEqual(@as(usize, 5), heap.count());
 
-    _ = heap.extractMin();
+    const min1 = heap.extractMin();
+    try std.testing.expectEqual(@as(?i32, 3), min1);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 4), heap.count());
 
-    _ = heap.extractMin();
+    const min2 = heap.extractMin();
+    try std.testing.expectEqual(@as(?i32, 5), min2);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 3), heap.count());
 
-    _ = heap.extractMin();
+    const min3 = heap.extractMin();
+    try std.testing.expectEqual(@as(?i32, 10), min3);
     try heap.validate();
+    try std.testing.expectEqual(@as(usize, 2), heap.count());
 }
 
 test "FibonacciHeap: descending order insertion" {

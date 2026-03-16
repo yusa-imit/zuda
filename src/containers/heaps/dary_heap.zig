@@ -296,32 +296,32 @@ test "DaryHeap(2): basic operations (binary heap)" {
     defer heap.deinit();
 
     try testing.expect(heap.isEmpty());
-    try testing.expectEqual(@as(usize, 0), heap.count());
-    try testing.expectEqual(@as(?i32, null), heap.peekMin());
+    try std.testing.expectEqual(@as(usize, 0), heap.count());
+    try std.testing.expectEqual(@as(?i32, null), heap.peekMin());
 
     try heap.insert(5);
     try testing.expect(!heap.isEmpty());
-    try testing.expectEqual(@as(usize, 1), heap.count());
-    try testing.expectEqual(@as(?i32, 5), heap.peekMin());
+    try std.testing.expectEqual(@as(usize, 1), heap.count());
+    try std.testing.expectEqual(@as(?i32, 5), heap.peekMin());
     try heap.validate();
 
     try heap.insert(3);
-    try testing.expectEqual(@as(?i32, 3), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.peekMin());
     try heap.validate();
 
     try heap.insert(7);
-    try testing.expectEqual(@as(?i32, 3), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.peekMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 3), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.peekMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 7), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.peekMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 7), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -336,15 +336,15 @@ test "DaryHeap(4): basic operations (quaternary heap)" {
     try heap.insert(9);
     try heap.insert(2);
 
-    try testing.expectEqual(@as(?i32, 1), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 1), heap.peekMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 1), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 2), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 3), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 7), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 9), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 1), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 2), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 9), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -359,7 +359,7 @@ test "DaryHeap(8): basic operations (octary heap)" {
     try heap.insert(90);
     try heap.insert(20);
 
-    try testing.expectEqual(@as(?i32, 10), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 10), heap.peekMin());
     try heap.validate();
 }
 
@@ -368,8 +368,8 @@ test "DaryHeap(4): heapify from slice" {
     var heap = try DaryHeap(i32, 4, void, testLessThan).initFromSlice(testing.allocator, {}, &data);
     defer heap.deinit();
 
-    try testing.expectEqual(@as(usize, 9), heap.count());
-    try testing.expectEqual(@as(?i32, 1), heap.peekMin());
+    try std.testing.expectEqual(@as(usize, 9), heap.count());
+    try std.testing.expectEqual(@as(?i32, 1), heap.peekMin());
     try heap.validate();
 
     var prev: i32 = -1;
@@ -389,12 +389,12 @@ test "DaryHeap(3): sorted insertion (ternary heap)" {
         try heap.insert(i);
     }
 
-    try testing.expectEqual(@as(usize, n), heap.count());
+    try std.testing.expectEqual(@as(usize, n), heap.count());
     try heap.validate();
 
     i = 0;
     while (i < n) : (i += 1) {
-        try testing.expectEqual(@as(?i32, i), heap.extractMin());
+        try std.testing.expectEqual(@as(?i32, i), heap.extractMin());
     }
     try testing.expect(heap.isEmpty());
 }
@@ -409,12 +409,12 @@ test "DaryHeap(4): reverse sorted insertion" {
         try heap.insert(i);
     }
 
-    try testing.expectEqual(@as(usize, n), heap.count());
+    try std.testing.expectEqual(@as(usize, n), heap.count());
     try heap.validate();
 
     i = 0;
     while (i < n) : (i += 1) {
-        try testing.expectEqual(@as(?i32, i), heap.extractMin());
+        try std.testing.expectEqual(@as(?i32, i), heap.extractMin());
     }
     try testing.expect(heap.isEmpty());
 }
@@ -433,7 +433,7 @@ test "DaryHeap(4): random insertion" {
         try heap.insert(val);
     }
 
-    try testing.expectEqual(@as(usize, n), heap.count());
+    try std.testing.expectEqual(@as(usize, n), heap.count());
     try heap.validate();
 
     var prev: i32 = -1;
@@ -454,18 +454,18 @@ test "DaryHeap(4): clone" {
     var cloned = try heap.clone();
     defer cloned.deinit();
 
-    try testing.expectEqual(heap.count(), cloned.count());
-    try testing.expectEqual(heap.peekMin(), cloned.peekMin());
+    try std.testing.expectEqual(heap.count(), cloned.count());
+    try std.testing.expectEqual(heap.peekMin(), cloned.peekMin());
     try cloned.validate();
 
-    try testing.expectEqual(@as(?i32, 3), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 3), cloned.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 3), cloned.extractMin());
 
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), cloned.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), cloned.extractMin());
 
-    try testing.expectEqual(@as(?i32, 7), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 7), cloned.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 7), cloned.extractMin());
 }
 
 test "DaryHeap(4): update" {
@@ -477,15 +477,15 @@ test "DaryHeap(4): update" {
     try heap.insert(30);
     try heap.insert(40);
 
-    try testing.expectEqual(@as(?i32, 10), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 10), heap.peekMin());
 
     heap.update(0, 50); // Update min to 50
     try heap.validate();
-    try testing.expectEqual(@as(?i32, 20), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 20), heap.peekMin());
 
     heap.update(heap.count() - 1, 5); // Update last to 5
     try heap.validate();
-    try testing.expectEqual(@as(?i32, 5), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.peekMin());
 }
 
 test "DaryHeap(4): remove" {
@@ -498,14 +498,14 @@ test "DaryHeap(4): remove" {
     try heap.insert(40);
     try heap.insert(50);
 
-    try testing.expectEqual(@as(usize, 5), heap.count());
+    try std.testing.expectEqual(@as(usize, 5), heap.count());
 
     _ = heap.remove(2); // Remove element at index 2
-    try testing.expectEqual(@as(usize, 4), heap.count());
+    try std.testing.expectEqual(@as(usize, 4), heap.count());
     try heap.validate();
 
     _ = heap.remove(0); // Remove min
-    try testing.expectEqual(@as(usize, 3), heap.count());
+    try std.testing.expectEqual(@as(usize, 3), heap.count());
     try heap.validate();
 }
 
@@ -519,7 +519,7 @@ test "DaryHeap(4): clear" {
 
     heap.clear();
     try testing.expect(heap.isEmpty());
-    try testing.expectEqual(@as(?i32, null), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, null), heap.peekMin());
 }
 
 test "DaryHeap(4): toSortedSlice" {
@@ -542,8 +542,8 @@ test "DaryHeap(4): empty operations" {
     var heap = DaryHeap(i32, 4, void, testLessThan).init(testing.allocator, {});
     defer heap.deinit();
 
-    try testing.expectEqual(@as(?i32, null), heap.extractMin());
-    try testing.expectEqual(@as(?i32, null), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, null), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, null), heap.peekMin());
     try heap.validate();
 }
 
@@ -552,10 +552,10 @@ test "DaryHeap(4): single element" {
     defer heap.deinit();
 
     try heap.insert(42);
-    try testing.expectEqual(@as(?i32, 42), heap.peekMin());
+    try std.testing.expectEqual(@as(?i32, 42), heap.peekMin());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 42), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 42), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -567,12 +567,12 @@ test "DaryHeap(4): duplicates" {
     try heap.insert(5);
     try heap.insert(5);
 
-    try testing.expectEqual(@as(usize, 3), heap.count());
+    try std.testing.expectEqual(@as(usize, 3), heap.count());
     try heap.validate();
 
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
-    try testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
+    try std.testing.expectEqual(@as(?i32, 5), heap.extractMin());
     try testing.expect(heap.isEmpty());
 }
 
@@ -584,10 +584,15 @@ test "DaryHeap(4): memory leak detection" {
     while (i < 100) : (i += 1) {
         try heap.insert(@intCast(i));
     }
+    try std.testing.expectEqual(@as(usize, 100), heap.count());
 
+    var expected: i32 = 0;
     while (!heap.isEmpty()) {
-        _ = heap.extractMin();
+        const min = heap.extractMin();
+        try std.testing.expectEqual(@as(?i32, expected), min);
+        expected += 1;
     }
+    try std.testing.expectEqual(@as(usize, 0), heap.count());
 }
 
 test "DaryHeap(4): capacity reservation" {
@@ -601,7 +606,7 @@ test "DaryHeap(4): capacity reservation" {
         try heap.insert(@intCast(i));
     }
 
-    try testing.expectEqual(@as(usize, 50), heap.count());
+    try std.testing.expectEqual(@as(usize, 50), heap.count());
 }
 
 test "DaryHeap(16): high branching factor" {
