@@ -167,3 +167,66 @@ fn deleteFixup(self: *Self, node: ?*Node, parent: ?*Node) void {
 ```
 
 This pattern is essential when fixup may need to walk up the tree starting from a null node (double-black situation).
+
+## Test Quality Anti-Patterns
+
+**AVOID: Tests with no assertions** (discovered 2026-03-16 during v1.5.0 quality audit)
+
+```zig
+// BAD: Just calls methods, doesn't verify behavior
+test "memory leak test" {
+    var map = try CuckooHashMap(u32, u32).init(allocator, .{});
+    defer map.deinit();
+
+    for (0..100) |i| {
+        _ = try map.insert(i, i);
+    }
+    // No assertions! Only implicit leak check from allocator
+}
+
+// GOOD: Explicitly verify expected state
+test "memory leak test" {
+    var map = try CuckooHashMap(u32, u32).init(allocator, .{});
+    defer map.deinit();
+
+    for (0..100) |i| {
+        _ = try map.insert(i, i);
+    }
+    try testing.expectEqual(@as(usize, 100), map.count());
+
+    // Verify keys are accessible
+    for (0..100) |i| {
+        try testing.expectEqual(@as(?u32, i), map.get(i));
+    }
+}
+```
+
+**AVOID: Validate-only tests without state verification**
+
+```zig
+// BAD: Just checks validate() doesn't error
+test "validate invariants" {
+    var map = try HashMap(u32, u32).init(allocator, .{});
+    defer map.deinit();
+
+    try map.validate();
+    _ = try map.insert(1, 100);
+    try map.validate();  // What should the state be?
+}
+
+// GOOD: Assert expected state at each step
+test "validate invariants" {
+    var map = try HashMap(u32, u32).init(allocator, .{});
+    defer map.deinit();
+
+    try map.validate();
+    try testing.expectEqual(@as(usize, 0), map.count());
+
+    _ = try map.insert(1, 100);
+    try map.validate();
+    try testing.expectEqual(@as(usize, 1), map.count());
+    try testing.expectEqual(@as(?u32, 100), map.get(1));
+}
+```
+
+**Key principle**: Every test must verify actual behavior, not just "doesn't crash". Tests should fail when the implementation is wrong, not just when it panics.

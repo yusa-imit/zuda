@@ -45,7 +45,22 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-16 - Hour 09)
+## Recent Progress (Session 2026-03-16 - Hour 11)
+**FEATURE MODE → v1.5.0 TEST QUALITY AUDIT CONTINUES:**
+- ✅ **Hash Container Test Quality Improvement** (commit d7267eb)
+  - **Scanned**: 5 hash containers (CuckooHashMap, RobinHoodHashMap, SwissTable, ConsistentHashRing, PersistentHashMap)
+  - **Found**: 9 tests with no assertions (44 files total across codebase have this pattern)
+  - **Pattern 1**: "Memory leak tests" only call insert/remove with comment "allocator will detect" (implicit testing)
+  - **Pattern 2**: "Validate invariants tests" call `try map.validate()` without checking count/state
+  - **Fixed**: Added explicit assertions to all 9 tests:
+    - Memory leak: count checks + key verification loops
+    - Validate: count + get() assertions after each operation
+  - **Impact**: Tests now fail when behavior is wrong, not just when code panics
+  - **Documented**: Added "Test Quality Anti-Patterns" section to patterns.md
+- 📊 **v1.5.0 Progress**: 1/5 items in progress (test quality audit ~10% complete)
+- 📋 **Next**: Continue with other container categories (lists, queues, trees, heaps)
+
+## Previous Progress (Session 2026-03-16 - Hour 09)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT START:**
 - ✅ **v1.5.0 Milestone Established** (commit 6f46d68)
   - 5 focus areas: test quality audit, documentation completeness, memory safety, cross-compilation, API consistency
@@ -54,8 +69,6 @@
   - **Fixed**: Added `expectEqual(0, items.len)` assertion to each test
   - **Impact**: Tests now actually verify behavior instead of just checking "doesn't crash"
   - **Pattern**: Tests that call a function but don't check output are meaningless
-- 📊 **v1.5.0 Progress**: 1/5 items started (test quality audit in progress)
-- 📋 **Next**: Continue scanning containers for weak tests, add failure scenarios
 
 ## Previous Progress (Session 2026-03-16 - Hour 07)
 **FEATURE MODE → v1.4.0 RELEASE COMPLETE:**
