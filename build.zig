@@ -158,12 +158,30 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    // Memory safety audit tests
+    const memory_safety_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/memory_safety_audit.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_memory_safety_tests = b.addRunArtifact(memory_safety_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_memory_safety_tests.step);
+
+    // Separate step for memory safety audit
+    const memory_safety_step = b.step("test-memory", "Run memory safety audit tests");
+    memory_safety_step.dependOn(&run_memory_safety_tests.step);
 
     // Benchmark executables
     const bench_trees = b.addExecutable(.{
