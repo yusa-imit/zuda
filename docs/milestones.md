@@ -58,6 +58,31 @@ Address performance gaps and optimize critical data structures:
   - **Best candidates**: Sorting networks, RadixSort (AVX-512), string matching (16-byte chunks)
   - **Recommendation**: Defer SIMD implementation to v1.5.0+ (benchmark-driven, user demand)
 
+### v1.5.0 — Code Quality & Maintainability
+
+Improve code quality, test coverage, and maintainability:
+
+- [ ] **Test quality audit**
+  - Identify and improve meaningless tests (unconditional pass, no assertions, implementation copy-paste)
+  - Add failure scenarios to happy-path-only tests
+  - Verify edge cases, error paths, concurrent scenarios
+  - Target: All tests validate actual behavior, not just code coverage
+- [ ] **Documentation completeness**
+  - Ensure all public functions have doc comments with Big-O complexity
+  - Add usage examples for complex containers (e.g., DancingLinks, VanEmdeBoasTree)
+  - Document common pitfalls and anti-patterns
+- [ ] **Memory safety verification**
+  - Run all tests with std.testing.allocator to detect leaks
+  - Verify all containers properly clean up in error paths
+  - Add stress tests for boundary conditions (max capacity, empty, single element)
+- [ ] **Cross-compilation testing**
+  - Verify all 6 targets (x86_64/aarch64 linux/macos/windows, wasm32-wasi) in CI
+  - Fix any platform-specific issues discovered
+- [ ] **API consistency review**
+  - Ensure all containers follow Generic Container Template
+  - Verify iterator protocol consistency (next() -> ?T)
+  - Standardize error naming conventions
+
 ### v1.2.0 — Consumer Migrations
 
 Validate zuda in production through consumer project adoption:
