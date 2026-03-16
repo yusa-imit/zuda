@@ -153,6 +153,8 @@ test "CountingSort - empty array" {
     var items: [0]i32 = undefined;
     const Sorter = CountingSort(i32);
     try Sorter.sort(testing.allocator, &items);
+    // Verify array length unchanged
+    try testing.expectEqual(@as(usize, 0), items.len);
 }
 
 test "CountingSort - single element" {

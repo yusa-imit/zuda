@@ -189,6 +189,8 @@ test "RadixSort LSD - empty array" {
     var items: [0]u32 = undefined;
     const Sorter = RadixSort(u32);
     try Sorter.sortLSD(testing.allocator, &items);
+    // Verify array length unchanged
+    try testing.expectEqual(@as(usize, 0), items.len);
 }
 
 test "RadixSort LSD - single element" {
@@ -281,6 +283,8 @@ test "RadixSort MSD - empty array" {
     var items: [0]u32 = undefined;
     const Sorter = RadixSort(u32);
     try Sorter.sortMSD(testing.allocator, &items);
+    // Verify array length unchanged
+    try testing.expectEqual(@as(usize, 0), items.len);
 }
 
 test "RadixSort MSD - single element" {

@@ -346,6 +346,8 @@ test "TimSort: empty array" {
     const allocator = testing.allocator;
     var items: [0]i32 = undefined;
     try sort(i32, allocator, &items);
+    // Verify array length unchanged
+    try testing.expectEqual(@as(usize, 0), items.len);
 }
 
 test "TimSort: single element" {

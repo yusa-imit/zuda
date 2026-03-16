@@ -195,6 +195,8 @@ test "IntroSort - empty array" {
         }
     }.cmp);
     Sorter.sort(&items, {});
+    // Verify array length unchanged
+    try testing.expectEqual(@as(usize, 0), items.len);
 }
 
 test "IntroSort - single element" {
