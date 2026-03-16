@@ -1,8 +1,8 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.4.0 (released 2026-03-16) ✅
-- **Phase**: Post-v1.4.0 (next milestone TBD)
+- **Version**: 1.5.0 (released 2026-03-17) ✅
+- **Phase**: Post-v1.5.0 (next milestone TBD)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
 - **Latest Milestone**: v1.4.0 COMPLETE (6/6 items: TimSort ✅, RedBlackTree ⚠️, Aho-Corasick ⚠️, BloomFilter ✅, memory profiling ✅, SIMD ✅)
@@ -101,13 +101,11 @@
     - Strings, Persistent, Specialized (3 files): 4 functions
   - **Pattern**: All docs include "/// Time: O(...) | Space: O(...)" complexity
   - **Quality**: 225 insertions, 0 logic changes, all 701 tests passing
-- 📊 **v1.5.0 Progress**: 5/5 items **COMPLETE** (100%)
-  - [x] Test quality audit (59 tests improved)
-  - [x] Documentation completeness (112 functions documented, 100% coverage)
-  - [x] Memory safety verification ✅ (commit dfee4a4)
-  - [x] Cross-compilation testing ✅ (commit ef0a273)
-  - [x] API consistency review ✅ (commit cd0368f)
-- 📋 **Next**: v1.5.0 release candidate
+- 📊 **v1.5.0 Status**: RELEASED (tag v1.5.0, commit 8a7ff67) ✅
+  - Release URL: https://github.com/yusa-imit/zuda/releases/tag/v1.5.0
+  - All 5 items complete: test quality, documentation, memory safety, cross-compilation, API consistency
+  - 701/701 tests passing, zero memory issues, CI green
+- 📋 **Next**: Establish next milestone (< 2 active milestones)
 
 ## Previous Progress (Session 2026-03-16 - Hour 19)
 **FEATURE MODE → v1.5.0 TEST QUALITY AUDIT COMPLETE:**

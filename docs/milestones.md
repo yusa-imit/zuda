@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.4.0 (2026-03-16) — Performance & Optimization
-- **Current phase**: Post-v1.4.0 (next milestone TBD)
+- **Latest release**: v1.5.0 (2026-03-17) — Code Quality & Maintainability
+- **Current phase**: Post-v1.5.0 (next milestone TBD)
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -58,9 +58,9 @@ Address performance gaps and optimize critical data structures:
   - **Best candidates**: Sorting networks, RadixSort (AVX-512), string matching (16-byte chunks)
   - **Recommendation**: Defer SIMD implementation to v1.5.0+ (benchmark-driven, user demand)
 
-### v1.5.0 — Code Quality & Maintainability
+### v1.5.0 — Code Quality & Maintainability ✅ RELEASED
 
-Improve code quality, test coverage, and maintainability:
+Released 2026-03-17. Improve code quality, test coverage, and maintainability:
 
 - [x] **Test quality audit** ✅
   - **Result**: 59 tests improved across 29 files (10/10 categories complete)
