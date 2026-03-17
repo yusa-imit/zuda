@@ -14,6 +14,7 @@ const AhoCorasickASCII = zuda.algorithms.string.AhoCorasickASCII;
 const AhoCorasickContext = struct {
     ac: AhoCorasick(u8),
     text: []const u8,
+    patterns: std.ArrayList([]const u8), // Keep patterns alive for automaton
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) !AhoCorasickContext {
@@ -22,8 +23,8 @@ const AhoCorasickContext = struct {
 
         // Generate 1000 random patterns (5-15 bytes each)
         const pattern_count = 1000;
-        var patterns = std.ArrayList([]const u8){};
-        defer {
+        var patterns: std.ArrayList([]const u8) = .{};
+        errdefer {
             for (patterns.items) |pattern| {
                 allocator.free(pattern);
             }
@@ -50,12 +51,17 @@ const AhoCorasickContext = struct {
             byte.* = random.intRangeAtMost(u8, 'a', 'z');
         }
 
-        return .{ .ac = ac, .text = text, .allocator = allocator };
+        return .{ .ac = ac, .text = text, .patterns = patterns, .allocator = allocator };
     }
 
     fn deinit(self: *AhoCorasickContext) void {
         self.allocator.free(self.text);
         self.ac.deinit();
+        // Free patterns after automaton is destroyed
+        for (self.patterns.items) |pattern| {
+            self.allocator.free(pattern);
+        }
+        self.patterns.deinit(self.allocator);
     }
 };
 
@@ -70,6 +76,7 @@ fn benchAhoCorasickSearch(ctx: *AhoCorasickContext) !void {
 const AhoCorasickASCIIContext = struct {
     ac: AhoCorasickASCII,
     text: []const u8,
+    patterns: std.ArrayList([]const u8), // Keep patterns alive for automaton
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) !AhoCorasickASCIIContext {
@@ -78,8 +85,8 @@ const AhoCorasickASCIIContext = struct {
 
         // Generate 1000 random patterns (5-15 bytes each)
         const pattern_count = 1000;
-        var patterns = std.ArrayList([]const u8){};
-        defer {
+        var patterns: std.ArrayList([]const u8) = .{};
+        errdefer {
             for (patterns.items) |pattern| {
                 allocator.free(pattern);
             }
@@ -106,12 +113,17 @@ const AhoCorasickASCIIContext = struct {
             byte.* = random.intRangeAtMost(u8, 'a', 'z');
         }
 
-        return .{ .ac = ac, .text = text, .allocator = allocator };
+        return .{ .ac = ac, .text = text, .patterns = patterns, .allocator = allocator };
     }
 
     fn deinit(self: *AhoCorasickASCIIContext) void {
         self.allocator.free(self.text);
         self.ac.deinit();
+        // Free patterns after automaton is destroyed
+        for (self.patterns.items) |pattern| {
+            self.allocator.free(pattern);
+        }
+        self.patterns.deinit(self.allocator);
     }
 };
 
