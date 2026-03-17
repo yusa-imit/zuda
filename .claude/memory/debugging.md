@@ -44,6 +44,14 @@ const is_repeated = (node.children.count() >= 2) or
 - Buffered writers: flush before `std.process.exit()`
 - File-scope: `const X = expr;` (no `comptime` keyword — redundant error)
 - `zig build test` uses `--listen=-` protocol — NEVER use `stdout()` in test code
+- **std.atomic.fence() removed** (Issue #7, fixed in 44bf1f6):
+  - Replace with stronger memory ordering on atomic ops (.seq_cst)
+  - For lock-free data structures, upgrade .acquire/.release to .seq_cst where fence was used
+  - Alternative: use dummy atomic RMW with .seq_cst as portable fence
+- **Generic functions can't be comptime params** (Issue #8, fixed in 44bf1f6):
+  - Problem: `fn hash(ctx: Context, key: anytype)` can't be passed as `comptime hashFn: fn(Context, K) u64`
+  - Solution: Create concrete wrapper inside factory function with known K type
+  - Pattern: Move AutoContext struct INSIDE Auto* factory, not as top-level export
 
 ## Common Data Structure Pitfalls
 - Red-black tree: remember to handle both left and right uncle cases in fixup

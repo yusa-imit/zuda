@@ -45,27 +45,33 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-17 - Hour 11)
+## Recent Progress (Session 2026-03-17 - Hour 13)
+**STABILIZATION MODE (FORCED) → CI FAILURE FIXES:**
+- 🔴 **CI RED on main** — Switched to stabilization mode despite hour % 4 == 1
+- ✅ **Issue #7 FIXED** — WorkStealingDeque std.atomic.fence removal (commit 44bf1f6)
+  - **Problem**: Used std.atomic.fence() removed in Zig 0.15
+  - **Fix**: Upgraded memory ordering to .seq_cst on atomic ops (pop/steal)
+  - **Impact**: bench_queues now compiles, WorkStealingDeque tests pass
+- ✅ **Issue #8 FIXED** — Hash map AutoContext type mismatch (commit 44bf1f6)
+  - **Problem**: Generic hash functions (anytype) can't be comptime fn params
+  - **Fix**: Moved AutoContext inside Auto* factory functions with concrete K type
+  - **Affected**: CuckooHashMap, RobinHoodHashMap
+  - **Added**: AutoSwissTable, AutoConsistentHashRing for API consistency
+  - **Impact**: bench_hashing now compiles, all hash map tests pass
+- ✅ **Benchmark API fixes** (commit 44bf1f6):
+  - Fixed bench/hashing.zig: .put() → .insert()
+  - AutoConsistentHashRing wrapper with simplified init(allocator, replicas)
+- 📊 **Test Status**: 701/701 passing (100% ✅)
+- 🔄 **CI Status**: Triggered (run in progress, waiting for green)
+- 🎯 **Next Priority**: v1.6.0 release once CI confirms green
+
+## Previous Progress (Session 2026-03-17 - Hour 11)
 **FEATURE MODE → v1.6.0 BENCHMARK SUITE COMPLETENESS:**
 - ✅ **v1.6.0 Milestone COMPLETE**: 4/4 items (100%) ✅
-  - [x] Update Performance Table ✅
-  - [x] RedBlackTree Deep Dive ✅
-  - [x] Aho-Corasick benchmark fix & investigation ✅
-  - [x] Benchmark Suite Completeness ✅ (commit d0d4f25)
 - ✅ **New Benchmark Suites Created** (commit d0d4f25):
-  - **bench/lists.zig**: 7 benchmarks (SkipList insert/search, XorLinkedList push/iterate, UnrolledLinkedList append/iterate, ConcurrentSkipList insert)
-  - **bench/queues.zig**: Deque push_back/push_front/pop_back, LockFreeQueue/Stack enqueue/dequeue/push/pop, WorkStealingDeque push/pop/steal
-  - **bench/hashing.zig**: CuckooHashMap, RobinHoodHashMap, SwissTable, ConsistentHashRing insert/get
-  - **bench/cache.zig**: 6 benchmarks (LRUCache/LFUCache/ARCCache put/get with 80% hit rate workload)
-  - **build.zig**: Added executable definitions and bench step integration for all 4 suites
-- 📊 **Benchmark Coverage**: 13 working benchmarks across 2 new suites (lists, cache)
-  - Lists benchmark fully functional (7 benchmarks, all containers covered)
-  - Cache benchmark fully functional (6 benchmarks, all 3 caches covered)
-- ⚠️ **Known Implementation Issues** (blocked benchmarks):
-  - CuckooHashMap/RobinHoodHashMap/SwissTable: AutoContext type signature mismatch (cuckoo_hash_map.zig:456)
-  - WorkStealingDeque: Uses removed `std.atomic.fence` API (needs std.Thread.Futex migration for Zig 0.15)
-  - Queues/Hash benchmarks created but can't compile until implementation bugs fixed
-- 🎯 **Next Priority**: v1.6.0 release (all 4 items complete)
+  - Lists, queues, hashing, cache benchmarks (25+ total benchmarks)
+- ⚠️ **Bugs discovered** (now FIXED in Hour 13):
+  - Issues #7, #8 blocked bench_queues and bench_hashing compilation
 
 ## Previous Progress (Session 2026-03-17 - Hour 09)
 **FEATURE MODE → v1.6.0 AHO-CORASICK BENCHMARK FIXED:**
