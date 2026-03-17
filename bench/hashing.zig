@@ -13,7 +13,7 @@ const bench = zuda.internal.bench;
 const AutoCuckooHashMap = zuda.containers.hashing.AutoCuckooHashMap;
 const AutoRobinHoodHashMap = zuda.containers.hashing.AutoRobinHoodHashMap;
 const AutoSwissTable = zuda.containers.hashing.AutoSwissTable;
-const ConsistentHashRing = zuda.containers.hashing.ConsistentHashRing;
+const AutoConsistentHashRing = zuda.containers.hashing.AutoConsistentHashRing;
 
 /// Benchmark: CuckooHashMap insert with 100k random keys
 fn benchCuckooHashMapInsert(allocator: std.mem.Allocator) !void {
@@ -27,7 +27,7 @@ fn benchCuckooHashMapInsert(allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     while (i < count) : (i += 1) {
         const key = random.int(i64);
-        _ = try map.put(key, key);
+        _ = try map.insert(key, key);
     }
 }
 
@@ -152,7 +152,7 @@ fn benchSwissTableGet(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: ConsistentHashRing add node
 fn benchConsistentHashRingAdd(allocator: std.mem.Allocator) !void {
-    var ring = ConsistentHashRing([]const u8).init(allocator, .{ .virtual_nodes = 150 });
+    var ring = try AutoConsistentHashRing([]const u8, []const u8).init(allocator, 150);
     defer ring.deinit();
 
     const count = 100;
@@ -166,7 +166,7 @@ fn benchConsistentHashRingAdd(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: ConsistentHashRing get node (key lookup)
 fn benchConsistentHashRingGet(allocator: std.mem.Allocator) !void {
-    var ring = ConsistentHashRing([]const u8).init(allocator, .{ .virtual_nodes = 150 });
+    var ring = try AutoConsistentHashRing([]const u8, []const u8).init(allocator, 150);
     defer ring.deinit();
 
     // Pre-populate nodes

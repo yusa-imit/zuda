@@ -425,35 +425,25 @@ pub fn CuckooHashMap(
     };
 }
 
-// Default hash and equality context for common types
-pub const AutoContext = struct {
-    /// Primary hash function.
-    /// Time: O(1) | Space: O(1)
-    pub fn hash1(ctx: @This(), key: anytype) u64 {
-        _ = ctx;
-        return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
-    }
-
-    /// Secondary hash function.
-    /// Time: O(1) | Space: O(1)
-    pub fn hash2(ctx: @This(), key: anytype) u64 {
-        _ = ctx;
-        return std.hash.Wyhash.hash(1, std.mem.asBytes(&key));
-    }
-
-    /// Checks equality of two keys.
-    /// Time: O(1) | Space: O(1)
-    pub fn eql(ctx: @This(), a: anytype, b: @TypeOf(a)) bool {
-        _ = ctx;
-        return a == b;
-    }
-};
-
 // Convenience alias for common case
 /// Creates hash map with automatic context.
 /// Time: O(1) amortized | Space: O(n)
 pub fn AutoCuckooHashMap(comptime K: type, comptime V: type) type {
-    return CuckooHashMap(K, V, AutoContext, AutoContext.hash1, AutoContext.hash2, AutoContext.eql);
+    const Context = struct {
+        pub fn hash1(_: @This(), key: K) u64 {
+            return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+        }
+
+        pub fn hash2(_: @This(), key: K) u64 {
+            return std.hash.Wyhash.hash(1, std.mem.asBytes(&key));
+        }
+
+        pub fn eql(_: @This(), a: K, b: K) bool {
+            return a == b;
+        }
+    };
+
+    return CuckooHashMap(K, V, Context, Context.hash1, Context.hash2, Context.eql);
 }
 
 // --- Tests ---

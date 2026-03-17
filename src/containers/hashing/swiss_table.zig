@@ -614,3 +614,20 @@ test "SwissTable: zero capacity init" {
     try testing.expectEqual(@as(?u32, 100), table.get(1));
     try table.validate();
 }
+
+// Convenience alias for common case
+/// Creates Swiss table with automatic context.
+/// Time: O(1) amortized | Space: O(n)
+pub fn AutoSwissTable(comptime K: type, comptime V: type) type {
+    const Context = struct {
+        pub fn hash(_: @This(), key: K) u64 {
+            return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+        }
+
+        pub fn eql(_: @This(), a: K, b: K) bool {
+            return a == b;
+        }
+    };
+
+    return SwissTable(K, V, Context, Context.hash, Context.eql);
+}

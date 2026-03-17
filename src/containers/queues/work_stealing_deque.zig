@@ -80,10 +80,9 @@ pub fn WorkStealingDeque(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn pop(self: *Self) ?T {
             const b = self.bottom.load(.acquire) -% 1;
-            self.bottom.store(b, .release);
-            std.atomic.fence(.seq_cst); // Full fence to order with steal operations
+            self.bottom.store(b, .seq_cst); // Upgraded to seq_cst to act as fence
 
-            const t = self.top.load(.acquire);
+            const t = self.top.load(.seq_cst); // Upgraded to seq_cst to act as fence
 
             if (t <= b) {
                 // Non-empty deque
@@ -115,9 +114,8 @@ pub fn WorkStealingDeque(comptime T: type) type {
         /// Returns null if the deque is empty or if we lose a race with the owner or other stealers.
         /// Time: O(1) | Space: O(1)
         pub fn steal(self: *Self) ?T {
-            const t = self.top.load(.acquire);
-            std.atomic.fence(.seq_cst); // Full fence to order with pop operations
-            const b = self.bottom.load(.acquire);
+            const t = self.top.load(.seq_cst); // Upgraded to seq_cst to act as fence
+            const b = self.bottom.load(.seq_cst); // Upgraded to seq_cst to act as fence
 
             if (t < b) {
                 // Non-empty deque

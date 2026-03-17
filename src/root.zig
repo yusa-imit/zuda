@@ -52,7 +52,9 @@ pub const containers = struct {
         pub const RobinHoodHashMap = @import("containers/hashing/robin_hood_hash_map.zig").RobinHoodHashMap;
         pub const AutoRobinHoodHashMap = @import("containers/hashing/robin_hood_hash_map.zig").AutoRobinHoodHashMap;
         pub const SwissTable = @import("containers/hashing/swiss_table.zig").SwissTable;
+        pub const AutoSwissTable = @import("containers/hashing/swiss_table.zig").AutoSwissTable;
         pub const ConsistentHashRing = @import("containers/hashing/consistent_hash_ring.zig").ConsistentHashRing;
+        pub const AutoConsistentHashRing = @import("containers/hashing/consistent_hash_ring.zig").AutoConsistentHashRing;
     };
 
     /// Heap variants

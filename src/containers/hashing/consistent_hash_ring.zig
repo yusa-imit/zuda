@@ -540,3 +540,54 @@ test "ConsistentHashRing: load distribution" {
     try testing.expect(node2_count >= 233 and node2_count <= 433);
     try testing.expect(node3_count >= 233 and node3_count <= 433);
 }
+
+// Convenience alias for common case
+/// Creates consistent hash ring with automatic context.
+/// Assumes both K and N support equality comparison and can be hashed via std.hash.Wyhash.
+/// Time: O(1) | Space: O(1)
+pub fn AutoConsistentHashRing(comptime K: type, comptime N: type) type {
+    const AutoContext = struct {
+        pub fn hash(_: @This(), key: K) u64 {
+            return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+        }
+
+        pub fn nodeEql(_: @This(), a: N, b: N) bool {
+            return std.meta.eql(a, b);
+        }
+    };
+
+    const BaseRing = ConsistentHashRing(K, N, AutoContext, AutoContext.hash, AutoContext.nodeEql);
+
+    return struct {
+        ring: BaseRing,
+
+        const Self = @This();
+
+        /// Initialize with automatic context.
+        pub fn init(allocator: std.mem.Allocator, replicas: usize) !Self {
+            return Self{
+                .ring = try BaseRing.init(allocator, AutoContext{}, replicas),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.ring.deinit();
+        }
+
+        pub fn addNode(self: *Self, node: N) !void {
+            try self.ring.addNode(node);
+        }
+
+        pub fn removeNode(self: *Self, node: N) void {
+            self.ring.removeNode(node);
+        }
+
+        pub fn getNode(self: *const Self, key: K) ?N {
+            return self.ring.getNode(key);
+        }
+
+        pub fn count(self: *const Self) usize {
+            return self.ring.count();
+        }
+    };
+}

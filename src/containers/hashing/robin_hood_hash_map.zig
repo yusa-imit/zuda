@@ -375,28 +375,21 @@ pub fn RobinHoodHashMap(
     };
 }
 
-// Default hash and equality context for common types
-pub const AutoContext = struct {
-    /// Computes hash for the key.
-    /// Time: O(1) | Space: O(1)
-    pub fn hash(ctx: @This(), key: anytype) u64 {
-        _ = ctx;
-        return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
-    }
-
-    /// Checks equality of two keys.
-    /// Time: O(1) | Space: O(1)
-    pub fn eql(ctx: @This(), a: anytype, b: @TypeOf(a)) bool {
-        _ = ctx;
-        return a == b;
-    }
-};
-
 // Convenience alias for common case
 /// Creates hash map with automatic context.
 /// Time: O(1) amortized | Space: O(n)
 pub fn AutoRobinHoodHashMap(comptime K: type, comptime V: type) type {
-    return RobinHoodHashMap(K, V, AutoContext, AutoContext.hash, AutoContext.eql);
+    const Context = struct {
+        pub fn hash(_: @This(), key: K) u64 {
+            return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+        }
+
+        pub fn eql(_: @This(), a: K, b: K) bool {
+            return a == b;
+        }
+    };
+
+    return RobinHoodHashMap(K, V, Context, Context.hash, Context.eql);
 }
 
 // --- Tests ---
