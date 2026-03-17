@@ -2,10 +2,11 @@
 
 ## Current Status
 - **Version**: 1.7.0 (released 2026-03-17) ✅
-- **Phase**: NEXT MILESTONE TBD
+- **Phase**: v1.8.0 — Double-Array Trie Implementation
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 701/701 tests)
 - **Latest Milestone**: v1.7.0 RELEASED ✅ (Aho-Corasick Optimization Analysis — documented limits, revised target 500→200 MB/sec)
+- **Next Milestone**: v1.8.0 — Double-Array Trie (Target: 200-300 MB/sec, 50-100× memory reduction)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -45,7 +46,22 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-17 - Hour 19)
+## Recent Progress (Session 2026-03-17 - Hour 21)
+**FEATURE MODE → v1.8.0 MILESTONE ESTABLISHMENT:**
+- ✅ **v1.8.0 Milestone Established** (this session)
+  - **Theme**: Double-Array Trie Implementation — achieve 200-300 MB/sec Aho-Corasick performance
+  - **Target**: +50-125% improvement over 133 MB/sec baseline, 50-100× memory reduction
+  - **5 focus areas**:
+    1. Theory research (Aoe 1989 algorithm)
+    2. BASE/CHECK array construction
+    3. Search path optimization (linearize transitions)
+    4. Memory profiling (verify 50-100× reduction)
+    5. Performance validation (≥200 MB/sec)
+  - **Timeline**: 1-2 weeks (complex algorithmic work)
+- ✅ **PRD Target Revised**: Aho-Corasick target updated from ≥500 MB/sec to ≥200 MB/sec (realistic for standard implementation)
+- 🎯 **Next Priority**: Begin double-array trie research (Aoe 1989 paper, algorithm pseudo-code)
+
+## Previous Progress (Session 2026-03-17 - Hour 19)
 **FEATURE MODE → v1.7.0 MILESTONE ESTABLISHMENT:**
 - ✅ **v1.7.0 Milestone Established** (commit 723d1dc)
   - **Theme**: Aho-Corasick Deep Optimization — close 367 MB/sec performance gap

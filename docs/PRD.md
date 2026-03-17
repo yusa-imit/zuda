@@ -419,7 +419,7 @@ zuda_rbtree_destroy(tree);
 | BloomFilter lookup | ≥ 100M ops/sec | vs. C reference (libbloom) |
 | Dijkstra (1M nodes, 5M edges) | ≤ 500 ms | vs. Boost.Graph, igraph |
 | TimSort (1M i64, random) | competitive with `std.sort` | ≤ 10% overhead |
-| Aho-Corasick (1000 patterns, 1MB text) | ≥ 500 MB/sec throughput | vs. C reference |
+| Aho-Corasick (1000 patterns, 1MB text) | ≥ 200 MB/sec throughput (standard impl) | vs. Rust aho-corasick |
 
 ### 6.2 Binary Size
 

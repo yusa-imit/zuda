@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.6.0 (2026-03-17) — Performance Benchmarking & Real-World Optimization
-- **Current phase**: v1.7.0 — Aho-Corasick Deep Optimization
+- **Latest release**: v1.7.0 (2026-03-17) — Aho-Corasick Deep Optimization (Analysis Complete)
+- **Current phase**: v1.8.0 — Double-Array Trie Implementation
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -12,7 +12,41 @@
 
 ## Active Milestones
 
-### v1.7.0 — Aho-Corasick Deep Optimization
+### v1.8.0 — Double-Array Trie Implementation
+
+Achieve 200-300 MB/sec Aho-Corasick performance through double-array trie structure:
+
+- [ ] **Double-array trie theory research** — Study Aoe 1989 construction algorithm
+  - Read original Aoe paper on double-array representation
+  - Understand BASE/CHECK array encoding for transitions
+  - Analyze space-time trade-offs: 30-50 bytes/node vs 2352 bytes (50-100× reduction)
+  - Document algorithm pseudo-code and invariants
+- [ ] **BASE/CHECK array construction** — Implement Aoe's trie compression
+  - Design BASE/CHECK array layout for Aho-Corasick automaton
+  - Implement conflict resolution strategy for node placement
+  - Handle failure links in double-array encoding
+  - Validate with small test cases (10-100 patterns)
+- [ ] **Search path optimization** — Linearize state transitions
+  - Replace pointer chasing with array indexing (BASE[s] + c)
+  - Inline failure link traversal using CHECK validation
+  - Minimize cache misses through sequential access patterns
+  - Benchmark against current NodeASCII implementation
+- [ ] **Memory profiling** — Verify 50-100× memory reduction
+  - Measure memory usage with MemoryTracker for 1000-pattern workload
+  - Compare: NodeASCII (~23 MB) vs double-array (target: 230-460 KB)
+  - Profile cache locality improvements
+- [ ] **Performance validation** — Achieve ≥200 MB/sec target
+  - Run bench/strings.zig with double-array variant
+  - Target: 200-300 MB/sec (+50-125% improvement over 133 MB/sec)
+  - Document comparative results vs NodeASCII/Generic variants
+
+**Success criteria**: Double-array Aho-Corasick achieves ≥200 MB/sec throughput with 50-100× memory reduction.
+
+**Dependencies**: Requires deep understanding of trie compression techniques. Reference Aoe 1989 paper and Rust aho-corasick DFA implementation.
+
+**Timeline**: 1-2 weeks (complex algorithmic work, TDD required)
+
+### v1.7.0 — Aho-Corasick Deep Optimization ✅ RELEASED
 
 Close the 367 MB/sec performance gap through analysis and strategic planning:
 
@@ -57,7 +91,7 @@ Close the 367 MB/sec performance gap through analysis and strategic planning:
 3. **v1.9.0+ milestone**: SIMD exploration (400-600 MB/sec, requires std.simd)
 4. **Document current performance**: "Competitive with Rust aho-corasick standard variant"
 
-**Status**: Analysis complete. Implementation deferred to v1.8.0 (double-array) and v1.9.0 (SIMD).
+**Status**: ✅ **RELEASED** (tag v1.7.0, commit df73b38) — Analysis complete. Implementation deferred to v1.8.0 (double-array) and v1.9.0 (SIMD).
 
 ### v1.6.0 — Performance Benchmarking & Real-World Optimization ✅ RELEASED
 
