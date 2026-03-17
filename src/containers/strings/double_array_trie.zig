@@ -43,10 +43,15 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             position: usize,
         };
 
-        /// BASE array: transition base values
-        base: []i32,
-        /// CHECK array: parent state verification
-        check: []u32,
+        /// Interleaved BASE+CHECK structure for cache locality
+        /// Reduces cache misses from 2 → 1 per transition check
+        pub const BaseCheck = struct {
+            base: i32,
+            check: u32,
+        };
+
+        /// Interleaved BASE+CHECK array (8 bytes per state, fits in single cache line)
+        base_check: []BaseCheck,
         /// Array marking leaf states (pattern endings)
         is_leaf: []bool,
         /// FAIL array: failure links for Aho-Corasick automaton
@@ -69,8 +74,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             if (patterns.len == 0) {
                 const empty_output = try allocator.alloc(std.ArrayList(usize), 0);
                 return Self{
-                    .base = &[_]i32{},
-                    .check = &[_]u32{},
+                    .base_check = &[_]BaseCheck{},
                     .is_leaf = &[_]bool{},
                     .fail = &[_]u32{},
                     .output = empty_output,
@@ -80,14 +84,13 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 };
             }
 
-            // Initial capacity
-            var base_arr = try allocator.alloc(i32, 1024);
-            errdefer allocator.free(base_arr);
-            @memset(base_arr, 0); // Initialize to 0
-
-            var check_arr = try allocator.alloc(u32, 1024);
-            errdefer allocator.free(check_arr);
-            @memset(check_arr, 0xFFFFFFFF); // 0xFFFFFFFF = empty
+            // Initial capacity - allocate interleaved BASE+CHECK array
+            var base_check_arr = try allocator.alloc(BaseCheck, 1024);
+            errdefer allocator.free(base_check_arr);
+            // Initialize with base=0, check=0xFFFFFFFF (empty)
+            for (base_check_arr) |*bc| {
+                bc.* = .{ .base = 0, .check = 0xFFFFFFFF };
+            }
 
             var is_leaf_arr = try allocator.alloc(bool, 1024);
             errdefer allocator.free(is_leaf_arr);
@@ -107,8 +110,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             }
 
             // Root state setup
-            base_arr[0] = 1;
-            check_arr[0] = 0;
+            base_check_arr[0] = .{ .base = 1, .check = 0 };
             fail_arr[0] = 0;
             var next_state_id: u32 = 1;
 
@@ -121,32 +123,32 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                     const char_u8 = @as(u8, @intCast(char));
 
                     // Get or assign base for current state (minimal base search)
-                    if (base_arr[current_state] == 0) {
+                    if (base_check_arr[current_state].base == 0) {
                         // Find minimal conflict-free base for this state
                         var base_candidate: u32 = 1;
                         while (true) {
                             // Check if this base works for this character
                             const target_pos = base_candidate + char_u8;
-                            if (target_pos >= base_arr.len) {
+                            if (target_pos >= base_check_arr.len) {
                                 // Expand arrays to accommodate target_pos
-                                const old_len = base_arr.len;
+                                const old_len = base_check_arr.len;
                                 const new_len = @max(old_len * 2, target_pos + 1);
-                                base_arr = try allocator.realloc(base_arr, new_len);
-                                check_arr = try allocator.realloc(check_arr, new_len);
+                                base_check_arr = try allocator.realloc(base_check_arr, new_len);
                                 is_leaf_arr = try allocator.realloc(is_leaf_arr, new_len);
                                 fail_arr = try allocator.realloc(fail_arr, new_len);
                                 output_arr = try allocator.realloc(output_arr, new_len);
-                                @memset(base_arr[old_len..new_len], 0);
-                                @memset(check_arr[old_len..new_len], 0xFFFFFFFF);
+                                for (base_check_arr[old_len..new_len]) |*bc| {
+                                    bc.* = .{ .base = 0, .check = 0xFFFFFFFF };
+                                }
                                 @memset(is_leaf_arr[old_len..new_len], false);
                                 @memset(fail_arr[old_len..new_len], 0);
                                 for (output_arr[old_len..new_len]) |*o| {
                                     o.* = .{};
                                 }
                             }
-                            if (check_arr[target_pos] == 0xFFFFFFFF) {
+                            if (base_check_arr[target_pos].check == 0xFFFFFFFF) {
                                 // Position is empty, use this base
-                                base_arr[current_state] = @as(i32, @intCast(base_candidate));
+                                base_check_arr[current_state].base = @as(i32, @intCast(base_candidate));
                                 break;
                             }
                             // Conflict, try next base
@@ -154,20 +156,20 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                         }
                     }
 
-                    const base_val = base_arr[current_state];
+                    const base_val = base_check_arr[current_state].base;
                     const target_pos = @as(u32, @intCast(base_val + @as(i32, char_u8)));
 
                     // Expand arrays if necessary
-                    while (target_pos >= base_arr.len) {
-                        const old_len = base_arr.len;
+                    while (target_pos >= base_check_arr.len) {
+                        const old_len = base_check_arr.len;
                         const new_len = old_len * 2;
-                        base_arr = try allocator.realloc(base_arr, new_len);
-                        check_arr = try allocator.realloc(check_arr, new_len);
+                        base_check_arr = try allocator.realloc(base_check_arr, new_len);
                         is_leaf_arr = try allocator.realloc(is_leaf_arr, new_len);
                         fail_arr = try allocator.realloc(fail_arr, new_len);
                         output_arr = try allocator.realloc(output_arr, new_len);
-                        @memset(base_arr[old_len..new_len], 0);
-                        @memset(check_arr[old_len..new_len], 0xFFFFFFFF);
+                        for (base_check_arr[old_len..new_len]) |*bc| {
+                            bc.* = .{ .base = 0, .check = 0xFFFFFFFF };
+                        }
                         @memset(is_leaf_arr[old_len..new_len], false);
                         @memset(fail_arr[old_len..new_len], 0);
                         for (output_arr[old_len..new_len]) |*o| {
@@ -176,9 +178,9 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                     }
 
                     // Assign next state at target position
-                    if (check_arr[target_pos] == 0xFFFFFFFF) {
+                    if (base_check_arr[target_pos].check == 0xFFFFFFFF) {
                         // First time at this position - create new state
-                        check_arr[target_pos] = current_state;
+                        base_check_arr[target_pos].check = current_state;
                         next_state_id = @max(next_state_id, target_pos + 1);
                     }
 
@@ -191,8 +193,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             }
 
             // Trim arrays to actual size used
-            base_arr = try allocator.realloc(base_arr, next_state_id);
-            check_arr = try allocator.realloc(check_arr, next_state_id);
+            base_check_arr = try allocator.realloc(base_check_arr, next_state_id);
             is_leaf_arr = try allocator.realloc(is_leaf_arr, next_state_id);
             fail_arr = try allocator.realloc(fail_arr, next_state_id);
             output_arr = try allocator.realloc(output_arr, next_state_id);
@@ -201,8 +202,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             // std.debug.print("[DAT] States: {d}, Memory: {d} KB\n", .{next_state_id, (next_state_id * 16) / 1024});
 
             var result = Self{
-                .base = base_arr,
-                .check = check_arr,
+                .base_check = base_check_arr,
                 .is_leaf = is_leaf_arr,
                 .fail = fail_arr,
                 .output = output_arr,
@@ -222,7 +222,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Failure links enable pattern detection after state mismatch.
         /// Time: O(|V|) | Space: O(|V|)
         fn buildFailureLinks(self: *Self) !void {
-            if (self.base.len == 0) return;
+            if (self.base_check.len == 0) return;
 
             // Use a queue for BFS traversal
             var queue = std.ArrayList(u32){};
@@ -232,11 +232,11 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             self.fail[0] = 0;
 
             // Initialize: all depth-1 nodes have failure link to root
-            if (self.base[0] >= 0) {
-                const base_val = self.base[0];
+            if (self.base_check[0].base >= 0) {
+                const base_val = self.base_check[0].base;
                 for (0..256) |c| {
                     const target_pos = @as(u32, @intCast(base_val + @as(i32, @intCast(c))));
-                    if (target_pos < self.check.len and self.check[target_pos] == 0) {
+                    if (target_pos < self.base_check.len and self.base_check[target_pos].check == 0) {
                         // This is a depth-1 node
                         self.fail[target_pos] = 0;
                         try queue.append(self.allocator, target_pos);
@@ -251,20 +251,20 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 queue_idx += 1;
 
                 // Get children of current state
-                if (current < self.base.len and self.base[current] >= 0) {
-                    const base_val = self.base[current];
+                if (current < self.base_check.len and self.base_check[current].base >= 0) {
+                    const base_val = self.base_check[current].base;
                     for (0..256) |c| {
                         const target_pos = @as(u32, @intCast(base_val + @as(i32, @intCast(c))));
-                        if (target_pos < self.check.len and self.check[target_pos] == current) {
+                        if (target_pos < self.base_check.len and self.base_check[target_pos].check == current) {
                             // This is a child of current state
 
                             // Find failure link by following parent's failure chain
                             var failure_candidate = self.fail[current];
                             while (failure_candidate != 0) {
-                                const fail_base = self.base[failure_candidate];
+                                const fail_base = self.base_check[failure_candidate].base;
                                 if (fail_base >= 0) {
                                     const fail_target = @as(u32, @intCast(fail_base + @as(i32, @intCast(c))));
-                                    if (fail_target < self.check.len and self.check[fail_target] == failure_candidate) {
+                                    if (fail_target < self.base_check.len and self.base_check[fail_target].check == failure_candidate) {
                                         // Found a transition on character c
                                         self.fail[target_pos] = fail_target;
                                         break;
@@ -276,10 +276,10 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                             // If no match found, link to root
                             if (failure_candidate == 0) {
                                 // Check if root has transition on c
-                                const root_base = self.base[0];
+                                const root_base = self.base_check[0].base;
                                 if (root_base >= 0) {
                                     const root_target = @as(u32, @intCast(root_base + @as(i32, @intCast(c))));
-                                    if (root_target < self.check.len and self.check[root_target] == 0) {
+                                    if (root_target < self.base_check.len and self.base_check[root_target].check == 0) {
                                         self.fail[target_pos] = root_target;
                                     } else {
                                         self.fail[target_pos] = 0;
@@ -300,7 +300,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Copies pattern indices from failure states to output array.
         /// Time: O(|V|) | Space: O(1)
         fn buildOutputLinks(self: *Self) !void {
-            if (self.base.len == 0) return;
+            if (self.base_check.len == 0) return;
 
             for (0..self.state_count) |s| {
                 const state = @as(u32, @intCast(s));
@@ -321,11 +321,8 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Free all resources used by the trie.
         /// Time: O(|V|) | Space: O(1)
         pub fn deinit(self: *Self) void {
-            if (self.base.len > 0) {
-                self.allocator.free(self.base);
-            }
-            if (self.check.len > 0) {
-                self.allocator.free(self.check);
+            if (self.base_check.len > 0) {
+                self.allocator.free(self.base_check);
             }
             if (self.is_leaf.len > 0) {
                 self.allocator.free(self.is_leaf);
@@ -361,13 +358,13 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Returns true if the key matches a pattern in the trie.
         /// Time: O(|key|) | Space: O(1)
         pub fn contains(self: *const Self, key: []const T) bool {
-            if (self.base.len == 0) return false;
+            if (self.base_check.len == 0) return false;
 
             var state: u32 = 0;
             for (key) |char| {
-                // Get base value for current state
-                if (state >= self.base.len) return false;
-                const base_val = self.base[state];
+                // Get base value for current state (single cache line access!)
+                if (state >= self.base_check.len) return false;
+                const base_val = self.base_check[state].base;
 
                 // Calculate next state position: pos = BASE[state] + c
                 // Cast char to i32 (safely, since u8 < 256)
@@ -377,10 +374,10 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 if (next_state_signed < 0) return false;
 
                 const next_state = @as(u32, @intCast(next_state_signed));
-                if (next_state >= self.check.len) return false;
+                if (next_state >= self.base_check.len) return false;
 
-                // Verify validity with CHECK array
-                if (self.check[next_state] != state) return false;
+                // Verify validity with CHECK array (same cache line as base!)
+                if (self.base_check[next_state].check != state) return false;
 
                 state = next_state;
             }
@@ -399,7 +396,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             var matches = std.ArrayList(Match){};
             errdefer matches.deinit(allocator);
 
-            if (text.len == 0 or self.base.len == 0) {
+            if (text.len == 0 or self.base_check.len == 0) {
                 return matches.toOwnedSlice(allocator);
             }
 
@@ -409,14 +406,15 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 const char_u8 = @as(u8, @intCast(char));
 
                 // Follow failure links until we find a valid transition or reach root
+                // HOT PATH: Interleaved BASE+CHECK access (1 cache miss instead of 2!)
                 while (true) {
-                    if (current_state < self.base.len) {
-                        const base_val = self.base[current_state];
-                        if (base_val >= 0) {
-                            const next_state_signed = base_val + @as(i32, @intCast(char_u8));
+                    if (current_state < self.base_check.len) {
+                        const bc = self.base_check[current_state]; // Single memory access!
+                        if (bc.base >= 0) {
+                            const next_state_signed = bc.base + @as(i32, @intCast(char_u8));
                             if (next_state_signed >= 0) {
                                 const next_state = @as(u32, @intCast(next_state_signed));
-                                if (next_state < self.check.len and self.check[next_state] == current_state) {
+                                if (next_state < self.base_check.len and self.base_check[next_state].check == current_state) {
                                     // Valid transition found
                                     current_state = next_state;
                                     break;
@@ -475,11 +473,8 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Time: O(|V| + |E|) | Space: O(1)
         pub fn validate(self: *const Self) !void {
             // Basic validation: arrays should be non-empty and consistent in size
-            if (self.base.len == 0) return;
-            if (self.base.len != self.check.len) {
-                return error.RootInvariant;
-            }
-            if (self.base.len != self.is_leaf.len) {
+            if (self.base_check.len == 0) return;
+            if (self.base_check.len != self.is_leaf.len) {
                 return error.RootInvariant;
             }
         }

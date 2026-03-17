@@ -38,9 +38,11 @@ fn benchDoubleArrayTrie(allocator: std.mem.Allocator, patterns: []const []const 
     var dat = try DoubleArrayTrie.init(allocator, patterns);
     defer dat.deinit();
 
+    // Calculate memory usage: BaseCheck (8 bytes) + is_leaf (1) + fail (4) + output pointer overhead (~24)
+    const mem_kb = @divFloor(dat.base_check.len * (@sizeOf(DoubleArrayTrie.BaseCheck) + @sizeOf(bool) + @sizeOf(u32) + 24), 1024);
     std.debug.print("DoubleArrayTrie: {} states, {} KB memory\n", .{
         dat.count(),
-        @divFloor(dat.base.len * (@sizeOf(i32) + @sizeOf(u32) + @sizeOf(bool) + @sizeOf(u32)), 1024),
+        mem_kb,
     });
 
     // Warmup

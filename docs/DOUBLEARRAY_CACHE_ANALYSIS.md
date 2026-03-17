@@ -129,23 +129,36 @@ output: []std.ArrayList(usize),
 - [x] Create `bench/cache_profile_strings.zig` to measure current throughput
 - [x] Establish baseline: 125.0 MB/sec (1000 patterns, 1 MB text)
 
-### Phase 2: Interleaved BASE+CHECK (Quick Win)
+### Phase 2: Interleaved BASE+CHECK (Quick Win) ✅ COMPLETE
 
 **Goal**: Achieve ≥160 MB/sec (+28% improvement)
 
-1. **Create variant**: `DoubleArrayTrieInterleaved(T)`
-   - Replace separate `base: []i32, check: []u32` with `base_check: []BaseCheck`
-   - Update `init()`: allocate single buffer, pack values
-   - Update `findAll()`: access `base_check[s].base` and `base_check[s].check`
-2. **Benchmark**: Measure throughput improvement
-3. **Validate**: Run all 40 Aho-Corasick tests (correctness unchanged)
-4. **Commit**: If ≥160 MB/sec, commit as incremental improvement
+**Implementation** (2026-03-18):
+1. ✅ Created `BaseCheck` struct (8 bytes: i32 base + u32 check)
+2. ✅ Replaced separate `base: []i32, check: []u32` with `base_check: []BaseCheck`
+3. ✅ Updated `init()`, `buildFailureLinks()`, `contains()`, `findAll()`, `validate()`
+4. ✅ All 722 tests passing (correctness preserved)
 
-**Code changes** (estimated):
-- `double_array_trie.zig`: ~50 lines modified
-- `aho_corasick.zig`: 0 lines (API unchanged)
+**Results** (5 benchmark runs, 1000 patterns, 1 MB text):
+- **Throughput**: 122.4 MB/sec (avg: 121.4, 121.9, 122.9, 122.9, 123.3)
+- **vs Baseline**: -2.6 MB/sec (-2% regression)
+- **vs Target**: -37.6 MB/sec (-24% below 160 MB/sec target)
 
-**Risk**: LOW (minimal logic changes, easy to revert)
+**Root Cause Analysis**:
+- ✅ **BaseCheck interleaving works**: Struct is 8 bytes, fits in cache line
+- ❌ **But hot path still has 3-4 cache misses**:
+  1. BASE+CHECK: 1 load (interleaved) ✅ — fixed
+  2. FAIL[current]: separate array access ❌ — still fragmented
+  3. OUTPUT[current]: ArrayList pointer dereference ❌ — still fragmented
+  4. OUTPUT data: separate heap allocation ❌ — still fragmented
+- **Bottleneck**: Interleaving BASE+CHECK fixed only **1 of 3-4** cache misses
+- **Conclusion**: Phase 2 alone is **insufficient** for +28% target
+
+**Code changes** (actual):
+- `double_array_trie.zig`: ~80 lines modified (init, buildFailureLinks, deinit, contains, findAll, validate)
+- `bench/cache_profile_strings.zig`: 5 lines modified (memory calculation)
+
+**Risk**: LOW (minimal logic changes, all tests pass)
 
 ### Phase 3: Full Linearization (Stretch Goal)
 
