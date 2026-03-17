@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.8.0 (released 2026-03-18) ✅
-- **Phase**: v1.8.0 RELEASED — Double-Array Trie Implementation
+- **Version**: 1.8.0 (released 2026-03-17) ✅
+- **Phase**: v1.9.0 ACTIVE — Aho-Corasick Linearization & Cache Optimization
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 722/722 tests)
 - **Latest Milestone**: v1.8.0 RELEASED (Double-Array Trie — 23× memory reduction, 88 MB/sec)
-- **Next Milestone**: TBD (< 2 active milestones rule)
+- **Active Milestone**: v1.9.0 — Close 88→200 MB/sec gap through cache-aware optimizations (0/5 items)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework

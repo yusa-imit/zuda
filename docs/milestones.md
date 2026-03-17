@@ -2,15 +2,44 @@
 
 ## Current Status
 
-- **Latest release**: v1.7.0 (2026-03-17) — Aho-Corasick Deep Optimization (Analysis Complete)
-- **Current phase**: v1.8.0 — Double-Array Trie Implementation
-- **Tests**: 701/701 passing (100%)
+- **Latest release**: v1.8.0 (2026-03-17) — Double-Array Trie Implementation
+- **Current phase**: v1.9.0 — Aho-Corasick Linearization & Cache Optimization
+- **Tests**: 722/722 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
 
 ---
 
 ## Active Milestones
+
+### v1.9.0 — Aho-Corasick Linearization & Cache Optimization
+
+Close the 88→200 MB/sec performance gap through cache-aware optimizations:
+
+- [ ] **Analyze double-array cache behavior** — Profile cache misses in DoubleArrayTrie
+  - Use `perf stat` to measure L1/L2/L3 cache miss rates
+  - Compare sparse vs dense allocation cache behavior
+  - Identify hot loops causing cache thrashing
+- [ ] **Implement array linearization** — Optimize memory layout for sequential access
+  - Pack BASE/CHECK/FAIL/OUTPUT arrays into single contiguous buffer
+  - Experiment with struct-of-arrays (SoA) vs array-of-structs (AoS) layout
+  - Add prefetching hints for next state transitions
+- [ ] **Optimize sparse allocation** — Reduce fragmentation overhead
+  - Implement block allocation (allocate 16-32 states at a time, not one-by-one)
+  - Use power-of-2 growth strategy to reduce reallocations
+  - Batch CHECK validation to reduce branch mispredictions
+- [ ] **Benchmark validation** — Measure performance improvements
+  - Target: ≥180 MB/sec (+105% from 88 MB/sec baseline)
+  - Stretch goal: ≥200 MB/sec (original target)
+  - Verify memory usage stays ≤100 KB (vs 66 KB baseline)
+- [ ] **Documentation** — Update performance analysis with findings
+  - Document cache-aware optimizations applied
+  - Compare final performance: sparse vs dense vs original pointer-based
+  - Update PRD targets if 200 MB/sec proves fundamentally unreachable
+
+**Success criteria**: Achieve ≥180 MB/sec (90% of target) while maintaining ≤100 KB memory footprint. Document cache optimization strategies for future reference.
+
+**Rationale**: v1.8.0 achieved excellent memory reduction (23×) but left performance on the table (-56% gap). This milestone focuses on cache-aware optimizations that don't sacrifice memory efficiency.
 
 ### v1.8.0 — Double-Array Trie Implementation ✅ COMPLETE
 
