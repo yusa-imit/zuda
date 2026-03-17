@@ -280,6 +280,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const bench_memory_strings = b.addExecutable(.{
+        .name = "bench_memory_strings",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/memory_strings.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
     const bench_rbtree_micro = b.addExecutable(.{
         .name = "bench_rbtree_micro",
         .root_module = b.createModule(.{
@@ -349,6 +361,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_sorting);
     b.installArtifact(bench_strings);
     b.installArtifact(bench_memory);
+    b.installArtifact(bench_memory_strings);
     b.installArtifact(bench_rbtree_micro);
     b.installArtifact(bench_lists);
     b.installArtifact(bench_queues);
@@ -397,6 +410,12 @@ pub fn build(b: *std.Build) void {
     const run_bench_memory = b.addRunArtifact(bench_memory);
     bench_memory_step.dependOn(&run_bench_memory.step);
     run_bench_memory.step.dependOn(b.getInstallStep());
+
+    // Memory profiling for string structures (v1.8.0 validation)
+    const bench_memory_strings_step = b.step("bench-memory-strings", "Run memory profiling for string structures");
+    const run_bench_memory_strings = b.addRunArtifact(bench_memory_strings);
+    bench_memory_strings_step.dependOn(&run_bench_memory_strings.step);
+    run_bench_memory_strings.step.dependOn(b.getInstallStep());
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
