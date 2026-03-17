@@ -37,6 +37,34 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AtomicOrder = std.builtin.AtomicOrder;
+const builtin = @import("builtin");
+
+// Platform compatibility check: requires 128-bit atomic support
+//
+// 128-bit atomic CAS (CMPXCHG16B on x86-64, CASP on ARM64) is NOT universally supported:
+// - x86-64-macos: ✓ Supported (macOS requires CMPXCHG16B)
+// - aarch64-macos: ✓ Supported (Apple Silicon has LSE)
+// - x86_64-linux: ✗ NOT guaranteed (depends on CPU and Zig build settings)
+// - aarch64-linux: ✗ NOT guaranteed (LSE optional on ARM64)
+// - x86_64-windows: ✗ NOT supported by Zig std library
+// - wasm32-wasi: ✗ NOT supported (32-bit atomics only)
+//
+// For maximum portability, this container is ONLY enabled on macOS.
+// Linux/Windows users should use WorkStealingDeque or mutex-based alternatives.
+comptime {
+    const supported = switch (builtin.os.tag) {
+        .macos => switch (builtin.cpu.arch) {
+            .x86_64, .aarch64 => true,
+            else => false,
+        },
+        else => false,
+    };
+    if (!supported) {
+        @compileError("LockFreeStack requires 128-bit atomic CAS support (CMPXCHG16B/CASP). " ++
+            "Currently only available on macOS (x86-64/ARM64). " ++
+            "On other platforms, use WorkStealingDeque or a mutex-based stack.");
+    }
+}
 
 /// Lock-free stack using Treiber's algorithm.
 ///

@@ -32,6 +32,28 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
 const Atomic = std.atomic.Value;
+const builtin = @import("builtin");
+
+// Platform compatibility check: requires reliable pointer tagging
+// While this uses `usize` atomics (not 128-bit), pointer tagging assumes:
+// - Pointers use < full address space (48-bit on x86-64, 24-bit on wasm32)
+// - Atomic usize operations are lock-free
+//
+// For safety and consistency with LockFreeStack, only enable on macOS.
+comptime {
+    const supported = switch (builtin.os.tag) {
+        .macos => switch (builtin.cpu.arch) {
+            .x86_64, .aarch64 => true,
+            else => false,
+        },
+        else => false,
+    };
+    if (!supported) {
+        @compileError("LockFreeQueue requires pointer tagging with atomic usize. " ++
+            "Currently only available on macOS (x86-64/ARM64). " ++
+            "On other platforms, use a mutex-based queue.");
+    }
+}
 
 /// Lock-free FIFO queue using Michael-Scott algorithm
 pub fn LockFreeQueue(comptime T: type) type {
@@ -53,9 +75,17 @@ pub fn LockFreeQueue(comptime T: type) type {
 
         /// Tagged pointer to handle ABA problem
         /// Stores both pointer and generation counter in a single atomic value
+        /// Platform-aware bit packing:
+        /// - 64-bit platforms: 48-bit pointer + 16-bit tag (x86-64, ARM64)
+        /// - 32-bit platforms: 24-bit pointer + 8-bit tag (WASM, ARM32)
         const TaggedPtr = struct {
             ptr: ?*Node,
             tag: usize,
+
+            // Platform-dependent bit layout
+            const ptr_bits: usize = if (@sizeOf(usize) == 8) 48 else 24;
+            const tag_bits: usize = if (@sizeOf(usize) == 8) 16 else 8;
+            const ptr_mask: usize = (@as(usize, 1) << ptr_bits) - 1;
 
             fn init(ptr: ?*Node, tag: usize) TaggedPtr {
                 return .{ .ptr = ptr, .tag = tag };
@@ -63,14 +93,13 @@ pub fn LockFreeQueue(comptime T: type) type {
 
             fn toUsize(self: TaggedPtr) usize {
                 const ptr_val = @intFromPtr(self.ptr orelse return self.tag);
-                // Pack pointer and tag: lower 48 bits = pointer, upper 16 bits = tag
-                // Assumes 48-bit address space (valid for x86-64, ARM64)
-                return ptr_val | (@as(usize, self.tag) << 48);
+                // Pack pointer and tag into platform-appropriate layout
+                return ptr_val | (@as(usize, self.tag) << ptr_bits);
             }
 
             fn fromUsize(val: usize) TaggedPtr {
-                const ptr_val = val & 0x0000_FFFF_FFFF_FFFF; // Lower 48 bits
-                const tag = val >> 48; // Upper 16 bits
+                const ptr_val = val & ptr_mask; // Lower N bits (platform-dependent)
+                const tag = val >> ptr_bits; // Upper M bits (platform-dependent)
                 if (ptr_val == 0 and tag == 0) {
                     return .{ .ptr = null, .tag = 0 };
                 }

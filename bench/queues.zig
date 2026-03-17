@@ -9,11 +9,23 @@
 const std = @import("std");
 const zuda = @import("zuda");
 const bench = zuda.internal.bench;
+const builtin = @import("builtin");
 
 const Deque = zuda.containers.queues.Deque;
-const LockFreeQueue = zuda.containers.queues.LockFreeQueue;
-const LockFreeStack = zuda.containers.queues.LockFreeStack;
 const WorkStealingDeque = zuda.containers.queues.WorkStealingDeque;
+
+// LockFreeQueue and LockFreeStack require 128-bit atomic support
+// Currently only guaranteed on macOS (x86-64/ARM64)
+const has_lockfree_support = switch (builtin.os.tag) {
+    .macos => switch (builtin.cpu.arch) {
+        .x86_64, .aarch64 => true,
+        else => false,
+    },
+    else => false,
+};
+
+const LockFreeQueue = if (has_lockfree_support) zuda.containers.queues.LockFreeQueue else void;
+const LockFreeStack = if (has_lockfree_support) zuda.containers.queues.LockFreeStack else void;
 
 /// Benchmark: Deque push_back operations
 fn benchDequePushBack(allocator: std.mem.Allocator) !void {
@@ -60,6 +72,7 @@ fn benchDequePopBack(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: LockFreeQueue enqueue operations
 fn benchLockFreeQueueEnqueue(allocator: std.mem.Allocator) !void {
+    if (comptime !has_lockfree_support) return;
     var queue = try LockFreeQueue(i64).init(allocator);
     defer queue.deinit();
 
@@ -72,6 +85,7 @@ fn benchLockFreeQueueEnqueue(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: LockFreeQueue dequeue operations
 fn benchLockFreeQueueDequeue(allocator: std.mem.Allocator) !void {
+    if (comptime !has_lockfree_support) return;
     var queue = try LockFreeQueue(i64).init(allocator);
     defer queue.deinit();
 
@@ -91,6 +105,7 @@ fn benchLockFreeQueueDequeue(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: LockFreeStack push operations
 fn benchLockFreeStackPush(allocator: std.mem.Allocator) !void {
+    if (comptime !has_lockfree_support) return;
     var stack = LockFreeStack(i64).init(allocator);
     defer stack.deinit();
 
@@ -103,6 +118,7 @@ fn benchLockFreeStackPush(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: LockFreeStack pop operations
 fn benchLockFreeStackPop(allocator: std.mem.Allocator) !void {
+    if (comptime !has_lockfree_support) return;
     var stack = LockFreeStack(i64).init(allocator);
     defer stack.deinit();
 
@@ -226,7 +242,7 @@ pub fn main() !void {
     }
 
     // LockFreeQueue enqueue
-    {
+    if (has_lockfree_support) {
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
@@ -238,10 +254,12 @@ pub fn main() !void {
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| LockFreeQueue | enqueue | {d} | {s} |\n", .{ ns_per_op, status });
+    } else {
+        std.debug.print("| LockFreeQueue | enqueue | N/A | ⊗ UNSUPPORTED |\n", .{});
     }
 
     // LockFreeQueue dequeue
-    {
+    if (has_lockfree_support) {
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
@@ -253,10 +271,12 @@ pub fn main() !void {
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| LockFreeQueue | dequeue | {d} | {s} |\n", .{ ns_per_op, status });
+    } else {
+        std.debug.print("| LockFreeQueue | dequeue | N/A | ⊗ UNSUPPORTED |\n", .{});
     }
 
     // LockFreeStack push
-    {
+    if (has_lockfree_support) {
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
@@ -268,10 +288,12 @@ pub fn main() !void {
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| LockFreeStack | push | {d} | {s} |\n", .{ ns_per_op, status });
+    } else {
+        std.debug.print("| LockFreeStack | push | N/A | ⊗ UNSUPPORTED |\n", .{});
     }
 
     // LockFreeStack pop
-    {
+    if (has_lockfree_support) {
         var benchmark = try bench.Benchmark.init(allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
@@ -283,6 +305,8 @@ pub fn main() !void {
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| LockFreeStack | pop | {d} | {s} |\n", .{ ns_per_op, status });
+    } else {
+        std.debug.print("| LockFreeStack | pop | N/A | ⊗ UNSUPPORTED |\n", .{});
     }
 
     // WorkStealingDeque push
