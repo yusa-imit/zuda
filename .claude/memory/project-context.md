@@ -45,7 +45,34 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-17 - Hour 15)
+## Recent Progress (Session 2026-03-17 - Hour 19)
+**FEATURE MODE → v1.7.0 MILESTONE ESTABLISHMENT:**
+- ✅ **v1.7.0 Milestone Established** (commit 723d1dc)
+  - **Theme**: Aho-Corasick Deep Optimization — close 367 MB/sec performance gap
+  - **Target**: Achieve ≥300 MB/sec (2.3x improvement from 133 MB/sec) OR document fundamental limits
+  - **5 focus areas**: Transition table compression, SIMD vectorization, memory layout optimization, alternative implementations, comparative benchmarks
+- ✅ **Memory Footprint Analysis — COMPLETE**
+  - **NodeASCII**: 2352 bytes per node (2.3 KB)
+    - Dense transition table: 2048 bytes (256 pointers × 8 bytes) — 87% of node size
+    - real_children tracking: 256 bytes (11% of node size)
+    - Metadata (failure, output, pattern_indices, depth): 48 bytes (2% of node size)
+  - **Estimated memory**: ~23 MB for benchmark workload (1000 patterns → ~10k nodes)
+  - **Key insight**: Transition table dominates memory footprint, but sparse alternatives (sorted array + binary search) would increase cache misses
+- 🔍 **Strategic Pivot Consideration**:
+  - **Original plan**: Implement sparse transition table (sorted array + binary search)
+  - **Problem identified**: Binary search = O(log k) memory accesses vs O(1) for dense array
+    - For 26-character alphabet: log₂(26) ≈ 5 cache misses per lookup
+    - Current bottleneck: ~200 ns per cache miss (v1.6.0 finding)
+    - **Prediction**: Sparse variant would be 5× **slower** than dense array (26 MB/sec vs 133 MB/sec)
+  - **Better approach**: Linearized/flattened automaton for cache locality (complex refactoring, needs TDD cycle)
+  - **Decision**: Defer implementation to future session, focus on comparative analysis and documentation
+- 📊 **Benchmark Baseline Verified**:
+  - Generic (HashMap): 59 MB/sec
+  - ASCII (dense array): 133 MB/sec (2.25x faster)
+  - Gap to target: 367 MB/sec (-73%)
+- 🎯 **Next Priority**: Comparative benchmarks against industry implementations (Hyperscan, rust aho-corasick, RE2)
+
+## Previous Progress (Session 2026-03-17 - Hour 15)
 **STABILIZATION MODE (FORCED) → CI CROSS-COMPILATION FIX:**
 - 🔴 **CI RED on main** (2 consecutive failures) — Forced stabilization mode
 - 🐛 **Root Cause**: LockFreeStack/Queue use 128-bit atomics NOT universally supported
