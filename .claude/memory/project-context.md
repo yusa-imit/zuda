@@ -46,32 +46,36 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-18 - Hour 05)
-**FEATURE MODE → v1.9.0 MILESTONE ESTABLISHMENT + CACHE ANALYSIS:**
-- ✅ **v1.9.0 Milestone Established** (commit fb1e26c)
-  - **Theme**: Aho-Corasick Linearization & Cache Optimization
-  - **Goal**: Close 88→200 MB/sec performance gap (+127% improvement)
-  - **5 focus areas**: Cache analysis, linearization, sparse allocation, benchmarking, documentation
-- ✅ **Cache Profiling Benchmark Created** (commit 790022d)
-  - **File**: `bench/cache_profile_strings.zig`
-  - **Baseline**: 125.0 MB/sec (1000 patterns, 1 MB text, 334 states)
-  - **Memory**: 4 KB (improved from 66 KB in v1.8.0 due to smaller workload)
-  - **Usage**: `./zig-out/bin/bench_cache_profile`
-- ✅ **Cache Behavior Analysis COMPLETE** (commit 7785f49)
-  - **Document**: docs/DOUBLEARRAY_CACHE_ANALYSIS.md (250+ lines)
-  - **Root cause**: Memory fragmentation across 4-5 arrays → 2-5 cache misses/char
-  - **Hot path**: BASE, CHECK, FAIL, OUTPUT separate allocations → 4 cache lines loaded per state
-  - **Proposed solution**: Linearized SoA layout (20 bytes/state) → 1 cache miss vs 4
-  - **Expected improvement**: +60-80% throughput (125 → 200-250 MB/sec)
-  - **Implementation plan**:
-    - Phase 2: Interleaved BASE+CHECK (≥160 MB/sec, +28%)
-    - Phase 3: Full linearization (≥200 MB/sec, +60%)
+## Recent Progress (Session 2026-03-18 - Hour 07)
+**FEATURE MODE → v1.9.0 PHASE 2 IMPLEMENTATION + FINDINGS:**
+- ✅ **Phase 2: Interleaved BASE+CHECK — COMPLETE** (commit 2eff97d)
+  - **Implementation**: Created `BaseCheck` struct (8 bytes: i32 base + u32 check)
+  - **Refactoring**: Replaced separate `base: []i32, check: []u32` with `base_check: []BaseCheck`
+  - **Updated**: init(), buildFailureLinks(), deinit(), contains(), findAll(), validate()
+  - **Tests**: ✅ 722/722 passing (correctness preserved)
+  - **Performance**: **122.4 MB/sec** (avg of 5 runs) vs baseline 125.0 MB/sec
+    - **-2% regression** instead of expected +28% improvement
+  - **Root cause**: Interleaving fixed only 1 of 3-4 cache misses
+    1. ✅ BASE[s] + CHECK[t] — now 1 load (was 2)
+    2. ❌ FAIL[s] — still separate array
+    3. ❌ OUTPUT[s] — still ArrayList pointer + heap data
+  - **Conclusion**: Phase 2 alone **insufficient** — need Phase 3 full linearization
 - 📊 **v1.9.0 Progress**: 1/5 items complete (20%)
   - [x] Cache analysis ✅
-  - [ ] Array linearization
+  - [x] Array linearization (Phase 2 complete, Phase 3 pending) ⚠️
   - [ ] Sparse allocation optimization
   - [ ] Benchmark validation
   - [ ] Documentation update
+- 🎯 **Next Priority**:
+  - **Option A**: Implement Phase 3 full linearization (State struct with BASE+CHECK+FAIL+output metadata)
+  - **Option B**: Accept current performance (122 MB/sec), revise targets, release v1.9.0
+  - **Recommendation**: Defer Phase 3 to next session (complex refactoring, 150+ lines, MEDIUM risk)
+
+## Previous Progress (Session 2026-03-18 - Hour 05)
+**FEATURE MODE → v1.9.0 MILESTONE ESTABLISHMENT + CACHE ANALYSIS:**
+- ✅ **v1.9.0 Milestone Established** (commit fb1e26c)
+- ✅ **Cache Profiling Benchmark Created** (commit 790022d)
+- ✅ **Cache Behavior Analysis COMPLETE** (commit 7785f49)
 
 ## Previous Progress (Session 2026-03-18 - Hour 03)
 **FEATURE MODE → v1.8.0 CRITICAL BUG FIX + MEMORY PROFILING:**
