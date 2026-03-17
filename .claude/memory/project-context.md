@@ -2,7 +2,7 @@
 
 ## Current Status
 - **Version**: 1.5.0 (released 2026-03-17) ✅
-- **Phase**: v1.6.0 — Performance Benchmarking & Real-World Optimization (2/4 items complete - 50%)
+- **Phase**: v1.6.0 — Performance Benchmarking & Real-World Optimization (3/4 items complete - 75%)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
 - **Latest Milestone**: v1.6.0 IN PROGRESS (Performance Benchmarking & Real-World Optimization)
@@ -45,13 +45,29 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-17 - Hour 07)
-**FEATURE MODE → v1.6.0 REDBLACKTREE DEEP DIVE COMPLETE:**
-- ✅ **v1.6.0 Progress**: 2/4 items complete (50%)
+## Recent Progress (Session 2026-03-17 - Hour 09)
+**FEATURE MODE → v1.6.0 AHO-CORASICK BENCHMARK FIXED:**
+- ✅ **v1.6.0 Progress**: 3/4 items complete (75%)
   - [x] Update Performance Table ✅ (commit 43a1faf)
   - [x] RedBlackTree Deep Dive ✅ (commits ec3ee69, 300651c)
-  - [ ] Aho-Corasick benchmark fix & investigation
+  - [x] Aho-Corasick benchmark fix & investigation ✅ (commits e7c2d59, 792c146)
   - [ ] Benchmark suite completeness
+- ✅ **Aho-Corasick Benchmark Fixed — COMPLETE** (commit e7c2d59)
+  - **Root cause**: Dangling pointer bug — patterns were freed before automaton used them
+  - **Symptom**: SIGSEGV during search phase (exit code 139)
+  - **Investigation**: Tested with reduced pattern count (100) — still crashed, confirmed not OOM
+  - **Fix**: Move pattern storage into context struct, change defer → errdefer, free patterns AFTER automaton deinit
+  - **Performance measured**: ASCII-optimized 133 MB/sec, Generic (HashMap) 59 MB/sec
+  - **vs v1.4.0**: +111% improvement (63 → 133 MB/sec for ASCII variant)
+  - **vs target**: FAIL -73% (133 vs 500 MB/sec)
+  - **Analysis**: Memory-bound (confirmed by v1.4.0 SIMD analysis), near-optimal for pointer-based traversal
+  - **Recommendation**: Revise target to ≥150 MB/sec (500 MB/sec unrealistic without SIMD vectorization)
+- 📊 **Performance Table Updated** (commit 792c146):
+  - Aho-Corasick: 133 MB/sec (was "Benchmark crash — unable to measure")
+
+## Previous Progress (Session 2026-03-17 - Hour 07)
+**FEATURE MODE → v1.6.0 REDBLACKTREE DEEP DIVE COMPLETE:**
+- ✅ **v1.6.0 Progress**: 2/4 items complete (50%) → moved to Hour 09
 - ✅ **RedBlackTree Performance Analysis — COMPLETE** (commit ec3ee69)
   - **Documentation**: Created docs/REDBLACKTREE_PERFORMANCE_ANALYSIS.md (425 lines)
   - **Measured performance**: 257 ns/op insert, 262 ns/op lookup (1M random keys)
