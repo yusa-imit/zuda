@@ -97,6 +97,7 @@ pub const containers = struct {
         pub const RadixTree = @import("containers/trees/radix_tree.zig").RadixTree;
         pub const SuffixArray = @import("containers/strings/suffix_array.zig").SuffixArray;
         pub const SuffixTree = @import("containers/strings/suffix_tree.zig").SuffixTree;
+        pub const DoubleArrayTrie = @import("containers/strings/double_array_trie.zig").DoubleArrayTrie;
     };
 
     /// Spatial index structures
