@@ -92,6 +92,35 @@ test "handles allocation failure" {
 }
 ```
 
+## Double-Array Trie Pattern (Aoe 1989)
+Space-efficient trie using BASE/CHECK arrays instead of pointer nodes:
+
+```zig
+pub fn DoubleArrayTrie(comptime T: type) type {
+    return struct {
+        base: []i32,        // State transition base (or next unallocated ID)
+        check: []u32,       // Parent state verification (0xFFFFFFFF = empty)
+        is_leaf: []bool,    // Pattern endings (separate array)
+        state_count: u32,
+        allocator: Allocator,
+        patterns: []const []const T,
+
+        // Transition: pos = BASE[state] + char; valid if CHECK[pos] == state
+        pub fn contains(self: *const Self, key: []const T) bool {
+            var state: u32 = 0;
+            for (key) |char| {
+                const pos = @as(u32, @intCast(self.base[state] + @as(i32, @intCast(@as(u8, @intCast(char))))));
+                if (pos >= self.check.len or self.check[pos] != state) return false;
+                state = pos;
+            }
+            return state < self.is_leaf.len and self.is_leaf[state];
+        }
+    };
+}
+```
+
+Construction: Reserve 256 positions per state for simplicity. More complex implementations use conflict resolution to minimize space.
+
 ## Zig 0.15 ArrayList Pattern
 In Zig 0.15, ArrayList no longer has `.init()` method. Use struct literal instead:
 

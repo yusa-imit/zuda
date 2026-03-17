@@ -11,7 +11,7 @@ zuda (root.zig — re-exports all public types)
 │   ├── hashing/        Hash containers (CuckooHashMap, RobinHoodHashMap, SwissTable)
 │   ├── queues/         Queue variants (Deque, StealingQueue)
 │   ├── graphs/         Graph representations (AdjacencyList, AdjacencyMatrix, CSR)
-│   ├── strings/        String structures (SuffixArray, SuffixTree)
+│   ├── strings/        String structures (SuffixArray, SuffixTree, DoubleArrayTrie)
 │   ├── spatial/        Spatial indices (KDTree, RTree, QuadTree, OctTree)
 │   └── probabilistic/  Probabilistic (BloomFilter, CountMinSketch, HyperLogLog)
 ├── algorithms/
@@ -42,3 +42,12 @@ Graph algorithms are generic over a duck-typed `Graph` concept via comptime. Any
 
 ### Complexity Contracts
 Every public function's doc comment states Big-O time and space. Verified via benchmark regression tests.
+
+### Double-Array Trie Implementation (v1.8.0)
+The DoubleArrayTrie(T) uses Aoe (1989) algorithm for space-efficient pattern storage:
+- BASE[state] = transition base address or next unallocated state ID
+- CHECK[pos] = parent state verification (0xFFFFFFFF marks empty slots)
+- is_leaf[state] = separate array tracking pattern endings (no BASE negation)
+- Current implementation uses naive 256-slot allocation per state for simplicity
+- Future optimization: bitmap-based conflict resolution for 50-100× memory reduction
+- Trade-off: Construction O(|V| × |Σ|) vs search O(1) per character
