@@ -46,7 +46,34 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-18 - Hour 03)
+## Recent Progress (Session 2026-03-18 - Hour 05)
+**FEATURE MODE → v1.9.0 MILESTONE ESTABLISHMENT + CACHE ANALYSIS:**
+- ✅ **v1.9.0 Milestone Established** (commit fb1e26c)
+  - **Theme**: Aho-Corasick Linearization & Cache Optimization
+  - **Goal**: Close 88→200 MB/sec performance gap (+127% improvement)
+  - **5 focus areas**: Cache analysis, linearization, sparse allocation, benchmarking, documentation
+- ✅ **Cache Profiling Benchmark Created** (commit 790022d)
+  - **File**: `bench/cache_profile_strings.zig`
+  - **Baseline**: 125.0 MB/sec (1000 patterns, 1 MB text, 334 states)
+  - **Memory**: 4 KB (improved from 66 KB in v1.8.0 due to smaller workload)
+  - **Usage**: `./zig-out/bin/bench_cache_profile`
+- ✅ **Cache Behavior Analysis COMPLETE** (commit 7785f49)
+  - **Document**: docs/DOUBLEARRAY_CACHE_ANALYSIS.md (250+ lines)
+  - **Root cause**: Memory fragmentation across 4-5 arrays → 2-5 cache misses/char
+  - **Hot path**: BASE, CHECK, FAIL, OUTPUT separate allocations → 4 cache lines loaded per state
+  - **Proposed solution**: Linearized SoA layout (20 bytes/state) → 1 cache miss vs 4
+  - **Expected improvement**: +60-80% throughput (125 → 200-250 MB/sec)
+  - **Implementation plan**:
+    - Phase 2: Interleaved BASE+CHECK (≥160 MB/sec, +28%)
+    - Phase 3: Full linearization (≥200 MB/sec, +60%)
+- 📊 **v1.9.0 Progress**: 1/5 items complete (20%)
+  - [x] Cache analysis ✅
+  - [ ] Array linearization
+  - [ ] Sparse allocation optimization
+  - [ ] Benchmark validation
+  - [ ] Documentation update
+
+## Previous Progress (Session 2026-03-18 - Hour 03)
 **FEATURE MODE → v1.8.0 CRITICAL BUG FIX + MEMORY PROFILING:**
 - 🐛 **Critical Bug Fixed — DoubleArrayTrie 127× memory overhead** (commits 5d6986b, cb540b9)
   - **Bug discovered**: Memory profiling revealed 200 MB usage (vs expected 15-30 KB)
