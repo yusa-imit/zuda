@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.5.0 (2026-03-17) — Code Quality & Maintainability
-- **Current phase**: v1.6.0 — Performance Benchmarking & Real-World Optimization
+- **Latest release**: v1.6.0 (2026-03-17) — Performance Benchmarking & Real-World Optimization
+- **Current phase**: v1.7.0 — Aho-Corasick Deep Optimization
 - **Tests**: 701/701 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -12,9 +12,37 @@
 
 ## Active Milestones
 
-### v1.6.0 — Performance Benchmarking & Real-World Optimization
+### v1.7.0 — Aho-Corasick Deep Optimization
 
-Systematic performance measurement and targeted optimization based on benchmark data:
+Close the 367 MB/sec performance gap through algorithmic and micro-optimization:
+
+- [ ] **Transition table compression** — Investigate sparse vs dense trade-offs
+  - Current: Dense array (256 children per node) wastes memory on low-alphabet patterns
+  - Sparse alternatives: Sorted array + binary search, compressed trie, minimal perfect hashing
+  - Target: Reduce cache misses while maintaining O(1) transitions
+- [ ] **SIMD vectorization exploration** — Byte-parallel state simulation
+  - Technique: Process 16-32 characters simultaneously using SIMD lanes
+  - Challenge: State-dependent transitions make vectorization non-trivial
+  - Reference: Hyperscan (Intel), Vectorscan (ARM NEON)
+  - Fallback: Document why SIMD is impractical if fundamental limitations exist
+- [ ] **Memory layout optimization** — Cache-conscious node packing
+  - Current analysis: ~200 ns/lookup dominated by cache misses (v1.6.0 deep dive)
+  - Techniques: Linearize hot paths, pack frequently-accessed transitions, prefetch next states
+  - Benchmark: Memory bandwidth vs compute — verify we're not already memory-bound
+- [ ] **Alternative automaton implementations** — Double-array trie, DAWGs
+  - Double-array: O(1) lookup with significantly smaller memory footprint
+  - DAWG (Directed Acyclic Word Graph): Share common suffixes across patterns
+  - Evaluate: Implementation complexity vs performance gain
+- [ ] **Comparative benchmarks** — Measure against reference implementations
+  - Targets: Hyperscan (C++), aho-corasick crate (Rust), RE2 (C++)
+  - Workloads: ASCII text, UTF-8 text, binary patterns, short vs long patterns
+  - Goal: Establish realistic performance ceiling based on industry standards
+
+**Success criteria**: Achieve ≥300 MB/sec (2.3x improvement) OR document fundamental memory bandwidth limits with comparative evidence.
+
+### v1.6.0 — Performance Benchmarking & Real-World Optimization ✅ RELEASED
+
+Released 2026-03-17. Systematic performance measurement and targeted optimization based on benchmark data:
 
 - [x] **Update Performance Table** ✅ (commit 43a1faf)
   - Ran all benchmarks except Aho-Corasick (benchmark crash — needs investigation)
