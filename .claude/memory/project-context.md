@@ -1,11 +1,11 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.6.0 (released 2026-03-17) ✅
-- **Phase**: v1.7.0 — Aho-Corasick Deep Optimization (0/5 items complete - 0%)
+- **Version**: 1.7.0 (released 2026-03-17) ✅
+- **Phase**: NEXT MILESTONE TBD
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 701/701 tests)
-- **Latest Milestone**: v1.7.0 ESTABLISHED (Aho-Corasick Deep Optimization — close 367 MB/sec performance gap)
+- **Latest Milestone**: v1.7.0 RELEASED ✅ (Aho-Corasick Optimization Analysis — documented limits, revised target 500→200 MB/sec)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
