@@ -104,7 +104,6 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             }
             for (output_arr) |*o| {
                 o.* = .{};
-                o.allocator = allocator;
             }
 
             // Root state setup
@@ -135,7 +134,6 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                         @memset(fail_arr[old_len..new_len], 0);
                         for (output_arr[old_len..new_len]) |*o| {
                             o.* = .{};
-                            o.allocator = allocator;
                         }
                     }
 
@@ -163,7 +161,6 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                         @memset(fail_arr[old_len..new_len], 0);
                         for (output_arr[old_len..new_len]) |*o| {
                             o.* = .{};
-                            o.allocator = allocator;
                         }
                     }
 
@@ -182,7 +179,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
 
                 // Mark end of pattern
                 is_leaf_arr[current_state] = true;
-                try output_arr[current_state].append(pattern_idx);
+                try output_arr[current_state].append(allocator, pattern_idx);
             }
 
             // Trim arrays to actual size used
@@ -219,7 +216,6 @@ pub fn DoubleArrayTrie(comptime T: type) type {
 
             // Use a queue for BFS traversal
             var queue = std.ArrayList(u32){};
-            queue.allocator = self.allocator;
             defer queue.deinit(self.allocator);
 
             // Root's failure link is self (0 -> 0)
@@ -233,7 +229,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                     if (target_pos < self.check.len and self.check[target_pos] == 0) {
                         // This is a depth-1 node
                         self.fail[target_pos] = 0;
-                        try queue.append(target_pos);
+                        try queue.append(self.allocator, target_pos);
                     }
                 }
             }
@@ -283,7 +279,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                                 }
                             }
 
-                            try queue.append(target_pos);
+                            try queue.append(self.allocator, target_pos);
                         }
                     }
                 }
@@ -304,7 +300,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 while (failure_state != state and failure_state != 0) {
                     if (failure_state < self.output.len) {
                         for (self.output[failure_state].items) |pattern_idx| {
-                            try self.output[state].append(pattern_idx);
+                            try self.output[state].append(self.allocator, pattern_idx);
                         }
                     }
                     failure_state = self.fail[failure_state];
@@ -391,11 +387,10 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Time: O(|text| + z) where z = number of matches | Space: O(z)
         pub fn findAll(self: *const Self, allocator: Allocator, text: []const T) ![]Match {
             var matches = std.ArrayList(Match){};
-            matches.allocator = allocator;
             errdefer matches.deinit(allocator);
 
             if (text.len == 0 or self.base.len == 0) {
-                return matches.toOwnedSlice();
+                return matches.toOwnedSlice(allocator);
             }
 
             var current_state: u32 = 0;
@@ -434,7 +429,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 // Emit patterns at current state
                 if (current_state < self.output.len) {
                     for (self.output[current_state].items) |pattern_idx| {
-                        try matches.append(.{
+                        try matches.append(allocator, .{
                             .pattern_index = pattern_idx,
                             .position = i + 1 - self.patterns[pattern_idx].len,
                         });
@@ -446,7 +441,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 while (failure_state != 0 and failure_state != current_state) {
                     if (failure_state < self.output.len) {
                         for (self.output[failure_state].items) |pattern_idx| {
-                            try matches.append(.{
+                            try matches.append(allocator, .{
                                 .pattern_index = pattern_idx,
                                 .position = i + 1 - self.patterns[pattern_idx].len,
                             });
@@ -460,7 +455,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 }
             }
 
-            return matches.toOwnedSlice();
+            return matches.toOwnedSlice(allocator);
         }
 
         // -- Validation --
