@@ -112,41 +112,52 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             fail_arr[0] = 0;
             var next_state_id: u32 = 1;
 
-            // For each pattern, insert into the double-array trie
+            // Build trie incrementally, assigning states to parents as needed
+            // Key optimization: only allocate base when transitioning to new state
             for (patterns, 0..) |pattern, pattern_idx| {
                 var current_state: u32 = 0;
 
                 for (pattern) |char| {
                     const char_u8 = @as(u8, @intCast(char));
 
-                    // Expand arrays if needed
-                    while (next_state_id >= base_arr.len) {
-                        const old_len = base_arr.len;
-                        const new_len = old_len * 2;
-                        base_arr = try allocator.realloc(base_arr, new_len);
-                        check_arr = try allocator.realloc(check_arr, new_len);
-                        is_leaf_arr = try allocator.realloc(is_leaf_arr, new_len);
-                        fail_arr = try allocator.realloc(fail_arr, new_len);
-                        output_arr = try allocator.realloc(output_arr, new_len);
-                        @memset(base_arr[old_len..new_len], 0);
-                        @memset(check_arr[old_len..new_len], 0xFFFFFFFF);
-                        @memset(is_leaf_arr[old_len..new_len], false);
-                        @memset(fail_arr[old_len..new_len], 0);
-                        for (output_arr[old_len..new_len]) |*o| {
-                            o.* = .{};
-                        }
-                    }
-
-                    // Get or assign base for current state
+                    // Get or assign base for current state (minimal base search)
                     if (base_arr[current_state] == 0) {
-                        base_arr[current_state] = @as(i32, @intCast(next_state_id));
-                        next_state_id += 256; // Reserve space for all 256 possible transitions
+                        // Find minimal conflict-free base for this state
+                        var base_candidate: u32 = 1;
+                        while (true) {
+                            // Check if this base works for this character
+                            const target_pos = base_candidate + char_u8;
+                            if (target_pos >= base_arr.len) {
+                                // Expand arrays to accommodate target_pos
+                                const old_len = base_arr.len;
+                                const new_len = @max(old_len * 2, target_pos + 1);
+                                base_arr = try allocator.realloc(base_arr, new_len);
+                                check_arr = try allocator.realloc(check_arr, new_len);
+                                is_leaf_arr = try allocator.realloc(is_leaf_arr, new_len);
+                                fail_arr = try allocator.realloc(fail_arr, new_len);
+                                output_arr = try allocator.realloc(output_arr, new_len);
+                                @memset(base_arr[old_len..new_len], 0);
+                                @memset(check_arr[old_len..new_len], 0xFFFFFFFF);
+                                @memset(is_leaf_arr[old_len..new_len], false);
+                                @memset(fail_arr[old_len..new_len], 0);
+                                for (output_arr[old_len..new_len]) |*o| {
+                                    o.* = .{};
+                                }
+                            }
+                            if (check_arr[target_pos] == 0xFFFFFFFF) {
+                                // Position is empty, use this base
+                                base_arr[current_state] = @as(i32, @intCast(base_candidate));
+                                break;
+                            }
+                            // Conflict, try next base
+                            base_candidate += 1;
+                        }
                     }
 
                     const base_val = base_arr[current_state];
                     const target_pos = @as(u32, @intCast(base_val + @as(i32, char_u8)));
 
-                    // Expand if necessary
+                    // Expand arrays if necessary
                     while (target_pos >= base_arr.len) {
                         const old_len = base_arr.len;
                         const new_len = old_len * 2;
@@ -164,14 +175,11 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                         }
                     }
 
-                    // Assign next state
+                    // Assign next state at target position
                     if (check_arr[target_pos] == 0xFFFFFFFF) {
-                        // First time at this position
+                        // First time at this position - create new state
                         check_arr[target_pos] = current_state;
-                        if (base_arr[target_pos] == 0) {
-                            base_arr[target_pos] = @as(i32, @intCast(next_state_id));
-                            next_state_id += 256;
-                        }
+                        next_state_id = @max(next_state_id, target_pos + 1);
                     }
 
                     current_state = target_pos;
@@ -183,12 +191,14 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             }
 
             // Trim arrays to actual size used
-            const final_size = next_state_id + 256;
-            base_arr = try allocator.realloc(base_arr, final_size);
-            check_arr = try allocator.realloc(check_arr, final_size);
-            is_leaf_arr = try allocator.realloc(is_leaf_arr, final_size);
-            fail_arr = try allocator.realloc(fail_arr, final_size);
-            output_arr = try allocator.realloc(output_arr, final_size);
+            base_arr = try allocator.realloc(base_arr, next_state_id);
+            check_arr = try allocator.realloc(check_arr, next_state_id);
+            is_leaf_arr = try allocator.realloc(is_leaf_arr, next_state_id);
+            fail_arr = try allocator.realloc(fail_arr, next_state_id);
+            output_arr = try allocator.realloc(output_arr, next_state_id);
+
+            // Debug: print state count for analysis
+            // std.debug.print("[DAT] States: {d}, Memory: {d} KB\n", .{next_state_id, (next_state_id * 16) / 1024});
 
             var result = Self{
                 .base = base_arr,
@@ -196,7 +206,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 .is_leaf = is_leaf_arr,
                 .fail = fail_arr,
                 .output = output_arr,
-                .state_count = final_size,
+                .state_count = next_state_id,
                 .allocator = allocator,
                 .patterns = patterns,
             };
