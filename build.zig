@@ -292,6 +292,54 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const bench_lists = b.addExecutable(.{
+        .name = "bench_lists",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/lists.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_queues = b.addExecutable(.{
+        .name = "bench_queues",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/queues.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_hashing = b.addExecutable(.{
+        .name = "bench_hashing",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/hashing.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
+    const bench_cache = b.addExecutable(.{
+        .name = "bench_cache",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/cache.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
     // Install benchmark executables
     b.installArtifact(bench_trees);
     b.installArtifact(bench_heaps);
@@ -302,6 +350,10 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_strings);
     b.installArtifact(bench_memory);
     b.installArtifact(bench_rbtree_micro);
+    b.installArtifact(bench_lists);
+    b.installArtifact(bench_queues);
+    b.installArtifact(bench_hashing);
+    b.installArtifact(bench_cache);
 
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench_trees = b.addRunArtifact(bench_trees);
@@ -311,6 +363,10 @@ pub fn build(b: *std.Build) void {
     const run_bench_graphs = b.addRunArtifact(bench_graphs);
     const run_bench_sorting = b.addRunArtifact(bench_sorting);
     const run_bench_strings = b.addRunArtifact(bench_strings);
+    const run_bench_lists = b.addRunArtifact(bench_lists);
+    const run_bench_queues = b.addRunArtifact(bench_queues);
+    const run_bench_hashing = b.addRunArtifact(bench_hashing);
+    const run_bench_cache = b.addRunArtifact(bench_cache);
 
     bench_step.dependOn(&run_bench_trees.step);
     bench_step.dependOn(&run_bench_heaps.step);
@@ -319,6 +375,10 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&run_bench_graphs.step);
     bench_step.dependOn(&run_bench_sorting.step);
     bench_step.dependOn(&run_bench_strings.step);
+    bench_step.dependOn(&run_bench_lists.step);
+    bench_step.dependOn(&run_bench_queues.step);
+    bench_step.dependOn(&run_bench_hashing.step);
+    bench_step.dependOn(&run_bench_cache.step);
 
     run_bench_trees.step.dependOn(b.getInstallStep());
     run_bench_heaps.step.dependOn(b.getInstallStep());
@@ -327,6 +387,10 @@ pub fn build(b: *std.Build) void {
     run_bench_graphs.step.dependOn(b.getInstallStep());
     run_bench_sorting.step.dependOn(b.getInstallStep());
     run_bench_strings.step.dependOn(b.getInstallStep());
+    run_bench_lists.step.dependOn(b.getInstallStep());
+    run_bench_queues.step.dependOn(b.getInstallStep());
+    run_bench_hashing.step.dependOn(b.getInstallStep());
+    run_bench_cache.step.dependOn(b.getInstallStep());
 
     // Memory profiling benchmark (separate step)
     const bench_memory_step = b.step("bench-memory", "Run memory profiling benchmarks");
