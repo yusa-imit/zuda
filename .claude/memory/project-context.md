@@ -4,7 +4,7 @@
 - **Version**: 1.5.0 (released 2026-03-17) ✅
 - **Phase**: v1.6.0 — Performance Benchmarking & Real-World Optimization (4/4 items complete - 100% ✅)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✓ GREEN (701/701 tests passing - 100%)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 701/701 tests)
 - **Latest Milestone**: v1.6.0 COMPLETE ✅ (Performance Benchmarking & Real-World Optimization)
 
 ## Phase 1 Progress — ✅ COMPLETE
@@ -45,25 +45,30 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-17 - Hour 13)
-**STABILIZATION MODE (FORCED) → CI FAILURE FIXES:**
-- 🔴 **CI RED on main** — Switched to stabilization mode despite hour % 4 == 1
-- ✅ **Issue #7 FIXED** — WorkStealingDeque std.atomic.fence removal (commit 44bf1f6)
-  - **Problem**: Used std.atomic.fence() removed in Zig 0.15
-  - **Fix**: Upgraded memory ordering to .seq_cst on atomic ops (pop/steal)
-  - **Impact**: bench_queues now compiles, WorkStealingDeque tests pass
-- ✅ **Issue #8 FIXED** — Hash map AutoContext type mismatch (commit 44bf1f6)
-  - **Problem**: Generic hash functions (anytype) can't be comptime fn params
-  - **Fix**: Moved AutoContext inside Auto* factory functions with concrete K type
-  - **Affected**: CuckooHashMap, RobinHoodHashMap
-  - **Added**: AutoSwissTable, AutoConsistentHashRing for API consistency
-  - **Impact**: bench_hashing now compiles, all hash map tests pass
-- ✅ **Benchmark API fixes** (commit 44bf1f6):
-  - Fixed bench/hashing.zig: .put() → .insert()
-  - AutoConsistentHashRing wrapper with simplified init(allocator, replicas)
+## Recent Progress (Session 2026-03-17 - Hour 15)
+**STABILIZATION MODE (FORCED) → CI CROSS-COMPILATION FIX:**
+- 🔴 **CI RED on main** (2 consecutive failures) — Forced stabilization mode
+- 🐛 **Root Cause**: LockFreeStack/Queue use 128-bit atomics NOT universally supported
+  - **Failing targets**: x86_64-windows-msvc, wasm32-wasi, x86_64-linux-gnu (3/6)
+  - **Error**: `expected 64-bit integer type or smaller; found 128-bit integer type`
+  - **Underlying issue**: `std.atomic.Value(u128)` requires CMPXCHG16B (x86) or CASP (ARM)
+    - Windows: Zig stdlib doesn't support 128-bit atomics
+    - WASM: Max 32-bit atomics
+    - Linux: CMPXCHG16B not guaranteed in Zig builds (depends on CPU model)
+- ✅ **Fix Applied** (commit e67fe1b):
+  - **LockFreeStack**: Added comptime check restricting to macOS only (x86-64/ARM64)
+  - **LockFreeQueue**: Added same restriction (uses pointer tagging with usize atomics)
+  - **bench/queues.zig**: Conditional compilation — print "⊗ UNSUPPORTED" on non-macOS
+  - **Rationale**: WorkStealingDeque provides portable lock-free alternative
 - 📊 **Test Status**: 701/701 passing (100% ✅)
-- 🔄 **CI Status**: Triggered (run in progress, waiting for green)
-- 🎯 **Next Priority**: v1.6.0 release once CI confirms green
+- ✅ **Cross-Compilation**: All 6 targets verified locally (PASS)
+- ✅ **CI Status**: GREEN (run 23181009529) — All 6 targets pass!
+- 🎯 **Next Priority**: v1.6.0 release (pending v1.6.0 milestone completion check)
+
+## Previous Progress (Session 2026-03-17 - Hour 13)
+**STABILIZATION MODE (FORCED) → CI FAILURE FIXES:**
+- ✅ **Issue #7 FIXED** — WorkStealingDeque std.atomic.fence removal (commit 44bf1f6)
+- ✅ **Issue #8 FIXED** — Hash map AutoContext type mismatch (commit 44bf1f6)
 
 ## Previous Progress (Session 2026-03-17 - Hour 11)
 **FEATURE MODE → v1.6.0 BENCHMARK SUITE COMPLETENESS:**

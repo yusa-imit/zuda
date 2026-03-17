@@ -52,6 +52,14 @@ const is_repeated = (node.children.count() >= 2) or
   - Problem: `fn hash(ctx: Context, key: anytype)` can't be passed as `comptime hashFn: fn(Context, K) u64`
   - Solution: Create concrete wrapper inside factory function with known K type
   - Pattern: Move AutoContext struct INSIDE Auto* factory, not as top-level export
+- **128-bit atomics NOT universally supported** (fixed in e67fe1b):
+  - `std.atomic.Value(u128)` requires CMPXCHG16B (x86-64) or CASP (ARM64)
+  - **NOT supported**: Windows (max 64-bit), WASM (max 32-bit), Linux (not guaranteed)
+  - **Supported**: macOS x86-64/ARM64 (Apple enforces CPU requirements)
+  - **Error symptom**: `expected 64-bit integer type or smaller; found 128-bit integer type`
+  - **Fix**: Use comptime check to restrict to macOS-only, OR rewrite using two separate atomics
+  - **Affected**: LockFreeStack, LockFreeQueue (now macOS-only)
+  - **Alternative**: WorkStealingDeque (portable, uses usize atomics)
 
 ## Common Data Structure Pitfalls
 - Red-black tree: remember to handle both left and right uncle cases in fixup
