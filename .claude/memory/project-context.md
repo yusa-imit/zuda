@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.10.0 (ready for release) ✅
-- **Phase**: v1.10.0 COMPLETE — Full DoubleArrayTrie Linearization (Phase 3)
+- **Version**: 1.10.0 (released 2026-03-18) ✅
+- **Phase**: v1.11.0 IN PROGRESS — SIMD Vectorization for Aho-Corasick
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 722/722 tests)
-- **Latest Milestone**: v1.10.0 COMPLETE (Phase 3 linearization: 92 MB/sec, +5% improvement)
-- **Next Priority**: Release v1.10.0, establish next milestone (< 2 active milestones)
+- **Latest Milestone**: v1.11.0 IN PROGRESS (Target: ≥200 MB/sec via SIMD, current: 92 MB/sec scalar)
+- **Next Priority**: Implement SIMD pattern matching kernel (16-byte chunks, SSE2/NEON)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -46,7 +46,30 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-18 - Hour 11)
+## Recent Progress (Session 2026-03-18 - Hour 13)
+**FEATURE MODE → v1.11.0 MILESTONE ESTABLISHMENT:**
+- ✅ **v1.10.0 Release Verified** (tag v1.10.0, GitHub release exists)
+  - **Status**: Released 2026-03-18 at 02:16:39Z
+  - **URL**: https://github.com/yusa-imit/zuda/releases/tag/v1.10.0
+  - **Tests**: 722/722 passing (100%)
+  - **Cross-compilation**: All 6 targets verified (x86_64/aarch64 linux/macos/windows, wasm32-wasi)
+- ✅ **v1.11.0 Milestone Established** (commit f2c3200)
+  - **Theme**: SIMD Vectorization for Aho-Corasick
+  - **Target**: Achieve ≥200 MB/sec throughput (108 MB/sec gap from 92 MB/sec scalar)
+  - **5 focus areas**: SIMD kernel, benchmarking, cross-platform validation, trade-off analysis, documentation
+  - **Expected improvement**: +100-200% (92 → 184-276 MB/sec) via SSE2/NEON intrinsics
+  - **Approach**: Process 16 characters in parallel using `@Vector(16, u8)`
+- 📊 **Performance Context**:
+  - Generic HashMap: 59 MB/sec (1570 KB memory)
+  - ASCII dense array: 133 MB/sec (19676 KB memory)
+  - DoubleArray scalar (v1.10.0): 92 MB/sec (66 KB memory) — 23× memory win, -31% throughput vs ASCII
+  - Target: ≥200 MB/sec (SIMD-accelerated, 66 KB memory)
+- 🎯 **Next Priority**: Implement SIMD pattern matching kernel in double_array_trie.zig
+  - Hot path identified: findAll() lines 501-531 (character-by-character state transitions)
+  - Implementation plan: Vectorize state lookups for 16-byte chunks, merge results
+  - Portability: SSE2 (x86_64), NEON (aarch64), scalar fallback (others)
+
+## Previous Progress (Session 2026-03-18 - Hour 11)
 **FEATURE MODE → v1.10.0 PHASE 3 LINEARIZATION COMPLETE:**
 - ✅ **Phase 3 State Struct Implementation** (commit d1d200e)
   - **Design**: Single 24-byte State struct packing all fields (base, check, fail, output_start, output_len, flags)
