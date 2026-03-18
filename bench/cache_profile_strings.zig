@@ -38,11 +38,14 @@ fn benchDoubleArrayTrie(allocator: std.mem.Allocator, patterns: []const []const 
     var dat = try DoubleArrayTrie.init(allocator, patterns);
     defer dat.deinit();
 
-    // Calculate memory usage: BaseCheck (8 bytes) + is_leaf (1) + fail (4) + output pointer overhead (~24)
-    const mem_kb = @divFloor(dat.base_check.len * (@sizeOf(DoubleArrayTrie.BaseCheck) + @sizeOf(bool) + @sizeOf(u32) + 24), 1024);
-    std.debug.print("DoubleArrayTrie: {} states, {} KB memory\n", .{
+    // Calculate memory usage: Phase 3 linearized State (24 bytes) + patterns array
+    const states_kb = @divFloor(dat.states.len * @sizeOf(DoubleArrayTrie.State), 1024);
+    const patterns_kb = @divFloor(dat.patterns.len * @sizeOf(usize), 1024);
+    std.debug.print("DoubleArrayTrie (Phase 3): {} states, {} KB states + {} KB patterns = {} KB total\n", .{
         dat.count(),
-        mem_kb,
+        states_kb,
+        patterns_kb,
+        states_kb + patterns_kb,
     });
 
     // Warmup

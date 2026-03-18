@@ -1484,7 +1484,7 @@ test "Phase 3: IS_LEAF flag replaces is_leaf array" {
     try testing.expect(@hasField(Trie.State, "flags"));
 
     // Phase 3 requirement: IS_LEAF constant defined for flag bit
-    try testing.expect(@hasField(Trie, "IS_LEAF"));
+    try testing.expect(@hasDecl(Trie, "IS_LEAF"));
 }
 
 test "Phase 3: fail field in State struct" {
