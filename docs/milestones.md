@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.9.0 (2026-03-18) — Aho-Corasick Cache Optimization Analysis
-- **Current phase**: v1.10.0 COMPLETE — Full DoubleArrayTrie Linearization (Phase 3)
+- **Latest release**: v1.10.0 (2026-03-18) — Full DoubleArrayTrie Linearization
+- **Current phase**: v1.11.0 — SIMD Vectorization for Aho-Corasick
 - **Tests**: 722/722 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -12,7 +12,42 @@
 
 ## Active Milestones
 
-### v1.10.0 — Full DoubleArrayTrie Linearization (Phase 3) ⚠️ COMPLETE
+### v1.11.0 — SIMD Vectorization for Aho-Corasick 🚧 IN PROGRESS
+
+Bridge the 67-108 MB/sec performance gap through SIMD acceleration:
+
+**Context**: v1.10.0 linearization achieved 92 MB/sec (-31% vs ASCII 133 MB/sec, -54% vs target 200 MB/sec). Memory-efficient design validated (66 KB vs 19676 KB), but scalar implementation hit bandwidth limits. SIMD vectorization is the remaining optimization path.
+
+**Target**: Achieve ≥200 MB/sec throughput (target met) OR document fundamental architectural limits
+
+**5 Focus Areas**:
+- [ ] **SIMD pattern matching kernel** — Vectorize state transitions for 16-byte chunks
+  - Design: Process 16 characters in parallel using SSE2/NEON intrinsics
+  - Expected: +100-200% improvement (92 → 184-276 MB/sec)
+  - Implementation: `@Vector(16, u8)` loads, parallel state lookups, merge results
+  - Fallback: Scalar path for non-aligned inputs and short strings
+  - Portability: SSE2 (x86_64), NEON (aarch64), scalar (other platforms)
+- [ ] **Benchmark SIMD variant** — Measure throughput improvement
+  - Workload: 1000 patterns, 1 MB text (same as v1.8.0-v1.10.0)
+  - Compare: SIMD vs scalar linearized (92 MB/sec) vs ASCII dense (133 MB/sec)
+  - Target validation: ≥200 MB/sec (67% improvement required)
+- [ ] **Cross-platform validation** — Verify SSE2/NEON/scalar paths
+  - Test: x86_64 (SSE2), aarch64 (NEON), wasm32 (scalar fallback)
+  - Ensure: Correctness on all platforms, SIMD only where supported
+  - Performance: Document speedup per platform
+- [ ] **Memory vs throughput trade-off analysis** — Compare all variants
+  - Comparison table: Generic (59 MB/sec, 1570 KB) | ASCII (133 MB/sec, 19676 KB) | DoubleArray (92 MB/sec, 66 KB) | SIMD (? MB/sec, 66 KB)
+  - Recommendation: Which variant for which use case (latency-sensitive, memory-constrained, throughput-critical)
+- [ ] **Documentation update** — SIMD analysis and variant selection guide
+  - Document: SIMD implementation details, platform support matrix
+  - Guide: How to choose between Generic/ASCII/DoubleArray/SIMD variants
+  - Update: PRD performance targets based on findings
+
+**Success Criteria**: ≥200 MB/sec throughput achieved OR documented that target requires algorithmic changes beyond SIMD (e.g., DFA minimization, hardware acceleration).
+
+**Status**: 🚧 **IN PROGRESS** — Milestone established 2026-03-18 Hour 13
+
+### v1.10.0 — Full DoubleArrayTrie Linearization (Phase 3) ✅ RELEASED
 
 Completed full linearization with modest performance gains:
 
