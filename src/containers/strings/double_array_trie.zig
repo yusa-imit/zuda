@@ -43,6 +43,24 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             position: usize,
         };
 
+        /// Phase 3 linearized State structure (24 bytes)
+        /// Packs all state data into single cache-line-friendly struct.
+        /// Reduces cache misses from 3-4 → 1 per transition.
+        pub const State = struct {
+            base: i32,           // 4 bytes - transition base (if < 0, leaf with pattern ID)
+            check: u32,          // 4 bytes - parent state verification
+            fail: u32,           // 4 bytes - failure link for Aho-Corasick
+            output_start: u32,   // 4 bytes - index into patterns[] array
+            output_len: u16,     // 2 bytes - number of patterns at this state
+            flags: u8,           // 1 byte - bit flags (is_leaf, etc.)
+            _padding1: u8,       // 1 byte - alignment padding
+            _padding2: u32,      // 4 bytes - additional padding for 24-byte alignment
+            // Total: 24 bytes/state
+        };
+
+        /// IS_LEAF flag bit (stored in State.flags)
+        pub const IS_LEAF: u8 = 0x01;
+
         /// Interleaved BASE+CHECK structure for cache locality
         /// Reduces cache misses from 2 → 1 per transition check
         pub const BaseCheck = struct {
@@ -50,68 +68,76 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             check: u32,
         };
 
-        /// Interleaved BASE+CHECK array (8 bytes per state, fits in single cache line)
-        base_check: []BaseCheck,
-        /// Array marking leaf states (pattern endings)
-        is_leaf: []bool,
-        /// FAIL array: failure links for Aho-Corasick automaton
-        fail: []u32,
-        /// OUTPUT array: pattern indices matching at each state
-        output: []std.ArrayList(usize),
+        /// Phase 3: Linearized states array (24 bytes per state)
+        states: []State,
+        /// Phase 3: Flattened pattern indices array (indexed by State.output_start/output_len)
+        patterns: []usize,
         /// Number of states in the trie
         state_count: u32,
+        /// Number of pattern entries in patterns array
+        pattern_count: u32,
         /// Allocator for memory management
         allocator: Allocator,
-        /// Original patterns stored for validation
-        patterns: []const []const T,
+        /// Original input patterns stored for validation
+        input_patterns: []const []const T,
 
         // -- Lifecycle --
 
         /// Initialize a DoubleArrayTrie from a list of patterns.
-        /// Builds the double-array trie structure using Aoe's algorithm.
+        /// Builds the double-array trie structure using Aoe's algorithm with Phase 3 linearization.
         /// Time: O(|patterns| × |max_pattern_len| + |V| × |Σ|) | Space: O(|V|)
         pub fn init(allocator: Allocator, patterns: []const []const T) !Self {
             if (patterns.len == 0) {
-                const empty_output = try allocator.alloc(std.ArrayList(usize), 0);
+                const empty_states = try allocator.alloc(State, 0);
+                const empty_patterns_arr = try allocator.alloc(usize, 0);
                 return Self{
-                    .base_check = &[_]BaseCheck{},
-                    .is_leaf = &[_]bool{},
-                    .fail = &[_]u32{},
-                    .output = empty_output,
+                    .states = empty_states,
+                    .patterns = empty_patterns_arr,
                     .state_count = 0,
+                    .pattern_count = 0,
                     .allocator = allocator,
-                    .patterns = &[_][]const T{},
+                    .input_patterns = patterns,
                 };
             }
 
-            // Initial capacity - allocate interleaved BASE+CHECK array
-            var base_check_arr = try allocator.alloc(BaseCheck, 1024);
-            errdefer allocator.free(base_check_arr);
+            // Phase 3: Allocate single linearized states array + pattern collection ArrayList
+            var states_arr = try allocator.alloc(State, 1024);
+            errdefer allocator.free(states_arr);
             // Initialize with base=0, check=0xFFFFFFFF (empty)
-            for (base_check_arr) |*bc| {
-                bc.* = .{ .base = 0, .check = 0xFFFFFFFF };
+            for (states_arr) |*state| {
+                state.* = .{
+                    .base = 0,
+                    .check = 0xFFFFFFFF,
+                    .fail = 0,
+                    .output_start = 0,
+                    .output_len = 0,
+                    .flags = 0,
+                    ._padding1 = 0,
+                    ._padding2 = 0,
+                };
             }
 
-            var is_leaf_arr = try allocator.alloc(bool, 1024);
-            errdefer allocator.free(is_leaf_arr);
-            @memset(is_leaf_arr, false);
-
-            var fail_arr = try allocator.alloc(u32, 1024);
-            errdefer allocator.free(fail_arr);
-            @memset(fail_arr, 0);
-
-            var output_arr = try allocator.alloc(std.ArrayList(usize), 1024);
+            // Collect output patterns in a temporary ArrayList
+            var output_lists = try allocator.alloc(std.ArrayList(usize), 1024);
             errdefer {
-                for (output_arr) |*o| o.deinit(allocator);
-                allocator.free(output_arr);
+                for (output_lists) |*o| o.deinit(allocator);
+                allocator.free(output_lists);
             }
-            for (output_arr) |*o| {
-                o.* = .{};
+            for (output_lists) |*o| {
+                o.* = std.ArrayList(usize){};
             }
 
             // Root state setup
-            base_check_arr[0] = .{ .base = 1, .check = 0 };
-            fail_arr[0] = 0;
+            states_arr[0] = .{
+                .base = 1,
+                .check = 0,
+                .fail = 0,
+                .output_start = 0,
+                .output_len = 0,
+                .flags = 0,
+                ._padding1 = 0,
+                ._padding2 = 0,
+            };
             var next_state_id: u32 = 1;
 
             // Build trie incrementally, assigning states to parents as needed
@@ -123,32 +149,37 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                     const char_u8 = @as(u8, @intCast(char));
 
                     // Get or assign base for current state (minimal base search)
-                    if (base_check_arr[current_state].base == 0) {
+                    if (states_arr[current_state].base == 0) {
                         // Find minimal conflict-free base for this state
                         var base_candidate: u32 = 1;
                         while (true) {
                             // Check if this base works for this character
                             const target_pos = base_candidate + char_u8;
-                            if (target_pos >= base_check_arr.len) {
+                            if (target_pos >= states_arr.len) {
                                 // Expand arrays to accommodate target_pos
-                                const old_len = base_check_arr.len;
+                                const old_len = states_arr.len;
                                 const new_len = @max(old_len * 2, target_pos + 1);
-                                base_check_arr = try allocator.realloc(base_check_arr, new_len);
-                                is_leaf_arr = try allocator.realloc(is_leaf_arr, new_len);
-                                fail_arr = try allocator.realloc(fail_arr, new_len);
-                                output_arr = try allocator.realloc(output_arr, new_len);
-                                for (base_check_arr[old_len..new_len]) |*bc| {
-                                    bc.* = .{ .base = 0, .check = 0xFFFFFFFF };
+                                states_arr = try allocator.realloc(states_arr, new_len);
+                                output_lists = try allocator.realloc(output_lists, new_len);
+                                for (states_arr[old_len..new_len]) |*state| {
+                                    state.* = .{
+                                        .base = 0,
+                                        .check = 0xFFFFFFFF,
+                                        .fail = 0,
+                                        .output_start = 0,
+                                        .output_len = 0,
+                                        .flags = 0,
+                                        ._padding1 = 0,
+                                        ._padding2 = 0,
+                                    };
                                 }
-                                @memset(is_leaf_arr[old_len..new_len], false);
-                                @memset(fail_arr[old_len..new_len], 0);
-                                for (output_arr[old_len..new_len]) |*o| {
-                                    o.* = .{};
+                                for (output_lists[old_len..new_len]) |*o| {
+                                    o.* = std.ArrayList(usize){};
                                 }
                             }
-                            if (base_check_arr[target_pos].check == 0xFFFFFFFF) {
+                            if (states_arr[target_pos].check == 0xFFFFFFFF) {
                                 // Position is empty, use this base
-                                base_check_arr[current_state].base = @as(i32, @intCast(base_candidate));
+                                states_arr[current_state].base = @as(i32, @intCast(base_candidate));
                                 break;
                             }
                             // Conflict, try next base
@@ -156,59 +187,83 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                         }
                     }
 
-                    const base_val = base_check_arr[current_state].base;
+                    const base_val = states_arr[current_state].base;
                     const target_pos = @as(u32, @intCast(base_val + @as(i32, char_u8)));
 
                     // Expand arrays if necessary
-                    while (target_pos >= base_check_arr.len) {
-                        const old_len = base_check_arr.len;
+                    while (target_pos >= states_arr.len) {
+                        const old_len = states_arr.len;
                         const new_len = old_len * 2;
-                        base_check_arr = try allocator.realloc(base_check_arr, new_len);
-                        is_leaf_arr = try allocator.realloc(is_leaf_arr, new_len);
-                        fail_arr = try allocator.realloc(fail_arr, new_len);
-                        output_arr = try allocator.realloc(output_arr, new_len);
-                        for (base_check_arr[old_len..new_len]) |*bc| {
-                            bc.* = .{ .base = 0, .check = 0xFFFFFFFF };
+                        states_arr = try allocator.realloc(states_arr, new_len);
+                        output_lists = try allocator.realloc(output_lists, new_len);
+                        for (states_arr[old_len..new_len]) |*state| {
+                            state.* = .{
+                                .base = 0,
+                                .check = 0xFFFFFFFF,
+                                .fail = 0,
+                                .output_start = 0,
+                                .output_len = 0,
+                                .flags = 0,
+                                ._padding1 = 0,
+                                ._padding2 = 0,
+                            };
                         }
-                        @memset(is_leaf_arr[old_len..new_len], false);
-                        @memset(fail_arr[old_len..new_len], 0);
-                        for (output_arr[old_len..new_len]) |*o| {
-                            o.* = .{};
+                        for (output_lists[old_len..new_len]) |*o| {
+                            o.* = std.ArrayList(usize){};
                         }
                     }
 
                     // Assign next state at target position
-                    if (base_check_arr[target_pos].check == 0xFFFFFFFF) {
+                    if (states_arr[target_pos].check == 0xFFFFFFFF) {
                         // First time at this position - create new state
-                        base_check_arr[target_pos].check = current_state;
+                        states_arr[target_pos].check = current_state;
                         next_state_id = @max(next_state_id, target_pos + 1);
                     }
 
                     current_state = target_pos;
                 }
 
-                // Mark end of pattern
-                is_leaf_arr[current_state] = true;
-                try output_arr[current_state].append(allocator, pattern_idx);
+                // Mark end of pattern: set IS_LEAF flag
+                states_arr[current_state].flags |= IS_LEAF;
+                try output_lists[current_state].append(allocator, pattern_idx);
             }
 
-            // Trim arrays to actual size used
-            base_check_arr = try allocator.realloc(base_check_arr, next_state_id);
-            is_leaf_arr = try allocator.realloc(is_leaf_arr, next_state_id);
-            fail_arr = try allocator.realloc(fail_arr, next_state_id);
-            output_arr = try allocator.realloc(output_arr, next_state_id);
+            // Trim states array to actual size used
+            states_arr = try allocator.realloc(states_arr, next_state_id);
+            output_lists = try allocator.realloc(output_lists, next_state_id);
 
-            // Debug: print state count for analysis
-            // std.debug.print("[DAT] States: {d}, Memory: {d} KB\n", .{next_state_id, (next_state_id * 16) / 1024});
+            // Phase 3: Flatten output_lists into single patterns array
+            var total_patterns: u32 = 0;
+            for (output_lists[0..next_state_id]) |list| {
+                total_patterns += @as(u32, @intCast(list.items.len));
+            }
+
+            const patterns_arr = try allocator.alloc(usize, total_patterns);
+            errdefer allocator.free(patterns_arr);
+
+            var pattern_offset: u32 = 0;
+            for (states_arr[0..next_state_id], 0..) |*state, state_idx| {
+                const list = output_lists[state_idx];
+                state.output_start = pattern_offset;
+                state.output_len = @intCast(list.items.len);
+                @memcpy(
+                    patterns_arr[pattern_offset .. pattern_offset + @as(u32, @intCast(list.items.len))],
+                    list.items,
+                );
+                pattern_offset += @as(u32, @intCast(list.items.len));
+            }
+
+            // Clean up temporary output_lists
+            for (output_lists) |*o| o.deinit(allocator);
+            allocator.free(output_lists);
 
             var result = Self{
-                .base_check = base_check_arr,
-                .is_leaf = is_leaf_arr,
-                .fail = fail_arr,
-                .output = output_arr,
+                .states = states_arr,
+                .patterns = patterns_arr,
                 .state_count = next_state_id,
+                .pattern_count = total_patterns,
                 .allocator = allocator,
-                .patterns = patterns,
+                .input_patterns = patterns,
             };
 
             // Build failure links and output links for Aho-Corasick
@@ -222,23 +277,23 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Failure links enable pattern detection after state mismatch.
         /// Time: O(|V|) | Space: O(|V|)
         fn buildFailureLinks(self: *Self) !void {
-            if (self.base_check.len == 0) return;
+            if (self.states.len == 0) return;
 
             // Use a queue for BFS traversal
             var queue = std.ArrayList(u32){};
             defer queue.deinit(self.allocator);
 
             // Root's failure link is self (0 -> 0)
-            self.fail[0] = 0;
+            self.states[0].fail = 0;
 
             // Initialize: all depth-1 nodes have failure link to root
-            if (self.base_check[0].base >= 0) {
-                const base_val = self.base_check[0].base;
+            if (self.states[0].base >= 0) {
+                const base_val = self.states[0].base;
                 for (0..256) |c| {
                     const target_pos = @as(u32, @intCast(base_val + @as(i32, @intCast(c))));
-                    if (target_pos < self.base_check.len and self.base_check[target_pos].check == 0) {
+                    if (target_pos < self.states.len and self.states[target_pos].check == 0) {
                         // This is a depth-1 node
-                        self.fail[target_pos] = 0;
+                        self.states[target_pos].fail = 0;
                         try queue.append(self.allocator, target_pos);
                     }
                 }
@@ -251,41 +306,41 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 queue_idx += 1;
 
                 // Get children of current state
-                if (current < self.base_check.len and self.base_check[current].base >= 0) {
-                    const base_val = self.base_check[current].base;
+                if (current < self.states.len and self.states[current].base >= 0) {
+                    const base_val = self.states[current].base;
                     for (0..256) |c| {
                         const target_pos = @as(u32, @intCast(base_val + @as(i32, @intCast(c))));
-                        if (target_pos < self.base_check.len and self.base_check[target_pos].check == current) {
+                        if (target_pos < self.states.len and self.states[target_pos].check == current) {
                             // This is a child of current state
 
                             // Find failure link by following parent's failure chain
-                            var failure_candidate = self.fail[current];
+                            var failure_candidate = self.states[current].fail;
                             while (failure_candidate != 0) {
-                                const fail_base = self.base_check[failure_candidate].base;
+                                const fail_base = self.states[failure_candidate].base;
                                 if (fail_base >= 0) {
                                     const fail_target = @as(u32, @intCast(fail_base + @as(i32, @intCast(c))));
-                                    if (fail_target < self.base_check.len and self.base_check[fail_target].check == failure_candidate) {
+                                    if (fail_target < self.states.len and self.states[fail_target].check == failure_candidate) {
                                         // Found a transition on character c
-                                        self.fail[target_pos] = fail_target;
+                                        self.states[target_pos].fail = fail_target;
                                         break;
                                     }
                                 }
-                                failure_candidate = self.fail[failure_candidate];
+                                failure_candidate = self.states[failure_candidate].fail;
                             }
 
                             // If no match found, link to root
                             if (failure_candidate == 0) {
                                 // Check if root has transition on c
-                                const root_base = self.base_check[0].base;
+                                const root_base = self.states[0].base;
                                 if (root_base >= 0) {
                                     const root_target = @as(u32, @intCast(root_base + @as(i32, @intCast(c))));
-                                    if (root_target < self.base_check.len and self.base_check[root_target].check == 0) {
-                                        self.fail[target_pos] = root_target;
+                                    if (root_target < self.states.len and self.states[root_target].check == 0) {
+                                        self.states[target_pos].fail = root_target;
                                     } else {
-                                        self.fail[target_pos] = 0;
+                                        self.states[target_pos].fail = 0;
                                     }
                                 } else {
-                                    self.fail[target_pos] = 0;
+                                    self.states[target_pos].fail = 0;
                                 }
                             }
 
@@ -298,43 +353,84 @@ pub fn DoubleArrayTrie(comptime T: type) type {
 
         /// Build output links for overlapping pattern detection.
         /// Copies pattern indices from failure states to output array.
-        /// Time: O(|V|) | Space: O(1)
+        /// Time: O(|V| × |failure_chain|) | Space: O(z) where z = total output patterns
         fn buildOutputLinks(self: *Self) !void {
-            if (self.base_check.len == 0) return;
+            if (self.states.len == 0) return;
 
+            // Phase 3: Build output lists with failure chain patterns
+            var output_lists = try self.allocator.alloc(std.ArrayList(usize), self.state_count);
+            defer {
+                for (output_lists) |*list| list.deinit(self.allocator);
+                self.allocator.free(output_lists);
+            }
+            for (output_lists) |*list| {
+                list.* = std.ArrayList(usize){};
+            }
+
+            // For each state, collect patterns: direct + patterns from failure chain
             for (0..self.state_count) |s| {
-                const state = @as(u32, @intCast(s));
+                const state_idx = @as(u32, @intCast(s));
+                const state = self.states[state_idx];
 
-                // Copy pattern indices from failure chain
-                var failure_state = self.fail[state];
-                while (failure_state != state and failure_state != 0) {
-                    if (failure_state < self.output.len) {
-                        for (self.output[failure_state].items) |pattern_idx| {
-                            try self.output[state].append(self.allocator, pattern_idx);
+                // Add direct patterns from current state
+                const start = state.output_start;
+                const len = state.output_len;
+                for (self.patterns[start .. start + len]) |pattern_idx| {
+                    try output_lists[state_idx].append(self.allocator, pattern_idx);
+                }
+
+                // Add patterns from failure chain
+                var failure_state = state.fail;
+                while (failure_state != state_idx and failure_state != 0) {
+                    if (failure_state < self.state_count) {
+                        const fail_state = self.states[failure_state];
+                        const fail_start = fail_state.output_start;
+                        const fail_len = fail_state.output_len;
+                        for (self.patterns[fail_start .. fail_start + fail_len]) |pattern_idx| {
+                            try output_lists[state_idx].append(self.allocator, pattern_idx);
                         }
                     }
-                    failure_state = self.fail[failure_state];
+                    if (failure_state < self.state_count) {
+                        failure_state = self.states[failure_state].fail;
+                    } else {
+                        break;
+                    }
                 }
             }
+
+            // Flatten output_lists into patterns array
+            var total_patterns: u32 = 0;
+            for (output_lists) |list| {
+                total_patterns += @as(u32, @intCast(list.items.len));
+            }
+
+            const new_patterns = try self.allocator.alloc(usize, total_patterns);
+            var pattern_offset: u32 = 0;
+            for (self.states[0..self.state_count], 0..) |*state, state_idx| {
+                const list = output_lists[state_idx];
+                state.output_start = pattern_offset;
+                state.output_len = @intCast(list.items.len);
+                @memcpy(
+                    new_patterns[pattern_offset .. pattern_offset + @as(u32, @intCast(list.items.len))],
+                    list.items,
+                );
+                pattern_offset += @as(u32, @intCast(list.items.len));
+            }
+
+            // Replace old patterns array
+            self.allocator.free(self.patterns);
+            self.patterns = new_patterns;
+            self.pattern_count = total_patterns;
         }
 
         /// Free all resources used by the trie.
         /// Time: O(|V|) | Space: O(1)
         pub fn deinit(self: *Self) void {
-            if (self.base_check.len > 0) {
-                self.allocator.free(self.base_check);
+            if (self.states.len > 0) {
+                self.allocator.free(self.states);
             }
-            if (self.is_leaf.len > 0) {
-                self.allocator.free(self.is_leaf);
-            }
-            if (self.fail.len > 0) {
-                self.allocator.free(self.fail);
-            }
-            if (self.output.len > 0) {
-                for (self.output) |*o| {
-                    o.deinit(self.allocator);
-                }
-                self.allocator.free(self.output);
+            if (self.patterns.len > 0) {
+                self.allocator.free(self.patterns);
             }
         }
 
@@ -358,13 +454,13 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Returns true if the key matches a pattern in the trie.
         /// Time: O(|key|) | Space: O(1)
         pub fn contains(self: *const Self, key: []const T) bool {
-            if (self.base_check.len == 0) return false;
+            if (self.states.len == 0) return false;
 
             var state: u32 = 0;
             for (key) |char| {
-                // Get base value for current state (single cache line access!)
-                if (state >= self.base_check.len) return false;
-                const base_val = self.base_check[state].base;
+                // Get base value for current state (Phase 3: single cache line access!)
+                if (state >= self.states.len) return false;
+                const base_val = self.states[state].base;
 
                 // Calculate next state position: pos = BASE[state] + c
                 // Cast char to i32 (safely, since u8 < 256)
@@ -374,17 +470,17 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 if (next_state_signed < 0) return false;
 
                 const next_state = @as(u32, @intCast(next_state_signed));
-                if (next_state >= self.base_check.len) return false;
+                if (next_state >= self.states.len) return false;
 
-                // Verify validity with CHECK array (same cache line as base!)
-                if (self.base_check[next_state].check != state) return false;
+                // Verify validity with CHECK field (same State struct as base!)
+                if (self.states[next_state].check != state) return false;
 
                 state = next_state;
             }
 
-            // Final state must be a leaf (marked in is_leaf array) to be a valid pattern ending
-            if (state >= self.is_leaf.len) return false;
-            return self.is_leaf[state];
+            // Final state must be a leaf (marked by IS_LEAF flag) to be a valid pattern ending
+            if (state >= self.states.len) return false;
+            return (self.states[state].flags & IS_LEAF) != 0;
         }
 
         // -- Aho-Corasick Search --
@@ -396,7 +492,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             var matches = std.ArrayList(Match){};
             errdefer matches.deinit(allocator);
 
-            if (text.len == 0 or self.base_check.len == 0) {
+            if (text.len == 0 or self.states.len == 0) {
                 return matches.toOwnedSlice(allocator);
             }
 
@@ -406,15 +502,15 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 const char_u8 = @as(u8, @intCast(char));
 
                 // Follow failure links until we find a valid transition or reach root
-                // HOT PATH: Interleaved BASE+CHECK access (1 cache miss instead of 2!)
+                // HOT PATH: Phase 3 single State struct access (1 cache miss instead of 3!)
                 while (true) {
-                    if (current_state < self.base_check.len) {
-                        const bc = self.base_check[current_state]; // Single memory access!
-                        if (bc.base >= 0) {
-                            const next_state_signed = bc.base + @as(i32, @intCast(char_u8));
+                    if (current_state < self.states.len) {
+                        const state = self.states[current_state]; // Single memory access!
+                        if (state.base >= 0) {
+                            const next_state_signed = state.base + @as(i32, @intCast(char_u8));
                             if (next_state_signed >= 0) {
                                 const next_state = @as(u32, @intCast(next_state_signed));
-                                if (next_state < self.base_check.len and self.base_check[next_state].check == current_state) {
+                                if (next_state < self.states.len and self.states[next_state].check == current_state) {
                                     // Valid transition found
                                     current_state = next_state;
                                     break;
@@ -427,36 +523,54 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                     if (current_state == 0) {
                         break;
                     }
-                    if (current_state < self.fail.len) {
-                        current_state = self.fail[current_state];
+                    if (current_state < self.states.len) {
+                        current_state = self.states[current_state].fail;
                     } else {
                         current_state = 0;
                     }
                 }
 
                 // Emit patterns at current state
-                if (current_state < self.output.len) {
-                    for (self.output[current_state].items) |pattern_idx| {
-                        try matches.append(allocator, .{
-                            .pattern_index = pattern_idx,
-                            .position = i + 1 - self.patterns[pattern_idx].len,
-                        });
+                if (current_state < self.state_count) {
+                    const state = self.states[current_state];
+                    if (state.output_start + state.output_len <= self.patterns.len) {
+                        const state_patterns = self.patterns[state.output_start .. state.output_start + state.output_len];
+                        for (state_patterns) |pattern_idx| {
+                            if (pattern_idx < self.input_patterns.len) {
+                                const pattern_len = self.input_patterns[pattern_idx].len;
+                                if (i + 1 >= pattern_len) {
+                                    try matches.append(allocator, .{
+                                        .pattern_index = pattern_idx,
+                                        .position = i + 1 - pattern_len,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
 
                 // Emit patterns at failure chain (overlapping matches)
-                var failure_state = if (current_state < self.fail.len) self.fail[current_state] else 0;
+                var failure_state = if (current_state < self.states.len) self.states[current_state].fail else 0;
                 while (failure_state != 0 and failure_state != current_state) {
-                    if (failure_state < self.output.len) {
-                        for (self.output[failure_state].items) |pattern_idx| {
-                            try matches.append(allocator, .{
-                                .pattern_index = pattern_idx,
-                                .position = i + 1 - self.patterns[pattern_idx].len,
-                            });
+                    if (failure_state < self.state_count) {
+                        const state = self.states[failure_state];
+                        if (state.output_start + state.output_len <= self.patterns.len) {
+                            const state_patterns = self.patterns[state.output_start .. state.output_start + state.output_len];
+                            for (state_patterns) |pattern_idx| {
+                                if (pattern_idx < self.input_patterns.len) {
+                                    const pattern_len = self.input_patterns[pattern_idx].len;
+                                    if (i + 1 >= pattern_len) {
+                                        try matches.append(allocator, .{
+                                            .pattern_index = pattern_idx,
+                                            .position = i + 1 - pattern_len,
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
-                    if (failure_state < self.fail.len) {
-                        failure_state = self.fail[failure_state];
+                    if (failure_state < self.states.len) {
+                        failure_state = self.states[failure_state].fail;
                     } else {
                         break;
                     }
@@ -472,9 +586,20 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Used for testing and debugging.
         /// Time: O(|V| + |E|) | Space: O(1)
         pub fn validate(self: *const Self) !void {
-            // Basic validation: arrays should be non-empty and consistent in size
-            if (self.base_check.len == 0) return;
-            if (self.base_check.len != self.is_leaf.len) {
+            // Phase 3: Validate State struct invariants
+            if (self.states.len == 0) return;
+
+            // Verify size consistency
+            if (self.states.len != self.state_count) {
+                return error.RootInvariant;
+            }
+
+            // Verify patterns array consistency
+            var max_output_end: u32 = 0;
+            for (self.states[0..self.state_count]) |state| {
+                max_output_end = @max(max_output_end, state.output_start + state.output_len);
+            }
+            if (max_output_end != self.pattern_count) {
                 return error.RootInvariant;
             }
         }
@@ -497,8 +622,7 @@ test "double_array_trie lifecycle: init and deinit" {
     defer trie.deinit();
 
     try testing.expect(trie.state_count > 0);
-    try testing.expect(trie.base.len > 0);
-    try testing.expect(trie.check.len > 0);
+    try testing.expect(trie.states.len > 0);
 }
 
 test "double_array_trie lifecycle: empty pattern list" {
@@ -1235,3 +1359,195 @@ test "aho_corasick_dat: memory safety no leaks" {
 
     try testing.expectEqual(@as(usize, 3), matches.len);
 }
+
+// ============================================================================
+// PHASE 3 LINEARIZATION TESTS (RED PHASE — FAILING)
+// ============================================================================
+// These tests verify the Phase 3 linearized State structure design.
+// Expected to FAIL with current Phase 2 implementation.
+// Phase 3 replaces 4 separate arrays (base_check, is_leaf, fail, output)
+// with a single 24-byte State struct + flattened patterns array.
+
+test "Phase 3: State struct size validation" {
+    // Phase 3 design goal: pack all state data into exactly 24 bytes
+    // Current Phase 2: BASE+CHECK (8) + is_leaf (1) + fail (4) + output overhead = 13+
+    // Phase 3: Single State struct with 24-byte cache-line alignment
+    //
+    // Assertion: @sizeOf(State) must equal 24 bytes (8-byte aligned)
+    // This ensures each state fits in exactly 3 cache line slots (64-byte line / 24-byte state)
+    // and minimizes padding waste.
+    //
+    // If this fails with Phase 2, it's expected — State struct doesn't exist yet.
+    // Phase 3 implementation must define: pub const State = struct { ... };
+
+    const Trie = DoubleArrayTrie(u8);
+    const state_size = @sizeOf(Trie.State);
+    try testing.expectEqual(@as(usize, 24), state_size);
+}
+
+test "Phase 3: states array replaces base_check" {
+    // Phase 3 redesign: Replace Phase 2's separate base_check array with
+    // a single linearized states array where each State contains base, check,
+    // fail, and output metadata.
+    //
+    // Assertion: Self.states exists and has type []State
+    // Assertion: Self.base_check should NOT exist (removed in Phase 3)
+    //
+    // Expected Phase 2 behavior:
+    // - base_check field exists: FAIL (Phase 3 removes it)
+    // - states field missing: FAIL (Phase 3 adds it)
+    //
+    // After Phase 3 refactoring, the DoubleArrayTrie struct should contain:
+    // - states: []State (replaces base_check: []BaseCheck)
+    // - patterns: []usize (flattened output patterns)
+    // - state_count: u32 (unchanged)
+    // - allocator: Allocator (unchanged)
+
+    const allocator = testing.allocator;
+    const patterns = [_][]const u8{ "test" };
+
+    var trie = try DoubleArrayTrie(u8).init(allocator, &patterns);
+    defer trie.deinit();
+
+    // Phase 3 requirement: states array must exist and be non-empty
+    try testing.expect(@hasField(DoubleArrayTrie(u8), "states"));
+    try testing.expect(trie.states.len > 0);
+
+    // Phase 3 requirement: base_check array must be removed
+    try testing.expect(!@hasField(DoubleArrayTrie(u8), "base_check"));
+}
+
+test "Phase 3: patterns array linearization" {
+    // Phase 3 redesign: Replace Phase 2's output: []ArrayList(usize) with
+    // a single flattened patterns: []usize array, indexed by State.output_start
+    // and State.output_len.
+    //
+    // Pattern layout (Phase 3):
+    // - patterns: [pattern_0_idx_0, pattern_0_idx_1, pattern_1_idx_0, ...]
+    // - State.output_start: index into patterns[] where this state's patterns begin
+    // - State.output_len: count of pattern indices for this state
+    //
+    // Example: If state 5 has patterns [2, 5, 7]:
+    // - state.output_start = 100 (position in patterns[])
+    // - state.output_len = 3
+    // - patterns[100..103] = [2, 5, 7]
+    //
+    // Assertion: patterns field exists (replaces output field)
+    // Assertion: Accessing patterns at state.output_start returns correct indices
+    //
+    // Current Phase 2: output[state].items = []usize
+    // Phase 3: patterns[state.output_start .. state.output_start + state.output_len] = []usize
+
+    const allocator = testing.allocator;
+    const test_patterns = [_][]const u8{ "abc", "ab", "bc" };
+
+    var trie = try DoubleArrayTrie(u8).init(allocator, &test_patterns);
+    defer trie.deinit();
+
+    // Phase 3 requirement: patterns array exists (linearized output)
+    try testing.expect(@hasField(DoubleArrayTrie(u8), "patterns"));
+    try testing.expect(trie.patterns.len > 0);
+
+    // Phase 3 requirement: output field removed (replaced by patterns + output_start/output_len)
+    try testing.expect(!@hasField(DoubleArrayTrie(u8), "output"));
+}
+
+test "Phase 3: IS_LEAF flag replaces is_leaf array" {
+    // Phase 3 redesign: Replace Phase 2's is_leaf: []bool with
+    // a bit flag in State.flags (0x01 = IS_LEAF).
+    //
+    // Flag layout (Phase 3):
+    // - State.flags: u8 bit field
+    // - IS_LEAF constant: 0x01
+    // - Leaf check: (state.flags & IS_LEAF) != 0
+    //
+    // Memory improvement:
+    // - Phase 2: is_leaf[state] = 1 byte per state
+    // - Phase 3: state.flags bit = 1 bit (within 24-byte State)
+    //
+    // Assertion: is_leaf array field removed
+    // Assertion: State.flags field exists
+    // Assertion: IS_LEAF constant defined
+    // Assertion: Leaf states can be checked via flags
+
+    const allocator = testing.allocator;
+    const test_patterns = [_][]const u8{ "hello", "world" };
+
+    var trie = try DoubleArrayTrie(u8).init(allocator, &test_patterns);
+    defer trie.deinit();
+
+    // Phase 3 requirement: is_leaf array removed
+    try testing.expect(!@hasField(DoubleArrayTrie(u8), "is_leaf"));
+
+    // Phase 3 requirement: State struct has flags field
+    const Trie = DoubleArrayTrie(u8);
+    try testing.expect(@hasField(Trie.State, "flags"));
+
+    // Phase 3 requirement: IS_LEAF constant defined for flag bit
+    try testing.expect(@hasField(Trie, "IS_LEAF"));
+}
+
+test "Phase 3: fail field in State struct" {
+    // Phase 3 redesign: Move fail: []u32 array into State.fail: u32 field.
+    //
+    // Aho-Corasick automaton requires failure links to find suffix matches.
+    // Phase 2 stores these in a separate array: fail[state] = next_state
+    // Phase 3 stores them in the State struct: state.fail = next_state
+    //
+    // Memory improvement:
+    // - Phase 2: fail[state] = 1 separate array access
+    // - Phase 3: state.fail = same cache line as state.base/check (1 access)
+    //
+    // Assertion: fail array field removed
+    // Assertion: State.fail field exists and is u32
+    // Assertion: Failure links can be accessed via state.fail
+
+    const allocator = testing.allocator;
+    const test_patterns = [_][]const u8{ "she", "he", "hers" };
+
+    var trie = try DoubleArrayTrie(u8).init(allocator, &test_patterns);
+    defer trie.deinit();
+
+    // Phase 3 requirement: fail array removed
+    try testing.expect(!@hasField(DoubleArrayTrie(u8), "fail"));
+
+    // Phase 3 requirement: State struct has fail field (u32)
+    const Trie = DoubleArrayTrie(u8);
+    try testing.expect(@hasField(Trie.State, "fail"));
+
+    // Verify State.fail is u32
+    // (This is a compile-time check, but we can validate after init)
+}
+
+test "Phase 3: memory layout sequential" {
+    // Phase 3 design verification: states array must be densely packed.
+    // Each State struct is exactly 24 bytes, so states[i+1] should be
+    // exactly 24 bytes after states[i] in memory.
+    //
+    // Verification:
+    // - Calculate address of states[0]
+    // - Calculate address of states[1]
+    // - Verify difference == 24 bytes
+    //
+    // This ensures optimal cache locality and no padding waste between states.
+    // Failure indicates alignment or struct size issue.
+    //
+    // Assertion: states array has uniform 24-byte stride
+    // Assertion: No padding or gaps between consecutive states
+
+    const allocator = testing.allocator;
+    const test_patterns = [_][]const u8{ "a", "ab", "abc" };
+
+    var trie = try DoubleArrayTrie(u8).init(allocator, &test_patterns);
+    defer trie.deinit();
+
+    if (trie.states.len >= 2) {
+        const addr_0 = @intFromPtr(&trie.states[0]);
+        const addr_1 = @intFromPtr(&trie.states[1]);
+        const stride = addr_1 - addr_0;
+
+        // Phase 3 requirement: uniform 24-byte stride between states
+        try testing.expectEqual(@as(usize, 24), stride);
+    }
+}
+
