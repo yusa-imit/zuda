@@ -326,6 +326,9 @@ pub const iterators = struct {
     pub const collect = @import("iterators/collect.zig").collect;
 };
 
+/// Utility functions for working with containers (comparators, hash functions, etc.)
+pub const utils = @import("utils.zig");
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");

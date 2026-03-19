@@ -881,7 +881,7 @@ test "RedBlackTree: stress test with random operations" {
         const key = random.intRangeAtMost(i32, 0, 999);
         if (tree.get(key) != null) {
             _ = tree.remove(key);
-            _ = inserted_keys.remove(key);
+            _ = inserted_keys.swapRemove(key);
             removed_count += 1;
         }
 

@@ -12,6 +12,25 @@
 
 ## Active Milestones
 
+### v1.12.0 — Practical Utilities & Enhancements
+
+Add commonly-needed utilities and ergonomic improvements based on real-world usage patterns:
+
+**Context**: All 5 phases complete, library feature-complete. Focus shifts to developer experience, common patterns, and practical utilities that reduce boilerplate in consumer projects.
+
+**Target**: Add 5-8 practical utilities/enhancements that improve day-to-day usage ✅
+
+**Categories**:
+- [ ] **Comparison utilities** — Generic comparison helpers for common types
+- [ ] **Hashing utilities** — Auto-hash for common composite types
+- [ ] **Collection builders** — Fluent builder API for complex container initialization
+- [ ] **Debug utilities** — Pretty-printing, diff helpers for testing
+- [ ] **Performance utilities** — Built-in benchmarking/profiling helpers
+
+**Success Criteria**: ✅ Add at least 3 utilities that eliminate boilerplate code patterns observed in consumer projects
+
+**Status**: 🚧 **IN PROGRESS** (2026-03-19)
+
 ### v1.11.0 — Aho-Corasick Performance Investigation ✅ COMPLETE
 
 Investigate SIMD and goto completion optimizations to bridge the 82 MB/sec → 200 MB/sec gap:
