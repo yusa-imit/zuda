@@ -34,3 +34,6 @@
 {"timestamp":"2026-03-17T00:07:47Z","action":"direct","task":"Fix Aho-Corasick benchmark crash — identified dangling pointer issue, fixed benchmark structure","project":"zuda"}
 {"timestamp":"2026-03-19T13:35:00Z","action":"subagent","agent_type":"test-writer","task":"Write goto completion tests for DoubleArrayTrie","project":"zuda"}
 {"timestamp":"2026-03-19T13:40:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement goto completion for DoubleArrayTrie","project":"zuda"}
+{"timestamp":"2026-03-19T17:05:00Z","action":"subagent","agent_type":"test-writer","task":"Write collection builder tests (TDD RED phase)","project":"zuda"}
+{"timestamp":"2026-03-19T17:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement collection builders to pass tests (TDD GREEN phase)","project":"zuda"}
+{"timestamp":"2026-03-19T17:20:00Z","action":"subagent","agent_type":"test-writer","task":"Fix SkipList duplicate test expectation","project":"zuda"}
