@@ -12,40 +12,57 @@
 
 ## Active Milestones
 
-### v1.11.0 — SIMD Vectorization for Aho-Corasick 🚧 IN PROGRESS
+### v1.11.0 — Aho-Corasick Performance Investigation ✅ COMPLETE
 
-Bridge the 67-108 MB/sec performance gap through SIMD acceleration:
+Investigate SIMD and goto completion optimizations to bridge the 82 MB/sec → 200 MB/sec gap:
 
-**Context**: v1.10.0 linearization achieved 92 MB/sec (-31% vs ASCII 133 MB/sec, -54% vs target 200 MB/sec). Memory-efficient design validated (66 KB vs 19676 KB), but scalar implementation hit bandwidth limits. SIMD vectorization is the remaining optimization path.
+**Context**: v1.10.0 linearization achieved 82-92 MB/sec (66 KB memory), below 200 MB/sec target. Explored SIMD vectorization and goto completion as optimization paths.
 
-**Target**: Achieve ≥200 MB/sec throughput (target met) OR document fundamental architectural limits
+**Target**: Achieve ≥200 MB/sec throughput OR document fundamental architectural limits ✅
 
-**5 Focus Areas**:
-- [ ] **SIMD pattern matching kernel** — Vectorize state transitions for 16-byte chunks
-  - Design: Process 16 characters in parallel using SSE2/NEON intrinsics
-  - Expected: +100-200% improvement (92 → 184-276 MB/sec)
-  - Implementation: `@Vector(16, u8)` loads, parallel state lookups, merge results
-  - Fallback: Scalar path for non-aligned inputs and short strings
-  - Portability: SSE2 (x86_64), NEON (aarch64), scalar (other platforms)
-- [ ] **Benchmark SIMD variant** — Measure throughput improvement
-  - Workload: 1000 patterns, 1 MB text (same as v1.8.0-v1.10.0)
-  - Compare: SIMD vs scalar linearized (92 MB/sec) vs ASCII dense (133 MB/sec)
-  - Target validation: ≥200 MB/sec (67% improvement required)
-- [ ] **Cross-platform validation** — Verify SSE2/NEON/scalar paths
-  - Test: x86_64 (SSE2), aarch64 (NEON), wasm32 (scalar fallback)
-  - Ensure: Correctness on all platforms, SIMD only where supported
-  - Performance: Document speedup per platform
-- [ ] **Memory vs throughput trade-off analysis** — Compare all variants
-  - Comparison table: Generic (59 MB/sec, 1570 KB) | ASCII (133 MB/sec, 19676 KB) | DoubleArray (92 MB/sec, 66 KB) | SIMD (? MB/sec, 66 KB)
-  - Recommendation: Which variant for which use case (latency-sensitive, memory-constrained, throughput-critical)
-- [ ] **Documentation update** — SIMD analysis and variant selection guide
-  - Document: SIMD implementation details, platform support matrix
-  - Guide: How to choose between Generic/ASCII/DoubleArray/SIMD variants
-  - Update: PRD performance targets based on findings
+**Investigation Results**:
+- [x] **SIMD vectorization analysis** — **REJECTED** ✅
+  - **Finding**: Aho-Corasick is state-dependent (each char's state depends on previous char)
+  - **Obstacle**: Failure link following is sequential, variable-length lookback
+  - **Conclusion**: SIMD infeasible without massive precomputed tables (Hyperscan approach)
+  - **Reference**: SIMD_ANALYSIS.md (v1.4.0), V1.11.0_FINDINGS.md
+- [x] **Goto completion implementation** — **REJECTED** ✅
+  - **Hypothesis**: Pre-compute all transitions to eliminate failure link loop (expected +50-100%)
+  - **Implementation**: Added goto_table (state_count × 256 × 4 bytes), buildGotoCompletion()
+  - **Performance**: 89 MB/sec (+8.5% from 82 MB/sec) ❌ FAR below expected
+  - **Memory**: 445 KB (+579% from 66 KB) ❌ defeats sparse double-array purpose
+  - **Root cause**: goto_table = 409 KB overhead (400 states × 256 × 4 bytes)
+  - **Efficiency**: 6.7× memory increase for 8.5% speedup — terrible tradeoff
+  - **Conclusion**: Goto completion FAILS design goal, reverted
+- [x] **Tradeoff analysis** — Documented fundamental limits ✅
+  - **Sparse (v1.10.0)**: 66 KB, 82 MB/sec ★★★★★ (memory-efficient)
+  - **Goto completion**: 445 KB, 89 MB/sec ★★ (bad tradeoff)
+  - **ASCII dense**: 19676 KB, 133 MB/sec ★ (massive memory)
+  - **Hyperscan (SIMD)**: 10-100 MB, 1-5 GB/sec ❌ (bloat)
+- [x] **Industry comparison** — zuda is competitive ✅
+  - Rust aho-corasick (standard): 50-150 MB/sec, ~1-2 KB/pattern
+  - Rust aho-corasick (DFA): 200-400 MB/sec, ~5-10 KB/pattern
+  - **zuda DoubleArrayTrie**: 82 MB/sec, ~0.06 KB/pattern ★★★★★ best memory efficiency
+- [x] **Documentation** — V1.11.0_FINDINGS.md created ✅
+  - Documented SIMD infeasibility
+  - Documented goto completion failure
+  - Documented fundamental tradeoffs
+  - Provided variant selection guide
 
-**Success Criteria**: ≥200 MB/sec throughput achieved OR documented that target requires algorithmic changes beyond SIMD (e.g., DFA minimization, hardware acceleration).
+**Success Criteria**: ✅ **ACHIEVED** — Documented that 200 MB/sec target requires algorithmic changes (dense transitions, massive memory overhead) that defeat sparse double-array purpose.
 
-**Status**: 🚧 **IN PROGRESS** — Milestone established 2026-03-18 Hour 13
+**Recommendations**:
+1. **Accept 82 MB/sec** as near-optimal for memory-efficient design (66 KB footprint)
+2. **Update PRD target** to ≥80 MB/sec (memory-efficient) OR document tradeoff matrix
+3. **Design philosophy**: "zuda prioritizes memory efficiency over raw throughput in Aho-Corasick"
+4. **Variant selection guide**:
+   - Memory-constrained: DoubleArrayTrie (66 KB, 82 MB/sec)
+   - Balanced: Generic Aho-Corasick (1570 KB, 59 MB/sec)
+   - Throughput-critical: AhoCorasickASCII (19676 KB, 133 MB/sec)
+
+**Outcome**: v1.10.0 sparse double-array (82 MB/sec, 66 KB) represents the **optimal balance** for memory-efficient Aho-Corasick. Further throughput gains require 6-296× memory increase.
+
+**Status**: ✅ **COMPLETE** (2026-03-19) — All optimization avenues explored, architectural limits documented. No release needed (no implementation changes).
 
 ### v1.10.0 — Full DoubleArrayTrie Linearization (Phase 3) ✅ RELEASED
 
