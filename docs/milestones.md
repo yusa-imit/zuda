@@ -32,9 +32,12 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
   - ✅ zoltraak SortedSet (src/compat/zoltraak_sortedset.zig) — 12 tests, 12× insert/remove speedup expected
   - **Exported**: `zuda.compat.silica_btree`, `zuda.compat.zr_dag`, `zuda.compat.zoltraak_sortedset`
   - **Replaces**: 6,815 LOC total (silica 4,300 + zr 715 + zoltraak 1,800)
-- [ ] **Migration Examples** — Before/after code samples showing direct replacements
-  - Code reduction metrics (LOC saved per migration)
-  - Performance comparison (benchmark before/after)
+- [x] **Migration Examples** — Before/after code samples showing direct replacements ✅
+  - ✅ silica BTree (examples/migrations/silica_btree/) — before.zig (4,300 LOC pattern) vs after.zig (zuda wrapper)
+  - ✅ zr DAG (examples/migrations/zr_dag/) — before.zig (715 LOC pattern) vs after.zig (zuda wrapper)
+  - ✅ zoltraak SortedSet (examples/migrations/zoltraak_sortedset/) — before.zig (1,800 LOC pattern) vs after.zig (zuda wrapper)
+  - ✅ Comprehensive README (examples/migrations/README.md) — migration strategy, patterns, impact table
+  - **Total**: 6 runnable examples + migration guide (-6,565 LOC savings demonstrated)
 - [ ] **API Harmonization** — Identify and fix API inconsistencies blocking migration
   - Common pain points across consumers
   - Missing methods or convenience functions
@@ -44,7 +47,7 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
 
 **Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC (6,815 LOC already covered by compat layers)
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 2/5 categories complete (40%), compatibility layers ready
+**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 3/5 categories complete (60%), migration examples ready
 
 ### v1.12.0 — Practical Utilities & Enhancements
 

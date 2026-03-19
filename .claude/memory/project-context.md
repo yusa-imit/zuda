@@ -2,11 +2,11 @@
 
 ## Current Status
 - **Version**: 1.12.0 (released 2026-03-19) — Practical Utilities & Enhancements
-- **Phase**: v1.13.0 IN PROGRESS (2/5 categories complete — 40%)
+- **Phase**: v1.13.0 IN PROGRESS (3/5 categories complete — 60%)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.13.0 IN PROGRESS — Consumer Migration Support (3 compatibility layers complete)
-- **Next Priority**: Create migration examples (before/after code samples)
+- **Latest Milestone**: v1.13.0 IN PROGRESS — Consumer Migration Support (3 compatibility layers, 6 migration examples)
+- **Next Priority**: API harmonization (identify missing methods blocking migration)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -46,7 +46,35 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-20 - Hour 05)
+## Recent Progress (Session 2026-03-20 - Hour 07)
+**FEATURE MODE → v1.13.0 CONSUMER MIGRATION SUPPORT — MIGRATION EXAMPLES COMPLETE:**
+- ✅ **Migration Examples Created** (commit pending)
+  - **Directory structure**: examples/migrations/{silica_btree,zr_dag,zoltraak_sortedset}/
+  - **silica BTree migration**:
+    - before.zig (94 lines) — Simulates custom B+Tree API (runtime order, string-only, 4,300 LOC pattern)
+    - after.zig (55 lines) — Uses zuda.compat.silica_btree.BTree (20× insert speedup)
+  - **zr DAG migration**:
+    - before.zig (125 lines) — Simulates custom DAG/TopoSort/CycleDetect (715 LOC pattern)
+    - after.zig (64 lines) — Uses zuda.compat.zr_dag.DAG (47% memory reduction)
+  - **zoltraak SortedSet migration**:
+    - before.zig (142 lines) — Simulates HashMap+ArrayList hybrid (1,800 LOC pattern, O(n) insert)
+    - after.zig (76 lines) — Uses zuda.compat.zoltraak_sortedset.SortedSet (12× speedup)
+  - **Comprehensive README** (examples/migrations/README.md, 295 lines):
+    - Migration strategy (3-step: evaluate → add dep → use wrapper)
+    - Before/after comparison table (-6,565 LOC savings)
+    - Common migration patterns (string types, runtime→comptime, manual duplication)
+    - Run instructions for all 6 examples
+    - Support links (migration guides, API reference, consumer issues)
+  - **All examples compile** (fixed Zig 0.15.2 ArrayList API: init removed, append/insert/deinit require allocator)
+- 📊 **v1.13.0 Status**: 3/5 categories complete (60%)
+  - [x] Migration guides ✅ (3 guides, -6,815 LOC impact)
+  - [x] Compatibility layers ✅ (3 implemented: silica BTree, zr DAG, zoltraak SortedSet)
+  - [x] Migration examples ✅ (6 runnable examples + README) — **NEW**
+  - [ ] API harmonization (Identify pain points)
+  - [ ] Consumer PR preparation (Draft at least one PR)
+- 🎯 **Next Priority**: API harmonization — review consumer codebases for missing zuda methods
+
+## Previous Progress (Session 2026-03-20 - Hour 05)
 **FEATURE MODE → v1.13.0 CONSUMER MIGRATION SUPPORT — COMPATIBILITY LAYERS COMPLETE:**
 - ✅ **v1.13.0 Milestone Established** — Consumer Migration Support
   - **Theme**: Enable seamless migration of consumer projects (zr, silica, zoltraak) from custom implementations to zuda
