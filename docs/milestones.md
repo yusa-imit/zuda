@@ -21,15 +21,25 @@ Add commonly-needed utilities and ergonomic improvements based on real-world usa
 **Target**: Add 5-8 practical utilities/enhancements that improve day-to-day usage ✅
 
 **Categories**:
-- [ ] **Comparison utilities** — Generic comparison helpers for common types
-- [ ] **Hashing utilities** — Auto-hash for common composite types
-- [ ] **Collection builders** — Fluent builder API for complex container initialization
-- [ ] **Debug utilities** — Pretty-printing, diff helpers for testing
-- [ ] **Performance utilities** — Built-in benchmarking/profiling helpers
+- [x] **Comparison utilities** — Generic comparison helpers for common types ✅
+  - `ascending()`, `descending()`, `deref()`, `tuple2()`, `stringAscending()`, `stringDescending()`
+  - 6 functions, 10 tests (commit dda6eb3)
+- [x] **Hashing utilities** — Auto-hash for common composite types ✅
+  - `auto()`, `deref()`, `tuple2()`, `string()`, `stringCaseInsensitive()`, `eqlAuto()`
+  - 6 functions, 9 tests (commit dda6eb3)
+- [x] **Collection builders** — Fluent builder API for complex container initialization ✅
+  - `fromSlice()`, `SliceBuilder.with()`, `SliceBuilder.filter()`, `SliceBuilder.map()`, `SliceBuilder.build()`
+  - 5 functions, 24 tests (commit eb57408)
+- [x] **Debug utilities** — Pretty-printing, diff helpers for testing ✅
+  - `prettyPrint()`, `expectSliceEqual()`, `fmt()`
+  - 3 functions, 29 tests (commit 24eeec6)
+- [x] **Performance utilities** — Built-in benchmarking/profiling helpers ✅
+  - `timeFn()`, `timeFnIters()`, `throughput()`, `mbPerSec()`, `AllocTracker`, `expectFaster()`
+  - 6 functions/types, 14 tests (commit dc41b3c)
 
-**Success Criteria**: ✅ Add at least 3 utilities that eliminate boilerplate code patterns observed in consumer projects
+**Success Criteria**: ✅ **ACHIEVED** — 5/5 categories complete, 26 utilities total (target: 5-8)
 
-**Status**: 🚧 **IN PROGRESS** (2026-03-19)
+**Status**: ✅ **COMPLETE** (2026-03-19)
 
 ### v1.11.0 — Aho-Corasick Performance Investigation ✅ COMPLETE
 

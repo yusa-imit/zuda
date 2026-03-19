@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.12.0 (in development) — Practical Utilities & Enhancements
-- **Phase**: v1.12.0 IN PROGRESS (4/5 categories complete — 80%)
+- **Version**: 1.12.0 (ready for release) — Practical Utilities & Enhancements
+- **Phase**: v1.12.0 COMPLETE (5/5 categories complete — 100%)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.12.0 IN PROGRESS (Comparison, hashing, collection builder, and debug utilities complete)
-- **Next Priority**: Add performance utilities (benchmarking helpers) — FINAL category for v1.12.0
+- **Latest Milestone**: v1.12.0 COMPLETE (All 5 utility categories implemented: comparison, hashing, collection builders, debug, performance)
+- **Next Priority**: Release v1.12.0, then establish next milestone
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -46,32 +46,31 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-19 - Hour 19)
-**FEATURE MODE → v1.12.0 DEBUG UTILITIES IMPLEMENTATION:**
-- ✅ **Debug Utilities Implemented** (commit 24eeec6)
-  - **Module**: src/utils/debug.zig (450 lines, 29 tests passing)
-  - **API**: Three core functions for debugging and testing:
-    1. `prettyPrint(writer, container)` — Format containers as readable strings
-       - ArrayList: "[1, 2, 3]" format with smart type detection
-       - Handles empty, single, multiple elements, strings, floats, large arrays
-    2. `expectSliceEqual(expected, actual, allocator)` — Compare slices with detailed diffs
-       - Length and element-by-element comparison
-       - Detailed error output showing exact index/value differences
-       - Supports integers, strings, booleans, mixed types
-    3. `fmt(container)` — Format wrapper for std.debug.print integration
-       - ContainerFormatter type implementing format() method
-       - Enables: `std.debug.print("{}", .{debug.fmt(list)})`
-  - **Tests**: 29 comprehensive tests — pretty-print (8), slice comparison (9), format wrapper (5), integration (7)
-  - **TDD Cycle**: test-writer (RED phase) → zig-developer (GREEN phase)
-  - **API**: Exported via `zuda.utils.debug`
-  - **Quality**: All tests passing (751/751 total), no memory leaks, proper error propagation, Big-O doc comments
-- 📊 **v1.12.0 Progress**: 4/5 categories complete (80%)
+## Recent Progress (Session 2026-03-19 - Hour 21)
+**FEATURE MODE → v1.12.0 MILESTONE COMPLETE:**
+- ✅ **Performance Utilities Implemented** (commit dc41b3c)
+  - **Module**: src/utils/perf.zig (473 lines, 14 tests passing)
+  - **API**: Six core functions/types for performance measurement:
+    1. `timeFn(allocator, func, args)` — Single function execution timing
+    2. `timeFnIters(allocator, func, args, warmup, iterations)` — Multiple iterations with warmup, returns minimum
+    3. `throughput(operations, nanoseconds)` — Calculate ops/sec from time measurements (overflow-safe)
+    4. `mbPerSec(bytes, nanoseconds)` — Calculate MB/sec for bandwidth measurements
+    5. `AllocTracker` — Custom allocator wrapper for memory profiling
+       - Tracks allocations, deallocations, bytes_allocated, bytes_freed, peak_bytes, current_bytes
+       - `stats()` method for snapshots, `report()` method for debug output
+       - std.mem.Allocator vtable (alloc, resize, free, remap)
+    6. `expectFaster(allocator, fast_fn, args, slow_fn, args, iterations)` — Performance regression test helper
+  - **Tests**: 14 comprehensive tests — timing (2), throughput (2), MB/sec (1), AllocTracker (5), performance assertions (2), edge cases (2)
+  - **Design**: Minimal, focused API for quick measurements; complements internal/bench.zig (full benchmark framework)
+  - **API**: Exported via `zuda.utils.perf`
+  - **Quality**: All tests passing, no memory leaks, handles compiler optimizations gracefully
+- 📊 **v1.12.0 Status**: 5/5 categories COMPLETE (100%) ✅
   - [x] Comparison utilities ✅ (6 functions, 10 tests)
   - [x] Hashing utilities ✅ (6 functions, 9 tests)
   - [x] Collection builders ✅ (5 functions, 24 tests)
-  - [x] Debug utilities ✅ (3 functions, 29 tests) — **NEW**
-  - [ ] Performance utilities
-- 🎯 **Next Priority**: Add performance utilities (benchmarking helpers) — FINAL category for v1.12.0
+  - [x] Debug utilities ✅ (3 functions, 29 tests)
+  - [x] Performance utilities ✅ (6 functions/types, 14 tests) — **NEW**
+- 🎯 **Next Priority**: Release v1.12.0
 
 ## Previous Progress (Session 2026-03-19 - Hour 17)
 **FEATURE MODE → v1.12.0 COLLECTION BUILDERS IMPLEMENTATION:**
