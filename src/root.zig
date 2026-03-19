@@ -333,6 +333,8 @@ pub const utils = @import("utils.zig");
 pub const compat = struct {
     /// Compatibility layer for silica's BTree API (4,300 LOC replacement)
     pub const silica_btree = @import("compat/silica_btree.zig");
+    /// Compatibility layer for zr's DAG API (715 LOC replacement)
+    pub const zr_dag = @import("compat/zr_dag.zig");
 };
 
 /// Internal utilities (not part of public API)
