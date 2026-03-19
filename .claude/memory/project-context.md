@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.12.0 (ready for release) — Practical Utilities & Enhancements
-- **Phase**: v1.12.0 COMPLETE (5/5 categories complete — 100%)
+- **Version**: 1.12.0 (released 2026-03-19) — Practical Utilities & Enhancements
+- **Phase**: v1.13.0 IN PROGRESS (1/5 categories complete — 20%)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.12.0 COMPLETE (All 5 utility categories implemented: comparison, hashing, collection builders, debug, performance)
-- **Next Priority**: Release v1.12.0, then establish next milestone
+- **Latest Milestone**: v1.13.0 IN PROGRESS — Consumer Migration Support (migration guides ready)
+- **Next Priority**: Implement compatibility layers for migration guides
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -46,7 +46,38 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-19 - Hour 21)
+## Recent Progress (Session 2026-03-20 - Hour 01)
+**FEATURE MODE → v1.13.0 CONSUMER MIGRATION SUPPORT:**
+- ✅ **v1.13.0 Milestone Established** — Consumer Migration Support
+  - **Theme**: Enable seamless migration of consumer projects (zr, silica, zoltraak) from custom implementations to zuda
+  - **Target**: Close ≥3 migration issues, reduce consumer DSA code by ≥1000 LOC
+  - **5 categories**: Migration guides, compatibility layers, migration examples, API harmonization, consumer PR prep
+- ✅ **Migration Guides Created** (commit 2958a85)
+  - **silica BTree** (docs/migrations/SILICA_BTREE.md):
+    - Current: 4,300 LOC custom B+Tree implementation
+    - Target: zuda BTree(comptime order) with compatibility wrapper
+    - Expected: 20× insert speedup (250 ns → 12 ns), equivalent memory (~1.6 MB for 100k keys)
+    - Impact: -4,300 LOC from silica
+  - **zr Graph** (docs/migrations/ZR_GRAPH.md):
+    - Current: 715 LOC (DAG 187 + TopoSort 323 + CycleDetect 205)
+    - Target: zuda AdjacencyList + topological_sort + cycle_detection algorithms
+    - Expected: Better cache locality, 47% memory reduction (1.2 MB → 640 KB for 10k nodes)
+    - Impact: -715 LOC from zr
+  - **zoltraak Sorted Set** (docs/migrations/ZOLTRAAK_SORTEDSET.md):
+    - Current: 1,800 LOC (HashMap + sorted ArrayList hybrid)
+    - Target: HashMap (member lookup) + zuda SkipList (score ordering)
+    - Expected: 12× insert/remove speedup (50 ns → 4 ns), +50% memory (acceptable for Redis workload)
+    - Impact: -1,800 LOC from zoltraak
+  - **Total impact**: -6,815 LOC across 3 consumer projects
+- 📊 **v1.13.0 Status**: 1/5 categories complete (20%)
+  - [x] Migration guides ✅ (3 comprehensive guides, -6,815 LOC impact)
+  - [ ] Compatibility layers (Phase 1 implementations)
+  - [ ] Migration examples (Before/after comparisons, benchmarks)
+  - [ ] API harmonization (Identify pain points)
+  - [ ] Consumer PR preparation (Draft at least one PR)
+- 🎯 **Next Priority**: Implement compatibility layer for silica BTree (highest LOC impact)
+
+## Previous Progress (Session 2026-03-19 - Hour 21)
 **FEATURE MODE → v1.12.0 MILESTONE COMPLETE:**
 - ✅ **Performance Utilities Implemented** (commit dc41b3c)
   - **Module**: src/utils/perf.zig (473 lines, 14 tests passing)

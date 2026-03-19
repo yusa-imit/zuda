@@ -21,10 +21,11 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
 **Target**: Close at least 3 high-impact migration issues by providing migration guides and compatibility layers ✅
 
 **Categories**:
-- [ ] **Migration Guides** — Step-by-step migration documentation for each consumer
-  - zr: Graph (DAG, topological sort, cycle detection), WorkStealingDeque, string algorithms
-  - silica: BTree, LRU cache, lock manager (deadlock detection)
-  - zoltraak: Sorted sets (SkipList/RedBlackTree), HyperLogLog, geospatial (geohash, haversine)
+- [x] **Migration Guides** — Step-by-step migration documentation for each consumer ✅
+  - ✅ silica BTree (4,300 LOC → zuda BTree) — docs/migrations/SILICA_BTREE.md
+  - ✅ zr Graph (715 LOC → zuda Graph + algorithms) — docs/migrations/ZR_GRAPH.md
+  - ✅ zoltraak Sorted Set (1,800 LOC → zuda SkipList) — docs/migrations/ZOLTRAAK_SORTEDSET.md
+  - **Total impact**: -6,815 LOC across 3 consumers
 - [ ] **Compatibility Layers** — Thin wrappers matching existing consumer APIs
   - Example: zr's DAG API wrapper around zuda AdjacencyList + algorithms
   - Example: silica's BTree API wrapper around zuda BTree(comptime order)
@@ -40,7 +41,7 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
 
 **Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20)
+**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 1/5 categories complete (20%), migration guides ready
 
 ### v1.12.0 — Practical Utilities & Enhancements
 
