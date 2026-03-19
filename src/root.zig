@@ -335,6 +335,8 @@ pub const compat = struct {
     pub const silica_btree = @import("compat/silica_btree.zig");
     /// Compatibility layer for zr's DAG API (715 LOC replacement)
     pub const zr_dag = @import("compat/zr_dag.zig");
+    /// Compatibility layer for zoltraak's SortedSet API (1,800 LOC replacement)
+    pub const zoltraak_sortedset = @import("compat/zoltraak_sortedset.zig");
 };
 
 /// Internal utilities (not part of public API)
