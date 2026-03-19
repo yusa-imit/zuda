@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.10.0 (released 2026-03-18) ✅
-- **Phase**: v1.12.0 IN PROGRESS — Practical Utilities & Enhancements
+- **Version**: 1.12.0 (in development) — Practical Utilities & Enhancements
+- **Phase**: v1.12.0 IN PROGRESS (3/5 categories complete — 60%)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.12.0 IN PROGRESS (Comparison & hashing utilities complete — 1/3 categories done)
-- **Next Priority**: Add debug utilities or collection builders (v1.12.0 continuation)
+- **Latest Milestone**: v1.12.0 IN PROGRESS (Comparison, hashing, and collection builder utilities complete)
+- **Next Priority**: Add debug utilities (pretty-printing, diff) OR performance utilities (benchmarking helpers)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -46,36 +46,34 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-19 - Hour 15)
-**FEATURE MODE → v1.12.0 UTILITIES IMPLEMENTATION:**
-- ✅ **v1.12.0 Milestone Established** — Practical Utilities & Enhancements
-  - Focus: Developer experience, common patterns, ergonomic helpers
-  - Target: 5-8 practical utilities that eliminate boilerplate
-  - 5 categories: comparison, hashing, collection builders, debug, performance
-- ✅ **Comparison Utilities Implemented** (commit dda6eb3)
-  - **Module**: src/utils/compare.zig (164 lines, 10 tests passing)
-  - **Functions**: ascending(T), descending(T), stringAscending, stringDescending, tuple2(T1,T2), deref(T)
-  - **Design**: Comptime functions returning comparators compatible with all containers
-  - **Tests**: Comprehensive unit tests + integration test with RedBlackTree
-  - **API**: Exported via `zuda.utils.compare.*`
-- ✅ **Hashing Utilities Implemented** (commit dda6eb3)
-  - **Module**: src/utils/hash.zig (179 lines, 9 tests passing)
-  - **Functions**: auto(K), string, tuple2(T1,T2), deref(T), stringCaseInsensitive, eqlAuto(K)
-  - **Design**: Comptime functions using std.hash.Wyhash for consistent hashing
-  - **Tests**: Unit tests + integration test with RobinHoodHashMap
-  - **API**: Exported via `zuda.utils.hash.*`
-- 🐛 **Bug Fixed** — RedBlackTree Zig 0.15.2 API compatibility
-  - **File**: src/containers/trees/red_black_tree.zig:884
-  - **Issue**: `ArrayHashMap.remove()` doesn't exist in Zig 0.15.2
-  - **Fix**: Updated to `swapRemove()` (correct API)
-  - **Impact**: All tests passing (722+ tests)
-- 📊 **v1.12.0 Progress**: 2/5 categories complete (40%)
+## Recent Progress (Session 2026-03-19 - Hour 17)
+**FEATURE MODE → v1.12.0 COLLECTION BUILDERS IMPLEMENTATION:**
+- ✅ **Collection Builder Utilities Implemented** (commit eb57408)
+  - **Module**: src/utils/builder.zig (665 lines, 24 tests passing)
+  - **API**: fromSlice(T, items) → SliceBuilder(T) with methods:
+    - toArrayList(allocator) — Copy slice to ArrayList
+    - toSkipList(allocator, ctx, compareFn) — Build sorted set
+    - toRedBlackTree(K, V, allocator, ctx, compareFn) — Build BST from Pair(K,V) items
+    - toHashMap(K, V, allocator, ctx, hashFn, eqlFn) — Build hash map from Pair(K,V) items
+  - **Helper**: Pair(K, V) type for key-value pairs in builders
+  - **Features**: Zero-copy slice wrapping, OOM propagation, empty slice support, duplicate handling
+  - **Tests**: 24 comprehensive tests — basic conversions, edge cases (empty/single/duplicates), memory safety (1000+ items), custom comparators
+  - **TDD Cycle**: test-writer → zig-developer → test-writer (fixed SkipList deduplication test)
+  - **API**: Exported via `zuda.utils.builder`
+- 📊 **v1.12.0 Progress**: 3/5 categories complete (60%)
   - [x] Comparison utilities ✅ (6 functions, 10 tests)
   - [x] Hashing utilities ✅ (6 functions, 9 tests)
-  - [ ] Collection builders
+  - [x] Collection builders ✅ (5 functions, 24 tests)
   - [ ] Debug utilities
   - [ ] Performance utilities
-- 🎯 **Next Priority**: Add debug utilities (pretty-printing, diff helpers) OR collection builders (fluent API)
+- 🎯 **Next Priority**: Add debug utilities (pretty-printing, diff helpers) OR performance utilities (benchmarking helpers)
+
+## Previous Progress (Session 2026-03-19 - Hour 15)
+**FEATURE MODE → v1.12.0 UTILITIES IMPLEMENTATION:**
+- ✅ **v1.12.0 Milestone Established** — Practical Utilities & Enhancements
+- ✅ **Comparison Utilities Implemented** (commit dda6eb3)
+- ✅ **Hashing Utilities Implemented** (commit dda6eb3)
+- 🐛 **Bug Fixed** — RedBlackTree Zig 0.15.2 API compatibility
 
 ## Previous Progress (Session 2026-03-19 - Hour 13)
 **FEATURE MODE → v1.11.0 AHO-CORASICK PERFORMANCE INVESTIGATION COMPLETE:**
