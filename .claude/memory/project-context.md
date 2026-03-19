@@ -2,11 +2,11 @@
 
 ## Current Status
 - **Version**: 1.10.0 (released 2026-03-18) ✅
-- **Phase**: v1.11.0 COMPLETE — Aho-Corasick Performance Investigation
+- **Phase**: v1.12.0 IN PROGRESS — Practical Utilities & Enhancements
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 722/722 tests)
-- **Latest Milestone**: v1.11.0 COMPLETE (Documented 200 MB/sec unrealistic, accept 82 MB/sec @ 66 KB)
-- **Next Priority**: Establish next milestone (< 2 active milestones)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
+- **Latest Milestone**: v1.12.0 IN PROGRESS (Comparison & hashing utilities complete — 1/3 categories done)
+- **Next Priority**: Add debug utilities or collection builders (v1.12.0 continuation)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -46,7 +46,38 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-19 - Hour 13)
+## Recent Progress (Session 2026-03-19 - Hour 15)
+**FEATURE MODE → v1.12.0 UTILITIES IMPLEMENTATION:**
+- ✅ **v1.12.0 Milestone Established** — Practical Utilities & Enhancements
+  - Focus: Developer experience, common patterns, ergonomic helpers
+  - Target: 5-8 practical utilities that eliminate boilerplate
+  - 5 categories: comparison, hashing, collection builders, debug, performance
+- ✅ **Comparison Utilities Implemented** (commit dda6eb3)
+  - **Module**: src/utils/compare.zig (164 lines, 10 tests passing)
+  - **Functions**: ascending(T), descending(T), stringAscending, stringDescending, tuple2(T1,T2), deref(T)
+  - **Design**: Comptime functions returning comparators compatible with all containers
+  - **Tests**: Comprehensive unit tests + integration test with RedBlackTree
+  - **API**: Exported via `zuda.utils.compare.*`
+- ✅ **Hashing Utilities Implemented** (commit dda6eb3)
+  - **Module**: src/utils/hash.zig (179 lines, 9 tests passing)
+  - **Functions**: auto(K), string, tuple2(T1,T2), deref(T), stringCaseInsensitive, eqlAuto(K)
+  - **Design**: Comptime functions using std.hash.Wyhash for consistent hashing
+  - **Tests**: Unit tests + integration test with RobinHoodHashMap
+  - **API**: Exported via `zuda.utils.hash.*`
+- 🐛 **Bug Fixed** — RedBlackTree Zig 0.15.2 API compatibility
+  - **File**: src/containers/trees/red_black_tree.zig:884
+  - **Issue**: `ArrayHashMap.remove()` doesn't exist in Zig 0.15.2
+  - **Fix**: Updated to `swapRemove()` (correct API)
+  - **Impact**: All tests passing (722+ tests)
+- 📊 **v1.12.0 Progress**: 2/5 categories complete (40%)
+  - [x] Comparison utilities ✅ (6 functions, 10 tests)
+  - [x] Hashing utilities ✅ (6 functions, 9 tests)
+  - [ ] Collection builders
+  - [ ] Debug utilities
+  - [ ] Performance utilities
+- 🎯 **Next Priority**: Add debug utilities (pretty-printing, diff helpers) OR collection builders (fluent API)
+
+## Previous Progress (Session 2026-03-19 - Hour 13)
 **FEATURE MODE → v1.11.0 AHO-CORASICK PERFORMANCE INVESTIGATION COMPLETE:**
 - ✅ **SIMD Vectorization Analysis** — **REJECTED** (commit none, analysis only)
   - **Finding**: Aho-Corasick is state-dependent (each character depends on previous state)
