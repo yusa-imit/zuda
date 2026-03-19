@@ -26,9 +26,11 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
   - ✅ zr Graph (715 LOC → zuda Graph + algorithms) — docs/migrations/ZR_GRAPH.md
   - ✅ zoltraak Sorted Set (1,800 LOC → zuda SkipList) — docs/migrations/ZOLTRAAK_SORTEDSET.md
   - **Total impact**: -6,815 LOC across 3 consumers
-- [ ] **Compatibility Layers** — Thin wrappers matching existing consumer APIs
-  - Example: zr's DAG API wrapper around zuda AdjacencyList + algorithms
-  - Example: silica's BTree API wrapper around zuda BTree(comptime order)
+- [x] **Compatibility Layers** — Thin wrappers matching existing consumer APIs ✅
+  - ✅ silica BTree (src/compat/silica_btree.zig) — 4 tests, 20× insert speedup expected
+  - ✅ zr DAG (src/compat/zr_dag.zig) — 5 tests, 47% memory reduction expected
+  - **Exported**: `zuda.compat.silica_btree`, `zuda.compat.zr_dag`
+  - **Replaces**: 5,015 LOC total (silica 4,300 + zr 715)
 - [ ] **Migration Examples** — Before/after code samples showing direct replacements
   - Code reduction metrics (LOC saved per migration)
   - Performance comparison (benchmark before/after)
@@ -39,9 +41,9 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
   - Full test suite passing with zuda replacements
   - Documentation updates reflecting new dependencies
 
-**Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC
+**Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC (5,015 LOC already covered by compat layers)
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 1/5 categories complete (20%), migration guides ready
+**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 2/5 categories complete (40%), compatibility layers ready
 
 ### v1.12.0 — Practical Utilities & Enhancements
 
