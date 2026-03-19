@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.10.0 (2026-03-18) — Full DoubleArrayTrie Linearization
-- **Current phase**: v1.11.0 — SIMD Vectorization for Aho-Corasick
+- **Latest release**: v1.12.0 (2026-03-19) — Practical Utilities & Enhancements
+- **Current phase**: v1.13.0 — Consumer Migration Support
 - **Tests**: 722/722 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -11,6 +11,36 @@
 ---
 
 ## Active Milestones
+
+### v1.13.0 — Consumer Migration Support
+
+Enable seamless migration of consumer projects (zr, silica, zoltraak) from custom implementations to zuda:
+
+**Context**: All 5 phases complete, library feature-complete. 10+ open migration issues across 3 consumer projects. Focus on removing friction for adoption through migration guides, compatibility layers, and real-world migration examples.
+
+**Target**: Close at least 3 high-impact migration issues by providing migration guides and compatibility layers ✅
+
+**Categories**:
+- [ ] **Migration Guides** — Step-by-step migration documentation for each consumer
+  - zr: Graph (DAG, topological sort, cycle detection), WorkStealingDeque, string algorithms
+  - silica: BTree, LRU cache, lock manager (deadlock detection)
+  - zoltraak: Sorted sets (SkipList/RedBlackTree), HyperLogLog, geospatial (geohash, haversine)
+- [ ] **Compatibility Layers** — Thin wrappers matching existing consumer APIs
+  - Example: zr's DAG API wrapper around zuda AdjacencyList + algorithms
+  - Example: silica's BTree API wrapper around zuda BTree(comptime order)
+- [ ] **Migration Examples** — Before/after code samples showing direct replacements
+  - Code reduction metrics (LOC saved per migration)
+  - Performance comparison (benchmark before/after)
+- [ ] **API Harmonization** — Identify and fix API inconsistencies blocking migration
+  - Common pain points across consumers
+  - Missing methods or convenience functions
+- [ ] **Consumer PR Preparation** — Draft PR branches for at least one consumer migration
+  - Full test suite passing with zuda replacements
+  - Documentation updates reflecting new dependencies
+
+**Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC
+
+**Status**: 🔄 **IN PROGRESS** (2026-03-20)
 
 ### v1.12.0 — Practical Utilities & Enhancements
 
