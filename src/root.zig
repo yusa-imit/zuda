@@ -329,6 +329,12 @@ pub const iterators = struct {
 /// Utility functions for working with containers (comparators, hash functions, etc.)
 pub const utils = @import("utils.zig");
 
+/// Compatibility layers for consumer project migration
+pub const compat = struct {
+    /// Compatibility layer for silica's BTree API (4,300 LOC replacement)
+    pub const silica_btree = @import("compat/silica_btree.zig");
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
