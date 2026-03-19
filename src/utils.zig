@@ -21,6 +21,7 @@
 
 pub const compare = @import("utils/compare.zig");
 pub const hash = @import("utils/hash.zig");
+pub const builder = @import("utils/builder.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
