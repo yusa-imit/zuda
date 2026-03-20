@@ -1,13 +1,13 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.13.0 (released 2026-03-20) — Consumer Migration Support
-- **Phase**: v1.14.0 READY FOR RELEASE (2/3 categories complete — 67%)
+- **Version**: 1.14.0 (released 2026-03-20) — Ergonomic Enhancements
+- **Phase**: Post-v1.14.0 (ready for next milestone)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 746/746 tests passing)
-- **Latest Milestone**: v1.13.0 RELEASED ✅ — Consumer Migration Support (3 guides, 3 compat layers, 6 examples, 1 PR drafted)
-- **Current Milestone**: v1.14.0 — Ergonomic Enhancements (bidirectional iterators ✅ + context-free constructors ✅)
-- **Next Priority**: Release v1.14.0, then establish v1.15.0 for iterator adaptor expansion
+- **Latest Milestone**: v1.14.0 RELEASED ✅ — Ergonomic Enhancements (bidirectional iterators + context-free constructors, 112 new tests)
+- **Current Milestone**: None (< 2 active milestones rule)
+- **Next Priority**: Establish v1.15.0 milestone for iterator adaptor expansion
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework

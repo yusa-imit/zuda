@@ -2,9 +2,9 @@
 
 ## Current Status
 
-- **Latest release**: v1.13.0 (2026-03-20) — Consumer Migration Support
-- **Current phase**: v1.14.0 — Ergonomic Enhancements
-- **Tests**: 722/722 passing (100%)
+- **Latest release**: v1.14.0 (2026-03-20) — Ergonomic Enhancements
+- **Current phase**: Post-v1.14.0 (ready for next milestone)
+- **Tests**: 746/746 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
 
@@ -53,7 +53,7 @@ Improve developer experience through bidirectional iterators, context-free const
 
 **Success Criteria**: All 3 categories complete, demonstrated in updated migration examples
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 2/3 categories complete (67%), bidirectional iterators ✅ + context-free constructors ✅ implemented
+**Status**: ✅ **COMPLETE** (2026-03-20) — Released with 2/3 categories (67%), iterator adaptor expansion deferred to v1.15.0
 
 ### v1.13.0 — Consumer Migration Support ✅ COMPLETE
 
