@@ -59,6 +59,8 @@ pub fn DFS(
             visit_order: std.ArrayList(V),
             /// Finish order (sequence of vertices in reverse topological order for DAGs)
             finish_order: std.ArrayList(V),
+            /// Whether a cycle (back edge) was detected during traversal
+            has_cycle: bool,
             allocator: Allocator,
             context: Context,
 
@@ -112,15 +114,10 @@ pub fn DFS(
             }
 
             /// Check if there's a back edge (cycle) in the traversal.
-            /// This is conservative: returns true if any back edge was detected.
             /// For directed graphs, presence of back edge indicates a cycle.
+            /// Time: O(1) | Space: O(1)
             pub fn hasCycle(self: *const Result) bool {
-                // If any vertex has discovery > finish, it indicates presence of back edge
-                // Actually, we need edge classification for this. Simplified: check if visit_order != finish_order
-                // Better approach: we'll add a separate cycle detection method
-                // For now, return false (will be set by run/runRecursive)
-                _ = self;
-                return false; // TODO: Need to track back edges during traversal
+                return self.has_cycle;
             }
         };
 
@@ -168,6 +165,7 @@ pub fn DFS(
             defer states.deinit();
 
             var time: usize = 0;
+            var has_cycle = false;
 
             // Explicit stack for iterative DFS
             const StackFrame = struct { v: V, first_visit: bool };
@@ -206,6 +204,9 @@ pub fn DFS(
                         if (neighbor_state == State.unvisited) {
                             try parents.put(neighbor, current);
                             try stack.append(allocator, .{ .v = neighbor, .first_visit = true });
+                        } else if (neighbor_state == State.visiting) {
+                            // Back edge detected (cycle in directed graph)
+                            has_cycle = true;
                         }
                     }
                 } else {
@@ -223,6 +224,7 @@ pub fn DFS(
                 .parents = parents,
                 .visit_order = visit_order,
                 .finish_order = finish_order,
+                .has_cycle = has_cycle,
                 .allocator = allocator,
                 .context = context,
             };
@@ -261,6 +263,7 @@ pub fn DFS(
             defer states.deinit();
 
             var time: usize = 0;
+            var has_cycle = false;
 
             // Early exit if start == goal
             if (context.eql(start, goal)) {
@@ -277,6 +280,7 @@ pub fn DFS(
                     .parents = parents,
                     .visit_order = visit_order,
                     .finish_order = finish_order,
+                    .has_cycle = false,
                     .allocator = allocator,
                     .context = context,
                 };
@@ -328,6 +332,9 @@ pub fn DFS(
                         if (neighbor_state == State.unvisited) {
                             try parents.put(neighbor, current);
                             try stack.append(allocator, .{ .v = neighbor, .first_visit = true });
+                        } else if (neighbor_state == State.visiting) {
+                            // Back edge detected (cycle in directed graph)
+                            has_cycle = true;
                         }
                     }
                 } else {
@@ -361,6 +368,7 @@ pub fn DFS(
                 .parents = parents,
                 .visit_order = visit_order,
                 .finish_order = finish_order,
+                .has_cycle = has_cycle,
                 .allocator = allocator,
                 .context = context,
             };
@@ -400,6 +408,7 @@ pub fn DFS(
             defer states.deinit();
 
             var time: usize = 0;
+            var has_cycle = false;
 
             const vertices = graph.getAllVertices();
 
@@ -439,6 +448,9 @@ pub fn DFS(
                             if (neighbor_state == State.unvisited) {
                                 try parents.put(neighbor, current);
                                 try stack.append(allocator, .{ .v = neighbor, .first_visit = true });
+                            } else if (neighbor_state == State.visiting) {
+                                // Back edge detected (cycle in directed graph)
+                                has_cycle = true;
                             }
                         }
                     } else {
@@ -456,6 +468,7 @@ pub fn DFS(
                 .parents = parents,
                 .visit_order = visit_order,
                 .finish_order = finish_order,
+                .has_cycle = has_cycle,
                 .allocator = allocator,
                 .context = context,
             };
@@ -753,6 +766,62 @@ test "DFS: cycle detection (back edge)" {
     try testing.expect(result.getDiscovery(1).? < result.getFinish(1).?);
     try testing.expect(result.getDiscovery(2).? < result.getFinish(2).?);
     try testing.expect(result.getDiscovery(3).? < result.getFinish(3).?);
+
+    // Verify cycle was detected
+    try testing.expect(result.hasCycle());
+}
+
+test "DFS: acyclic graph (DAG)" {
+    const TestGraph = struct {
+        edges: std.AutoHashMap(u32, std.ArrayList(u32)),
+
+        pub fn getNeighbors(self: *const @This(), vertex: u32) ?[]const Edge {
+            const list = self.edges.get(vertex) orelse return null;
+            return @ptrCast(list.items);
+        }
+
+        const Edge = struct { target: u32 };
+    };
+
+    const TestContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    var graph: TestGraph = .{ .edges = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator) };
+    defer graph.edges.deinit();
+    defer {
+        var it = graph.edges.valueIterator();
+        while (it.next()) |list| list.deinit(testing.allocator);
+    }
+
+    // DAG: 1 -> 2 -> 4
+    //      |    |
+    //      v    v
+    //      3 -> 4
+    var list1 = std.ArrayList(u32){};
+    try list1.append(testing.allocator, 2);
+    try list1.append(testing.allocator, 3);
+    try graph.edges.put(1, list1);
+
+    var list2 = std.ArrayList(u32){};
+    try list2.append(testing.allocator, 4);
+    try graph.edges.put(2, list2);
+
+    var list3 = std.ArrayList(u32){};
+    try list3.append(testing.allocator, 4);
+    try graph.edges.put(3, list3);
+
+    const dfs_impl = DFS(u32, TestContext);
+    var result = try dfs_impl.run(testing.allocator, &graph, 1, .{});
+    defer result.deinit();
+
+    // No cycle should be detected in DAG
+    try testing.expect(!result.hasCycle());
 }
 
 test "DFS: single vertex" {

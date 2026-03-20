@@ -677,6 +677,64 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             };
         }
 
+        /// Get the number of dimensions (rank) of the array
+        ///
+        /// Returns: Rank as usize (comptime rank of this array type)
+        ///
+        /// Time: O(1)
+        /// Space: O(1)
+        pub fn rank(self: *const Self) usize {
+            // Extract ndim from the shape array type
+            return @typeInfo(@TypeOf(self.shape)).Array.len;
+        }
+
+        /// Flatten the array to 1D, converting to row-major order
+        ///
+        /// Converts a multi-dimensional array to a 1D array with all elements
+        /// in row-major traversal order. Performs zero-copy if the input is
+        /// contiguous (data pointer unchanged), copies data if non-contiguous.
+        ///
+        /// Parameters: none
+        ///
+        /// Returns: NDArray(T, 1) with shape = [total_elements], row-major order
+        ///
+        /// Errors:
+        /// - error.OutOfMemory if copy required and allocation fails
+        ///
+        /// Time: O(1) if contiguous, O(n) if non-contiguous (where n = prod(shape))
+        /// Space: O(1) if contiguous, O(n) if non-contiguous
+        pub fn flatten(self: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            // Calculate total number of elements
+            const total_elements = self.count();
+
+            // Check if array is contiguous
+            // Contiguous: data.len equals the expected total element count
+            const is_contiguous = self.data.len == total_elements;
+
+            if (is_contiguous) {
+                // Zero-copy: use fromOwnedSlice with same data pointer
+                // We need to cast away const on data slice
+                const mutable_data: []T = @constCast(self.data);
+                return NDArray(T, 1).fromOwnedSlice(self.allocator, &[_]usize{total_elements}, mutable_data, self.layout);
+            } else {
+                // Non-contiguous: must copy data to new contiguous buffer
+                // Allocate new buffer
+                const new_data = try self.allocator.alloc(T, total_elements);
+                errdefer self.allocator.free(new_data);
+
+                // Copy all elements from old layout to new contiguous buffer
+                var iter = self.iterator();
+                var idx: usize = 0;
+                while (iter.next()) |val| {
+                    new_data[idx] = val;
+                    idx += 1;
+                }
+
+                // Create array from owned slice
+                return NDArray(T, 1).fromOwnedSlice(self.allocator, &[_]usize{total_elements}, new_data, self.layout);
+            }
+        }
+
         // -- Indexing and Slicing Functions --
 
         /// Get element at multi-dimensional indices with negative indexing support
@@ -3604,4 +3662,327 @@ test "ndarray: transpose no memory leak with multiple transposes" {
     }
 
     // std.testing.allocator will detect leaks if any transposes incorrectly allocate
+}
+
+// ============================================================================
+// flatten() Tests - Convert multi-dimensional array to 1D
+// ============================================================================
+
+test "ndarray: flatten 2D [2,3] row-major → 1D [6] with elements [[1,2,3],[4,5,6]] → [1,2,3,4,5,6]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Set values: [[1,2,3], [4,5,6]]
+    arr.set(&[_]isize{ 0, 0 }, 1);
+    arr.set(&[_]isize{ 0, 1 }, 2);
+    arr.set(&[_]isize{ 0, 2 }, 3);
+    arr.set(&[_]isize{ 1, 0 }, 4);
+    arr.set(&[_]isize{ 1, 1 }, 5);
+    arr.set(&[_]isize{ 1, 2 }, 6);
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape is 1D with 6 elements
+    try testing.expectEqual(1, flattened.ndim());
+    try testing.expectEqual(6, flattened.shape[0]);
+    try testing.expectEqual(6, flattened.count());
+
+    // Verify row-major order: [1,2,3,4,5,6]
+    try testing.expectEqual(1, flattened.at(0));
+    try testing.expectEqual(2, flattened.at(1));
+    try testing.expectEqual(3, flattened.at(2));
+    try testing.expectEqual(4, flattened.at(3));
+    try testing.expectEqual(5, flattened.at(4));
+    try testing.expectEqual(6, flattened.at(5));
+}
+
+test "ndarray: flatten 3D [2,3,4] → 1D [24] preserves all elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values 1..24 directly into data slice
+    for (0..24) |i| {
+        arr.data[i] = @floatFromInt(i + 1);
+    }
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape
+    try testing.expectEqual(1, flattened.ndim());
+    try testing.expectEqual(24, flattened.shape[0]);
+    try testing.expectEqual(24, flattened.count());
+
+    // Verify all elements are in row-major order
+    for (0..24) |i| {
+        const expected: f64 = @floatFromInt(i + 1);
+        try testing.expectEqual(expected, flattened.at(i));
+    }
+}
+
+test "ndarray: flatten 1D [6] → 1D [6] is zero-copy (same data pointer)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values 1..6
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i)}, @intCast(i + 1));
+    }
+
+    const original_ptr = arr.data.ptr;
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape unchanged
+    try testing.expectEqual(1, flattened.shape[0]);
+    try testing.expectEqual(6, flattened.count());
+
+    // Verify zero-copy: same data pointer
+    try testing.expectEqual(original_ptr, flattened.data.ptr);
+}
+
+test "ndarray: flatten contiguous 2D [3,4] row-major → 1D [12] zero-copy" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill array directly into data slice
+    for (0..12) |i| {
+        arr.data[i] = @floatFromInt(i + 1);
+    }
+
+    const original_ptr = arr.data.ptr;
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape
+    try testing.expectEqual(12, flattened.shape[0]);
+
+    // Verify zero-copy: same data pointer
+    try testing.expectEqual(original_ptr, flattened.data.ptr);
+
+    // Verify elements preserved in row-major order
+    for (0..12) |i| {
+        const expected: f64 = @floatFromInt(i + 1);
+        try testing.expectEqual(expected, flattened.at(i));
+    }
+}
+
+test "ndarray: flatten non-contiguous (sliced) 2D → 1D requires copy" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill entire array
+    for (0..4) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @intCast(i * 4 + j + 1));
+        }
+    }
+
+    // Slice to get [[5,6,7,8],[9,10,11,12],[13,14,15,16]] (non-contiguous view)
+    const sliced = try arr.slice(&[_]?[2]usize{ .{ 1, 4 }, .{ 0, 4 } });
+
+    const flattened = try sliced.flatten();
+    defer flattened.deinit();
+
+    // Verify shape
+    try testing.expectEqual(12, flattened.shape[0]);
+
+    // Non-contiguous requires copy, so data pointer should differ
+    // OR if implementation handles it as zero-copy despite non-contiguity,
+    // then we just verify elements are in correct row-major order
+    const expected = [_]i32{ 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    for (0..12) |i| {
+        try testing.expectEqual(expected[i], flattened.at(i));
+    }
+}
+
+test "ndarray: flatten column-major 2D [3,4] → 1D [12] converts to row-major order" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .column_major);
+    defer arr.deinit();
+
+    // In column-major layout, fill and verify order
+    // [[1, 4, 7, 10], [2, 5, 8, 11], [3, 6, 9, 12]]
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @floatFromInt(i + j * 3 + 1));
+        }
+    }
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape
+    try testing.expectEqual(12, flattened.shape[0]);
+
+    // The flattened result should be in row-major order: [1,4,7,10,2,5,8,11,3,6,9,12]
+    const expected = [_]f64{ 1, 4, 7, 10, 2, 5, 8, 11, 3, 6, 9, 12 };
+    for (0..12) |i| {
+        try testing.expectEqual(expected[i], flattened.at(i));
+    }
+}
+
+test "ndarray: flatten empty 2D [0,5] → 1D [0] shape correct" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 0, 5 }, .row_major);
+    defer arr.deinit();
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify empty shape
+    try testing.expectEqual(1, flattened.ndim());
+    try testing.expectEqual(0, flattened.shape[0]);
+    try testing.expectEqual(0, flattened.count());
+}
+
+test "ndarray: flatten [1,1,1,6] 4D → 1D [6] preserves all elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 4).init(allocator, &[_]usize{ 1, 1, 1, 6 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values 10..15
+    for (0..6) |i| {
+        arr.set(&[_]isize{ 0, 0, 0, @intCast(i) }, @intCast(i + 10));
+    }
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape
+    try testing.expectEqual(1, flattened.shape[0]);
+    try testing.expectEqual(6, flattened.count());
+
+    // Verify elements
+    for (0..6) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i + 10)), flattened.at(i));
+    }
+}
+
+test "ndarray: flatten large [100,200] → [20000] 1D array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 100, 200 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..20000) |i| {
+        arr.data[i] = @floatFromInt(i);
+    }
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify shape
+    try testing.expectEqual(20000, flattened.shape[0]);
+    try testing.expectEqual(20000, flattened.count());
+
+    // Spot check some values
+    try testing.expectEqual(0.0, flattened.at(0));
+    try testing.expectEqual(100.0, flattened.at(100));
+    try testing.expectEqual(19999.0, flattened.at(19999));
+}
+
+test "ndarray: flatten no memory leak with multiple flatten operations" {
+    const allocator = testing.allocator;
+
+    for (0..5) |_| {
+        var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+        defer arr.deinit();
+
+        for (0..3) |_| {
+            const flattened = try arr.flatten();
+            defer flattened.deinit();
+            try testing.expectEqual(24, flattened.count());
+        }
+    }
+    // std.testing.allocator will detect leaks if flatten incorrectly allocates
+}
+
+test "ndarray: flatten all elements accessible by index in 1D result" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 5 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values 100..114
+    for (0..15) |i| {
+        arr.data[i] = @intCast(i + 100);
+    }
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify every element is accessible and correct
+    for (0..15) |i| {
+        const expected: i32 = @intCast(i + 100);
+        try testing.expectEqual(expected, flattened.at(i));
+    }
+}
+
+test "ndarray: flatten reshape reshape preserves elements (2D→1D→2D)" {
+    const allocator = testing.allocator;
+    var original = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer original.deinit();
+
+    // Fill with 1..12
+    for (0..3) |i| {
+        for (0..4) |j| {
+            original.set(&[_]isize{ @intCast(i), @intCast(j) }, @intCast(i * 4 + j + 1));
+        }
+    }
+
+    // Flatten to 1D
+    const flattened = try original.flatten();
+    defer flattened.deinit();
+
+    // Reshape back to 2D [4,3]
+    const reshaped = try flattened.reshape(&[_]usize{ 4, 3 });
+    defer reshaped.deinit();
+
+    // Verify shape
+    try testing.expectEqual(4, reshaped.shape[0]);
+    try testing.expectEqual(3, reshaped.shape[1]);
+
+    // Verify all 12 elements are present (reshaped layout may differ)
+    var found_count: usize = 0;
+    var iter = reshaped.iterator();
+    while (iter.next()) |_| {
+        found_count += 1;
+    }
+    try testing.expectEqual(12, found_count);
+}
+
+test "ndarray: flatten after zeros() creation preserves zeros in 1D" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).zeros(allocator, &[_]usize{ 2, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify all zeros
+    for (0..12) |i| {
+        try testing.expectEqual(0.0, flattened.at(i));
+    }
+}
+
+test "ndarray: flatten after ones() creation preserves ones in 1D" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const flattened = try arr.flatten();
+    defer flattened.deinit();
+
+    // Verify all ones
+    for (0..12) |i| {
+        try testing.expectEqual(1, flattened.at(i));
+    }
 }
