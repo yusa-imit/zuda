@@ -835,6 +835,80 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             };
         }
 
+        /// Ensure the array has contiguous memory layout
+        ///
+        /// If the array is already contiguous (data.len == prod(shape) and strides
+        /// match expected row-major or column-major pattern), returns a copy of the
+        /// array with same data pointer.
+        ///
+        /// If non-contiguous (result of slicing, transposing, or permuting), allocates
+        /// a new contiguous buffer, copies all elements via iterator traversal,
+        /// and returns new array with contiguous strides.
+        ///
+        /// Parameters:
+        /// - self: Reference to the array
+        ///
+        /// Returns: New NDArray with contiguous memory layout and independent allocation
+        ///
+        /// Errors:
+        /// - std.mem.Allocator.Error if memory allocation fails during copying
+        ///
+        /// Time: O(1) if already contiguous, O(n) if copying required (n = prod(shape))
+        /// Space: O(n) if allocation needed for new buffer
+        pub fn contiguous(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Calculate total number of elements
+            const total_elements = self.count();
+
+            // Calculate expected contiguous strides based on layout
+            const expected_strides = calculateStrides(self.shape, self.layout);
+
+            // Check if already contiguous:
+            // 1. data.len must equal total_elements
+            // 2. strides must match expected contiguous pattern
+            var is_contiguous = self.data.len == total_elements;
+
+            if (is_contiguous) {
+                // Verify stride pattern matches
+                for (0..ndim) |i| {
+                    if (self.strides[i] != expected_strides[i]) {
+                        is_contiguous = false;
+                        break;
+                    }
+                }
+            }
+
+            // If already contiguous, return a copy of the struct
+            if (is_contiguous) {
+                return Self{
+                    .shape = self.shape,
+                    .strides = self.strides,
+                    .data = self.data,
+                    .allocator = self.allocator,
+                    .layout = self.layout,
+                };
+            }
+
+            // Non-contiguous: allocate new buffer and copy elements
+            const new_data = try self.allocator.alloc(T, total_elements);
+            errdefer self.allocator.free(new_data);
+
+            // Copy all elements in row-major order via iterator
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |value| : (idx += 1) {
+                new_data[idx] = value;
+            }
+
+            // Return new array with contiguous layout and expected strides
+            return Self{
+                .shape = self.shape,
+                .strides = expected_strides,
+                .data = new_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
         // -- Indexing and Slicing Functions --
 
         /// Get element at multi-dimensional indices with negative indexing support
@@ -4576,4 +4650,334 @@ test "ndarray: permute 2D partial reorder [1,0] affects element access" {
     // After permute [1,0]: shape [3,2], element ordering in strides changes
     try testing.expectEqual(@as(i32, 0), permuted.at(&[_]isize{ 0, 0 }));
     try testing.expectEqual(@as(i32, 3), permuted.at(&[_]isize{ 0, 1 }));
+}
+
+// -- contiguous() Tests --
+
+test "ndarray: contiguous already contiguous 2D array returns same pointer" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const contiguous = try arr.contiguous();
+    defer contiguous.deinit();
+
+    // Should have same data pointer (already contiguous)
+    try testing.expectEqual(arr.data.ptr, contiguous.data.ptr);
+
+    // Should have same shape
+    try testing.expectEqualSlices(usize, &arr.shape, &contiguous.shape);
+
+    // Should have same strides
+    try testing.expectEqualSlices(usize, &arr.strides, &contiguous.strides);
+
+    // Data should be identical
+    try testing.expectEqualSlices(i32, arr.data, contiguous.data);
+}
+
+test "ndarray: contiguous 1D array always contiguous returns same pointer" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{10}, .row_major);
+    defer arr.deinit();
+
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @floatFromInt(i);
+    }
+
+    const contiguous = try arr.contiguous();
+    defer contiguous.deinit();
+
+    // 1D arrays are always contiguous
+    try testing.expectEqual(arr.data.ptr, contiguous.data.ptr);
+    try testing.expectEqual(@as(usize, 10), contiguous.shape[0]);
+    try testing.expectEqual(@as(usize, 1), contiguous.strides[0]);
+}
+
+test "ndarray: contiguous sliced non-contiguous array allocates new buffer" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 4, 5 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Slice [1:3, 1:4] - creates non-contiguous view
+    const sliced = arr.slice(&[_][2]?isize{
+        &[_]?isize{ 1, 3 },
+        &[_]?isize{ 1, 4 },
+    });
+
+    const contiguous = try sliced.contiguous();
+    defer contiguous.deinit();
+
+    // New buffer should be allocated (different pointer)
+    try testing.expect(sliced.data.ptr != contiguous.data.ptr);
+
+    // New buffer is shorter than original
+    try testing.expect(contiguous.data.len < arr.data.len);
+
+    // Shape should match sliced shape
+    try testing.expectEqual(sliced.shape[0], contiguous.shape[0]);
+    try testing.expectEqual(sliced.shape[1], contiguous.shape[1]);
+
+    // Verify strides are contiguous (expected for row-major)
+    try testing.expectEqual(@as(usize, 3), contiguous.strides[0]); // shape[1] = 3 (4 - 1)
+    try testing.expectEqual(@as(usize, 1), contiguous.strides[1]);
+
+    // Verify data is copied correctly
+    try testing.expectEqual(@as(i32, 6), try contiguous.get(&[_]isize{ 0, 0 }));  // original[1,1]
+    try testing.expectEqual(@as(i32, 7), try contiguous.get(&[_]isize{ 0, 1 }));  // original[1,2]
+    try testing.expectEqual(@as(i32, 8), try contiguous.get(&[_]isize{ 0, 2 }));  // original[1,3]
+}
+
+test "ndarray: contiguous transposed 2D array allocates new buffer" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with pattern: [[0,1,2],[3,4,5]]
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const transposed = arr.transpose();
+    // Verify it's non-contiguous (stride pattern changes)
+    // Original strides: [3, 1] for shape [2, 3]
+    // After transpose: strides [1, 2] for shape [3, 2]
+
+    const contiguous = try transposed.contiguous();
+    defer contiguous.deinit();
+
+    // New buffer allocated
+    try testing.expect(transposed.data.ptr != contiguous.data.ptr);
+
+    // New shape is transposed
+    try testing.expectEqual(@as(usize, 3), contiguous.shape[0]);
+    try testing.expectEqual(@as(usize, 2), contiguous.shape[1]);
+
+    // Verify contiguous strides for row-major layout
+    try testing.expectEqual(@as(usize, 2), contiguous.strides[0]);
+    try testing.expectEqual(@as(usize, 1), contiguous.strides[1]);
+
+    // Verify transposed elements are in correct positions
+    // transposed[0,0] = original[0,0] = 0
+    // transposed[0,1] = original[1,0] = 3
+    // transposed[1,0] = original[0,1] = 1
+    // transposed[1,1] = original[1,1] = 4
+    try testing.expectEqual(@as(i32, 0), try contiguous.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 3), try contiguous.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 1), try contiguous.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 4), try contiguous.get(&[_]isize{ 1, 1 }));
+}
+
+test "ndarray: contiguous permuted 3D array allocates and reorders" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Permute [2, 0, 1] - should create non-contiguous view
+    const permuted = try arr.permute(&[_]usize{ 2, 0, 1 });
+
+    const contiguous = try permuted.contiguous();
+    defer contiguous.deinit();
+
+    // New buffer allocated
+    try testing.expect(permuted.data.ptr != contiguous.data.ptr);
+
+    // New shape reflects permutation [2, 0, 1]
+    // original [2, 3, 4] -> [4, 2, 3]
+    try testing.expectEqual(@as(usize, 4), contiguous.shape[0]);
+    try testing.expectEqual(@as(usize, 2), contiguous.shape[1]);
+    try testing.expectEqual(@as(usize, 3), contiguous.shape[2]);
+
+    // Verify contiguous strides for row-major
+    try testing.expectEqual(@as(usize, 6), contiguous.strides[0]); // 2 * 3
+    try testing.expectEqual(@as(usize, 3), contiguous.strides[1]); // 3
+    try testing.expectEqual(@as(usize, 1), contiguous.strides[2]); // 1
+}
+
+test "ndarray: contiguous column-major layout stride validation" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(f32, 2).init(allocator, &[_]usize{ 3, 4 }, .column_major);
+    defer arr.deinit();
+
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @floatFromInt(i);
+    }
+
+    const contiguous = try arr.contiguous();
+    defer contiguous.deinit();
+
+    // For column-major [3, 4]: strides should be [1, 3]
+    try testing.expectEqual(@as(usize, 1), contiguous.strides[0]);
+    try testing.expectEqual(@as(usize, 3), contiguous.strides[1]);
+}
+
+test "ndarray: contiguous iterator traversal matches original after contiguation" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill pattern
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Slice to create non-contiguous view
+    const sliced = arr.slice(&[_][2]?isize{
+        &[_]?isize{ 0, 2 },
+        &[_]?isize{ 0, 2 },
+    });
+
+    const contiguous = try sliced.contiguous();
+    defer contiguous.deinit();
+
+    // Traverse and verify values match sliced view
+    var iter_contiguous = contiguous.iterator();
+    var iter_sliced = sliced.iterator();
+
+    while (iter_contiguous.next()) |val_c| {
+        const val_s = iter_sliced.next();
+        try testing.expect(val_s != null);
+        try testing.expectEqual(val_c, val_s.?);
+    }
+
+    try testing.expect(iter_sliced.next() == null);
+}
+
+test "ndarray: contiguous idempotent - calling twice preserves data" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const sliced = arr.slice(&[_][2]?isize{
+        &[_]?isize{ 0, 2 },
+        &[_]?isize{ 1, 3 },
+    });
+
+    const contiguous1 = try sliced.contiguous();
+    defer contiguous1.deinit();
+
+    // Call contiguous() on already-contiguous array
+    const contiguous2 = try contiguous1.contiguous();
+    defer contiguous2.deinit();
+
+    // Should have same pointer (already contiguous)
+    try testing.expectEqual(contiguous1.data.ptr, contiguous2.data.ptr);
+
+    // Data should be identical
+    try testing.expectEqualSlices(i32, contiguous1.data, contiguous2.data);
+}
+
+test "ndarray: contiguous large array stress test 1M elements" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 1000, 1000 }, .row_major);
+    defer arr.deinit();
+
+    // Just initialize; memory safety is key here
+    // Slice to trigger non-contiguous state
+    const sliced = arr.slice(&[_][2]?isize{
+        &[_]?isize{ 100, 900 },
+        &[_]?isize{ 100, 900 },
+    });
+
+    const contiguous = try sliced.contiguous();
+    defer contiguous.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 800), contiguous.shape[0]);
+    try testing.expectEqual(@as(usize, 800), contiguous.shape[1]);
+
+    // Verify total element count
+    const expected_elements = 800 * 800;
+    try testing.expectEqual(expected_elements, contiguous.count());
+}
+
+test "ndarray: contiguous empty slice handling" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Slice that results in empty array [0, 3]
+    const empty_slice = arr.slice(&[_][2]?isize{
+        &[_]?isize{ 0, 0 },
+        &[_]?isize{ 0, 3 },
+    });
+
+    // contiguous() on empty view should still work
+    const contiguous = try empty_slice.contiguous();
+    defer contiguous.deinit();
+
+    try testing.expectEqual(@as(usize, 0), contiguous.shape[0]);
+    try testing.expectEqual(@as(usize, 3), contiguous.shape[1]);
+    try testing.expectEqual(@as(usize, 0), contiguous.count());
+}
+
+test "ndarray: contiguous preserves element values through copy" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Set specific pattern
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @as(f64, @floatFromInt(i)) * 3.14;
+    }
+
+    // Permute to non-contiguous
+    const permuted = try arr.permute(&[_]usize{ 1, 2, 0 });
+
+    const contiguous = try permuted.contiguous();
+    defer contiguous.deinit();
+
+    // Spot-check values are preserved via iterator
+    var iter = contiguous.iterator();
+    var count: usize = 0;
+    while (iter.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 24), count); // 2*3*4 = 24
+}
+
+test "ndarray: contiguous distinguishes contiguous from non-contiguous views" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..arr.data.len) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Original array is contiguous
+    var contiguous_original = try arr.contiguous();
+    defer contiguous_original.deinit();
+
+    try testing.expectEqual(arr.data.ptr, contiguous_original.data.ptr);
+
+    // Permuted view is non-contiguous
+    const permuted = try arr.permute(&[_]usize{ 2, 1, 0 });
+    var contiguous_permuted = try permuted.contiguous();
+    defer contiguous_permuted.deinit();
+
+    // Should allocate new buffer for permuted view
+    try testing.expect(permuted.data.ptr != contiguous_permuted.data.ptr);
+
+    // Both results have same number of elements
+    try testing.expectEqual(arr.count(), contiguous_permuted.count());
 }
