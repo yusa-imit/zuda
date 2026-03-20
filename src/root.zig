@@ -343,6 +343,13 @@ pub const compat = struct {
     pub const zoltraak_sortedset = @import("compat/zoltraak_sortedset.zig");
 };
 
+/// Scientific computing modules (v2.0 track)
+pub const ndarray = struct {
+    /// N-dimensional arrays with flexible memory layouts
+    pub const NDArray = @import("ndarray/ndarray.zig").NDArray;
+    pub const Layout = @import("ndarray/ndarray.zig").Layout;
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
