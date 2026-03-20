@@ -326,6 +326,7 @@ pub const iterators = struct {
     pub const SkipWhile = @import("iterators/skip_while.zig").SkipWhile;
     pub const Enumerate = @import("iterators/enumerate.zig").Enumerate;
     pub const FlatMap = @import("iterators/flat_map.zig").FlatMap;
+    pub const Partition = @import("iterators/partition.zig").Partition;
     pub const collect = @import("iterators/collect.zig").collect;
 };
 
