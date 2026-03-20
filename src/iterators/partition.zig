@@ -79,37 +79,24 @@ pub fn Partition(comptime T: type, comptime _: type) type {
             base_iter: anytype,
             predicate_fn: *const fn (T) bool,
         ) !Self {
-            // First pass: count elements in each partition
+            // Single pass: collect elements into ArrayLists, then convert to owned slices
+            var true_list = std.ArrayList(T).init(allocator);
+            errdefer true_list.deinit();
+            var false_list = std.ArrayList(T).init(allocator);
+            errdefer false_list.deinit();
+
             var iter = base_iter;
-            var true_count: usize = 0;
-            var false_count: usize = 0;
-
             while (iter.next()) |value| {
                 if (predicate_fn(value)) {
-                    true_count += 1;
+                    try true_list.append(value);
                 } else {
-                    false_count += 1;
+                    try false_list.append(value);
                 }
             }
 
-            // Allocate buffers
-            const true_slice = try allocator.alloc(T, true_count);
-            const false_slice = try allocator.alloc(T, false_count);
-
-            // Second pass: populate buffers
-            iter = base_iter;
-            var true_idx: usize = 0;
-            var false_idx: usize = 0;
-
-            while (iter.next()) |value| {
-                if (predicate_fn(value)) {
-                    true_slice[true_idx] = value;
-                    true_idx += 1;
-                } else {
-                    false_slice[false_idx] = value;
-                    false_idx += 1;
-                }
-            }
+            // Convert to owned slices (transfers ownership to caller)
+            const true_slice = try true_list.toOwnedSlice();
+            const false_slice = try false_list.toOwnedSlice();
 
             return .{
                 .allocator = allocator,
