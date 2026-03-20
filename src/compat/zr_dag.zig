@@ -56,17 +56,26 @@ pub const DAG = struct {
     const Self = @This();
 
     /// Internal zuda graph (directed, string vertices, no edge data).
-    const Graph = AdjacencyList([]const u8, void);
+    const StringContext = struct {
+        pub fn hash(_: @This(), key: []const u8) u64 {
+            return std.hash.Wyhash.hash(0, key);
+        }
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            return std.mem.eql(u8, a, b);
+        }
+    };
+    const Graph = AdjacencyList([]const u8, void, StringContext, StringContext.hash, StringContext.eql);
 
     allocator: std.mem.Allocator,
     graph: Graph,
+
 
     /// Initialize an empty DAG.
     /// Time: O(1) | Space: O(1)
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .allocator = allocator,
-            .graph = Graph.init(allocator, true), // directed=true
+            .graph = Graph.init(allocator, .{}, true), // directed=true
         };
     }
 
@@ -101,6 +110,64 @@ pub const DAG = struct {
         try self.graph.addEdge(from, to, {});
     }
 
+    /// Get a node by name.
+    ///
+    /// **zr API**: `pub fn getNode(self: *DAG, name: []const u8) ?*Node`
+    ///
+    /// Note: zuda's AdjacencyList doesn't expose "Node" struct like zr's original.
+    /// This method is provided for backward compatibility with limited use cases.
+    /// Returns a dummy Node-like struct if the vertex exists.
+    ///
+    /// **WARNING**: This is a compatibility shim. The returned pointer is ephemeral.
+    /// Do NOT store it beyond the current scope.
+    ///
+    /// Time: O(1) | Space: O(1)
+    pub fn getNode(self: *const Self, name: []const u8) ?*const anyopaque {
+        // Check if vertex exists
+        const exists = self.graph.hasVertex(name);
+        if (exists) {
+            // Return a non-null opaque pointer (zr code only checks for null)
+            return @ptrCast(&self.graph);
+        }
+        return null;
+    }
+
+    /// Get all entry nodes (nodes with no dependencies).
+    ///
+    /// **zr API**: `pub fn getEntryNodes(self: *DAG, allocator: std.mem.Allocator) !std.ArrayList([]const u8)`
+    ///
+    /// Returns:
+    /// - ArrayList of entry node names (caller owns, must call deinit)
+    ///
+    /// Time: O(V + E) | Space: O(V)
+    pub fn getEntryNodes(self: *const Self, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
+        var result = std.ArrayList([]const u8){};
+        errdefer result.deinit(allocator);
+
+        var vertex_it = self.graph.vertexIterator();
+        while (vertex_it.next()) |vertex| {
+            // Count incoming edges (dependencies)
+            var has_dependencies = false;
+            var neighbor_it = self.graph.neighborIterator(vertex) catch continue;
+            while (neighbor_it.next()) |_| {
+                has_dependencies = true;
+                break;
+            }
+
+            if (!has_dependencies) {
+                try result.append(allocator, try allocator.dupe(u8, vertex));
+            }
+        }
+
+        return result;
+    }
+
+    /// Expose internal graph's adjacencies hashmap for compatibility with zr's API.
+    /// This allows `dag.nodes.iterator()` to work in existing zr code (ascii.zig).
+    pub inline fn nodes(self: *const Self) @TypeOf(self.graph.adjacencies) {
+        return self.graph.adjacencies;
+    }
+
     /// Compute topological sort using Kahn's algorithm.
     ///
     /// **zr API**: `pub fn topologicalSort(self: *DAG) ![][]const u8`
@@ -112,7 +179,7 @@ pub const DAG = struct {
     /// Time: O(V + E) | Space: O(V)
     pub fn topologicalSort(self: *Self) ![][]const u8 {
         // Create string context for topological sort
-        const StringContext = struct {
+        const TopoStringContext = struct {
             pub fn hash(ctx: @This(), key: []const u8) u64 {
                 _ = ctx;
                 return std.hash.Wyhash.hash(0, key);
@@ -123,7 +190,7 @@ pub const DAG = struct {
             }
         };
 
-        const TopoSort = topological_sort_mod.TopologicalSort([]const u8, StringContext);
+        const TopoSort = topological_sort_mod.TopologicalSort([]const u8, TopoStringContext);
         var result = try TopoSort.sort(self.allocator, &self.graph, .{});
         defer result.deinit();
 
@@ -146,7 +213,7 @@ pub const DAG = struct {
     /// Time: O(V + E) | Space: O(V) for recursion stack
     pub fn detectCycle(self: *Self) !?[][]const u8 {
         // Use topological sort's cycle detection (returns cycle vertices)
-        const StringContext = struct {
+        const CycleStringContext = struct {
             pub fn hash(ctx: @This(), key: []const u8) u64 {
                 _ = ctx;
                 return std.hash.Wyhash.hash(0, key);
@@ -157,7 +224,7 @@ pub const DAG = struct {
             }
         };
 
-        const TopoSort = topological_sort_mod.TopologicalSort([]const u8, StringContext);
+        const TopoSort = topological_sort_mod.TopologicalSort([]const u8, CycleStringContext);
         var result = try TopoSort.sort(self.allocator, &self.graph, .{});
         defer result.deinit();
 
