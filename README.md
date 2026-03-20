@@ -2,7 +2,7 @@
 
 > **Z**ig **U**niversal **D**atastructures and **A**lgorithms
 
-A comprehensive, production-ready library of data structures and algorithms for Zig 0.15+.
+A comprehensive, production-ready library of data structures, algorithms, and scientific computing for Zig 0.15+. The Zig-native alternative to NumPy/SciPy.
 
 [![CI](https://github.com/yusa-imit/zuda/actions/workflows/ci.yml/badge.svg)](https://github.com/yusa-imit/zuda/actions)
 [![Zig](https://img.shields.io/badge/zig-0.15.x-orange)](https://ziglang.org/)
@@ -12,13 +12,24 @@ A comprehensive, production-ready library of data structures and algorithms for 
 
 ## Features
 
-- **✅ 100+ Data Structures**: Lists, trees, graphs, heaps, spatial indexes, probabilistic structures
-- **🚀 80+ Algorithms**: Sorting, graph algorithms, string matching, dynamic programming, geometry, math
-- **🔧 Allocator-First**: Every container accepts `std.mem.Allocator` for full control
-- **⚡ Comptime-Optimized**: Parameterize behavior at compile time for zero-overhead abstractions
-- **🧪 701 Tests Passing**: Comprehensive test coverage including property-based and fuzz testing
-- **🌍 C FFI**: Export to C, Python, Node.js, and other languages
-- **📚 Complete Documentation**: API reference, algorithm explainers, decision guides
+### v1.x — Data Structures & Algorithms (Stable)
+- **100+ Data Structures**: Lists, trees, graphs, heaps, spatial indexes, probabilistic structures
+- **80+ Algorithms**: Sorting, graph algorithms, string matching, dynamic programming, geometry, math
+- **746 Tests Passing**: Comprehensive test coverage including property-based and fuzz testing
+
+### v2.0 — Scientific Computing (In Development)
+- **NDArray**: N-dimensional array with broadcasting, slicing, and element-wise operations
+- **Linear Algebra**: BLAS Level 1-3, LU/QR/SVD/Cholesky decompositions, linear solvers
+- **Statistics**: Descriptive stats, probability distributions, hypothesis testing, regression
+- **Signal Processing**: FFT/IFFT, convolution, digital filters, spectral analysis
+- **Numerical Methods**: Integration, interpolation, ODE solvers, root finding
+- **Optimization**: Gradient descent, L-BFGS, linear programming, auto-differentiation
+
+### Core Design
+- **Allocator-First**: Every container accepts `std.mem.Allocator` for full control
+- **Comptime-Optimized**: Parameterize behavior at compile time for zero-overhead abstractions
+- **C FFI**: Export to C, Python, Node.js, and other languages
+- **Complete Documentation**: API reference, algorithm explainers, decision guides
 
 ---
 
@@ -82,6 +93,69 @@ pub fn main() !void {
 7: lucky
 42: answer
 ```
+
+---
+
+## v2.0 Preview — Scientific Computing
+
+zuda v2.0 transforms the library into a comprehensive scientific computing platform. Here's a preview of the planned API:
+
+```zig
+const std = @import("std");
+const zuda = @import("zuda");
+const NDArray = zuda.ndarray.NDArray;
+const linalg = zuda.linalg;
+const stats = zuda.stats;
+
+pub fn main() !void {
+    const alloc = std.heap.page_allocator;
+
+    // Create matrices
+    var A = try NDArray(f64, 2).fromSlice(alloc, &.{ 3, 3 }, &.{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 10,
+    });
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(alloc, &.{3}, &.{ 1, 2, 3 });
+    defer b.deinit();
+
+    // Solve Ax = b
+    var x = try linalg.solve(alloc, A, b);
+    defer x.deinit();
+
+    // SVD decomposition
+    var result = try linalg.svd(alloc, A);
+    defer result.deinit();
+
+    // Statistics
+    const data = try NDArray(f64, 1).arange(alloc, 0, 1000, 1);
+    defer data.deinit();
+    const mu = stats.mean(data);
+    const sigma = stats.std(data);
+}
+```
+
+### NumPy vs zuda Comparison
+
+| NumPy (Python) | zuda (Zig) |
+|----------------|------------|
+| `np.array([[1,2],[3,4]])` | `NDArray(f64, 2).fromSlice(alloc, &.{2,2}, &.{1,2,3,4})` |
+| `np.zeros((3, 3))` | `NDArray(f64, 2).zeros(alloc, &.{3, 3})` |
+| `A @ B` | `linalg.matmul(alloc, A, B)` |
+| `np.linalg.solve(A, b)` | `linalg.solve(alloc, A, b)` |
+| `np.fft.fft(x)` | `signal.fft(alloc, x)` |
+| `np.mean(x)` | `stats.mean(x)` |
+| `scipy.optimize.minimize(f, x0)` | `optimize.minimize(alloc, f, x0, .{})` |
+
+**Why zuda over NumPy?**
+- No GIL — true parallelism without workarounds
+- No garbage collector — predictable latency
+- Comptime generics — zero-overhead abstractions
+- Single binary — no Python runtime dependency
+- Explicit memory — allocator-first design, no hidden allocations
+- C ABI — easy integration with any language
 
 ---
 
@@ -208,14 +282,24 @@ See [examples/FFI_README.md](examples/FFI_README.md) for Python, Node.js, and ot
 
 ## Roadmap
 
-- [x] **Phase 1**: Lists, queues, heaps, hash tables (Weeks 1-8) ✅
-- [x] **Phase 2**: Trees, spatial structures, strings (Weeks 9-16) ✅
-- [x] **Phase 3**: Graph algorithms (Weeks 17-24) ✅
-- [x] **Phase 4**: Sorting, string algorithms, probabilistic, caches, geometry, math, DP (Weeks 25-34) ✅
-- [x] **Phase 5**: Concurrent, persistent, exotic, C API, FFI (Weeks 35-44) ✅
-- [ ] **v1.0**: Documentation, decision guides, migration from consumer projects
+### v1.x — Data Structures & Algorithms (Complete)
+- [x] **Phase 1**: Lists, queues, heaps, hash tables
+- [x] **Phase 2**: Trees, spatial structures, strings
+- [x] **Phase 3**: Graph algorithms
+- [x] **Phase 4**: Sorting, string algorithms, probabilistic, caches, geometry, math, DP
+- [x] **Phase 5**: Concurrent, persistent, exotic, C API, FFI
+- [x] **v1.0**: Documentation, decision guides, consumer migration support
 
-See [PRD.md](docs/PRD.md) for detailed roadmap.
+### v2.0 — Scientific Computing (In Progress)
+- [ ] **Phase 6**: NDArray foundation (multi-dimensional array, broadcasting, element-wise ops)
+- [ ] **Phase 7**: Linear algebra (BLAS, decompositions, solvers, sparse matrices)
+- [ ] **Phase 8**: Statistics & random (distributions, hypothesis testing, regression)
+- [ ] **Phase 9**: Transforms & signal processing (FFT, convolution, filtering)
+- [ ] **Phase 10**: Numerical methods (integration, interpolation, ODE solvers, root finding)
+- [ ] **Phase 11**: Optimization (gradient descent, L-BFGS, linear programming, auto-diff)
+- [ ] **Phase 12**: v2.0 integration, SIMD acceleration, NumPy compatibility guide
+
+See [PRD.md](docs/PRD.md) for detailed roadmap and [milestones.md](docs/milestones.md) for progress tracking.
 
 ---
 
@@ -250,11 +334,15 @@ See [CLAUDE.md](CLAUDE.md#coding-standards) for complete coding standards.
 
 ## Version History
 
-- **v0.5.0** (2026-03-13): Phase 5 complete - C API, FFI bindings, persistent structures, exotic containers
-- **v0.4.0**: Phase 4 complete - Probabilistic structures, caches, geometry, math, DP utilities
-- **v0.3.0**: Phase 3 complete - Graph algorithms (shortest paths, MST, flow, matching)
-- **v0.2.0**: Phase 2 complete - Trees, spatial structures, suffix arrays/trees
-- **v0.1.0**: Phase 1 complete - Foundations (lists, queues, heaps, hash tables)
+- **v1.14.0** (2026-03-20): Ergonomic enhancements — reverse iterators, convenience constructors, 112 new tests
+- **v1.0.0** (2026-03-14): Stable release — 100+ data structures, 80+ algorithms, C FFI, 746 tests
+- **v0.5.0** (2026-03-13): Phase 5 complete — C API, FFI bindings, persistent structures, exotic containers
+- **v0.4.0**: Phase 4 complete — Probabilistic structures, caches, geometry, math, DP utilities
+- **v0.3.0**: Phase 3 complete — Graph algorithms (shortest paths, MST, flow, matching)
+- **v0.2.0**: Phase 2 complete — Trees, spatial structures, suffix arrays/trees
+- **v0.1.0**: Phase 1 complete — Foundations (lists, queues, heaps, hash tables)
+
+**Next**: v2.0.0 — Scientific computing platform (NDArray, linear algebra, statistics, FFT, numerical methods, optimization)
 
 ---
 
@@ -269,6 +357,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 Inspired by:
 - **Zig Standard Library**: `std.ArrayList`, `std.HashMap`, `std.PriorityQueue`
 - **Boost C++ Libraries**: Comprehensive STL-style containers
+- **NumPy / SciPy**: NDArray design, scientific computing API surface
+- **Eigen**: Template-based linear algebra design patterns
+- **LAPACK / OpenBLAS / FFTW**: Performance reference implementations
 - **CLRS**: *Introduction to Algorithms* (3rd edition)
 - **Sedgewick**: *Algorithms* (4th edition)
 - **Knuth**: *The Art of Computer Programming*

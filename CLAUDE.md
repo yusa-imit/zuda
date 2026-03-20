@@ -1,7 +1,7 @@
 # zuda — Claude Code Orchestrator
 
 > **zuda**: Zig Universal Datastructures and Algorithms
-> Current Phase: **Phase 1 — Foundations**
+> Current Phase: **v1.x Complete — v2.0 Scientific Computing Track**
 
 ---
 
@@ -12,6 +12,8 @@
 - **Build**: `zig build` / `zig build test`
 - **PRD**: `docs/PRD.md` (전체 요구사항 참조)
 - **Branch Strategy**: `main` (development)
+- **Vision**: v1.x는 100+ 자료구조 & 80+ 알고리즘 라이브러리 (완료). v2.0은 선형대수, 통계, FFT, 수치해석, 최적화를 포함하는 **과학 컴퓨팅 플랫폼**으로 확장 — NumPy/SciPy의 Zig-native 대안
+- **v2.0 Modules**: `ndarray/` (NDArray), `linalg/` (선형대수), `stats/` (통계), `signal/` (FFT/신호처리), `numeric/` (수치해석), `optimize/` (최적화)
 
 ## Repository Structure
 
@@ -55,6 +57,11 @@ zuda/
 │   │   ├── geometry/
 │   │   └── dynamic_programming/
 │   ├── iterators/               #   Composable iterator adaptors
+│   ├── ndarray/                 #   N-dimensional Array (v2.0)
+│   ├── linalg/                  #   Linear Algebra — BLAS, decompositions, solvers (v2.0)
+│   ├── stats/                   #   Statistics — distributions, testing, regression (v2.0)
+│   ├── signal/                  #   Signal Processing — FFT, convolution, filtering (v2.0)
+│   ├── numeric/                 #   Numerical Methods — integration, ODE, interpolation (v2.0)
 │   └── internal/                #   Shared utilities (not public API)
 │       ├── testing.zig          #     Property-based test helpers
 │       └── bench.zig            #     Micro-benchmark harness
@@ -482,7 +489,8 @@ gh issue create --repo yusa-imit/<consumer> \
 
 See [`docs/milestones.md`](docs/milestones.md) for the full implementation roadmap, phase checklists, and performance targets.
 
-**Current phase**: Phase 1 — Foundations (Lists, Queues, Hash containers, Heaps)
+**v1.x status**: Phases 1-5 complete (100+ data structures, 80+ algorithms, 746 tests passing)
+**v2.0 track**: Phases 6-12 — Scientific computing (NDArray → linalg → stats → signal → numeric → optimize → release)
 
 ---
 
