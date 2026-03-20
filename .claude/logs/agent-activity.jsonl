@@ -42,3 +42,5 @@
 {"timestamp":"2026-03-20T06:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement zoltraak SortedSet compatibility layer (12 TDD tests)","project":"zuda"}
 {"timestamp":"2026-03-21T02:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for NDArray.fromOwnedSlice()","project":"zuda"}
 {"timestamp":"2026-03-21T02:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray.fromOwnedSlice() Green phase","project":"zuda"}
+{"timestamp":"2026-03-21T03:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write reshape() tests","project":"zuda"}
+{"timestamp":"2026-03-21T03:20:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray.reshape()","project":"zuda"}

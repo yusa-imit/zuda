@@ -53,13 +53,36 @@
 - [x] **Indexing & slicing** (4/4) ✅ — get, set, at, slice (negative indexing, non-owning views)
 - [x] **Iterator protocol** ✅ — NDArrayIterator with next() -> ?T, layout-aware traversal
 - [x] **fromOwnedSlice** ✅ — Move semantics variant of fromSlice (12 tests, commit 5500f7d)
-- [ ] **Reshape & Transform** — reshape, transpose, permute, flatten, ravel, squeeze, unsqueeze, contiguous
+- [x] **Reshape** ✅ — reshape() with zero-copy optimization (16 tests, commit 5f6ff16)
+- [ ] **Transform** — transpose, permute, flatten, ravel, squeeze, unsqueeze, contiguous
 - [ ] **Element-wise operations** — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, trig functions
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules
 - [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
-## Recent Progress (Session 2026-03-21 - Hour 02)
+## Recent Progress (Session 2026-03-21 - Hour 03)
+**FEATURE MODE → v1.17.0 NDARRAY RESHAPE & TRANSFORM — RESHAPE COMPLETE:**
+- ✅ **NDArray.reshape() Implementation** (commit 5f6ff16)
+  - **Function**: Reshape array to new shape with zero-copy when possible
+  - **TDD Cycle**: test-writer (16 Red-phase tests) → zig-developer (Green implementation)
+  - **Zero-copy path**: Contiguous arrays reuse same data pointer (O(1) time)
+  - **Copy path**: Non-contiguous arrays allocate new buffer and copy via iterator (O(n) time)
+  - **Validation**: Total size match (prod(shape)), no zero dimensions
+  - **Error Handling**: ZeroDimension (invalid shape), CapacityExceeded (size mismatch/overflow)
+  - **Tests**: 16 comprehensive tests (basic, errors, zero-copy, layouts, stress, memory safety)
+  - **Complexity**: Time O(1) contiguous / O(n) non-contiguous, Space O(ndim) view / O(n) copy
+  - **Milestone**: v1.17.0 category 1/7 COMPLETE ✅
+- 📊 **v1.17.0 Status**: 1/7 categories COMPLETE (14%)
+  - [x] Reshape ✅ (1 function, 16 tests)
+  - [ ] Transpose & Permute (2 functions)
+  - [ ] Flatten & Ravel (2 functions)
+  - [ ] Squeeze & Unsqueeze (2 functions)
+  - [ ] Contiguous (1 function)
+  - [ ] Documentation (docs/GUIDE.md update)
+- 🎯 **Total**: 16 new tests this session, 1 commit
+- 📋 **Next Priority**: Implement transpose() and permute()
+
+## Previous Progress (Session 2026-03-21 - Hour 02)
 **FEATURE MODE → v1.16.0 NDARRAY CORE — MILESTONE COMPLETE:**
 - ✅ **NDArray.fromOwnedSlice() Implementation** (commit 5500f7d)
   - **Function**: Move-semantics variant of fromSlice() — takes ownership without copying
