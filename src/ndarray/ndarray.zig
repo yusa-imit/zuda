@@ -65,6 +65,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             ZeroDimension,
             CapacityExceeded,
             IndexOutOfBounds,
+            InvalidPermutation,
         };
 
         /// Shape of the array: length along each dimension
@@ -768,6 +769,70 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             // Create 1D array from owned slice, preserving layout
             return NDArray(T, 1).fromOwnedSlice(self.allocator, &[_]usize{total_elements}, new_data, self.layout);
+        }
+
+        /// Reorder array dimensions according to a permutation of axes
+        ///
+        /// Creates a zero-copy view of the array with dimensions reordered.
+        /// The axes parameter specifies the new order: new_shape[i] = old_shape[axes[i]]
+        ///
+        /// Example: For shape [2, 3, 4] with axes [2, 1, 0], result shape is [4, 3, 2]
+        ///
+        /// Modifications to the permuted view affect the original array (shared data).
+        ///
+        /// Parameters:
+        /// - axes: Slice with ndim elements, must be a valid permutation of [0..ndim)
+        ///
+        /// Returns: New NDArray view with reordered shape and strides, same data pointer
+        ///
+        /// Errors:
+        /// - error.InvalidPermutation if axes is not a valid permutation:
+        ///   - Length != ndim
+        ///   - Contains values >= ndim
+        ///   - Contains duplicates
+        ///
+        /// Time: O(ndim) to validate and reorder
+        /// Space: O(1) - view only, no new allocation
+        pub fn permute(self: *const Self, axes: []const usize) Error!Self {
+            // Validate axes length
+            if (axes.len != ndim) {
+                return error.InvalidPermutation;
+            }
+
+            // Track seen values to detect duplicates
+            var seen: [ndim]bool = [_]bool{false} ** ndim;
+
+            // Validate each axis value
+            for (axes) |axis| {
+                // Check if in range [0..ndim)
+                if (axis >= ndim) {
+                    return error.InvalidPermutation;
+                }
+
+                // Check for duplicates
+                if (seen[axis]) {
+                    return error.InvalidPermutation;
+                }
+                seen[axis] = true;
+            }
+
+            // Create new shape and strides by reordering
+            var new_shape: [ndim]usize = undefined;
+            var new_strides: [ndim]usize = undefined;
+
+            for (0..ndim) |i| {
+                new_shape[i] = self.shape[axes[i]];
+                new_strides[i] = self.strides[axes[i]];
+            }
+
+            // Return new view with reordered metadata but same data pointer
+            return Self{
+                .shape = new_shape,
+                .strides = new_strides,
+                .data = self.data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
         }
 
         // -- Indexing and Slicing Functions --
@@ -4274,4 +4339,241 @@ test "ndarray: ravel result is proper 1D array with shape [n]" {
         count += 1;
     }
     try testing.expectEqual(24, count);
+}
+
+// -- permute() Function Tests (12+ tests) --
+
+test "ndarray: permute 2D [1,0] equals transpose" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 });
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..12) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Permute with [1,0] should equal transpose
+    const permuted = try arr.permute(&[_]usize{ 1, 0 });
+    const transposed = arr.transpose();
+
+    // Verify shapes match
+    try testing.expectEqual(transposed.shape[0], permuted.shape[0]);
+    try testing.expectEqual(transposed.shape[1], permuted.shape[1]);
+
+    // Verify strides match
+    try testing.expectEqual(transposed.strides[0], permuted.strides[0]);
+    try testing.expectEqual(transposed.strides[1], permuted.strides[1]);
+
+    // Verify element access matches
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx_i: isize = @intCast(i);
+            const idx_j: isize = @intCast(j);
+            try testing.expectEqual(
+                transposed.at(&[_]isize{ idx_i, idx_j }),
+                permuted.at(&[_]isize{ idx_i, idx_j }),
+            );
+        }
+    }
+}
+
+test "ndarray: permute 3D [2,1,0] reverses all axes" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..24) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const permuted = try arr.permute(&[_]usize{ 2, 1, 0 });
+
+    // Verify shape: [2,3,4] → [4,3,2]
+    try testing.expectEqual(4, permuted.shape[0]);
+    try testing.expectEqual(3, permuted.shape[1]);
+    try testing.expectEqual(2, permuted.shape[2]);
+
+    // Verify total element count unchanged
+    try testing.expectEqual(24, permuted.count());
+}
+
+test "ndarray: permute 3D [1,2,0] cyclic rotation" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    for (0..24) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const permuted = try arr.permute(&[_]usize{ 1, 2, 0 });
+
+    // Verify shape: [2,3,4] → [3,4,2]
+    try testing.expectEqual(3, permuted.shape[0]);
+    try testing.expectEqual(4, permuted.shape[1]);
+    try testing.expectEqual(2, permuted.shape[2]);
+
+    // Total count preserved
+    try testing.expectEqual(24, permuted.count());
+}
+
+test "ndarray: permute 3D identity [0,1,2] no-op" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    for (0..24) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const permuted = try arr.permute(&[_]usize{ 0, 1, 2 });
+
+    // Shape unchanged
+    try testing.expectEqual(2, permuted.shape[0]);
+    try testing.expectEqual(3, permuted.shape[1]);
+    try testing.expectEqual(4, permuted.shape[2]);
+
+    // Strides unchanged
+    try testing.expectEqual(arr.strides[0], permuted.strides[0]);
+    try testing.expectEqual(arr.strides[1], permuted.strides[1]);
+    try testing.expectEqual(arr.strides[2], permuted.strides[2]);
+}
+
+test "ndarray: permute zero-copy same data pointer" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    const original_ptr = arr.data.ptr;
+
+    const permuted = try arr.permute(&[_]usize{ 2, 1, 0 });
+
+    // CRITICAL: Data pointer must be identical (zero-copy view)
+    try testing.expectEqual(original_ptr, permuted.data.ptr);
+}
+
+test "ndarray: permute preserves total element count" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    const permuted = try arr.permute(&[_]usize{ 2, 0, 1 });
+
+    // Element count must be preserved
+    try testing.expectEqual(arr.count(), permuted.count());
+    try testing.expectEqual(24, permuted.count());
+}
+
+test "ndarray: permute shape and strides transformation 2D" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 });
+    defer arr.deinit();
+
+    // With row-major layout: strides should be [4, 1] for shape [3,4]
+    const original_strides = arr.strides;
+
+    const permuted = try arr.permute(&[_]usize{ 1, 0 });
+
+    // Shape becomes [4, 3]
+    try testing.expectEqual(4, permuted.shape[0]);
+    try testing.expectEqual(3, permuted.shape[1]);
+
+    // Strides should be reversed to [1, 4]
+    try testing.expectEqual(original_strides[1], permuted.strides[0]);
+    try testing.expectEqual(original_strides[0], permuted.strides[1]);
+}
+
+test "ndarray: permute error duplicate axes [0,0,1]" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    // Axes with duplicate should fail
+    const result = arr.permute(&[_]usize{ 0, 0, 1 });
+    try testing.expectError(error.InvalidPermutation, result);
+}
+
+test "ndarray: permute error out of range axes [0,1,3]" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    // Axes with out-of-range index should fail
+    const result = arr.permute(&[_]usize{ 0, 1, 3 });
+    try testing.expectError(error.InvalidPermutation, result);
+}
+
+test "ndarray: permute error wrong length axes" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    // Wrong number of axes should fail
+    const result = arr.permute(&[_]usize{ 0, 1 });
+    try testing.expectError(error.InvalidPermutation, result);
+}
+
+test "ndarray: permute chain reversibility" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 });
+    defer arr.deinit();
+
+    for (0..24) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Permute with [2,0,1]
+    const perm1 = try arr.permute(&[_]usize{ 2, 0, 1 });
+    try testing.expectEqual(@as(usize, 4), perm1.shape[0]);
+    try testing.expectEqual(@as(usize, 2), perm1.shape[1]);
+    try testing.expectEqual(@as(usize, 3), perm1.shape[2]);
+
+    // Permute back with [1,2,0] (inverse permutation)
+    const perm2 = try perm1.permute(&[_]usize{ 1, 2, 0 });
+    try testing.expectEqual(@as(usize, 2), perm2.shape[0]);
+    try testing.expectEqual(@as(usize, 3), perm2.shape[1]);
+    try testing.expectEqual(@as(usize, 4), perm2.shape[2]);
+}
+
+test "ndarray: permute 1D array [0] identity" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{10});
+    defer arr.deinit();
+
+    for (0..10) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    const permuted = try arr.permute(&[_]usize{0});
+
+    try testing.expectEqual(@as(usize, 10), permuted.shape[0]);
+    try testing.expectEqual(arr.data.ptr, permuted.data.ptr);
+}
+
+test "ndarray: permute 2D partial reorder [1,0] affects element access" {
+    const allocator = std.testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 });
+    defer arr.deinit();
+
+    // Fill: [[0,1,2],[3,4,5]]
+    arr.data[0] = 0;
+    arr.data[1] = 1;
+    arr.data[2] = 2;
+    arr.data[3] = 3;
+    arr.data[4] = 4;
+    arr.data[5] = 5;
+
+    const permuted = try arr.permute(&[_]usize{ 1, 0 });
+
+    // Shape should be [3, 2]
+    try testing.expectEqual(@as(usize, 3), permuted.shape[0]);
+    try testing.expectEqual(@as(usize, 2), permuted.shape[1]);
+
+    // Access pattern changes due to stride reordering
+    // Original arr[0,0]=0, arr[0,1]=1, arr[0,2]=2, arr[1,0]=3, arr[1,1]=4, arr[1,2]=5
+    // After permute [1,0]: shape [3,2], element ordering in strides changes
+    try testing.expectEqual(@as(i32, 0), permuted.at(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 3), permuted.at(&[_]isize{ 0, 1 }));
 }
