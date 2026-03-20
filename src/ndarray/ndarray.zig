@@ -636,6 +636,47 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
         }
 
+        /// Transpose the array by reversing all axes (zero-copy view)
+        ///
+        /// Creates a new array view with shape and strides reversed, sharing the same
+        /// underlying data. This is a zero-copy operation that returns a view with
+        /// swapped dimensions.
+        ///
+        /// For a 2D array [rows, cols] with strides [cols, 1] in row-major order:
+        /// - Transposed shape: [cols, rows]
+        /// - Transposed strides: [1, cols]
+        ///
+        /// For a 3D array [d0, d1, d2] with strides [s0, s1, s2]:
+        /// - Transposed shape: [d2, d1, d0]
+        /// - Transposed strides: [s2, s1, s0]
+        ///
+        /// Modifications to the transposed view affect the original array (shared data).
+        ///
+        /// Parameters: none
+        ///
+        /// Returns: New NDArray view with reversed shape and strides, same data pointer
+        ///
+        /// Time: O(ndim) to reverse arrays
+        /// Space: O(1) - view only, no new allocation
+        pub fn transpose(self: *const Self) Self {
+            // Copy shape and strides to local arrays for reversal
+            var new_shape: [ndim]usize = self.shape;
+            var new_strides: [ndim]usize = self.strides;
+
+            // Reverse both shape and strides arrays
+            std.mem.reverse(usize, &new_shape);
+            std.mem.reverse(usize, &new_strides);
+
+            // Return new view with reversed metadata but same data pointer
+            return Self{
+                .shape = new_shape,
+                .strides = new_strides,
+                .data = self.data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
         // -- Indexing and Slicing Functions --
 
         /// Get element at multi-dimensional indices with negative indexing support
@@ -3320,4 +3361,247 @@ test "ndarray: reshape no memory leak with multiple allocations" {
     }
 
     // std.testing.allocator will detect leaks if any allocation not freed
+}
+
+// -- transpose() Function Tests (13+ tests) --
+
+test "ndarray: transpose 2D row-major [2,3] → [3,2] shape correct" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values: 1, 2, 3, 4, 5, 6
+    for (0..arr.count()) |i| {
+        arr.data[i] = @floatFromInt(i + 1);
+    }
+
+    const transposed = arr.transpose();
+
+    // Shape must swap: [2,3] → [3,2]
+    try testing.expectEqual(3, transposed.shape[0]);
+    try testing.expectEqual(2, transposed.shape[1]);
+}
+
+test "ndarray: transpose 2D row-major [[1,2,3],[4,5,6]] → [[1,4],[2,5],[3,6]]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill: [[1,2,3],[4,5,6]] in row-major order
+    arr.data[0] = 1;
+    arr.data[1] = 2;
+    arr.data[2] = 3;
+    arr.data[3] = 4;
+    arr.data[4] = 5;
+    arr.data[5] = 6;
+
+    const transposed = arr.transpose();
+
+    // After transpose [3,2]: [[1,4],[2,5],[3,6]]
+    // In memory (row-major): 1, 4, 2, 5, 3, 6
+    // But strides are swapped, so we access via strides
+    try testing.expectEqual(1, transposed.at(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(4, transposed.at(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(2, transposed.at(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(5, transposed.at(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(3, transposed.at(&[_]isize{ 2, 0 }));
+    try testing.expectEqual(6, transposed.at(&[_]isize{ 2, 1 }));
+}
+
+test "ndarray: transpose 3D [2,3,4] → [4,3,2] shape correct" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const transposed = arr.transpose();
+
+    // Shape must reverse: [2,3,4] → [4,3,2]
+    try testing.expectEqual(4, transposed.shape[0]);
+    try testing.expectEqual(3, transposed.shape[1]);
+    try testing.expectEqual(2, transposed.shape[2]);
+}
+
+test "ndarray: transpose 1D [6] → [6] no-op (shape unchanged)" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(u8, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    for (0..6) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const transposed = arr.transpose();
+
+    // 1D transpose should be no-op
+    try testing.expectEqual(6, transposed.shape[0]);
+    try testing.expectEqual(arr.data.ptr, transposed.data.ptr);
+}
+
+test "ndarray: transpose zero-copy (same data pointer)" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const transposed = arr.transpose();
+
+    // Data pointer must be identical (zero-copy view)
+    try testing.expectEqual(arr.data.ptr, transposed.data.ptr);
+}
+
+test "ndarray: transpose view modification affects original" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill original: [1,2,3,4,5,6]
+    for (0..6) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    var transposed = arr.transpose();
+
+    // Modify transposed view at [0,1] (which is original [1,0])
+    transposed.set(&[_]isize{ 0, 1 }, 99);
+
+    // Original should reflect the change
+    try testing.expectEqual(99, arr.at(&[_]isize{ 1, 0 }));
+}
+
+test "ndarray: transpose 2D row-major strides swap correctly" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Row-major [3,4] has strides [4, 1]
+    try testing.expectEqual(4, arr.strides[0]);
+    try testing.expectEqual(1, arr.strides[1]);
+
+    const transposed = arr.transpose();
+
+    // After transpose [4,3], strides should reverse: [1, 4]
+    try testing.expectEqual(1, transposed.strides[0]);
+    try testing.expectEqual(4, transposed.strides[1]);
+}
+
+test "ndarray: transpose 2D column-major strides swap correctly" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .column_major);
+    defer arr.deinit();
+
+    // Column-major [3,4] has strides [1, 3]
+    try testing.expectEqual(1, arr.strides[0]);
+    try testing.expectEqual(3, arr.strides[1]);
+
+    const transposed = arr.transpose();
+
+    // After transpose [4,3], strides should reverse: [3, 1]
+    try testing.expectEqual(3, transposed.strides[0]);
+    try testing.expectEqual(1, transposed.strides[1]);
+}
+
+test "ndarray: transpose 3D strides reverse correctly [2,3,4]→[4,3,2]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Row-major [2,3,4] has strides [12, 4, 1]
+    try testing.expectEqual(12, arr.strides[0]);
+    try testing.expectEqual(4, arr.strides[1]);
+    try testing.expectEqual(1, arr.strides[2]);
+
+    const transposed = arr.transpose();
+
+    // After transpose [4,3,2], strides should reverse: [1, 4, 12]
+    try testing.expectEqual(1, transposed.strides[0]);
+    try testing.expectEqual(4, transposed.strides[1]);
+    try testing.expectEqual(12, transposed.strides[2]);
+}
+
+test "ndarray: transpose twice restores original shape and strides" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const original_shape = arr.shape;
+    const original_strides = arr.strides;
+
+    const transposed_once = arr.transpose();
+    const transposed_twice = transposed_once.transpose();
+
+    // Double transpose should restore original shape
+    for (0..arr.shape.len) |i| {
+        try testing.expectEqual(original_shape[i], transposed_twice.shape[i]);
+    }
+
+    // Double transpose should restore original strides
+    for (0..arr.strides.len) |i| {
+        try testing.expectEqual(original_strides[i], transposed_twice.strides[i]);
+    }
+}
+
+test "ndarray: transpose iterator yields correct element order" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill: [[1,2,3],[4,5,6]]
+    arr.data[0] = 1;
+    arr.data[1] = 2;
+    arr.data[2] = 3;
+    arr.data[3] = 4;
+    arr.data[4] = 5;
+    arr.data[5] = 6;
+
+    const transposed = arr.transpose();
+
+    // Iterator should yield: [1,4,2,5,3,6] (rows of transposed [3,2])
+    var iter = transposed.iterator();
+    try testing.expectEqual(1, iter.next());
+    try testing.expectEqual(4, iter.next());
+    try testing.expectEqual(2, iter.next());
+    try testing.expectEqual(5, iter.next());
+    try testing.expectEqual(3, iter.next());
+    try testing.expectEqual(6, iter.next());
+    try testing.expectEqual(null, iter.next());
+}
+
+test "ndarray: transpose large array [100,200] shape reversal" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(u32, 2).init(allocator, &[_]usize{ 100, 200 }, .row_major);
+    defer arr.deinit();
+
+    // Transpose should handle large arrays without allocation failure
+    const transposed = arr.transpose();
+
+    try testing.expectEqual(200, transposed.shape[0]);
+    try testing.expectEqual(100, transposed.shape[1]);
+}
+
+test "ndarray: transpose no memory leak with multiple transposes" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, 6 }, .row_major);
+        defer arr.deinit();
+
+        for (0..10) |_| {
+            const transposed = arr.transpose();
+            // Each transposition creates a view but doesn't allocate new memory
+            try testing.expectEqual(6, transposed.shape[0]);
+        }
+    }
+
+    // std.testing.allocator will detect leaks if any transposes incorrectly allocate
 }
