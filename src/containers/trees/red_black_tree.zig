@@ -79,6 +79,36 @@ pub fn RedBlackTree(
             }
         };
 
+        pub const ReverseIterator = struct {
+            stack: std.ArrayList(*Node),
+            allocator: std.mem.Allocator,
+
+            /// Time: O(log n) amortized | Space: O(log n)
+            pub fn next(self: *ReverseIterator) !?Entry {
+                if (self.stack.items.len == 0) return null;
+
+                const node = self.stack.pop().?; // pop() returns ?T in Zig 0.15
+                const result = Entry{ .key = node.key, .value = node.value };
+
+                // Push left subtree (mirror of forward iterator which pushes right)
+                if (node.left) |left| {
+                    var current: ?*Node = left;
+                    while (current) |n| {
+                        try self.stack.append(self.allocator, n); // Zig 0.15 API
+                        current = n.right;
+                    }
+                }
+
+                return result;
+            }
+
+            /// Frees iterator resources.
+            /// Time: O(1) | Space: O(1)
+            pub fn deinit(self: *ReverseIterator) void {
+                self.stack.deinit(self.allocator); // Zig 0.15 API
+            }
+        };
+
         allocator: std.mem.Allocator,
         root: ?*Node,
         size: usize,
@@ -571,6 +601,25 @@ pub fn RedBlackTree(
             };
         }
 
+        /// Create a reverse in-order iterator (sorted by key, descending).
+        /// Time: O(log n) for initialization | Space: O(log n)
+        pub fn reverseIterator(self: *const Self) !ReverseIterator {
+            var stack: std.ArrayList(*Node) = .{}; // Zig 0.15 API
+            errdefer stack.deinit(self.allocator);
+
+            // Initialize stack with rightmost path
+            var current = self.root;
+            while (current) |node| {
+                try stack.append(self.allocator, node); // Zig 0.15 API
+                current = node.right;
+            }
+
+            return ReverseIterator{
+                .stack = stack,
+                .allocator = self.allocator,
+            };
+        }
+
         // -- Debug --
 
         /// Validate red-black tree invariants.
@@ -947,5 +996,462 @@ test "RedBlackTree: memory leak detection" {
         _ = tree.remove(i);
     }
 
+    try std.testing.expectEqual(@as(usize, 0), tree.count());
+}
+
+// -- Tests for reverseIterator() --
+
+test "RedBlackTree reverseIterator returns null on empty tree" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    try std.testing.expect((try iter.next()) == null);
+}
+
+test "RedBlackTree reverseIterator single element returns one entry then null" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    _ = try tree.insert(42, 420);
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    const entry = (try iter.next()).?;
+    try std.testing.expectEqual(@as(i32, 42), entry.key);
+    try std.testing.expectEqual(@as(i32, 420), entry.value);
+
+    try std.testing.expect((try iter.next()) == null);
+}
+
+test "RedBlackTree reverseIterator multiple elements in descending order" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    const keys = [_]i32{ 10, 5, 15, 3, 7 };
+    for (keys) |k| {
+        _ = try tree.insert(k, k * 100);
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    const expected = [_]i32{ 15, 10, 7, 5, 3 };
+    var i: usize = 0;
+
+    while (try iter.next()) |entry| {
+        try std.testing.expectEqual(expected[i], entry.key);
+        i += 1;
+    }
+
+    try std.testing.expectEqual(expected.len, i);
+}
+
+test "RedBlackTree reverseIterator stress test with 1000 random inserts" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    var inserted_keys = std.AutoArrayHashMap(i32, bool).init(std.testing.allocator);
+    defer inserted_keys.deinit();
+
+    for (0..1000) |_| {
+        const key = random.intRangeAtMost(i32, 0, 9999);
+        _ = try tree.insert(key, key * 2);
+        try inserted_keys.put(key, true);
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var prev: i32 = std.math.maxInt(i32);
+    var count: usize = 0;
+
+    while (try iter.next()) |entry| {
+        // Verify descending order
+        try std.testing.expect(entry.key <= prev);
+        prev = entry.key;
+        count += 1;
+    }
+
+    // Verify count matches
+    try std.testing.expectEqual(inserted_keys.count(), count);
+}
+
+test "RedBlackTree reverseIterator works correctly after removals" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    const keys = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    for (keys) |k| {
+        _ = try tree.insert(k, k * 10);
+    }
+
+    // Remove some elements
+    _ = tree.remove(2);
+    _ = tree.remove(5);
+    _ = tree.remove(8);
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    const expected = [_]i32{ 10, 9, 7, 6, 4, 3, 1 };
+    var i: usize = 0;
+
+    while (try iter.next()) |entry| {
+        try std.testing.expectEqual(expected[i], entry.key);
+        i += 1;
+    }
+
+    try std.testing.expectEqual(expected.len, i);
+}
+
+test "RedBlackTree reverseIterator consistency with forward iterator" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    const keys = [_]i32{ 50, 30, 70, 20, 40, 60, 80, 10, 25 };
+    for (keys) |k| {
+        _ = try tree.insert(k, k * 10);
+    }
+
+    // Collect forward iteration results
+    var forward_keys = std.ArrayList(i32){};
+    defer forward_keys.deinit(std.testing.allocator);
+
+    var fwd_iter = try tree.iterator();
+    defer fwd_iter.deinit();
+
+    while (try fwd_iter.next()) |entry| {
+        try forward_keys.append(std.testing.allocator, entry.key);
+    }
+
+    // Collect reverse iteration results
+    var backward_keys = std.ArrayList(i32){};
+    defer backward_keys.deinit(std.testing.allocator);
+
+    var rev_iter = try tree.reverseIterator();
+    defer rev_iter.deinit();
+
+    while (try rev_iter.next()) |entry| {
+        try backward_keys.append(std.testing.allocator, entry.key);
+    }
+
+    // Verify same count
+    try std.testing.expectEqual(forward_keys.items.len, backward_keys.items.len);
+
+    // Verify reverse of forward == backward
+    var i: usize = 0;
+    while (i < forward_keys.items.len) : (i += 1) {
+        try std.testing.expectEqual(
+            forward_keys.items[forward_keys.items.len - 1 - i],
+            backward_keys.items[i],
+        );
+    }
+}
+
+test "RedBlackTree reverseIterator memory leak detection with 100 elements" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    for (0..100) |i| {
+        _ = try tree.insert(@intCast(i), @intCast(i * 10));
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var count: usize = 0;
+    while (try iter.next()) |_| {
+        count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 100), count);
+}
+
+test "RedBlackTree reverseIterator duplicate values on right side (unbalanced)" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    // Insert in order to create right-skewed tree
+    const keys = [_]i32{ 1, 2, 3, 4, 5, 6, 7 };
+    for (keys) |k| {
+        _ = try tree.insert(k, k * 10);
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var prev: i32 = std.math.maxInt(i32);
+    while (try iter.next()) |entry| {
+        try std.testing.expect(entry.key < prev);
+        prev = entry.key;
+    }
+}
+
+test "RedBlackTree reverseIterator duplicate values on left side (unbalanced)" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    // Insert in reverse order to create left-skewed tree
+    var i: i32 = 7;
+    while (i >= 1) : (i -= 1) {
+        _ = try tree.insert(i, i * 10);
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var prev: i32 = std.math.maxInt(i32);
+    while (try iter.next()) |entry| {
+        try std.testing.expect(entry.key < prev);
+        prev = entry.key;
+    }
+}
+
+test "RedBlackTree reverseIterator perfectly balanced tree" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    // Insert in balanced order
+    const keys = [_]i32{ 4, 2, 6, 1, 3, 5, 7 };
+    for (keys) |k| {
+        _ = try tree.insert(k, k * 10);
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    const expected = [_]i32{ 7, 6, 5, 4, 3, 2, 1 };
+    var i: usize = 0;
+
+    while (try iter.next()) |entry| {
+        try std.testing.expectEqual(expected[i], entry.key);
+        i += 1;
+    }
+
+    try std.testing.expectEqual(expected.len, i);
+}
+
+test "RedBlackTree reverseIterator float keys with descending order" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: f64, b: f64) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(f64, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    const values = [_]f64{ 3.14, 2.71, 1.41, 1.73, 4.0, 2.0 };
+    for (values) |v| {
+        _ = try tree.insert(v, @intFromFloat(v * 100));
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var prev: f64 = std.math.floatMax(f64);
+    var count: usize = 0;
+
+    while (try iter.next()) |entry| {
+        try std.testing.expect(entry.key <= prev);
+        prev = entry.key;
+        count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 6), count);
+}
+
+test "RedBlackTree reverseIterator string keys lexicographic descending order" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: []const u8, b: []const u8) std.math.Order {
+            return std.mem.order(u8, a, b);
+        }
+    };
+
+    var tree = RedBlackTree([]const u8, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    const words = [_][]const u8{ "zebra", "apple", "monkey", "cat", "dog", "banana" };
+    for (words, 0..) |w, i| {
+        _ = try tree.insert(w, @intCast(i));
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var prev: []const u8 = "zzz";
+    var count: usize = 0;
+
+    while (try iter.next()) |entry| {
+        try std.testing.expect(std.mem.order(u8, entry.key, prev) == .lt);
+        prev = entry.key;
+        count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 6), count);
+}
+
+test "RedBlackTree reverseIterator validates invariants during iteration" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    for (0..50) |i| {
+        _ = try tree.insert(@intCast(i), @intCast(i * 2));
+    }
+
+    try tree.validate();
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    var count: usize = 0;
+    while (try iter.next()) |_| {
+        count += 1;
+        if (count % 10 == 0) {
+            try tree.validate();
+        }
+    }
+
+    try tree.validate();
+}
+
+test "RedBlackTree reverseIterator handles empty iteration after removals" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    for (0..10) |i| {
+        _ = try tree.insert(@intCast(i), @intCast(i));
+    }
+
+    // Remove all elements
+    for (0..10) |i| {
+        _ = tree.remove(@intCast(i));
+    }
+
+    var iter = try tree.reverseIterator();
+    defer iter.deinit();
+
+    try std.testing.expect((try iter.next()) == null);
     try std.testing.expectEqual(@as(usize, 0), tree.count());
 }
