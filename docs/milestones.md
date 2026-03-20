@@ -38,16 +38,17 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
   - ✅ zoltraak SortedSet (examples/migrations/zoltraak_sortedset/) — before.zig (1,800 LOC pattern) vs after.zig (zuda wrapper)
   - ✅ Comprehensive README (examples/migrations/README.md) — migration strategy, patterns, impact table
   - **Total**: 6 runnable examples + migration guide (-6,565 LOC savings demonstrated)
-- [ ] **API Harmonization** — Identify and fix API inconsistencies blocking migration
-  - Common pain points across consumers
-  - Missing methods or convenience functions
+- [x] **API Harmonization** — Identify and fix API inconsistencies blocking migration ✅
+  - ✅ docs/API_HARMONIZATION_v1.13.0.md — Analyzed 3 consumer codebases, 8 API gaps identified
+  - ✅ All critical gaps resolved via compatibility layers (no blocking issues)
+  - ⏭️ Nice-to-have enhancements deferred to v1.14.0 (bidirectional iterators, context-free constructors)
 - [ ] **Consumer PR Preparation** — Draft PR branches for at least one consumer migration
   - Full test suite passing with zuda replacements
   - Documentation updates reflecting new dependencies
 
 **Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC (6,815 LOC already covered by compat layers)
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 3/5 categories complete (60%), migration examples ready
+**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 4/5 categories complete (80%), API harmonization documented
 
 ### v1.12.0 — Practical Utilities & Enhancements
 
