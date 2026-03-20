@@ -321,6 +321,7 @@ pub const iterators = struct {
     pub const Chain = @import("iterators/chain.zig").Chain;
     pub const Zip = @import("iterators/zip.zig").Zip;
     pub const Take = @import("iterators/take.zig").Take;
+    pub const TakeWhile = @import("iterators/take_while.zig").TakeWhile;
     pub const Skip = @import("iterators/skip.zig").Skip;
     pub const Enumerate = @import("iterators/enumerate.zig").Enumerate;
     pub const FlatMap = @import("iterators/flat_map.zig").FlatMap;
