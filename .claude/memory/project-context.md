@@ -56,12 +56,37 @@
 - [x] **Reshape** ✅ — reshape() with zero-copy optimization (16 tests, commit 5f6ff16)
 - [x] **Transpose** ✅ — transpose() zero-copy view with reversed axes (13 tests, commit 960326c)
 - [x] **Transform** ✅ — flatten, ravel, permute, contiguous (4/6 functions complete, squeeze/unsqueeze deferred)
-- [ ] **Element-wise operations** — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, trig functions
+- [x] **Element-wise operations** ✅ — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, sin, cos, tan (14 methods, 39 tests, commit e220475)
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules
 - [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
-## Recent Progress (Session 2026-03-21 - Hour 05)
+## Recent Progress (Session 2026-03-21 - Hour 07)
+**FEATURE MODE → v1.17.0 NDARRAY ELEMENT-WISE OPERATIONS — 14 METHODS COMPLETE:**
+- ✅ **NDArray Element-wise Operations Implementation** (commit e220475)
+  - **Functions**: 14 methods across 4 categories
+    1. Binary arithmetic (5): add, sub, mul, div, mod
+    2. Unary arithmetic (2): neg, abs
+    3. Mathematical (4): exp, log, sqrt, pow
+    4. Trigonometric (3): sin, cos, tan
+  - **TDD Cycle**: test-writer (39 Red-phase tests) → zig-developer (Green implementation)
+  - **Memory Model**: All operations return new NDArray with independent data buffer (no in-place modification)
+  - **Iterator Protocol**: Element-wise traversal respects layout and strides (works for any dimension)
+  - **Type Safety**: Math functions restricted to floating-point types, mod to integers (compile-time checks)
+  - **Tests**: 39 comprehensive tests (1D/2D/3D, row-major/column-major, data independence, numerical accuracy)
+  - **Complexity**: All operations O(n) time, O(n) space where n = prod(shape)
+- 📊 **v1.17.0 Status**: 4/7 categories COMPLETE (57%)
+  - [x] Reshape ✅ (1 function, 16 tests)
+  - [x] Transpose ✅ (1 function, 13 tests)
+  - [x] Transform ✅ (4 functions: flatten, ravel, permute, contiguous; 36 tests)
+  - [x] Element-wise operations ✅ (14 methods: add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, sin, cos, tan; 39 tests)
+  - [ ] Broadcasting
+  - [ ] Reduction operations
+  - [ ] Documentation (docs/GUIDE.md update)
+- 🎯 **Total**: 39 new tests this session, 1 commit
+- 📋 **Next Priority**: Broadcasting (NumPy-compatible broadcasting rules)
+
+## Previous Progress (Session 2026-03-21 - Hour 05)
 **FEATURE MODE → v1.17.0 NDARRAY TRANSFORM — 4 FUNCTIONS COMPLETE:**
 - ✅ **NDArray.ravel() Implementation** (commit 50f304f)
   - **Function**: Always-copy flatten (never returns view, unlike flatten())
@@ -89,8 +114,7 @@
 - 📊 **v1.17.0 Status**: 3/7 categories COMPLETE (43%)
   - [x] Reshape ✅ (1 function, 16 tests)
   - [x] Transpose ✅ (1 function, 13 tests)
-  - [x] Transform ✅ (4 functions: flatten, ravel, permute, contiguous; 11+13+12 tests = 36 tests)
-    - Note: squeeze/unsqueeze deferred (require ndim change, complex comptime design)
+  - [x] Transform ✅ (4 functions: flatten, ravel, permute, contiguous; 36 tests)
   - [ ] Element-wise operations
   - [ ] Broadcasting
   - [ ] Reduction operations
