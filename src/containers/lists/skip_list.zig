@@ -160,6 +160,16 @@ pub fn SkipList(
             };
         }
 
+        /// Initialize with default comparison function for i32 keys
+        /// Time: O(1) | Space: O(1)
+        pub fn initDefault(allocator: Allocator) !Self {
+            if (K == i32 or K == f64 or K == []const u8) {
+                return init(allocator, {});
+            } else {
+                @compileError("initDefault() is only available for i32, f64, or []const u8 key types");
+            }
+        }
+
         /// Clean up all allocated memory
         /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
@@ -751,4 +761,536 @@ test "skip list: toSlice and fromSlice" {
         try testing.expectEqual(e1.key, e2.key);
         try testing.expectEqual(e1.value, e2.value);
     }
+}
+
+// -- Tests for initDefault() convenience constructors --
+
+/// Default comparison function for i32 keys
+/// Time: O(1) | Space: O(1)
+fn defaultCompareInt(_: void, a: i32, b: i32) Order {
+    return std.math.order(a, b);
+}
+
+/// Default comparison function for f64 keys
+/// Time: O(1) | Space: O(1)
+fn defaultCompareFloat(_: void, a: f64, b: f64) Order {
+    return std.math.order(a, b);
+}
+
+/// Default comparison function for string ([]const u8) keys
+/// Time: O(min(a.len, b.len)) | Space: O(1)
+fn defaultCompareString(_: void, a: []const u8, b: []const u8) Order {
+    return std.mem.order(u8, a, b);
+}
+
+test "skip list: initDefault with i32 keys - basic operations" {
+    // Test that initDefault() creates a working SkipList with i32 keys
+    var list = try SkipList(i32, []const u8, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(0, list.count());
+    try testing.expect(list.isEmpty());
+
+    // Insert some values
+    try testing.expectEqual(null, try list.insert(5, "five"));
+    try testing.expectEqual(null, try list.insert(3, "three"));
+    try testing.expectEqual(null, try list.insert(7, "seven"));
+
+    // Verify retrieval
+    try testing.expectEqualStrings("five", list.get(5).?);
+    try testing.expectEqualStrings("three", list.get(3).?);
+    try testing.expectEqualStrings("seven", list.get(7).?);
+    try testing.expectEqual(null, list.get(10));
+    try testing.expectEqual(3, list.count());
+}
+
+test "skip list: initDefault with i32 keys - insert and replace" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(null, try list.insert(42, 100));
+    try testing.expectEqual(100, try list.insert(42, 200));
+    try testing.expectEqual(200, list.get(42).?);
+    try testing.expectEqual(1, list.count());
+}
+
+test "skip list: initDefault with i32 keys - remove operations" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    _ = try list.insert(10, 100);
+    _ = try list.insert(20, 200);
+    _ = try list.insert(30, 300);
+
+    const removed = list.remove(20).?;
+    try testing.expectEqual(20, removed.key);
+    try testing.expectEqual(200, removed.value);
+    try testing.expectEqual(null, list.get(20));
+    try testing.expectEqual(2, list.count());
+
+    // Verify removal of non-existent key returns null
+    try testing.expectEqual(null, list.remove(99));
+}
+
+test "skip list: initDefault with i32 keys - iterator maintains order" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const keys = [_]i32{ 15, 5, 25, 3, 17, 11, 22, 8 };
+    for (keys) |k| {
+        _ = try list.insert(k, k * 10);
+    }
+
+    // Verify iteration order is sorted
+    var it = list.iterator();
+    var prev: i32 = std.math.minInt(i32);
+    while (it.next()) |entry| {
+        try testing.expect(entry.key > prev);
+        try testing.expectEqual(entry.key * 10, entry.value);
+        prev = entry.key;
+    }
+}
+
+test "skip list: initDefault with i32 keys - min and max" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(null, list.min());
+    try testing.expectEqual(null, list.max());
+
+    _ = try list.insert(15, 150);
+    _ = try list.insert(5, 50);
+    _ = try list.insert(25, 250);
+
+    try testing.expectEqual(5, list.min().?.key);
+    try testing.expectEqual(25, list.max().?.key);
+}
+
+test "skip list: initDefault with i32 keys - clear and validate" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    for (0..50) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 10));
+    }
+    try testing.expectEqual(50, list.count());
+
+    try list.validate();
+
+    list.clearRetainingCapacity();
+    try testing.expectEqual(0, list.count());
+    try testing.expect(list.isEmpty());
+    try list.validate();
+}
+
+test "skip list: initDefault with f64 keys - basic operations" {
+    var list = try SkipList(f64, []const u8, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(0, list.count());
+
+    _ = try list.insert(3.14, "pi");
+    _ = try list.insert(2.71, "e");
+    _ = try list.insert(1.41, "sqrt2");
+
+    try testing.expectEqualStrings("pi", list.get(3.14).?);
+    try testing.expectEqualStrings("e", list.get(2.71).?);
+    try testing.expectEqualStrings("sqrt2", list.get(1.41).?);
+    try testing.expectEqual(null, list.get(0.0));
+    try testing.expectEqual(3, list.count());
+}
+
+test "skip list: initDefault with f64 keys - insert and replace" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(null, try list.insert(1.5, 100.0));
+    try testing.expectEqual(100.0, try list.insert(1.5, 200.0));
+    try testing.expectEqual(200.0, list.get(1.5).?);
+    try testing.expectEqual(1, list.count());
+}
+
+test "skip list: initDefault with f64 keys - remove operations" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    _ = try list.insert(1.1, 11.0);
+    _ = try list.insert(2.2, 22.0);
+    _ = try list.insert(3.3, 33.0);
+
+    const removed = list.remove(2.2).?;
+    try testing.expectEqual(2.2, removed.key);
+    try testing.expectEqual(22.0, removed.value);
+    try testing.expectEqual(null, list.get(2.2));
+    try testing.expectEqual(2, list.count());
+}
+
+test "skip list: initDefault with f64 keys - iterator maintains order" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const keys = [_]f64{ 1.5, 0.5, 2.5, 0.3, 1.7, 1.1, 2.2, 0.8 };
+    for (keys) |k| {
+        _ = try list.insert(k, k * 10.0);
+    }
+
+    var it = list.iterator();
+    var prev: f64 = -1.0e10;
+    while (it.next()) |entry| {
+        try testing.expect(entry.key > prev);
+        try testing.expectEqual(entry.key * 10.0, entry.value);
+        prev = entry.key;
+    }
+}
+
+test "skip list: initDefault with f64 keys - min and max" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(null, list.min());
+    try testing.expectEqual(null, list.max());
+
+    _ = try list.insert(1.5, 15.0);
+    _ = try list.insert(0.5, 5.0);
+    _ = try list.insert(2.5, 25.0);
+
+    try testing.expectEqual(0.5, list.min().?.key);
+    try testing.expectEqual(2.5, list.max().?.key);
+}
+
+test "skip list: initDefault with f64 keys - validate" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    for (0..30) |i| {
+        const k = @as(f64, @floatFromInt(i)) * 0.1;
+        _ = try list.insert(k, k);
+    }
+
+    try list.validate();
+
+    for (0..15) |i| {
+        const k = @as(f64, @floatFromInt(i)) * 0.1;
+        _ = list.remove(k);
+    }
+
+    try list.validate();
+}
+
+test "skip list: initDefault with string keys - basic operations" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(0, list.count());
+
+    _ = try list.insert("apple", 1);
+    _ = try list.insert("banana", 2);
+    _ = try list.insert("cherry", 3);
+
+    try testing.expectEqual(1, list.get("apple").?);
+    try testing.expectEqual(2, list.get("banana").?);
+    try testing.expectEqual(3, list.get("cherry").?);
+    try testing.expectEqual(null, list.get("date"));
+    try testing.expectEqual(3, list.count());
+}
+
+test "skip list: initDefault with string keys - insert and replace" {
+    var list = try SkipList([]const u8, []const u8, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(null, try list.insert("key1", "value1"));
+    try testing.expectEqualStrings("value1", (try list.insert("key1", "value2")).?);
+    try testing.expectEqualStrings("value2", list.get("key1").?);
+    try testing.expectEqual(1, list.count());
+}
+
+test "skip list: initDefault with string keys - remove operations" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    _ = try list.insert("first", 1);
+    _ = try list.insert("second", 2);
+    _ = try list.insert("third", 3);
+
+    const removed = list.remove("second").?;
+    try testing.expectEqualStrings("second", removed.key);
+    try testing.expectEqual(2, removed.value);
+    try testing.expectEqual(null, list.get("second"));
+    try testing.expectEqual(2, list.count());
+}
+
+test "skip list: initDefault with string keys - iterator maintains order" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const keys = [_][]const u8{ "dog", "cat", "elephant", "ant", "bee", "fox" };
+    for (keys, 0..) |k, i| {
+        _ = try list.insert(k, @intCast(i));
+    }
+
+    var it = list.iterator();
+    var prev: []const u8 = "";
+    while (it.next()) |entry| {
+        try testing.expect(std.mem.order(u8, prev, entry.key) != .gt);
+        prev = entry.key;
+    }
+}
+
+test "skip list: initDefault with string keys - min and max" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    try testing.expectEqual(null, list.min());
+    try testing.expectEqual(null, list.max());
+
+    _ = try list.insert("zebra", 3);
+    _ = try list.insert("apple", 1);
+    _ = try list.insert("monkey", 2);
+
+    try testing.expectEqualStrings("apple", list.min().?.key);
+    try testing.expectEqualStrings("zebra", list.max().?.key);
+}
+
+test "skip list: initDefault with string keys - validate" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const strings = [_][]const u8{ "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf" };
+    for (strings, 0..) |s, i| {
+        _ = try list.insert(s, @intCast(i));
+    }
+
+    try list.validate();
+
+    for (0..3) |i| {
+        _ = list.remove(strings[i]);
+    }
+
+    try list.validate();
+}
+
+test "skip list: initDefault with i32 - memory safety (no leaks)" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    for (0..200) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 2));
+    }
+
+    for (0..100) |i| {
+        _ = list.remove(@intCast(i));
+    }
+
+    try list.validate();
+    // std.testing.allocator will detect leaks in defer
+}
+
+test "skip list: initDefault with f64 - memory safety (no leaks)" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    for (0..200) |i| {
+        const k = @as(f64, @floatFromInt(i)) * 0.1;
+        _ = try list.insert(k, k * 2.0);
+    }
+
+    for (0..100) |i| {
+        const k = @as(f64, @floatFromInt(i)) * 0.1;
+        _ = list.remove(k);
+    }
+
+    try list.validate();
+    // std.testing.allocator will detect leaks in defer
+}
+
+test "skip list: initDefault with strings - memory safety (no leaks)" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const keys = [_][]const u8{ "aaa", "bbb", "ccc", "ddd", "eee", "fff", "ggg", "hhh" };
+
+    for (keys, 0..) |k, i| {
+        _ = try list.insert(k, @intCast(i));
+    }
+
+    for (0..4) |i| {
+        _ = list.remove(keys[i]);
+    }
+
+    try list.validate();
+    // std.testing.allocator will detect leaks in defer
+}
+
+test "skip list: initDefault behavior identical to explicit context init with i32" {
+    // Create list with initDefault
+    var list1 = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list1.deinit();
+
+    // Create list with explicit context
+    var list2 = try SkipList(i32, i32, void, defaultCompareInt).initWithSeed(testing.allocator, {}, 42);
+    defer list2.deinit();
+
+    // Both should start empty
+    try testing.expectEqual(0, list1.count());
+    try testing.expectEqual(0, list2.count());
+
+    // Insert same keys into both
+    const test_keys = [_]i32{ 10, 5, 15, 3, 7, 12, 18 };
+    for (test_keys) |k| {
+        _ = try list1.insert(k, k);
+        _ = try list2.insert(k, k);
+    }
+
+    // Both should have same count
+    try testing.expectEqual(list1.count(), list2.count());
+
+    // Both should return same values for same keys
+    for (test_keys) |k| {
+        try testing.expectEqual(list1.get(k), list2.get(k));
+    }
+
+    // Both should validate successfully
+    try list1.validate();
+    try list2.validate();
+
+    // Iterator order should be identical
+    var it1 = list1.iterator();
+    var it2 = list2.iterator();
+    while (it1.next()) |e1| {
+        const e2 = it2.next().?;
+        try testing.expectEqual(e1.key, e2.key);
+        try testing.expectEqual(e1.value, e2.value);
+    }
+}
+
+test "skip list: initDefault behavior identical to explicit context init with f64" {
+    var list1 = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list1.deinit();
+
+    var list2 = try SkipList(f64, f64, void, defaultCompareFloat).initWithSeed(testing.allocator, {}, 42);
+    defer list2.deinit();
+
+    try testing.expectEqual(0, list1.count());
+    try testing.expectEqual(0, list2.count());
+
+    const test_keys = [_]f64{ 1.0, 0.5, 1.5, 0.3, 0.7, 1.2, 1.8 };
+    for (test_keys) |k| {
+        _ = try list1.insert(k, k);
+        _ = try list2.insert(k, k);
+    }
+
+    try testing.expectEqual(list1.count(), list2.count());
+
+    for (test_keys) |k| {
+        try testing.expectEqual(list1.get(k), list2.get(k));
+    }
+
+    try list1.validate();
+    try list2.validate();
+
+    var it1 = list1.iterator();
+    var it2 = list2.iterator();
+    while (it1.next()) |e1| {
+        const e2 = it2.next().?;
+        try testing.expectEqual(e1.key, e2.key);
+        try testing.expectEqual(e1.value, e2.value);
+    }
+}
+
+test "skip list: initDefault behavior identical to explicit context init with strings" {
+    var list1 = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list1.deinit();
+
+    var list2 = try SkipList([]const u8, i32, void, defaultCompareString).initWithSeed(testing.allocator, {}, 42);
+    defer list2.deinit();
+
+    try testing.expectEqual(0, list1.count());
+    try testing.expectEqual(0, list2.count());
+
+    const test_keys = [_][]const u8{ "apple", "banana", "cherry", "date", "elderberry" };
+    for (test_keys, 0..) |k, i| {
+        _ = try list1.insert(k, @intCast(i));
+        _ = try list2.insert(k, @intCast(i));
+    }
+
+    try testing.expectEqual(list1.count(), list2.count());
+
+    for (test_keys) |k| {
+        try testing.expectEqual(list1.get(k), list2.get(k));
+    }
+
+    try list1.validate();
+    try list2.validate();
+
+    var it1 = list1.iterator();
+    var it2 = list2.iterator();
+    while (it1.next()) |e1| {
+        const e2 = it2.next().?;
+        try testing.expectEqualStrings(e1.key, e2.key);
+        try testing.expectEqual(e1.value, e2.value);
+    }
+}
+
+test "skip list: initDefault with i32 - stress test" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    var prng = std.Random.DefaultPrng.init(999);
+    const random = prng.random();
+
+    for (0..500) |_| {
+        const key = random.intRangeAtMost(i32, 0, 200);
+        _ = try list.insert(key, key * 10);
+    }
+
+    try list.validate();
+    try testing.expect(list.count() > 0);
+}
+
+test "skip list: initDefault with strings - contains and getPtr" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    _ = try list.insert("test", 42);
+
+    try testing.expect(list.contains("test"));
+    try testing.expect(!list.contains("missing"));
+
+    const ptr = list.getPtr("test");
+    try testing.expect(ptr != null);
+    try testing.expectEqual(42, ptr.?.* );
+}
+
+test "skip list: initDefault range iterator with i32" {
+    var list = try SkipList(i32, i32, void, defaultCompareInt).initDefault(testing.allocator);
+    defer list.deinit();
+
+    for (0..20) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 10));
+    }
+
+    var it = list.rangeIterator(5, 15, true);
+    var count: usize = 0;
+    while (it.next()) |entry| {
+        try testing.expect(entry.key >= 5 and entry.key <= 15);
+        count += 1;
+    }
+    try testing.expectEqual(11, count);
+}
+
+test "skip list: initDefault range iterator with strings" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const keys = [_][]const u8{ "aa", "ab", "ac", "ba", "bb", "bc", "ca", "cb", "cc" };
+    for (keys, 0..) |k, i| {
+        _ = try list.insert(k, @intCast(i));
+    }
+
+    var it = list.rangeIterator("ab", "ca", true);
+    var count: usize = 0;
+    while (it.next()) |_| {
+        count += 1;
+    }
+    try testing.expect(count > 0);
 }
