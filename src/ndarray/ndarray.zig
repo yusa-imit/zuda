@@ -909,6 +909,543 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             };
         }
 
+        // -- Element-wise Arithmetic Operations --
+
+        /// Element-wise addition: self + other
+        ///
+        /// Parameters:
+        /// - other: Another NDArray with matching shape
+        ///
+        /// Returns: New NDArray containing element-wise sum
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn add(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse both arrays in element order and add
+            var self_iter = self.iterator();
+            var other_iter = other.iterator();
+
+            var idx: usize = 0;
+            while (self_iter.next()) |self_val| {
+                const other_val = other_iter.next() orelse return error.ShapeMismatch;
+                result_data[idx] = self_val + other_val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise subtraction: self - other
+        ///
+        /// Parameters:
+        /// - other: Another NDArray with matching shape
+        ///
+        /// Returns: New NDArray containing element-wise difference
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn sub(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse both arrays in element order and subtract
+            var self_iter = self.iterator();
+            var other_iter = other.iterator();
+
+            var idx: usize = 0;
+            while (self_iter.next()) |self_val| {
+                const other_val = other_iter.next() orelse return error.ShapeMismatch;
+                result_data[idx] = self_val - other_val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise multiplication: self * other
+        ///
+        /// Parameters:
+        /// - other: Another NDArray with matching shape
+        ///
+        /// Returns: New NDArray containing element-wise product
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn mul(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse both arrays in element order and multiply
+            var self_iter = self.iterator();
+            var other_iter = other.iterator();
+
+            var idx: usize = 0;
+            while (self_iter.next()) |self_val| {
+                const other_val = other_iter.next() orelse return error.ShapeMismatch;
+                result_data[idx] = self_val * other_val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise division: self / other
+        ///
+        /// Parameters:
+        /// - other: Another NDArray with matching shape
+        ///
+        /// Returns: New NDArray containing element-wise quotient
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn div(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse both arrays in element order and divide
+            var self_iter = self.iterator();
+            var other_iter = other.iterator();
+
+            var idx: usize = 0;
+            while (self_iter.next()) |self_val| {
+                const other_val = other_iter.next() orelse return error.ShapeMismatch;
+                result_data[idx] = self_val / other_val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise modulo: self % other (integer types only)
+        ///
+        /// Parameters:
+        /// - other: Another NDArray with matching shape
+        ///
+        /// Returns: New NDArray containing element-wise remainder
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not an integer type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn mod(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: mod only works on integer types
+            if (!std.meta.trait.isIntegral(T)) {
+                @compileError("mod() is only defined for integer types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse both arrays in element order and compute modulo
+            var self_iter = self.iterator();
+            var other_iter = other.iterator();
+
+            var idx: usize = 0;
+            while (self_iter.next()) |self_val| {
+                const other_val = other_iter.next() orelse return error.ShapeMismatch;
+                result_data[idx] = self_val % other_val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        // -- Element-wise Unary Operations --
+
+        /// Element-wise negation: -self
+        ///
+        /// Returns: New NDArray with negated elements
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn neg(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and negate each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = -val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise absolute value
+        ///
+        /// Returns: New NDArray with absolute values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn abs(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute absolute value of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = if (val < 0) -val else val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        // -- Mathematical Functions (floating-point types) --
+
+        /// Element-wise exponential: e^x for each element
+        ///
+        /// Returns: New NDArray with exponential values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn exp(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: exp only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("exp() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute exponential of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.exp(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise natural logarithm: ln(x) for each element
+        ///
+        /// Returns: New NDArray with logarithm values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn log(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: log only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("log() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute logarithm of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.log(T, std.math.e, val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise square root: sqrt(x) for each element
+        ///
+        /// Returns: New NDArray with square root values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn sqrt(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: sqrt only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("sqrt() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute square root of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.sqrt(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise power: x^exponent for each element
+        ///
+        /// Parameters:
+        /// - exponent: The exponent to raise each element to
+        ///
+        /// Returns: New NDArray with power values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn pow(self: *const Self, exponent: T) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: pow only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("pow() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute power of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.pow(T, val, exponent);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        // -- Trigonometric Functions (floating-point types) --
+
+        /// Element-wise sine: sin(x) for each element
+        ///
+        /// Returns: New NDArray with sine values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn sin(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: sin only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("sin() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute sine of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.sin(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise cosine: cos(x) for each element
+        ///
+        /// Returns: New NDArray with cosine values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn cos(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: cos only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("cos() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute cosine of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.cos(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
+        /// Element-wise tangent: tan(x) for each element
+        ///
+        /// Returns: New NDArray with tangent values
+        ///
+        /// Errors:
+        /// - Allocator.Error if memory allocation fails
+        /// - CompileError if T is not a floating-point type
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn tan(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: tan only works on float types
+            if (!std.meta.trait.isFloat(T)) {
+                @compileError("tan() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute tangent of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.tan(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
+        }
+
         // -- Indexing and Slicing Functions --
 
         /// Get element at multi-dimensional indices with negative indexing support
@@ -4980,4 +5517,811 @@ test "ndarray: contiguous distinguishes contiguous from non-contiguous views" {
 
     // Both results have same number of elements
     try testing.expectEqual(arr.count(), contiguous_permuted.count());
+}
+
+// ============================================================================
+// Element-wise Operations Tests
+// ============================================================================
+
+test "ndarray: add 1D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer b.deinit();
+
+    // Fill arrays: a = [1, 2, 3, 4, 5], b = [10, 20, 30, 40, 50]
+    for (0..5) |i| {
+        a.data[i] = @as(f64, @floatFromInt(i + 1));
+        b.data[i] = @as(f64, @floatFromInt((i + 1) * 10));
+    }
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    // Verify result shape matches input
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+
+    // Verify element-wise addition
+    try testing.expectEqual(11.0, result.data[0]); // 1 + 10
+    try testing.expectEqual(22.0, result.data[1]); // 2 + 20
+    try testing.expectEqual(33.0, result.data[2]); // 3 + 30
+    try testing.expectEqual(44.0, result.data[3]); // 4 + 40
+    try testing.expectEqual(55.0, result.data[4]); // 5 + 50
+
+    // Verify no data sharing with inputs
+    try testing.expect(result.data.ptr != a.data.ptr);
+    try testing.expect(result.data.ptr != b.data.ptr);
+}
+
+test "ndarray: add 2D arrays element-wise row_major" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer b.deinit();
+
+    // Fill: a = [[1, 2, 3], [4, 5, 6]], b = [[10, 20, 30], [40, 50, 60]]
+    for (0..6) |i| {
+        a.data[i] = @intCast(i + 1);
+        b.data[i] = @intCast((i + 1) * 10);
+    }
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    // Verify shape matches
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+    try testing.expectEqual(a.shape[1], result.shape[1]);
+
+    // Verify additions
+    try testing.expectEqual(11, result.data[0]); // 1+10
+    try testing.expectEqual(22, result.data[1]); // 2+20
+    try testing.expectEqual(33, result.data[2]); // 3+30
+    try testing.expectEqual(44, result.data[3]); // 4+40
+    try testing.expectEqual(55, result.data[4]); // 5+50
+    try testing.expectEqual(66, result.data[5]); // 6+60
+}
+
+test "ndarray: add 2D arrays element-wise column_major" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .column_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .column_major);
+    defer b.deinit();
+
+    // Fill arrays
+    for (0..6) |i| {
+        a.data[i] = @as(f64, @floatFromInt(i + 1));
+        b.data[i] = @as(f64, @floatFromInt((i + 1) * 10));
+    }
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    // Verify shape
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+    try testing.expectEqual(a.shape[1], result.shape[1]);
+
+    // Result should match column-major layout of inputs
+    try testing.expectEqual(11.0, result.data[0]);
+    try testing.expectEqual(22.0, result.data[1]);
+}
+
+test "ndarray: add 3D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer b.deinit();
+
+    for (0..8) |i| {
+        a.data[i] = @intCast(i + 1);
+        b.data[i] = 100;
+    }
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    // Verify shape matches
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+    try testing.expectEqual(a.shape[1], result.shape[1]);
+    try testing.expectEqual(a.shape[2], result.shape[2]);
+
+    // Verify all elements
+    for (0..8) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i + 1 + 100)), result.data[i]);
+    }
+}
+
+test "ndarray: sub 1D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer b.deinit();
+
+    // a = [10, 20, 30, 40], b = [1, 2, 3, 4]
+    for (0..4) |i| {
+        a.data[i] = @as(f64, @floatFromInt((i + 1) * 10));
+        b.data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var result = try a.sub(&b);
+    defer result.deinit();
+
+    // Verify subtraction: a - b
+    try testing.expectEqual(9.0, result.data[0]);  // 10-1
+    try testing.expectEqual(18.0, result.data[1]); // 20-2
+    try testing.expectEqual(27.0, result.data[2]); // 30-3
+    try testing.expectEqual(36.0, result.data[3]); // 40-4
+
+    // Verify no data sharing
+    try testing.expect(result.data.ptr != a.data.ptr);
+    try testing.expect(result.data.ptr != b.data.ptr);
+}
+
+test "ndarray: sub 2D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer b.deinit();
+
+    // a = [[100, 200], [300, 400]], b = [[10, 20], [30, 40]]
+    for (0..4) |i| {
+        a.data[i] = @intCast((i + 1) * 100);
+        b.data[i] = @intCast((i + 1) * 10);
+    }
+
+    var result = try a.sub(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(90, result.data[0]);   // 100-10
+    try testing.expectEqual(180, result.data[1]);  // 200-20
+    try testing.expectEqual(270, result.data[2]);  // 300-30
+    try testing.expectEqual(360, result.data[3]);  // 400-40
+}
+
+test "ndarray: mul 1D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer b.deinit();
+
+    // a = [2, 3, 4, 5, 6], b = [10, 10, 10, 10, 10]
+    for (0..5) |i| {
+        a.data[i] = @as(f64, @floatFromInt(i + 2));
+        b.data[i] = 10.0;
+    }
+
+    var result = try a.mul(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(20.0, result.data[0]);
+    try testing.expectEqual(30.0, result.data[1]);
+    try testing.expectEqual(40.0, result.data[2]);
+    try testing.expectEqual(50.0, result.data[3]);
+    try testing.expectEqual(60.0, result.data[4]);
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+    try testing.expect(result.data.ptr != b.data.ptr);
+}
+
+test "ndarray: mul 2D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer b.deinit();
+
+    // a = [[1, 2, 3], [4, 5, 6]], b = [[2, 2, 2], [2, 2, 2]]
+    for (0..6) |i| {
+        a.data[i] = @intCast(i + 1);
+        b.data[i] = 2;
+    }
+
+    var result = try a.mul(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(2, result.data[0]);   // 1*2
+    try testing.expectEqual(4, result.data[1]);   // 2*2
+    try testing.expectEqual(6, result.data[2]);   // 3*2
+    try testing.expectEqual(8, result.data[3]);   // 4*2
+    try testing.expectEqual(10, result.data[4]);  // 5*2
+    try testing.expectEqual(12, result.data[5]);  // 6*2
+}
+
+test "ndarray: div 1D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer b.deinit();
+
+    // a = [100, 200, 300, 400], b = [10, 10, 10, 10]
+    for (0..4) |i| {
+        a.data[i] = @as(f64, @floatFromInt((i + 1) * 100));
+        b.data[i] = 10.0;
+    }
+
+    var result = try a.div(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(10.0, result.data[0]);
+    try testing.expectEqual(20.0, result.data[1]);
+    try testing.expectEqual(30.0, result.data[2]);
+    try testing.expectEqual(40.0, result.data[3]);
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+    try testing.expect(result.data.ptr != b.data.ptr);
+}
+
+test "ndarray: div 2D arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer b.deinit();
+
+    // a = [[10, 20], [30, 40]], b = [[2, 4], [5, 8]]
+    a.data[0] = 10.0;
+    a.data[1] = 20.0;
+    a.data[2] = 30.0;
+    a.data[3] = 40.0;
+
+    b.data[0] = 2.0;
+    b.data[1] = 4.0;
+    b.data[2] = 5.0;
+    b.data[3] = 8.0;
+
+    var result = try a.div(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(5.0, result.data[0]);   // 10/2
+    try testing.expectEqual(5.0, result.data[1]);   // 20/4
+    try testing.expectEqual(6.0, result.data[2]);   // 30/5
+    try testing.expectEqual(5.0, result.data[3]);   // 40/8
+}
+
+test "ndarray: mod 1D integer arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer b.deinit();
+
+    // a = [10, 11, 12, 13, 14], b = [3, 3, 3, 3, 3]
+    for (0..5) |i| {
+        a.data[i] = @intCast(10 + i);
+        b.data[i] = 3;
+    }
+
+    var result = try a.mod(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(1, result.data[0]);  // 10 % 3
+    try testing.expectEqual(2, result.data[1]);  // 11 % 3
+    try testing.expectEqual(0, result.data[2]);  // 12 % 3
+    try testing.expectEqual(1, result.data[3]);  // 13 % 3
+    try testing.expectEqual(2, result.data[4]);  // 14 % 3
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+    try testing.expect(result.data.ptr != b.data.ptr);
+}
+
+test "ndarray: mod 2D integer arrays element-wise" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer b.deinit();
+
+    // a = [[5, 10], [15, 20]], b = [[3, 4], [7, 6]]
+    a.data[0] = 5;
+    a.data[1] = 10;
+    a.data[2] = 15;
+    a.data[3] = 20;
+
+    b.data[0] = 3;
+    b.data[1] = 4;
+    b.data[2] = 7;
+    b.data[3] = 6;
+
+    var result = try a.mod(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(2, result.data[0]);  // 5 % 3
+    try testing.expectEqual(2, result.data[1]);  // 10 % 4
+    try testing.expectEqual(1, result.data[2]);  // 15 % 7
+    try testing.expectEqual(2, result.data[3]);  // 20 % 6
+}
+
+test "ndarray: neg 1D array unary negation" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    // a = [1, -2, 3, -4, 5]
+    a.data[0] = 1.0;
+    a.data[1] = -2.0;
+    a.data[2] = 3.0;
+    a.data[3] = -4.0;
+    a.data[4] = 5.0;
+
+    var result = try a.neg();
+    defer result.deinit();
+
+    try testing.expectEqual(-1.0, result.data[0]);
+    try testing.expectEqual(2.0, result.data[1]);
+    try testing.expectEqual(-3.0, result.data[2]);
+    try testing.expectEqual(4.0, result.data[3]);
+    try testing.expectEqual(-5.0, result.data[4]);
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: neg 2D integer array unary negation" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a.deinit();
+
+    // a = [[1, -2, 3], [-4, 5, -6]]
+    for (0..6) |i| {
+        a.data[i] = @intCast(if (i % 2 == 0) i + 1 else -(i + 1));
+    }
+
+    var result = try a.neg();
+    defer result.deinit();
+
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+    try testing.expectEqual(a.shape[1], result.shape[1]);
+
+    for (0..6) |i| {
+        try testing.expectEqual(-a.data[i], result.data[i]);
+    }
+}
+
+test "ndarray: abs 1D array absolute value" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    // a = [1.5, -2.5, 3.0, -4.5, 0]
+    a.data[0] = 1.5;
+    a.data[1] = -2.5;
+    a.data[2] = 3.0;
+    a.data[3] = -4.5;
+    a.data[4] = 0.0;
+
+    var result = try a.abs();
+    defer result.deinit();
+
+    try testing.expectEqual(1.5, result.data[0]);
+    try testing.expectEqual(2.5, result.data[1]);
+    try testing.expectEqual(3.0, result.data[2]);
+    try testing.expectEqual(4.5, result.data[3]);
+    try testing.expectEqual(0.0, result.data[4]);
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: abs 2D integer array absolute value" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    // a = [[1, -2], [-3, 4]]
+    a.data[0] = 1;
+    a.data[1] = -2;
+    a.data[2] = -3;
+    a.data[3] = 4;
+
+    var result = try a.abs();
+    defer result.deinit();
+
+    try testing.expectEqual(1, result.data[0]);
+    try testing.expectEqual(2, result.data[1]);
+    try testing.expectEqual(3, result.data[2]);
+    try testing.expectEqual(4, result.data[3]);
+}
+
+test "ndarray: exp 1D array exponential" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer a.deinit();
+
+    // a = [0, 1, 2]
+    a.data[0] = 0.0;
+    a.data[1] = 1.0;
+    a.data[2] = 2.0;
+
+    var result = try a.exp();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10); // e^0 = 1
+    try testing.expectApproxEqAbs(std.math.exp(1.0), result.data[1], 1e-10); // e^1 ≈ 2.71828
+    try testing.expectApproxEqAbs(std.math.exp(2.0), result.data[2], 1e-10); // e^2 ≈ 7.38906
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: exp 2D array exponential" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 0.0;
+    a.data[1] = 1.0;
+    a.data[2] = -1.0;
+    a.data[3] = 2.0;
+
+    var result = try a.exp();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(std.math.exp(1.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(std.math.exp(-1.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(std.math.exp(2.0), result.data[3], 1e-10);
+}
+
+test "ndarray: log 1D array natural logarithm" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer a.deinit();
+
+    // a = [1, e, e^2]
+    a.data[0] = 1.0;
+    a.data[1] = std.math.exp(1.0);
+    a.data[2] = std.math.exp(2.0);
+
+    var result = try a.log();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // ln(1) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10); // ln(e) = 1
+    try testing.expectApproxEqAbs(2.0, result.data[2], 1e-10); // ln(e^2) = 2
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: log 2D array natural logarithm" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 1.0;
+    a.data[1] = std.math.exp(1.0);
+    a.data[2] = std.math.exp(2.0);
+    a.data[3] = std.math.exp(3.0);
+
+    var result = try a.log();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(2.0, result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(3.0, result.data[3], 1e-10);
+}
+
+test "ndarray: sqrt 1D array square root" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    // a = [0, 1, 4, 9, 16]
+    a.data[0] = 0.0;
+    a.data[1] = 1.0;
+    a.data[2] = 4.0;
+    a.data[3] = 9.0;
+    a.data[4] = 16.0;
+
+    var result = try a.sqrt();
+    defer result.deinit();
+
+    try testing.expectEqual(0.0, result.data[0]); // sqrt(0) = 0
+    try testing.expectEqual(1.0, result.data[1]); // sqrt(1) = 1
+    try testing.expectEqual(2.0, result.data[2]); // sqrt(4) = 2
+    try testing.expectEqual(3.0, result.data[3]); // sqrt(9) = 3
+    try testing.expectEqual(4.0, result.data[4]); // sqrt(16) = 4
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: sqrt 2D array square root" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 4.0;
+    a.data[1] = 9.0;
+    a.data[2] = 16.0;
+    a.data[3] = 25.0;
+
+    var result = try a.sqrt();
+    defer result.deinit();
+
+    try testing.expectEqual(2.0, result.data[0]);
+    try testing.expectEqual(3.0, result.data[1]);
+    try testing.expectEqual(4.0, result.data[2]);
+    try testing.expectEqual(5.0, result.data[3]);
+}
+
+test "ndarray: pow 1D array power with exponent" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer a.deinit();
+
+    // a = [1, 2, 3, 4]
+    for (0..4) |i| {
+        a.data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var result = try a.pow(3.0);
+    defer result.deinit();
+
+    try testing.expectEqual(1.0, result.data[0]);   // 1^3 = 1
+    try testing.expectEqual(8.0, result.data[1]);   // 2^3 = 8
+    try testing.expectEqual(27.0, result.data[2]);  // 3^3 = 27
+    try testing.expectEqual(64.0, result.data[3]);  // 4^3 = 64
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: pow 2D array power with exponent" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 2.0;
+    a.data[1] = 3.0;
+    a.data[2] = 4.0;
+    a.data[3] = 5.0;
+
+    var result = try a.pow(2.0);
+    defer result.deinit();
+
+    try testing.expectEqual(4.0, result.data[0]);   // 2^2 = 4
+    try testing.expectEqual(9.0, result.data[1]);   // 3^2 = 9
+    try testing.expectEqual(16.0, result.data[2]);  // 4^2 = 16
+    try testing.expectEqual(25.0, result.data[3]);  // 5^2 = 25
+}
+
+test "ndarray: pow with fractional exponent" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 4.0;
+    a.data[1] = 9.0;
+    a.data[2] = 16.0;
+
+    var result = try a.pow(0.5);
+    defer result.deinit();
+
+    try testing.expectEqual(2.0, result.data[0]); // 4^0.5 = 2
+    try testing.expectEqual(3.0, result.data[1]); // 9^0.5 = 3
+    try testing.expectEqual(4.0, result.data[2]); // 16^0.5 = 4
+}
+
+test "ndarray: sin 1D array sine" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    // a = [0, π/6, π/4, π/3, π/2]
+    const pi = std.math.pi;
+    a.data[0] = 0.0;
+    a.data[1] = pi / 6.0;
+    a.data[2] = pi / 4.0;
+    a.data[3] = pi / 3.0;
+    a.data[4] = pi / 2.0;
+
+    var result = try a.sin();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);     // sin(0) = 0
+    try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10);     // sin(π/6) = 0.5
+    try testing.expectApproxEqAbs(std.math.sin(pi / 4.0), result.data[2], 1e-10); // sin(π/4) ≈ 0.707
+    try testing.expectApproxEqAbs(std.math.sin(pi / 3.0), result.data[3], 1e-10); // sin(π/3) ≈ 0.866
+    try testing.expectApproxEqAbs(1.0, result.data[4], 1e-10);     // sin(π/2) = 1
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: sin 2D array sine" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    const pi = std.math.pi;
+    a.data[0] = 0.0;
+    a.data[1] = pi / 2.0;
+    a.data[2] = pi;
+    a.data[3] = 3.0 * pi / 2.0;
+
+    var result = try a.sin();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);   // sin(0) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);   // sin(π/2) = 1
+    try testing.expectApproxEqAbs(0.0, result.data[2], 1e-10);   // sin(π) ≈ 0
+    try testing.expectApproxEqAbs(-1.0, result.data[3], 1e-10);  // sin(3π/2) = -1
+}
+
+test "ndarray: cos 1D array cosine" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    const pi = std.math.pi;
+    a.data[0] = 0.0;
+    a.data[1] = pi / 3.0;
+    a.data[2] = pi / 4.0;
+    a.data[3] = pi / 2.0;
+    a.data[4] = pi;
+
+    var result = try a.cos();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);                    // cos(0) = 1
+    try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10);                    // cos(π/3) = 0.5
+    try testing.expectApproxEqAbs(std.math.cos(pi / 4.0), result.data[2], 1e-10); // cos(π/4) ≈ 0.707
+    try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10);                    // cos(π/2) = 0
+    try testing.expectApproxEqAbs(-1.0, result.data[4], 1e-10);                   // cos(π) = -1
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: cos 2D array cosine" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    const pi = std.math.pi;
+    a.data[0] = 0.0;
+    a.data[1] = pi / 2.0;
+    a.data[2] = pi;
+    a.data[3] = 3.0 * pi / 2.0;
+
+    var result = try a.cos();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);   // cos(0) = 1
+    try testing.expectApproxEqAbs(0.0, result.data[1], 1e-10);   // cos(π/2) = 0
+    try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10);  // cos(π) = -1
+    try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10);   // cos(3π/2) ≈ 0
+}
+
+test "ndarray: tan 1D array tangent" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer a.deinit();
+
+    const pi = std.math.pi;
+    a.data[0] = 0.0;
+    a.data[1] = pi / 6.0;
+    a.data[2] = pi / 4.0;
+    a.data[3] = pi / 3.0;
+
+    var result = try a.tan();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);                    // tan(0) = 0
+    try testing.expectApproxEqAbs(std.math.tan(pi / 6.0), result.data[1], 1e-10); // tan(π/6) ≈ 0.577
+    try testing.expectApproxEqAbs(1.0, result.data[2], 1e-10);                    // tan(π/4) = 1
+    try testing.expectApproxEqAbs(std.math.tan(pi / 3.0), result.data[3], 1e-10); // tan(π/3) ≈ 1.732
+
+    try testing.expect(result.data.ptr != a.data.ptr);
+}
+
+test "ndarray: tan 2D array tangent" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a.deinit();
+
+    const pi = std.math.pi;
+    a.data[0] = 0.0;
+    a.data[1] = pi / 4.0;
+    a.data[2] = -pi / 4.0;
+    a.data[3] = pi / 6.0;
+
+    var result = try a.tan();
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);                     // tan(0) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);                     // tan(π/4) = 1
+    try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10);                    // tan(-π/4) = -1
+    try testing.expectApproxEqAbs(std.math.tan(pi / 6.0), result.data[3], 1e-10);  // tan(π/6) ≈ 0.577
+}
+
+test "ndarray: add result is independent copy (no aliasing)" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer b.deinit();
+
+    a.data[0] = 1.0;
+    a.data[1] = 2.0;
+    a.data[2] = 3.0;
+    b.data[0] = 10.0;
+    b.data[1] = 20.0;
+    b.data[2] = 30.0;
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    // Modify original arrays
+    a.data[0] = 100.0;
+    b.data[0] = 200.0;
+
+    // Result should remain unchanged
+    try testing.expectEqual(11.0, result.data[0]);
+}
+
+test "ndarray: operations preserve layout information" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .column_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .column_major);
+    defer b.deinit();
+
+    for (0..6) |i| {
+        a.data[i] = 1.0;
+        b.data[i] = 2.0;
+    }
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    // Result should preserve column-major layout from inputs
+    try testing.expectEqual(a.layout, result.layout);
+    try testing.expectEqual(b.layout, result.layout);
+}
+
+test "ndarray: 3D array element-wise operations" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer b.deinit();
+
+    for (0..8) |i| {
+        a.data[i] = @intCast(i);
+        b.data[i] = 10;
+    }
+
+    var result = try a.add(&b);
+    defer result.deinit();
+
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+    try testing.expectEqual(a.shape[1], result.shape[1]);
+    try testing.expectEqual(a.shape[2], result.shape[2]);
+
+    for (0..8) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i + 10)), result.data[i]);
+    }
+}
+
+test "ndarray: sqrt with 3D array" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer a.deinit();
+
+    for (0..8) |i| {
+        a.data[i] = @as(f64, @floatFromInt((i + 1) * (i + 1))); // [1, 4, 9, 16, 25, 36, 49, 64]
+    }
+
+    var result = try a.sqrt();
+    defer result.deinit();
+
+    try testing.expectEqual(a.shape[0], result.shape[0]);
+    try testing.expectEqual(a.shape[1], result.shape[1]);
+    try testing.expectEqual(a.shape[2], result.shape[2]);
+
+    for (0..8) |i| {
+        try testing.expectEqual(@as(f64, @floatFromInt(i + 1)), result.data[i]);
+    }
 }
