@@ -369,6 +369,7 @@ pub fn IntGraph(comptime W: type) type {
     return AdjacencyList(u32, W, Context, Context.hash, Context.eql);
 }
 
+
 // -- Tests --
 
 test "AdjacencyList: basic directed graph" {
@@ -589,4 +590,789 @@ test "AdjacencyList: error cases" {
     try testing.expectError(error.EdgeNotFound, graph.removeEdge(1, 2));
 
     try graph.validate();
+}
+
+// -- Convenience Constructor Tests --
+
+/// Context for i32 vertices with auto-hash and equality.
+/// Time: O(1) | Space: O(1)
+const I32Context = struct {
+    pub fn hash(_: @This(), key: i32) u64 {
+        return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+    }
+
+    pub fn eql(_: @This(), a: i32, b: i32) bool {
+        return a == b;
+    }
+};
+
+/// Context for string vertices with Wyhash and memcmp equality.
+/// Time: O(1) hash, O(n) eql | Space: O(1)
+const StringContext = struct {
+    pub fn hash(_: @This(), key: []const u8) u64 {
+        return std.hash.Wyhash.hash(0, key);
+    }
+
+    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        return std.mem.eql(u8, a, b);
+    }
+};
+
+/// Creates an AdjacencyList with auto-context for i32 vertices (directed).
+/// Time: O(1) | Space: O(1)
+pub fn IntDirectedGraph(comptime W: type) type {
+    return AdjacencyList(i32, W, I32Context, I32Context.hash, I32Context.eql);
+}
+
+/// Creates an AdjacencyList with auto-context for i32 vertices (undirected).
+/// Time: O(1) | Space: O(1)
+pub fn IntUndirectedGraph(comptime W: type) type {
+    return AdjacencyList(i32, W, I32Context, I32Context.hash, I32Context.eql);
+}
+
+/// Creates an AdjacencyList with string context for []const u8 vertices (directed).
+/// Time: O(1) | Space: O(1)
+pub fn StringDirectedGraph(comptime W: type) type {
+    return AdjacencyList([]const u8, W, StringContext, StringContext.hash, StringContext.eql);
+}
+
+/// Creates an AdjacencyList with string context for []const u8 vertices (undirected).
+/// Time: O(1) | Space: O(1)
+pub fn StringUndirectedGraph(comptime W: type) type {
+    return AdjacencyList([]const u8, W, StringContext, StringContext.hash, StringContext.eql);
+}
+
+test "initDirected: i32 vertices unweighted" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex(10);
+    try graph.addVertex(20);
+    try graph.addVertex(30);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expect(graph.containsVertex(10));
+    try testing.expect(graph.containsVertex(20));
+    try testing.expect(graph.containsVertex(30));
+    try testing.expect(!graph.containsVertex(99));
+
+    try graph.validate();
+}
+
+test "initDirected: i32 vertices weighted" {
+    var graph = IntDirectedGraph(i64).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, 100);
+    try graph.addEdge(2, 3, 200);
+    try graph.addEdge(1, 3, 50);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 3), graph.edgeCount());
+
+    try testing.expectEqual(@as(?i64, 100), graph.getEdgeWeight(1, 2));
+    try testing.expectEqual(@as(?i64, 200), graph.getEdgeWeight(2, 3));
+    try testing.expectEqual(@as(?i64, 50), graph.getEdgeWeight(1, 3));
+    try testing.expectEqual(@as(?i64, null), graph.getEdgeWeight(2, 1));
+
+    try graph.validate();
+}
+
+test "initDirected: i32 vertices directed semantics" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(5, 10, {});
+    try graph.addEdge(10, 15, {});
+
+    // Directed: edges are one-way only
+    try testing.expect(graph.containsEdge(5, 10));
+    try testing.expect(!graph.containsEdge(10, 5));
+    try testing.expect(graph.containsEdge(10, 15));
+    try testing.expect(!graph.containsEdge(15, 10));
+
+    try graph.validate();
+}
+
+test "initUndirected: i32 vertices unweighted" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex(100);
+    try graph.addVertex(200);
+    try graph.addVertex(300);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expect(graph.containsVertex(100));
+    try testing.expect(graph.containsVertex(200));
+    try testing.expect(graph.containsVertex(300));
+
+    try graph.validate();
+}
+
+test "initUndirected: i32 vertices weighted" {
+    var graph = IntUndirectedGraph(f32).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, 1.5);
+    try graph.addEdge(2, 3, 2.5);
+    try graph.addEdge(1, 3, 3.5);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 3), graph.edgeCount());
+
+    try testing.expectEqual(@as(?f32, 1.5), graph.getEdgeWeight(1, 2));
+    try testing.expectEqual(@as(?f32, 1.5), graph.getEdgeWeight(2, 1));
+    try testing.expectEqual(@as(?f32, 2.5), graph.getEdgeWeight(2, 3));
+    try testing.expectEqual(@as(?f32, 2.5), graph.getEdgeWeight(3, 2));
+
+    try graph.validate();
+}
+
+test "initUndirected: i32 vertices bidirectional edges" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge(7, 8, {});
+    try graph.addEdge(8, 9, {});
+
+    // Undirected: edges work both ways
+    try testing.expect(graph.containsEdge(7, 8));
+    try testing.expect(graph.containsEdge(8, 7));
+    try testing.expect(graph.containsEdge(8, 9));
+    try testing.expect(graph.containsEdge(9, 8));
+
+    try graph.validate();
+}
+
+test "initDirected: string vertices unweighted" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex("alpha");
+    try graph.addVertex("beta");
+    try graph.addVertex("gamma");
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expect(graph.containsVertex("alpha"));
+    try testing.expect(graph.containsVertex("beta"));
+    try testing.expect(graph.containsVertex("gamma"));
+    try testing.expect(!graph.containsVertex("delta"));
+}
+
+test "initDirected: string vertices weighted" {
+    var graph = StringDirectedGraph(i32).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge("start", "mid", 10);
+    try graph.addEdge("mid", "end", 20);
+    try graph.addEdge("start", "end", 15);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 3), graph.edgeCount());
+
+    try testing.expectEqual(@as(?i32, 10), graph.getEdgeWeight("start", "mid"));
+    try testing.expectEqual(@as(?i32, 20), graph.getEdgeWeight("mid", "end"));
+    try testing.expectEqual(@as(?i32, 15), graph.getEdgeWeight("start", "end"));
+    try testing.expectEqual(@as(?i32, null), graph.getEdgeWeight("mid", "start"));
+
+}
+
+test "initDirected: string vertices directed semantics" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge("alice", "bob", {});
+    try graph.addEdge("bob", "charlie", {});
+
+    // Directed: one-way edges
+    try testing.expect(graph.containsEdge("alice", "bob"));
+    try testing.expect(!graph.containsEdge("bob", "alice"));
+    try testing.expect(graph.containsEdge("bob", "charlie"));
+    try testing.expect(!graph.containsEdge("charlie", "bob"));
+
+}
+
+test "initUndirected: string vertices unweighted" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex("node1");
+    try graph.addVertex("node2");
+    try graph.addVertex("node3");
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expect(graph.containsVertex("node1"));
+    try testing.expect(graph.containsVertex("node2"));
+    try testing.expect(graph.containsVertex("node3"));
+
+}
+
+test "initUndirected: string vertices weighted" {
+    var graph = StringUndirectedGraph(f64).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge("city_a", "city_b", 5.5);
+    try graph.addEdge("city_b", "city_c", 3.2);
+    try graph.addEdge("city_a", "city_c", 7.1);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 3), graph.edgeCount());
+
+    try testing.expectEqual(@as(?f64, 5.5), graph.getEdgeWeight("city_a", "city_b"));
+    try testing.expectEqual(@as(?f64, 5.5), graph.getEdgeWeight("city_b", "city_a"));
+    try testing.expectEqual(@as(?f64, 3.2), graph.getEdgeWeight("city_b", "city_c"));
+    try testing.expectEqual(@as(?f64, 3.2), graph.getEdgeWeight("city_c", "city_b"));
+
+}
+
+test "initUndirected: string vertices bidirectional edges" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge("x", "y", {});
+    try graph.addEdge("y", "z", {});
+
+    // Undirected: edges work in both directions
+    try testing.expect(graph.containsEdge("x", "y"));
+    try testing.expect(graph.containsEdge("y", "x"));
+    try testing.expect(graph.containsEdge("y", "z"));
+    try testing.expect(graph.containsEdge("z", "y"));
+
+}
+
+test "initDirected: i32 remove vertex" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(2, 3, {});
+    try graph.addEdge(1, 3, {});
+
+    try graph.removeVertex(2);
+
+    try testing.expectEqual(@as(usize, 2), graph.vertexCount());
+    try testing.expect(!graph.containsVertex(2));
+    try testing.expect(graph.containsVertex(1));
+    try testing.expect(graph.containsVertex(3));
+    try testing.expect(graph.containsEdge(1, 3));
+    try testing.expect(!graph.containsEdge(1, 2));
+    try testing.expect(!graph.containsEdge(2, 3));
+
+    try graph.validate();
+}
+
+test "initDirected: string remove vertex" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge("a", "b", {});
+    try graph.addEdge("b", "c", {});
+    try graph.addEdge("a", "c", {});
+
+    try graph.removeVertex("b");
+
+    try testing.expectEqual(@as(usize, 2), graph.vertexCount());
+    try testing.expect(!graph.containsVertex("b"));
+    try testing.expect(graph.containsVertex("a"));
+    try testing.expect(graph.containsVertex("c"));
+    try testing.expect(graph.containsEdge("a", "c"));
+
+}
+
+test "initUndirected: i32 remove vertex" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge(10, 20, {});
+    try graph.addEdge(20, 30, {});
+    try graph.addEdge(10, 30, {});
+
+    try graph.removeVertex(20);
+
+    try testing.expectEqual(@as(usize, 2), graph.vertexCount());
+    try testing.expect(!graph.containsVertex(20));
+    try testing.expect(graph.containsVertex(10));
+    try testing.expect(graph.containsVertex(30));
+    try testing.expect(graph.containsEdge(10, 30));
+    try testing.expect(graph.containsEdge(30, 10));
+
+    try graph.validate();
+}
+
+test "initUndirected: string remove vertex" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge("foo", "bar", {});
+    try graph.addEdge("bar", "baz", {});
+    try graph.addEdge("foo", "baz", {});
+
+    try graph.removeVertex("bar");
+
+    try testing.expectEqual(@as(usize, 2), graph.vertexCount());
+    try testing.expect(!graph.containsVertex("bar"));
+    try testing.expect(graph.containsVertex("foo"));
+    try testing.expect(graph.containsVertex("baz"));
+    try testing.expect(graph.containsEdge("foo", "baz"));
+    try testing.expect(graph.containsEdge("baz", "foo"));
+
+}
+
+test "initDirected: i32 remove edge" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(5, 6, {});
+    try graph.addEdge(6, 7, {});
+    try graph.addEdge(5, 7, {});
+
+    try graph.removeEdge(5, 6);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 2), graph.edgeCount());
+    try testing.expect(!graph.containsEdge(5, 6));
+    try testing.expect(graph.containsEdge(6, 7));
+    try testing.expect(graph.containsEdge(5, 7));
+
+    try graph.validate();
+}
+
+test "initDirected: string remove edge" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge("u", "v", {});
+    try graph.addEdge("v", "w", {});
+    try graph.addEdge("u", "w", {});
+
+    try graph.removeEdge("u", "v");
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 2), graph.edgeCount());
+    try testing.expect(!graph.containsEdge("u", "v"));
+    try testing.expect(graph.containsEdge("v", "w"));
+    try testing.expect(graph.containsEdge("u", "w"));
+
+}
+
+test "initUndirected: i32 remove edge" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge(11, 12, {});
+    try graph.addEdge(12, 13, {});
+    try graph.addEdge(11, 13, {});
+
+    try graph.removeEdge(11, 12);
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 2), graph.edgeCount());
+    try testing.expect(!graph.containsEdge(11, 12));
+    try testing.expect(!graph.containsEdge(12, 11));
+    try testing.expect(graph.containsEdge(12, 13));
+
+    try graph.validate();
+}
+
+test "initUndirected: string remove edge" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge("p", "q", {});
+    try graph.addEdge("q", "r", {});
+    try graph.addEdge("p", "r", {});
+
+    try graph.removeEdge("p", "q");
+
+    try testing.expectEqual(@as(usize, 3), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 2), graph.edgeCount());
+    try testing.expect(!graph.containsEdge("p", "q"));
+    try testing.expect(!graph.containsEdge("q", "p"));
+    try testing.expect(graph.containsEdge("q", "r"));
+
+}
+
+test "initDirected: i32 neighbors and degree" {
+    var graph = IntDirectedGraph(i32).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, 10);
+    try graph.addEdge(1, 3, 20);
+    try graph.addEdge(2, 3, 30);
+
+    try testing.expectEqual(@as(usize, 2), graph.outDegree(1));
+    try testing.expectEqual(@as(usize, 1), graph.outDegree(2));
+    try testing.expectEqual(@as(usize, 0), graph.outDegree(3));
+
+    try testing.expectEqual(@as(usize, 0), graph.inDegree(1));
+    try testing.expectEqual(@as(usize, 1), graph.inDegree(2));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree(3));
+
+    const neighbors_1 = graph.getNeighbors(1).?;
+    try testing.expectEqual(@as(usize, 2), neighbors_1.len);
+
+    try graph.validate();
+}
+
+test "initDirected: string neighbors and degree" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge("root", "left", {});
+    try graph.addEdge("root", "right", {});
+    try graph.addEdge("left", "leaf", {});
+
+    try testing.expectEqual(@as(usize, 2), graph.outDegree("root"));
+    try testing.expectEqual(@as(usize, 1), graph.outDegree("left"));
+    try testing.expectEqual(@as(usize, 0), graph.outDegree("right"));
+    try testing.expectEqual(@as(usize, 0), graph.outDegree("leaf"));
+
+    try testing.expectEqual(@as(usize, 1), graph.inDegree("left"));
+    try testing.expectEqual(@as(usize, 1), graph.inDegree("right"));
+    try testing.expectEqual(@as(usize, 1), graph.inDegree("leaf"));
+
+}
+
+test "initUndirected: i32 neighbors and degree" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(1, 3, {});
+    try graph.addEdge(2, 3, {});
+
+    // In undirected graphs, inDegree = outDegree
+    try testing.expectEqual(@as(usize, 2), graph.outDegree(1));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree(1));
+    try testing.expectEqual(@as(usize, 2), graph.outDegree(2));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree(2));
+    try testing.expectEqual(@as(usize, 2), graph.outDegree(3));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree(3));
+
+    try graph.validate();
+}
+
+test "initUndirected: string neighbors and degree" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addEdge("a", "b", {});
+    try graph.addEdge("b", "c", {});
+    try graph.addEdge("c", "a", {});
+
+    // All have degree 2 (complete triangle)
+    try testing.expectEqual(@as(usize, 2), graph.outDegree("a"));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree("a"));
+    try testing.expectEqual(@as(usize, 2), graph.outDegree("b"));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree("b"));
+    try testing.expectEqual(@as(usize, 2), graph.outDegree("c"));
+    try testing.expectEqual(@as(usize, 2), graph.inDegree("c"));
+
+}
+
+test "initDirected: i32 vertex iterator" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex(42);
+    try graph.addVertex(43);
+    try graph.addVertex(44);
+
+    var count: usize = 0;
+    var it = graph.vertexIterator();
+    while (it.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 3), count);
+    try graph.validate();
+}
+
+test "initDirected: string vertex iterator" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex("first");
+    try graph.addVertex("second");
+    try graph.addVertex("third");
+
+    var count: usize = 0;
+    var it = graph.vertexIterator();
+    while (it.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 3), count);
+}
+
+test "initUndirected: i32 vertex iterator" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex(50);
+    try graph.addVertex(51);
+
+    var count: usize = 0;
+    var it = graph.vertexIterator();
+    while (it.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 2), count);
+    try graph.validate();
+}
+
+test "initUndirected: string vertex iterator" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex("north");
+    try graph.addVertex("south");
+
+    var count: usize = 0;
+    var it = graph.vertexIterator();
+    while (it.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 2), count);
+}
+
+test "initDirected: i32 empty graph" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try testing.expect(graph.isEmpty());
+    try testing.expectEqual(@as(usize, 0), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 0), graph.edgeCount());
+
+    try graph.validate();
+}
+
+test "initDirected: string empty graph" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try testing.expect(graph.isEmpty());
+    try testing.expectEqual(@as(usize, 0), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 0), graph.edgeCount());
+
+}
+
+test "initUndirected: i32 empty graph" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try testing.expect(graph.isEmpty());
+    try testing.expectEqual(@as(usize, 0), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 0), graph.edgeCount());
+
+    try graph.validate();
+}
+
+test "initUndirected: string empty graph" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try testing.expect(graph.isEmpty());
+    try testing.expectEqual(@as(usize, 0), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 0), graph.edgeCount());
+
+}
+
+test "initDirected: i32 duplicate vertex error" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex(1);
+    try testing.expectError(error.VertexExists, graph.addVertex(1));
+
+    try graph.validate();
+}
+
+test "initDirected: string duplicate vertex error" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex("dup");
+    try testing.expectError(error.VertexExists, graph.addVertex("dup"));
+
+}
+
+test "initUndirected: i32 duplicate vertex error" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex(99);
+    try testing.expectError(error.VertexExists, graph.addVertex(99));
+
+    try graph.validate();
+}
+
+test "initUndirected: string duplicate vertex error" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex("same");
+    try testing.expectError(error.VertexExists, graph.addVertex("same"));
+
+}
+
+test "initDirected: i32 remove nonexistent vertex error" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try testing.expectError(error.VertexNotFound, graph.removeVertex(999));
+
+    try graph.validate();
+}
+
+test "initDirected: string remove nonexistent vertex error" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try testing.expectError(error.VertexNotFound, graph.removeVertex("missing"));
+
+}
+
+test "initUndirected: i32 remove nonexistent vertex error" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try testing.expectError(error.VertexNotFound, graph.removeVertex(111));
+
+    try graph.validate();
+}
+
+test "initUndirected: string remove nonexistent vertex error" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try testing.expectError(error.VertexNotFound, graph.removeVertex("absent"));
+
+}
+
+test "initDirected: i32 remove nonexistent edge error" {
+    var graph = IntDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try testing.expectError(error.EdgeNotFound, graph.removeEdge(1, 2));
+
+    try graph.validate();
+}
+
+test "initDirected: string remove nonexistent edge error" {
+    var graph = StringDirectedGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addVertex("x");
+    try graph.addVertex("y");
+    try testing.expectError(error.EdgeNotFound, graph.removeEdge("x", "y"));
+
+}
+
+test "initUndirected: i32 remove nonexistent edge error" {
+    var graph = IntUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex(5);
+    try graph.addVertex(6);
+    try testing.expectError(error.EdgeNotFound, graph.removeEdge(5, 6));
+
+    try graph.validate();
+}
+
+test "initUndirected: string remove nonexistent edge error" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    try graph.addVertex("src");
+    try graph.addVertex("dst");
+    try testing.expectError(error.EdgeNotFound, graph.removeEdge("src", "dst"));
+
+}
+
+test "initDirected: i32 large graph memory leak check" {
+    var graph = IntDirectedGraph(i64).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    for (0..100) |i| {
+        const v = @as(i32, @intCast(i));
+        try graph.addVertex(v);
+        if (i > 0) {
+            try graph.addEdge(v - 1, v, @as(i64, @intCast(i * 10)));
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 100), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 99), graph.edgeCount());
+
+    try graph.validate();
+}
+
+test "initDirected: string large graph memory leak check" {
+    var graph = StringDirectedGraph(i32).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    var vertices: std.ArrayList([]const u8) = .{};
+    defer vertices.deinit(testing.allocator);
+    defer for (vertices.items) |v| testing.allocator.free(v);
+
+    for (0..50) |i| {
+        var buffer: [20]u8 = undefined;
+        const label = try std.fmt.bufPrint(&buffer, "v_{d}", .{i});
+        const owned_label = try testing.allocator.dupe(u8, label);
+        try vertices.append(testing.allocator, owned_label);
+        try graph.addVertex(owned_label);
+        if (i > 0) {
+            try graph.addEdge(vertices.items[i - 1], owned_label, @as(i32, @intCast(i)));
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 50), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 49), graph.edgeCount());
+}
+
+test "initUndirected: i32 large graph memory leak check" {
+    var graph = IntUndirectedGraph(f32).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    for (0..80) |i| {
+        const v = @as(i32, @intCast(i));
+        try graph.addVertex(v);
+        if (i > 0) {
+            try graph.addEdge(v - 1, v, @as(f32, @floatFromInt(i)) * 1.5);
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 80), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 79), graph.edgeCount());
+
+    try graph.validate();
+}
+
+test "initUndirected: string large graph memory leak check" {
+    var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
+    defer graph.deinit();
+
+    var vertices: std.ArrayList([]const u8) = .{};
+    defer vertices.deinit(testing.allocator);
+    defer for (vertices.items) |v| testing.allocator.free(v);
+
+    for (0..60) |i| {
+        var buffer: [20]u8 = undefined;
+        const label = try std.fmt.bufPrint(&buffer, "node_{d}", .{i});
+        const owned_label = try testing.allocator.dupe(u8, label);
+        try vertices.append(testing.allocator, owned_label);
+        try graph.addVertex(owned_label);
+        if (i > 0) {
+            try graph.addEdge(vertices.items[i - 1], owned_label, {});
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 60), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 59), graph.edgeCount());
 }
