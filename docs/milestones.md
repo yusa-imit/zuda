@@ -21,13 +21,13 @@ Improve developer experience through bidirectional iterators, context-free const
 **Target**: Implement 3 categories of ergonomic improvements to streamline consumer adoption ✅
 
 **Categories**:
-- [ ] **Bidirectional Iterators** — Add reverse iteration to ordered containers
-  - [ ] BTree.reverseIterator() — O(1) init, O(log n) per step
-  - [ ] SkipList.reverseIterator() — O(1) init, O(1) per step (expected)
-  - [ ] RedBlackTree.reverseIterator() — O(log n) rightmost lookup, O(log n) predecessor
-  - **Tests**: Comprehensive tests for each container (empty, single, stress 1000 ops)
-  - **Impact**: Eliminates need for ArrayList collection + reverse in silica migrations
-  - **Estimated effort**: 2-3 sessions (Medium complexity — stateful cursor design)
+- [x] **Bidirectional Iterators** — Add reverse iteration to ordered containers ✅
+  - [x] BTree.reverseIterator() — O(1) init, O(1) amortized per step (commit 9d9347e) ✅
+  - [x] SkipList.reverseIterator() — O(1) init, O(1) per step (commit fa1e443) ✅
+  - [x] RedBlackTree.reverseIterator() — O(log n) init, O(1) amortized per step (commit dfe3289) ✅
+  - **Tests**: ✅ 36 comprehensive tests (10 BTree + 14 SkipList + 12 RedBlackTree), all passing
+  - **Impact**: ✅ Eliminates need for ArrayList collection + reverse in silica migrations
+  - **Estimated effort**: 2-3 sessions ✅ (ACHIEVED — 3 containers implemented)
 - [x] **Context-Free Constructors** — Convenience initializers for common default contexts ✅
   - [x] SkipList.initDefault(allocator) — Uses std.math.order for i32/f64, string compare for []const u8 ✅
     - Single unified method with comptime type checking (commit 4c06601)
@@ -53,7 +53,7 @@ Improve developer experience through bidirectional iterators, context-free const
 
 **Success Criteria**: All 3 categories complete, demonstrated in updated migration examples
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 1/3 categories complete (33%), context-free constructors implemented for SkipList and AdjacencyList
+**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 2/3 categories complete (67%), bidirectional iterators ✅ + context-free constructors ✅ implemented
 
 ### v1.13.0 — Consumer Migration Support ✅ COMPLETE
 
