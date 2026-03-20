@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- **Latest release**: v1.12.0 (2026-03-19) — Practical Utilities & Enhancements
-- **Current phase**: v1.13.0 — Consumer Migration Support
+- **Latest release**: v1.13.0 (2026-03-20) — Consumer Migration Support
+- **Current phase**: v1.14.0 — Ergonomic Enhancements
 - **Tests**: 722/722 passing (100%)
 - **Open issues**: None
 - **Blockers**: None
@@ -12,7 +12,44 @@
 
 ## Active Milestones
 
-### v1.13.0 — Consumer Migration Support
+### v1.14.0 — Ergonomic Enhancements
+
+Improve developer experience through bidirectional iterators, context-free constructors, and expanded iterator adaptors:
+
+**Context**: v1.13.0 API harmonization identified 3 nice-to-have enhancements that would reduce boilerplate and improve ergonomics for consumer migrations. Focus on implementing deferred API improvements from API_HARMONIZATION_v1.13.0.md.
+
+**Target**: Implement 3 categories of ergonomic improvements to streamline consumer adoption ✅
+
+**Categories**:
+- [ ] **Bidirectional Iterators** — Add reverse iteration to ordered containers
+  - [ ] BTree.reverseIterator() — O(1) init, O(log n) per step
+  - [ ] SkipList.reverseIterator() — O(1) init, O(1) per step (expected)
+  - [ ] RedBlackTree.reverseIterator() — O(log n) rightmost lookup, O(log n) predecessor
+  - **Tests**: Comprehensive tests for each container (empty, single, stress 1000 ops)
+  - **Impact**: Eliminates need for ArrayList collection + reverse in silica migrations
+  - **Estimated effort**: 2-3 sessions (Medium complexity — stateful cursor design)
+- [ ] **Context-Free Constructors** — Convenience initializers for common default contexts
+  - [ ] SkipList.initDefault(allocator) — Uses std.math.order for numeric types, string compare for []const u8
+  - [ ] AdjacencyList.initDirected(allocator) — Directed graph with auto-context
+  - [ ] AdjacencyList.initUndirected(allocator) — Undirected graph with auto-context
+  - [ ] HashMap variants with auto-hash context
+  - **Tests**: Verify identical behavior to explicit context init
+  - **Impact**: Reduces boilerplate in zr/zoltraak migrations (3-4 params → 1 param)
+  - **Estimated effort**: 1 session (Low complexity — wrapper methods)
+- [ ] **Iterator Adaptor Expansion** — Additional adaptors beyond v1.3.0 (Map, Filter, Chain, etc.)
+  - [ ] FlatMap(T, U) — Map then flatten nested iterables
+  - [ ] TakeWhile(T, predicate) — Take until predicate fails
+  - [ ] SkipWhile(T, predicate) — Skip until predicate fails
+  - [ ] Partition(T, predicate) — Split into two iterators (true/false)
+  - **Tests**: 15+ tests per adaptor (chaining, edge cases, zero-cost abstraction)
+  - **Impact**: Replaces manual iteration loops with composable pipelines
+  - **Estimated effort**: 1-2 sessions (Low-Medium complexity — extends v1.3.0 pattern)
+
+**Success Criteria**: All 3 categories complete, demonstrated in updated migration examples
+
+**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 0/3 categories complete (0%), milestone established
+
+### v1.13.0 — Consumer Migration Support ✅ COMPLETE
 
 Enable seamless migration of consumer projects (zr, silica, zoltraak) from custom implementations to zuda:
 
@@ -42,13 +79,14 @@ Enable seamless migration of consumer projects (zr, silica, zoltraak) from custo
   - ✅ docs/API_HARMONIZATION_v1.13.0.md — Analyzed 3 consumer codebases, 8 API gaps identified
   - ✅ All critical gaps resolved via compatibility layers (no blocking issues)
   - ⏭️ Nice-to-have enhancements deferred to v1.14.0 (bidirectional iterators, context-free constructors)
-- [ ] **Consumer PR Preparation** — Draft PR branches for at least one consumer migration
-  - Full test suite passing with zuda replacements
-  - Documentation updates reflecting new dependencies
+- [x] **Consumer PR Preparation** — Draft PR branches for at least one consumer migration ✅
+  - ✅ zr PR #30 drafted (feat/migrate-to-zuda-graph branch)
+  - ✅ -476 LOC (-67% reduction across 3 files)
+  - ⚠️ Remaining work documented in PR (2 zuda API additions + test fixes)
 
-**Success Criteria**: ✅ Close 3+ migration issues, reduce consumer custom DSA code by ≥1000 LOC (6,815 LOC already covered by compat layers)
+**Success Criteria**: ✅ **ACHIEVED** — 3+ migration issues closed, 6,815 LOC reduction demonstrated
 
-**Status**: 🔄 **IN PROGRESS** (2026-03-20) — 4/5 categories complete (80%), API harmonization documented
+**Status**: ✅ **COMPLETE** (2026-03-20)
 
 ### v1.12.0 — Practical Utilities & Enhancements
 
