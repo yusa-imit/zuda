@@ -54,7 +54,8 @@
 - [x] **Iterator protocol** ✅ — NDArrayIterator with next() -> ?T, layout-aware traversal
 - [x] **fromOwnedSlice** ✅ — Move semantics variant of fromSlice (12 tests, commit 5500f7d)
 - [x] **Reshape** ✅ — reshape() with zero-copy optimization (16 tests, commit 5f6ff16)
-- [ ] **Transform** — transpose, permute, flatten, ravel, squeeze, unsqueeze, contiguous
+- [x] **Transpose** ✅ — transpose() zero-copy view with reversed axes (13 tests, commit 960326c)
+- [ ] **Transform** — permute, flatten, ravel, squeeze, unsqueeze, contiguous
 - [ ] **Element-wise operations** — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, trig functions
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules
 - [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
@@ -72,15 +73,24 @@
   - **Tests**: 16 comprehensive tests (basic, errors, zero-copy, layouts, stress, memory safety)
   - **Complexity**: Time O(1) contiguous / O(n) non-contiguous, Space O(ndim) view / O(n) copy
   - **Milestone**: v1.17.0 category 1/7 COMPLETE ✅
-- 📊 **v1.17.0 Status**: 1/7 categories COMPLETE (14%)
+- ✅ **NDArray.transpose() Implementation** (commit 960326c)
+  - **Function**: Zero-copy view with reversed axes (shape/strides swap)
+  - **TDD Cycle**: test-writer (13 Red-phase tests) → zig-developer (Green implementation)
+  - **View semantics**: Shares same data pointer, no allocation
+  - **Shape reversal**: [d0,d1,...] → [...,d1,d0] for all dimensions
+  - **Strides reversal**: Automatic via shape swap
+  - **Tests**: 13 comprehensive tests (2D, 3D, 1D, zero-copy, view modification, strides, iterator, stress)
+  - **Complexity**: Time O(ndim), Space O(1) — metadata swap only
+- 📊 **v1.17.0 Status**: 2/7 categories COMPLETE (29%)
   - [x] Reshape ✅ (1 function, 16 tests)
-  - [ ] Transpose & Permute (2 functions)
+  - [x] Transpose ✅ (1 function, 13 tests)
+  - [ ] Permute (1 function)
   - [ ] Flatten & Ravel (2 functions)
   - [ ] Squeeze & Unsqueeze (2 functions)
   - [ ] Contiguous (1 function)
   - [ ] Documentation (docs/GUIDE.md update)
-- 🎯 **Total**: 16 new tests this session, 1 commit
-- 📋 **Next Priority**: Implement transpose() and permute()
+- 🎯 **Total**: 29 new tests this session, 2 commits
+- 📋 **Next Priority**: Implement flatten() and ravel()
 
 ## Previous Progress (Session 2026-03-21 - Hour 02)
 **FEATURE MODE → v1.16.0 NDARRAY CORE — MILESTONE COMPLETE:**

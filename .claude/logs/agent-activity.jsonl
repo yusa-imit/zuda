@@ -44,3 +44,5 @@
 {"timestamp":"2026-03-21T02:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray.fromOwnedSlice() Green phase","project":"zuda"}
 {"timestamp":"2026-03-21T03:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write reshape() tests","project":"zuda"}
 {"timestamp":"2026-03-21T03:20:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray.reshape()","project":"zuda"}
+{"timestamp":"2026-03-21T03:25:00Z","action":"subagent","agent_type":"test-writer","task":"Write transpose() tests","project":"zuda"}
+{"timestamp":"2026-03-21T03:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray.transpose()","project":"zuda"}
