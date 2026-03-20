@@ -707,36 +707,38 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     return null;
                 }
 
-                // Convert flat index to multi-dimensional indices using row-major style
-                // For a row-major-ordered flat index, we calculate indices by dividing
+                // Convert flat row-major index to multi-dimensional indices
+                // then apply strides to get correct memory offset
                 var multi_index: [ndim]usize = undefined;
                 var current = self.index;
 
                 // Calculate multi-dimensional indices from flat row-major index
-                // For shape [d0, d1, d2, ...], index i maps to:
-                // i0 = i / (d1*d2*...), i1 = (i % (d1*d2*...)) / (d2*...), etc.
+                // For shape [d0, d1, d2, ...], flat index i converts to:
+                // index[0] = i / (d1*d2*...), then i %= (d1*d2*...)
+                // index[1] = i / (d2*...), then i %= (d2*...)
+                // etc.
                 for (0..ndim) |dim| {
-                    // Calculate the stride (product of all following dimensions)
-                    var stride: usize = 1;
+                    // Calculate divisor: product of all dimensions after this one
+                    var divisor: usize = 1;
                     for (dim + 1..ndim) |d| {
-                        stride *= self.shape[d];
+                        divisor *= self.shape[d];
                     }
 
-                    // Extract this dimension's index
-                    multi_index[dim] = current / stride;
-                    current = current % stride;
+                    // Extract index for this dimension
+                    multi_index[dim] = current / divisor;
+                    current = current % divisor;
                 }
 
-                // Calculate memory offset using strides
+                // Calculate memory offset using array strides
                 var offset: usize = 0;
                 for (0..ndim) |i| {
                     offset += multi_index[i] * self.strides[i];
                 }
 
-                // Get the value from data
+                // Get value from memory
                 const value = self.data[offset];
 
-                // Increment index for next call
+                // Move to next element
                 self.index += 1;
 
                 return value;
