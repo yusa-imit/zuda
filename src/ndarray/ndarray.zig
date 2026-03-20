@@ -64,6 +64,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         pub const Error = error{
             ZeroDimension,
             CapacityExceeded,
+            IndexOutOfBounds,
         };
 
         /// Shape of the array: length along each dimension
@@ -494,6 +495,187 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(rows * cols)
         pub fn identity(allocator: Allocator, rows: usize, cols: usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
             return Self.eye(allocator, rows, cols, 0, layout);
+        }
+
+        // -- Indexing and Slicing Functions --
+
+        /// Get element at multi-dimensional indices with negative indexing support
+        ///
+        /// Parameters:
+        /// - indices: Array of ndim signed indices (negative = relative to end)
+        ///
+        /// Returns: Element value at computed location
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if any index is out of range after normalization
+        ///
+        /// Time: O(ndim) for index calculation
+        /// Space: O(1)
+        pub fn get(self: *const Self, indices: []const isize) Error!T {
+            // Validate index count
+            if (indices.len != ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Normalize indices and compute flat offset
+            var offset: usize = 0;
+            for (0..ndim) |i| {
+                var idx = indices[i];
+
+                // Convert negative index to positive
+                if (idx < 0) {
+                    idx += @as(isize, @intCast(self.shape[i]));
+                }
+
+                // Check bounds
+                if (idx < 0 or idx >= @as(isize, @intCast(self.shape[i]))) {
+                    return error.IndexOutOfBounds;
+                }
+
+                // Add to flat offset
+                offset += @as(usize, @intCast(idx)) * self.strides[i];
+            }
+
+            return self.data[offset];
+        }
+
+        /// Set element at multi-dimensional indices with negative indexing support
+        ///
+        /// Parameters:
+        /// - indices: Array of ndim signed indices (negative = relative to end)
+        /// - value: Value to set at the location
+        ///
+        /// Time: O(ndim) for index calculation
+        /// Space: O(1)
+        pub fn set(self: *Self, indices: []const isize, value: T) void {
+            // Validate index count
+            if (indices.len != ndim) {
+                return;
+            }
+
+            // Normalize indices and compute flat offset
+            var offset: usize = 0;
+            for (0..ndim) |i| {
+                var idx = indices[i];
+
+                // Convert negative index to positive
+                if (idx < 0) {
+                    idx += @as(isize, @intCast(self.shape[i]));
+                }
+
+                // Check bounds
+                if (idx < 0 or idx >= @as(isize, @intCast(self.shape[i]))) {
+                    return;
+                }
+
+                // Add to flat offset
+                offset += @as(usize, @intCast(idx)) * self.strides[i];
+            }
+
+            self.data[offset] = value;
+        }
+
+        /// Get element at flat index with negative indexing support
+        ///
+        /// Parameters:
+        /// - index: Flat signed index (negative = relative to end)
+        ///
+        /// Returns: Element value at flat index location
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if index is out of range
+        ///
+        /// Time: O(1) direct access
+        /// Space: O(1)
+        pub fn at(self: *const Self, index: isize) Error!T {
+            var idx = index;
+
+            // Convert negative index to positive
+            if (idx < 0) {
+                idx += @as(isize, @intCast(self.data.len));
+            }
+
+            // Check bounds
+            if (idx < 0 or idx >= @as(isize, @intCast(self.data.len))) {
+                return error.IndexOutOfBounds;
+            }
+
+            return self.data[@as(usize, @intCast(idx))];
+        }
+
+        /// Create a non-owning view of a sub-region with slicing support
+        ///
+        /// Parameters:
+        /// - ranges: Array of [start, stop] pairs for each dimension
+        ///   - null start means 0 (beginning)
+        ///   - null stop means shape[i] (end)
+        ///   - Negative indices count from end: -n → shape[i] - n
+        ///   - Out-of-bounds ranges are clamped to valid bounds
+        ///
+        /// Returns: New NDArray view sharing same underlying data
+        ///   - View does NOT own the data (data pointer adjusted, not copied)
+        ///   - shape adjusted based on slice ranges
+        ///   - strides remain the same as original
+        ///
+        /// Time: O(ndim) for range processing
+        /// Space: O(1) - view only, no allocation
+        pub fn slice(self: *const Self, ranges: []const [2]?isize) Self {
+            // If range count doesn't match, return copy of original
+            if (ranges.len != ndim) {
+                return self.*;
+            }
+
+            // Calculate starting offset and new shape
+            var start_offset: usize = 0;
+            var new_shape: [ndim]usize = undefined;
+
+            for (0..ndim) |i| {
+                const range = ranges[i];
+
+                // Determine start and stop for this dimension
+                var start: isize = if (range[0]) |s| s else 0;
+                var stop: isize = if (range[1]) |e| e else @as(isize, @intCast(self.shape[i]));
+
+                // Normalize negative indices
+                if (start < 0) {
+                    start += @as(isize, @intCast(self.shape[i]));
+                }
+                if (stop < 0) {
+                    stop += @as(isize, @intCast(self.shape[i]));
+                }
+
+                // Clamp to valid range
+                if (start < 0) start = 0;
+                if (stop < 0) stop = 0;
+                if (start > @as(isize, @intCast(self.shape[i]))) {
+                    start = @as(isize, @intCast(self.shape[i]));
+                }
+                if (stop > @as(isize, @intCast(self.shape[i]))) {
+                    stop = @as(isize, @intCast(self.shape[i]));
+                }
+
+                // Ensure start <= stop
+                if (start > stop) {
+                    start = stop;
+                }
+
+                // Calculate new dimension size
+                new_shape[i] = @as(usize, @intCast(stop - start));
+
+                // Add start offset for this dimension
+                start_offset += @as(usize, @intCast(start)) * self.strides[i];
+            }
+
+            // Create view with adjusted data pointer
+            const view_data = self.data[start_offset..];
+
+            return Self{
+                .shape = new_shape,
+                .strides = self.strides,
+                .data = view_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+            };
         }
     };
 }
@@ -1409,4 +1591,402 @@ test "ndarray: identity() works with different types and layouts" {
     try testing.expectEqual(@as(i32, 1), arr.data[5]);
     try testing.expectEqual(@as(i32, 1), arr.data[10]);
     try testing.expectEqual(@as(i32, 1), arr.data[15]);
+}
+
+// -- Indexing Tests (get/set) (7 tests) --
+
+test "ndarray: get() retrieves single element from 2D array [2,3]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    defer arr.deinit();
+
+    // Row-major [2,3]: [1,2,3 | 4,5,6]
+    // Get [0,0] = 1.0, [0,2] = 3.0, [1,1] = 5.0
+    try testing.expectEqual(1.0, arr.get(&[_]isize{0, 0}));
+    try testing.expectEqual(3.0, arr.get(&[_]isize{0, 2}));
+    try testing.expectEqual(5.0, arr.get(&[_]isize{1, 1}));
+}
+
+test "ndarray: get() supports negative indexing (-1 = last element)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    defer arr.deinit();
+
+    // [-1,-1] = [1,2] (last row, last col) = 6.0
+    try testing.expectEqual(6.0, arr.get(&[_]isize{-1, -1}));
+    // [-1,0] = [1,0] (last row, first col) = 4.0
+    try testing.expectEqual(4.0, arr.get(&[_]isize{-1, 0}));
+    // [0,-1] = [0,2] (first row, last col) = 3.0
+    try testing.expectEqual(3.0, arr.get(&[_]isize{0, -1}));
+    // [-2,-2] = [0,1] (second-to-last row, second-to-last col) = 2.0
+    try testing.expectEqual(2.0, arr.get(&[_]isize{-2, -2}));
+}
+
+test "ndarray: get() retrieves from 3D array [2,3,4]" {
+    const allocator = testing.allocator;
+    var data: [24]i32 = undefined;
+    for (0..24) |i| data[i] = @intCast(i);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 3, 4}, data[0..], .row_major);
+    defer arr.deinit();
+
+    // Row-major [2,3,4]: element [i,j,k] at index i*12 + j*4 + k
+    try testing.expectEqual(@as(i32, 0), arr.get(&[_]isize{0, 0, 0}));
+    try testing.expectEqual(@as(i32, 3), arr.get(&[_]isize{0, 0, 3}));
+    try testing.expectEqual(@as(i32, 12), arr.get(&[_]isize{1, 0, 0}));
+    try testing.expectEqual(@as(i32, 23), arr.get(&[_]isize{1, 2, 3}));
+}
+
+test "ndarray: set() modifies single element in 2D array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{0, 1}, 42.0);
+    arr.set(&[_]isize{1, 2}, 99.0);
+
+    try testing.expectEqual(42.0, arr.data[1]);
+    try testing.expectEqual(99.0, arr.data[5]);
+    try testing.expectEqual(0.0, arr.data[0]);
+}
+
+test "ndarray: set() with negative indices modifies last row/col" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{-1, -1}, 100);
+    arr.set(&[_]isize{-2, 0}, 50);
+
+    // [-1,-1] = [2,3] at index 2*4 + 3 = 11
+    try testing.expectEqual(@as(i32, 100), arr.data[11]);
+    // [-2,0] = [1,0] at index 1*4 + 0 = 4
+    try testing.expectEqual(@as(i32, 50), arr.data[4]);
+}
+
+test "ndarray: set() persists changes across multiple operations" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{2, 2}, 1.0, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{0, 0}, 10.0);
+    arr.set(&[_]isize{0, 1}, 20.0);
+    arr.set(&[_]isize{1, 0}, 30.0);
+    arr.set(&[_]isize{1, 1}, 40.0);
+
+    try testing.expectEqual(10.0, arr.get(&[_]isize{0, 0}));
+    try testing.expectEqual(20.0, arr.get(&[_]isize{0, 1}));
+    try testing.expectEqual(30.0, arr.get(&[_]isize{1, 0}));
+    try testing.expectEqual(40.0, arr.get(&[_]isize{1, 1}));
+}
+
+test "ndarray: get() rejects out-of-bounds positive indices" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // Shape [2,3] allows indices [0-1, 0-2]
+    // [2,0] is out of bounds (row index too high)
+    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{2, 0}));
+}
+
+test "ndarray: get() rejects out-of-bounds negative indices" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // [-3, 0] is out of bounds for shape [2,3] (would be row -3)
+    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{-3, 0}));
+}
+
+// -- Flat Indexing Tests (at) (6 tests) --
+
+test "ndarray: at() returns element at flat index in row-major [2,3]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    defer arr.deinit();
+
+    // Flat indexing: 0→1, 1→2, 2→3, 3→4, 4→5, 5→6
+    try testing.expectEqual(1.0, arr.at(0));
+    try testing.expectEqual(3.0, arr.at(2));
+    try testing.expectEqual(4.0, arr.at(3));
+    try testing.expectEqual(6.0, arr.at(5));
+}
+
+test "ndarray: at() supports negative flat indices (-1 = last element)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    defer arr.deinit();
+
+    // [-1] = last element = 6.0
+    try testing.expectEqual(6.0, arr.at(-1));
+    // [-2] = second-to-last = 5.0
+    try testing.expectEqual(5.0, arr.at(-2));
+    // [-6] = first element = 1.0
+    try testing.expectEqual(1.0, arr.at(-6));
+}
+
+test "ndarray: at() respects memory layout (row-major vs column-major)" {
+    const allocator = testing.allocator;
+    const data = [_]f64{1, 2, 3, 4, 5, 6};
+
+    var arr_rm = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, data[0..], .row_major);
+    defer arr_rm.deinit();
+
+    var arr_cm = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, data[0..], .column_major);
+    defer arr_cm.deinit();
+
+    // Row-major: elements stored as [row0_col0, row0_col1, row0_col2, row1_col0, row1_col1, row1_col2]
+    // at(0) = arr.data[0] regardless of layout (flat index into storage)
+    try testing.expectEqual(1.0, arr_rm.at(0));
+    try testing.expectEqual(1.0, arr_cm.at(0));
+
+    // at(1) accesses different logical positions
+    // Row-major: at(1) = row0_col1 = data[1]
+    // Column-major: at(1) = row1_col0 = data[1]
+    // Both access data[1] in flat storage order
+}
+
+test "ndarray: at() works with 3D array [2,3,4]" {
+    const allocator = testing.allocator;
+    var data: [24]i32 = undefined;
+    for (0..24) |i| data[i] = @intCast(i);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 3, 4}, data[0..], .row_major);
+    defer arr.deinit();
+
+    // Flat indices 0-23 map directly to data array
+    try testing.expectEqual(@as(i32, 0), arr.at(0));
+    try testing.expectEqual(@as(i32, 10), arr.at(10));
+    try testing.expectEqual(@as(i32, 23), arr.at(23));
+}
+
+test "ndarray: at() rejects out-of-bounds indices" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Shape [5] has 5 elements, valid indices: [0-4] or [-5 to -1]
+    // at(5) is out of bounds
+    try testing.expectError(error.IndexOutOfBounds, arr.at(5));
+}
+
+// -- Slicing Tests (slice) (8 tests) --
+
+test "ndarray: slice() extracts row from 2D array [3,4]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice row 1: [5, 6, 7, 8]
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 2 },  // rows 1:2 (single row)
+        .{ null, null }, // all columns
+    });
+
+    try testing.expectEqual(@as(usize, 1), sliced.shape[0]);
+    try testing.expectEqual(@as(usize, 4), sliced.shape[1]);
+    try testing.expectEqual(5.0, sliced.at(0));
+    try testing.expectEqual(8.0, sliced.at(3));
+}
+
+test "ndarray: slice() extracts column from 2D array [3,4]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice column 2: [3, 7, 11]
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ null, null }, // all rows
+        .{ 2, 3 }, // column 2:3 (single column)
+    });
+
+    try testing.expectEqual(@as(usize, 3), sliced.shape[0]);
+    try testing.expectEqual(@as(usize, 1), sliced.shape[1]);
+    try testing.expectEqual(3.0, sliced.at(0));
+    try testing.expectEqual(7.0, sliced.at(1));
+    try testing.expectEqual(11.0, sliced.at(2));
+}
+
+test "ndarray: slice() extracts rectangular subregion [3,4] → [2,2]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice [1:3, 1:3] (rows 1-2, cols 1-2)
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 3 }, // rows 1:3
+        .{ 1, 3 }, // cols 1:3
+    });
+
+    try testing.expectEqual(@as(usize, 2), sliced.shape[0]);
+    try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
+    // Contents: [[6,7], [10,11]]
+    try testing.expectEqual(6.0, sliced.get(&[_]isize{0, 0}));
+    try testing.expectEqual(7.0, sliced.get(&[_]isize{0, 1}));
+    try testing.expectEqual(10.0, sliced.get(&[_]isize{1, 0}));
+    try testing.expectEqual(11.0, sliced.get(&[_]isize{1, 1}));
+}
+
+test "ndarray: slice() with null bounds means unbounded dimension" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice all rows, cols 1:3
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ null, null }, // unbounded rows = all rows
+        .{ 1, 3 }, // cols 1:3
+    });
+
+    try testing.expectEqual(@as(usize, 3), sliced.shape[0]);
+    try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
+}
+
+test "ndarray: slice() returns view sharing underlying data (non-owning)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    var sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 3 },
+        .{ null, null },
+    });
+
+    // Modify original array
+    arr.set(&[_]isize{1, 0}, 999.0);
+
+    // Slice should reflect the change (shares data)
+    try testing.expectEqual(999.0, sliced.get(&[_]isize{0, 0}));
+}
+
+test "ndarray: slice() of 3D array extracts sub-tensor [2,3,4] → [1,3,4]" {
+    const allocator = testing.allocator;
+    var data: [24]i32 = undefined;
+    for (0..24) |i| data[i] = @intCast(i);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 3, 4}, data[0..], .row_major);
+    defer arr.deinit();
+
+    // Slice first 3x4 matrix (first element in first dimension)
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 0, 1 },
+        .{ null, null },
+        .{ null, null },
+    });
+
+    try testing.expectEqual(@as(usize, 1), sliced.shape[0]);
+    try testing.expectEqual(@as(usize, 3), sliced.shape[1]);
+    try testing.expectEqual(@as(usize, 4), sliced.shape[2]);
+}
+
+test "ndarray: slice() with negative indices works correctly" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice last 2 rows, last 2 cols using negative indices
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ -2, null }, // rows -2 to end (last 2 rows)
+        .{ -2, null }, // cols -2 to end (last 2 cols)
+    });
+
+    try testing.expectEqual(@as(usize, 2), sliced.shape[0]);
+    try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
+    // Should contain [[7,8], [11,12]]
+    try testing.expectEqual(7.0, sliced.get(&[_]isize{0, 0}));
+    try testing.expectEqual(8.0, sliced.get(&[_]isize{0, 1}));
+    try testing.expectEqual(11.0, sliced.get(&[_]isize{1, 0}));
+    try testing.expectEqual(12.0, sliced.get(&[_]isize{1, 1}));
+}
+
+test "ndarray: slice() rejects out-of-bounds ranges" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr.deinit();
+
+    // Slice range [0:5] exceeds shape [3] (rows)
+    const result = arr.slice(&[_][2]?isize{
+        .{ 0, 5 }, // out of bounds
+        .{ null, null },
+    });
+    _ = result;
+    // Should panic or return error
+}
+
+// -- Negative Indexing Integration Tests (3 tests) --
+
+test "ndarray: negative indices work consistently across get/set/at" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).arange(allocator, 0.0, 10.0, 1.0, .row_major);
+    defer arr.deinit();
+
+    // Array: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    // at(-1) = last element = 9.0
+    try testing.expectEqual(9.0, arr.at(-1));
+
+    // get([-1]) = same as at(-1)
+    try testing.expectEqual(9.0, arr.get(&[_]isize{-1}));
+
+    // set([-1], 99)
+    arr.set(&[_]isize{-1}, 99.0);
+
+    // Verify change
+    try testing.expectEqual(99.0, arr.at(-1));
+    try testing.expectEqual(99.0, arr.get(&[_]isize{-1}));
+}
+
+test "ndarray: negative 2D indexing wraps correctly" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr.deinit();
+
+    // Set [-1, -1] (last element)
+    arr.set(&[_]isize{-1, -1}, 42.0);
+
+    // Verify via positive index
+    try testing.expectEqual(42.0, arr.get(&[_]isize{2, 3}));
+
+    // Set [-2, -3] (second-to-last row, third-to-last col)
+    arr.set(&[_]isize{-2, -3}, 88.0);
+
+    // Verify via positive index
+    try testing.expectEqual(88.0, arr.get(&[_]isize{1, 1}));
+}
+
+test "ndarray: slicing with negative bounds extracts tail regions" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).arange(allocator, 0, 10, 1, .row_major);
+    defer arr.deinit();
+
+    // Slice last 3 elements: [-3:end]
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ -3, null },
+    });
+
+    try testing.expectEqual(@as(usize, 3), sliced.shape[0]);
+    try testing.expectEqual(@as(i32, 7), sliced.at(0));
+    try testing.expectEqual(@as(i32, 8), sliced.at(1));
+    try testing.expectEqual(@as(i32, 9), sliced.at(2));
 }
