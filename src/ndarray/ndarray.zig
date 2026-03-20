@@ -441,6 +441,73 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return arr;
         }
 
+        /// Create an array from an owned (allocated) slice without copying
+        ///
+        /// Takes ownership of an existing allocated slice and uses it directly for array data.
+        /// This is a move-semantics variant of fromSlice() that avoids copying.
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator (used for deinit() to free the owned_data)
+        /// - shape: Array shape (ndim elements)
+        /// - owned_data: Slice of allocated data to take ownership of
+        /// - layout: Row-major or column-major
+        ///
+        /// Returns: Initialized NDArray with direct reference to owned_data (no copy)
+        ///
+        /// Errors:
+        /// - error.CapacityExceeded if owned_data.len != prod(shape)
+        /// - error.ZeroDimension if any dimension is 0
+        ///
+        /// Ownership: Caller must NOT free owned_data after this call — deinit() will handle it
+        ///
+        /// Time: O(ndim) strides calculation only (no data copy)
+        /// Space: O(ndim) for metadata (owns existing data)
+        pub fn fromOwnedSlice(allocator: Allocator, shape: []const usize, owned_data: []T, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+            // Validate shape length matches ndim
+            if (shape.len != ndim) {
+                return error.ZeroDimension;
+            }
+
+            // Check for zero dimensions
+            for (shape) |dim| {
+                if (dim == 0) {
+                    return error.ZeroDimension;
+                }
+            }
+
+            // Calculate total element count with overflow check
+            var total_elements: usize = 1;
+            for (shape) |dim| {
+                // Check for overflow
+                if (total_elements > std.math.maxInt(usize) / dim) {
+                    return error.CapacityExceeded;
+                }
+                total_elements *= dim;
+            }
+
+            // Verify owned_data size matches shape
+            if (owned_data.len != total_elements) {
+                return error.CapacityExceeded;
+            }
+
+            // Copy shape into fixed array
+            var shape_array: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                shape_array[i] = shape[i];
+            }
+
+            // Calculate strides
+            const strides = calculateStrides(shape_array, layout);
+
+            return Self{
+                .shape = shape_array,
+                .strides = strides,
+                .data = owned_data,
+                .allocator = allocator,
+                .layout = layout,
+            };
+        }
+
         /// Create an identity/unit matrix
         ///
         /// Parameters:
@@ -1525,6 +1592,248 @@ test "ndarray: linspace() creates 100 points in [0, 1]" {
     // Verify monotonic increase
     for (0..99) |i| {
         try testing.expect(arr.data[i] <= arr.data[i + 1]);
+    }
+}
+
+// -- fromOwnedSlice() Creation Function Tests (11 tests) --
+
+test "ndarray: fromOwnedSlice() basic 1D array [5] takes ownership" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 5);
+    defer {
+        // Only free if test fails; normally deinit() handles it
+        if (!std.debug.runtime_safety) {
+            // In release mode, trust the NDArray to free
+        }
+    }
+    for (0..5) |i| {
+        data[i] = @floatFromInt(i + 1);
+    }
+
+    var arr = try NDArray(f64, 1).fromOwnedSlice(allocator, &[_]usize{5}, data, .row_major);
+    defer arr.deinit();
+
+    // Verify shape and count
+    try testing.expectEqual(5, arr.count());
+    try testing.expectEqual(5, arr.shape[0]);
+
+    // Verify data ownership (should point to same memory, no copy)
+    try testing.expectEqual(@intFromPtr(data.ptr), @intFromPtr(arr.data.ptr));
+
+    // Verify data integrity
+    for (0..5) |i| {
+        try testing.expectEqual(@as(f64, @floatFromInt(i + 1)), arr.data[i]);
+    }
+}
+
+test "ndarray: fromOwnedSlice() 2D array row-major [3,4] layout verification" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 12);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..12) |i| {
+        data[i] = @floatFromInt(i + 1);
+    }
+
+    var arr = try NDArray(f64, 2).fromOwnedSlice(allocator, &[_]usize{ 3, 4 }, data, .row_major);
+    defer arr.deinit();
+
+    // Verify shape
+    try testing.expectEqual(3, arr.shape[0]);
+    try testing.expectEqual(4, arr.shape[1]);
+    try testing.expectEqual(12, arr.count());
+
+    // Verify row-major strides: [4, 1]
+    try testing.expectEqual(4, arr.strides[0]);
+    try testing.expectEqual(1, arr.strides[1]);
+
+    // Verify layout
+    try testing.expectEqual(Layout.row_major, arr.layout);
+
+    // Verify all data copied correctly (should still be original data)
+    for (0..12) |i| {
+        try testing.expectEqual(@as(f64, @floatFromInt(i + 1)), arr.data[i]);
+    }
+}
+
+test "ndarray: fromOwnedSlice() 2D array column-major [2,5] layout verification" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 10);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..10) |i| {
+        data[i] = @floatFromInt(i + 10);
+    }
+
+    var arr = try NDArray(f64, 2).fromOwnedSlice(allocator, &[_]usize{ 2, 5 }, data, .column_major);
+    defer arr.deinit();
+
+    // Verify shape
+    try testing.expectEqual(2, arr.shape[0]);
+    try testing.expectEqual(5, arr.shape[1]);
+
+    // Verify column-major strides: [1, 2]
+    try testing.expectEqual(1, arr.strides[0]);
+    try testing.expectEqual(2, arr.strides[1]);
+
+    // Verify layout
+    try testing.expectEqual(Layout.column_major, arr.layout);
+
+    // Verify data integrity
+    for (0..10) |i| {
+        try testing.expectEqual(@as(f64, @floatFromInt(i + 10)), arr.data[i]);
+    }
+}
+
+test "ndarray: fromOwnedSlice() 3D array [2,3,4] rank verification" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(i32, 24);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..24) |i| {
+        data[i] = @intCast(i + 100);
+    }
+
+    var arr = try NDArray(i32, 3).fromOwnedSlice(allocator, &[_]usize{ 2, 3, 4 }, data, .row_major);
+    defer arr.deinit();
+
+    // Verify shape
+    try testing.expectEqual(2, arr.shape[0]);
+    try testing.expectEqual(3, arr.shape[1]);
+    try testing.expectEqual(4, arr.shape[2]);
+    try testing.expectEqual(24, arr.count());
+
+    // Verify row-major strides: [12, 4, 1]
+    try testing.expectEqual(12, arr.strides[0]);
+    try testing.expectEqual(4, arr.strides[1]);
+    try testing.expectEqual(1, arr.strides[2]);
+
+    // Verify data integrity
+    for (0..24) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i + 100)), arr.data[i]);
+    }
+}
+
+test "ndarray: fromOwnedSlice() 3D array column-major [2,3,4] stride calculation" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 24);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..24) |i| {
+        data[i] = @floatFromInt(i);
+    }
+
+    var arr = try NDArray(f64, 3).fromOwnedSlice(allocator, &[_]usize{ 2, 3, 4 }, data, .column_major);
+    defer arr.deinit();
+
+    // Verify column-major strides: [1, 2, 6]
+    try testing.expectEqual(1, arr.strides[0]);
+    try testing.expectEqual(2, arr.strides[1]);
+    try testing.expectEqual(6, arr.strides[2]);
+}
+
+test "ndarray: fromOwnedSlice() size mismatch [3,4] shape with 10-element data returns error" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 10);
+    defer allocator.free(data); // Manually free since fromOwnedSlice will fail
+
+    // Try to create [3,4] (12 elements) from 10-element slice
+    const result = NDArray(f64, 2).fromOwnedSlice(allocator, &[_]usize{ 3, 4 }, data, .row_major);
+
+    try testing.expectError(error.CapacityExceeded, result);
+}
+
+test "ndarray: fromOwnedSlice() shape overflow check" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 100);
+    defer allocator.free(data); // Manually free since fromOwnedSlice will fail
+
+    // Try shape that would overflow: [max_usize, 2]
+    const huge_shape = &[_]usize{ std.math.maxInt(usize), 2 };
+    const result = NDArray(f64, 2).fromOwnedSlice(allocator, huge_shape, data, .row_major);
+
+    try testing.expectError(error.CapacityExceeded, result);
+}
+
+test "ndarray: fromOwnedSlice() zero dimension check [0,5] rejects" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 1);
+    defer allocator.free(data); // Manually free since fromOwnedSlice will fail
+
+    // Zero-dimension array should be rejected
+    const result = NDArray(f64, 2).fromOwnedSlice(allocator, &[_]usize{ 0, 5 }, data, .row_major);
+
+    try testing.expectError(error.ZeroDimension, result);
+}
+
+test "ndarray: fromOwnedSlice() mismatched shape length rejects" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(f64, 12);
+    defer allocator.free(data); // Manually free since fromOwnedSlice will fail
+
+    // Shape length 1 doesn't match ndim=2
+    const result = NDArray(f64, 2).fromOwnedSlice(allocator, &[_]usize{12}, data, .row_major);
+
+    try testing.expectError(error.ZeroDimension, result);
+}
+
+test "ndarray: fromOwnedSlice() data pointer equality (no copy)" {
+    const allocator = testing.allocator;
+    const owned_data = try allocator.alloc(f64, 8);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..8) |i| {
+        owned_data[i] = @floatFromInt(i * 10);
+    }
+
+    const original_ptr = @intFromPtr(owned_data.ptr);
+    var arr = try NDArray(f64, 1).fromOwnedSlice(allocator, &[_]usize{8}, owned_data, .row_major);
+    defer arr.deinit();
+
+    const array_ptr = @intFromPtr(arr.data.ptr);
+
+    // Pointers should be identical (no copy, direct ownership)
+    try testing.expectEqual(original_ptr, array_ptr);
+}
+
+test "ndarray: fromOwnedSlice() validate() passes invariant checks" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(i32, 20);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..20) |i| {
+        data[i] = @intCast(i);
+    }
+
+    var arr = try NDArray(i32, 2).fromOwnedSlice(allocator, &[_]usize{ 4, 5 }, data, .row_major);
+    defer arr.deinit();
+
+    // validate() should pass without assertion errors
+    try arr.validate();
+}
+
+test "ndarray: fromOwnedSlice() i32 element type 1D [10]" {
+    const allocator = testing.allocator;
+    const data = try allocator.alloc(i32, 10);
+    defer {
+        // Trust deinit to free
+    }
+    for (0..10) |i| {
+        data[i] = @intCast(i * 5);
+    }
+
+    var arr = try NDArray(i32, 1).fromOwnedSlice(allocator, &[_]usize{10}, data, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(10, arr.count());
+    for (0..10) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i * 5)), arr.data[i]);
     }
 }
 
