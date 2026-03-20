@@ -5,9 +5,9 @@
 - **Phase**: v2.0 Track (Phase 6) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.15.0 RELEASED ✅ — Iterator Adaptor Expansion (FlatMap, TakeWhile, SkipWhile, Partition adaptors)
+- **Latest Milestone**: v1.16.0 READY FOR RELEASE ✅ — NDArray Core (creation, indexing, iteration, fromOwnedSlice)
 - **Current Milestone**: v1.16.0 — NDArray Core (Phase 6: Scientific Computing)
-- **Next Priority**: Complete v1.16.0 NDArray Core (3/4 categories done: creation ✅, indexing ✅, iteration ✅)
+- **Next Priority**: Release v1.16.0 OR start v1.17.0 NDArray Operations (reshape, transform, element-wise ops)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -52,14 +52,32 @@
 - [x] **Creation functions** (9/9) ✅ — zeros, ones, full, empty, arange, linspace, fromSlice, eye, identity
 - [x] **Indexing & slicing** (4/4) ✅ — get, set, at, slice (negative indexing, non-owning views)
 - [x] **Iterator protocol** ✅ — NDArrayIterator with next() -> ?T, layout-aware traversal
-- [ ] **fromOwnedSlice** — Move semantics variant of fromSlice
+- [x] **fromOwnedSlice** ✅ — Move semantics variant of fromSlice (12 tests, commit 5500f7d)
 - [ ] **Reshape & Transform** — reshape, transpose, permute, flatten, ravel, squeeze, unsqueeze, contiguous
 - [ ] **Element-wise operations** — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, trig functions
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules
 - [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
-## Recent Progress (Session 2026-03-21 - Hour 01)
+## Recent Progress (Session 2026-03-21 - Hour 02)
+**FEATURE MODE → v1.16.0 NDARRAY CORE — MILESTONE COMPLETE:**
+- ✅ **NDArray.fromOwnedSlice() Implementation** (commit 5500f7d)
+  - **Function**: Move-semantics variant of fromSlice() — takes ownership without copying
+  - **TDD Cycle**: test-writer (11 Red-phase tests) → zig-developer (Green implementation)
+  - **Implementation**: Direct ownership transfer, validates shape/size, calculates strides
+  - **Error Handling**: ZeroDimension (invalid shape), CapacityExceeded (size mismatch/overflow)
+  - **Tests**: 12 comprehensive tests (ownership, layouts, error paths, memory safety)
+  - **Complexity**: Time O(ndim), Space O(ndim) — no data allocation/copy
+  - **Milestone**: v1.16.0 category 4/4 COMPLETE ✅
+- 📊 **v1.16.0 Status**: 4/4 categories COMPLETE (100%) — READY FOR RELEASE
+  - [x] Creation functions ✅ (9 functions, 44 tests)
+  - [x] Indexing & slicing ✅ (4 functions, 24 tests)
+  - [x] Iterator protocol ✅ (1 Iterator, 33 tests)
+  - [x] fromOwnedSlice ✅ (1 function, 12 tests)
+- 🎯 **Total**: 12 new tests this session, 1 commit
+- 📋 **Next Priority**: Release v1.16.0 OR start v1.17.0 NDArray Operations
+
+## Previous Progress (Session 2026-03-21 - Hour 01)
 **FEATURE MODE → v1.16.0 NDARRAY CORE — 3/4 CATEGORIES COMPLETE:**
 - 🐛 **Bug Fix**: Partition iterator double-consumption bug (commit 21ddde5)
   - **Root cause**: Iterator consumed twice (count pass + populate pass)
