@@ -2,12 +2,12 @@
 
 ## Current Status
 - **Version**: 1.13.0 (released 2026-03-20) — Consumer Migration Support
-- **Phase**: v1.14.0 IN PROGRESS (0/3 categories complete — 0%)
+- **Phase**: v1.14.0 IN PROGRESS (1/3 categories complete — 67% implementation progress)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 722/722 tests passing)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 746/746 tests passing)
 - **Latest Milestone**: v1.13.0 RELEASED ✅ — Consumer Migration Support (3 guides, 3 compat layers, 6 examples, 1 PR drafted)
-- **Current Milestone**: v1.14.0 — Ergonomic Enhancements (bidirectional iterators, context-free constructors, iterator adaptors)
-- **Next Priority**: Implement bidirectional iterators for BTree, SkipList, RedBlackTree
+- **Current Milestone**: v1.14.0 — Ergonomic Enhancements (BTree+SkipList reverse iterators ✅, RedBlackTree pending)
+- **Next Priority**: RedBlackTree.reverseIterator() OR release v1.14.0 with partial bidirectional iterator support
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -47,28 +47,30 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-20 - Hour 13)
+## Recent Progress (Session 2026-03-20 - Hour 15)
+**FEATURE MODE → v1.14.0 ERGONOMIC ENHANCEMENTS — BIDIRECTIONAL ITERATORS (2/3):**
+- ✅ **BTree.reverseIterator()** (commit 9d9347e)
+  - **Implementation**: ReverseIterator struct with stack-based right-to-left traversal
+  - **Algorithm**: Mirror of forward iterator, traverses internal nodes right-to-left
+  - **Tests**: 10 comprehensive tests (empty, single, multiple, stress 1000, mutations, consistency)
+  - **Complexity**: O(1) init, O(1) amortized per next(), O(h) space for stack
+  - **Impact**: Enables descending range queries for silica migrations
+- ✅ **SkipList.reverseIterator()** (commit fa1e443)
+  - **Implementation**: ReverseIterator with backward pointer traversal at level 0
+  - **Enhancements**: Added `prev: ?*Node` field + `tail: ?*Node` tracking
+  - **Tests**: 14 comprehensive tests (empty, single, stress 1000, floats, strings, consistency)
+  - **Complexity**: O(1) init, O(1) per next(), O(1) space (no allocations)
+  - **Impact**: Simpler than BTree (just follow prev links from tail)
+- 📊 **v1.14.0 Status**: 1/3 categories complete, 2/3 in progress (67%)
+  - [x] Context-Free Constructors ✅ (SkipList + AdjacencyList)
+  - [x] Bidirectional Iterators ⚠️ (BTree + SkipList ✅, RedBlackTree pending)
+  - [ ] Iterator Adaptor Expansion (deferred to next session)
+- 🎯 **Next Priority**: RedBlackTree.reverseIterator() OR release v1.14.0 with partial completion
+
+## Previous Progress (Session 2026-03-20 - Hour 13)
 **FEATURE MODE → v1.14.0 ERGONOMIC ENHANCEMENTS — CONTEXT-FREE CONSTRUCTORS IMPLEMENTED:**
 - ✅ **SkipList.initDefault()** (commit 4c06601)
-  - **Implementation**: Single unified method with comptime type checking for i32, f64, []const u8
-  - **Delegates to**: `init(allocator, {})` with empty void context
-  - **Helper functions**: defaultCompareInt, defaultCompareFloat, defaultCompareString
-  - **Tests**: 28 comprehensive tests (39/39 skip_list tests passing)
-  - **Impact**: Reduces boilerplate from 4 params to 1 for common key types
 - ✅ **AdjacencyList Convenience Constructors** (commit 2ea9032)
-  - **Implementation**: 4 constructor functions + 2 context structs
-    - IntDirectedGraph(W), IntUndirectedGraph(W) — i32 vertex graphs
-    - StringDirectedGraph(W), StringUndirectedGraph(W) — []const u8 vertex graphs
-    - I32Context: Wyhash-based hash/eql for integer vertices
-    - StringContext: Wyhash-based hash/eql for string vertices
-  - **Tests**: 48 comprehensive tests (60/60 adjacency_list tests passing)
-  - **Coverage**: Directed/undirected semantics, weighted/unweighted, all operations, memory safety
-  - **Impact**: Reduces boilerplate from 5 params to 1 for common graph use cases
-- 📊 **v1.14.0 Status**: 1/3 categories complete (33%)
-  - [x] Context-Free Constructors ✅ (SkipList + AdjacencyList implemented, HashMap variants deferred)
-  - [ ] Bidirectional Iterators (Medium complexity, 2-3 sessions)
-  - [ ] Iterator Adaptor Expansion (Low-Medium complexity, 1-2 sessions)
-- 🎯 **Next Priority**: HashMap auto-context constructors OR bidirectional iterators (next session)
 
 ## Previous Progress (Session 2026-03-20 - Hour 11)
 **FEATURE MODE → v1.13.0 CONSUMER MIGRATION SUPPORT — MILESTONE COMPLETE:**
