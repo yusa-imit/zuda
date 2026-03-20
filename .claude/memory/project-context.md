@@ -2,12 +2,12 @@
 
 ## Current Status
 - **Version**: 1.14.0 (released 2026-03-20) — Ergonomic Enhancements
-- **Phase**: Post-v1.14.0 (ready for next milestone)
+- **Phase**: v1.15.0 — Iterator Adaptor Expansion
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 746/746 tests passing)
 - **Latest Milestone**: v1.14.0 RELEASED ✅ — Ergonomic Enhancements (bidirectional iterators + context-free constructors, 112 new tests)
-- **Current Milestone**: None (< 2 active milestones rule)
-- **Next Priority**: Establish v1.15.0 milestone for iterator adaptor expansion
+- **Current Milestone**: v1.15.0 — Iterator Adaptor Expansion (FlatMap, TakeWhile, SkipWhile, Partition)
+- **Next Priority**: Implement FlatMap adaptor (first of 4 in v1.15.0)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework

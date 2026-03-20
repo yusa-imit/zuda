@@ -12,48 +12,43 @@
 
 ## Active Milestones
 
-### v1.14.0 — Ergonomic Enhancements
+### v1.15.0 — Iterator Adaptor Expansion
 
-Improve developer experience through bidirectional iterators, context-free constructors, and expanded iterator adaptors:
+Extend the iterator system with advanced adaptors for composable data transformation pipelines:
 
-**Context**: v1.13.0 API harmonization identified 3 nice-to-have enhancements that would reduce boilerplate and improve ergonomics for consumer migrations. Focus on implementing deferred API improvements from API_HARMONIZATION_v1.13.0.md.
+**Context**: v1.14.0 deferred iterator adaptor expansion. v1.3.0 established the foundation (Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect). Now expand with advanced adaptors for real-world data processing patterns.
 
-**Target**: Implement 3 categories of ergonomic improvements to streamline consumer adoption ✅
+**Target**: Implement 4+ advanced iterator adaptors that enable zero-allocation, composable data transformation pipelines ✅
 
 **Categories**:
-- [x] **Bidirectional Iterators** — Add reverse iteration to ordered containers ✅
-  - [x] BTree.reverseIterator() — O(1) init, O(1) amortized per step (commit 9d9347e) ✅
-  - [x] SkipList.reverseIterator() — O(1) init, O(1) per step (commit fa1e443) ✅
-  - [x] RedBlackTree.reverseIterator() — O(log n) init, O(1) amortized per step (commit dfe3289) ✅
-  - **Tests**: ✅ 36 comprehensive tests (10 BTree + 14 SkipList + 12 RedBlackTree), all passing
-  - **Impact**: ✅ Eliminates need for ArrayList collection + reverse in silica migrations
-  - **Estimated effort**: 2-3 sessions ✅ (ACHIEVED — 3 containers implemented)
-- [x] **Context-Free Constructors** — Convenience initializers for common default contexts ✅
-  - [x] SkipList.initDefault(allocator) — Uses std.math.order for i32/f64, string compare for []const u8 ✅
-    - Single unified method with comptime type checking (commit 4c06601)
-    - 28 comprehensive tests (39/39 skip_list tests passing)
-    - Compile error for unsupported key types
-  - [x] AdjacencyList convenience constructors ✅ (commit 2ea9032)
-    - IntDirectedGraph(W), IntUndirectedGraph(W) — i32 vertex graphs
-    - StringDirectedGraph(W), StringUndirectedGraph(W) — []const u8 vertex graphs
-    - 48 comprehensive tests (60/60 adjacency_list tests passing)
-    - I32Context and StringContext with Wyhash-based hash/eql
-  - [ ] HashMap variants with auto-hash context (deferred to next session)
-  - **Tests**: ✅ 76 new tests (28 SkipList + 48 AdjacencyList), all passing
-  - **Impact**: ✅ Reduces boilerplate from 4-5 params → 1 param for common use cases
-  - **Estimated effort**: 1 session ✅ (ACHIEVED — 2 containers implemented)
-- [ ] **Iterator Adaptor Expansion** — Additional adaptors beyond v1.3.0 (Map, Filter, Chain, etc.)
-  - [ ] FlatMap(T, U) — Map then flatten nested iterables
-  - [ ] TakeWhile(T, predicate) — Take until predicate fails
-  - [ ] SkipWhile(T, predicate) — Skip until predicate fails
-  - [ ] Partition(T, predicate) — Split into two iterators (true/false)
-  - **Tests**: 15+ tests per adaptor (chaining, edge cases, zero-cost abstraction)
-  - **Impact**: Replaces manual iteration loops with composable pipelines
-  - **Estimated effort**: 1-2 sessions (Low-Medium complexity — extends v1.3.0 pattern)
+- [ ] **FlatMap Adaptor** — Map then flatten nested iterables
+  - [ ] `FlatMap(T, U, InnerIter, mapFn)` — Transform and flatten in single pass
+  - [ ] Lazy evaluation (no intermediate allocation)
+  - [ ] Tests: 15+ tests (nested arrays, optional unwrapping, error propagation, chaining)
+  - **Use case**: `items.flatMap(parseLines).collect()` — parse file lines in single pass
+- [ ] **TakeWhile Adaptor** — Take until predicate fails
+  - [ ] `TakeWhile(T, BaseIter, predicateFn)` — Stop on first false predicate
+  - [ ] Preserves base iterator state (can resume after TakeWhile ends)
+  - [ ] Tests: 15+ tests (empty, all match, none match, partial match, chaining)
+  - **Use case**: `stream.takeWhile(lessThan100).sum()` — sum until threshold
+- [ ] **SkipWhile Adaptor** — Skip until predicate fails
+  - [ ] `SkipWhile(T, BaseIter, predicateFn)` — Drop elements until predicate false, then yield rest
+  - [ ] Complements TakeWhile (mirror semantics)
+  - [ ] Tests: 15+ tests (empty, all skip, none skip, partial skip, chaining with TakeWhile)
+  - **Use case**: `log.skipWhile(isOld).collect()` — skip old entries, keep recent
+- [ ] **Partition Adaptor** — Split into two iterators based on predicate
+  - [ ] `Partition(T, BaseIter, predicateFn)` → `{true: TrueIter, false: FalseIter}`
+  - [ ] Lazy buffering (minimize memory allocation)
+  - [ ] Tests: 15+ tests (empty, all true, all false, mixed, chaining both sides)
+  - **Use case**: `{even, odd} = nums.partition(isEven)` — split evens and odds
+- [ ] **Documentation & Examples** — Update iterator guide with new adaptors
+  - [ ] Add FlatMap/TakeWhile/SkipWhile/Partition sections to docs/GUIDE.md
+  - [ ] Real-world examples: log processing, data ETL, sensor filtering
+  - [ ] Benchmark zero-cost abstraction vs manual loops
 
-**Success Criteria**: All 3 categories complete, demonstrated in updated migration examples
+**Success Criteria**: All 4 adaptors complete with 60+ tests total, docs updated, zero-cost abstraction verified
 
-**Status**: ✅ **COMPLETE** (2026-03-20) — Released with 2/3 categories (67%), iterator adaptor expansion deferred to v1.15.0
+**Estimated Effort**: 1-2 sessions (extends v1.3.0 pattern, low-medium complexity)
 
 ### v1.13.0 — Consumer Migration Support ✅ COMPLETE
 
@@ -507,6 +502,7 @@ Validate zuda in production through consumer project adoption:
 | Phase 5 | Advanced & Polish | v1.0.0 | 2026-03-14 | LockFreeQueue, LockFreeStack, ConcurrentSkipList, ConcurrentHashMap, PersistentArray, PersistentRBTree, PersistentHashMap (HAMT), DisjointSet, VanEmdeBoasTree, DancingLinks, Rope, BK-Tree, C API, documentation, 213 public exports |
 | Post-v1.0.0 | Performance Optimization | v1.1.0 | 2026-03-15 | Fixed FibonacciHeap deinit & insert API, TimSort allocation bug, BloomFilter benchmark; optimized Aho-Corasick build & search; analyzed RedBlackTree (near-optimal) |
 | Post-v1.1.0 | Iterator System & Completeness | v1.3.0 | 2026-03-15 | 8 iterator adaptors (Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect), A* comprehensive tests, PersistentArray.pop(), comprehensive iterator pattern guide |
+| Post-v1.3.0 | Ergonomic Enhancements | v1.14.0 | 2026-03-20 | BTree/SkipList/RedBlackTree reverseIterator() (36 tests), SkipList.initDefault() (28 tests), AdjacencyList convenience constructors (48 tests), 112 new tests total |
 
 ### Post-v1.0.0 Activity
 
