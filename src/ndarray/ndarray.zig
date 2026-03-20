@@ -735,6 +735,41 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
         }
 
+        /// Flatten multi-dimensional array to 1D with copy semantics (always allocates)
+        ///
+        /// Unlike flatten() which may return a view for contiguous arrays,
+        /// ravel() always allocates a new independent array regardless of
+        /// contiguity. This is useful when ownership/independence is critical.
+        ///
+        /// Parameters: none
+        ///
+        /// Returns: New 1D NDArray with shape [total_elements], independent copy
+        ///
+        /// Errors:
+        /// - error.OutOfMemory if allocation fails
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for new allocation
+        pub fn ravel(self: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            // Calculate total number of elements
+            const total_elements = self.count();
+
+            // Always allocate new buffer (key difference from flatten)
+            const new_data = try self.allocator.alloc(T, total_elements);
+            errdefer self.allocator.free(new_data);
+
+            // Copy all elements using iterator (respects source layout)
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                new_data[idx] = val;
+                idx += 1;
+            }
+
+            // Create 1D array from owned slice, preserving layout
+            return NDArray(T, 1).fromOwnedSlice(self.allocator, &[_]usize{total_elements}, new_data, self.layout);
+        }
+
         // -- Indexing and Slicing Functions --
 
         /// Get element at multi-dimensional indices with negative indexing support
@@ -3985,4 +4020,258 @@ test "ndarray: flatten after ones() creation preserves ones in 1D" {
     for (0..12) |i| {
         try testing.expectEqual(1, flattened.at(i));
     }
+}
+
+// ============================================================================
+// TESTS FOR ravel() — Always-Copy Flatten Semantics
+// ============================================================================
+
+test "ndarray: ravel 2D row-major preserves element sequence" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values 0..11 in row-major order
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @intCast(i * 4 + j));
+        }
+    }
+
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // Verify shape is [12]
+    try testing.expectEqual(1, raveled.shape.len);
+    try testing.expectEqual(12, raveled.count());
+
+    // Verify element sequence matches row-major order
+    for (0..12) |idx| {
+        const expected: i32 = @intCast(idx);
+        try testing.expectEqual(expected, raveled.at(@intCast(idx)));
+    }
+}
+
+test "ndarray: ravel 3D row-major preserves all elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    var idx: usize = 0;
+    while (idx < arr.count()) : (idx += 1) {
+        arr.data[idx] = @as(f64, @floatFromInt(idx)) + 1.0;
+    }
+
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // Verify total element count: 2*3*4 = 24
+    try testing.expectEqual(24, raveled.count());
+
+    // Verify all values copied correctly
+    for (0..24) |i| {
+        const expected: f64 = @as(f64, @floatFromInt(i)) + 1.0;
+        try testing.expectEqual(expected, raveled.at(@intCast(i)));
+    }
+}
+
+test "ndarray: ravel 1D array still allocates copy (not view)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{10}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..10) |i| {
+        arr.data[i] = @intCast(i + 100);
+    }
+
+    const original_ptr = arr.data.ptr;
+
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // Critical: ravel must ALWAYS allocate new data, even for 1D arrays
+    // Different pointers = separate allocations
+    try testing.expect(raveled.data.ptr != original_ptr);
+
+    // Verify values still correct
+    for (0..10) |i| {
+        const expected: i32 = @intCast(i + 100);
+        try testing.expectEqual(expected, raveled.at(@intCast(i)));
+    }
+}
+
+test "ndarray: ravel always allocates new data pointer (never shares)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const original_ptr = arr.data.ptr;
+
+    // Even for contiguous row-major array, ravel() must copy
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // This is the key difference from flatten():
+    // flatten() may return a view (same pointer if contiguous)
+    // ravel() ALWAYS returns a new allocation (different pointer)
+    try testing.expect(raveled.data.ptr != original_ptr);
+
+    // Verify owned data is modifiable independently
+    raveled.data[0] = 999;
+    try testing.expectEqual(0, arr.data[0]); // Original unchanged
+    try testing.expectEqual(999, raveled.data[0]); // Copy modified
+}
+
+test "ndarray: ravel non-contiguous sliced array copies all elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 4, 5 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..20) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    // Create a non-contiguous slice [1:3, 1:4] (2x3 view)
+    const sliced = arr.slice(&[_][2]?isize{
+        &[_]?isize{ 1, 3 },
+        &[_]?isize{ 1, 4 },
+    });
+
+    // Sliced array is non-contiguous
+    try testing.expectEqual(2, sliced.shape[0]);
+    try testing.expectEqual(3, sliced.shape[1]);
+
+    const raveled = try sliced.ravel();
+    defer raveled.deinit();
+
+    // Verify ravel captured all elements from slice
+    try testing.expectEqual(6, raveled.count());
+
+    // Expected values from slice [1:3, 1:4]:
+    // Row 1, cols 1-3: 6,7,8
+    // Row 2, cols 1-3: 11,12,13
+    const expected = [_]i32{ 6, 7, 8, 11, 12, 13 };
+    for (0..6) |i| {
+        try testing.expectEqual(expected[i], raveled.at(@intCast(i)));
+    }
+}
+
+test "ndarray: ravel column-major preserves layout order" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .column_major);
+    defer arr.deinit();
+
+    // Fill in column-major order: (0,0), (1,0), (0,1), (1,1), (0,2), (1,2)
+    var value: i32 = 0;
+    for (0..3) |j| {
+        for (0..2) |i| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, value);
+            value += 1;
+        }
+    }
+
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // Verify layout is preserved in result
+    try testing.expectEqual(Layout.column_major, raveled.layout);
+
+    // Verify element order matches column-major traversal
+    for (0..6) |i| {
+        try testing.expectEqual(i, raveled.at(@intCast(i)));
+    }
+}
+
+test "ndarray: ravel empty-dimension array [0,5] error handling" {
+    const allocator = testing.allocator;
+
+    // Note: NDArray disallows zero dimensions at init time
+    // This test verifies the design constraint is maintained
+    const result = NDArray(i32, 2).init(allocator, &[_]usize{ 0, 5 }, .row_major);
+    try testing.expectError(error.ZeroDimension, result);
+}
+
+test "ndarray: ravel large array stress test (10k+ elements)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 10, 20, 50 }, .row_major);
+    defer arr.deinit();
+
+    // Total: 10,000 elements
+    try testing.expectEqual(10000, arr.count());
+
+    // Fill with pattern: element value = flat index % 256
+    for (0..10000) |i| {
+        arr.data[i] = @intCast((i % 256));
+    }
+
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // Verify all elements copied correctly
+    try testing.expectEqual(10000, raveled.count());
+    for (0..10000) |i| {
+        const expected: i32 = @intCast(i % 256);
+        try testing.expectEqual(expected, raveled.at(@intCast(i)));
+    }
+}
+
+test "ndarray: ravel no memory leaks on repeated calls" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    // Repeated ravel calls must not leak memory
+    for (0..5) |_| {
+        const raveled = try arr.ravel();
+        defer raveled.deinit();
+        try testing.expectEqual(30, raveled.count());
+    }
+    // testing.allocator will detect any leaks
+}
+
+test "ndarray: ravel preserves layout in result metadata" {
+    const allocator = testing.allocator;
+
+    // Test row-major preservation
+    var arr_rm = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr_rm.deinit();
+
+    const raveled_rm = try arr_rm.ravel();
+    defer raveled_rm.deinit();
+
+    try testing.expectEqual(Layout.row_major, raveled_rm.layout);
+
+    // Test column-major preservation
+    var arr_cm = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .column_major);
+    defer arr_cm.deinit();
+
+    const raveled_cm = try arr_cm.ravel();
+    defer raveled_cm.deinit();
+
+    try testing.expectEqual(Layout.column_major, raveled_cm.layout);
+}
+
+test "ndarray: ravel result is proper 1D array with shape [n]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const raveled = try arr.ravel();
+    defer raveled.deinit();
+
+    // Result must be 1D with correct shape
+    try testing.expectEqual(24, raveled.count());
+    try testing.expectEqual(24, raveled.shape[0]);
+    try testing.expectEqual(1, raveled.strides[0]);
+
+    // Iterator should work correctly on 1D result
+    var iter = raveled.iterator();
+    var count: usize = 0;
+    while (iter.next()) |_| {
+        count += 1;
+    }
+    try testing.expectEqual(24, count);
 }
