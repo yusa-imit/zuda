@@ -61,12 +61,14 @@ pub fn SkipList(
             key: K,
             value: V,
             forward: [max_level]?*Node,
+            prev: ?*Node, // Backward pointer for reverse iteration (level 0 only)
 
             fn init(key: K, value: V) Node {
                 return .{
                     .key = key,
                     .value = value,
                     .forward = [_]?*Node{null} ** max_level,
+                    .prev = null,
                 };
             }
         };
@@ -113,12 +115,32 @@ pub fn SkipList(
             }
         };
 
+        /// Reverse iterator for traversing the skip list in descending order
+        pub const ReverseIterator = struct {
+            current: ?*Node,
+
+            /// Get the next entry in descending order
+            /// Time: O(1)
+            pub fn next(self: *ReverseIterator) ?Entry {
+                const node = self.current orelse return null;
+                self.current = node.prev;
+                return Entry{ .key = node.key, .value = node.value };
+            }
+
+            /// Clean up the iterator (no-op as no allocations are needed)
+            /// Time: O(1)
+            pub fn deinit(self: *ReverseIterator) void {
+                _ = self;
+            }
+        };
+
         allocator: Allocator,
         header: *Node,
         level: usize,
         len: usize,
         ctx: Context,
         prng: std.Random.DefaultPrng,
+        tail: ?*Node, // Pointer to the last node for reverse iteration
 
         // -- Lifecycle --
 
@@ -139,6 +161,7 @@ pub fn SkipList(
                 .len = 0,
                 .ctx = ctx,
                 .prng = prng,
+                .tail = null,
             };
         }
 
@@ -157,6 +180,7 @@ pub fn SkipList(
                 .len = 0,
                 .ctx = ctx,
                 .prng = prng,
+                .tail = null,
             };
         }
 
@@ -275,6 +299,21 @@ pub fn SkipList(
                 update[i].?.forward[i] = new_node;
             }
 
+            // Update backward pointer (level 0 only)
+            // Only link to actual data nodes, not the header
+            if (update[0] == self.header) {
+                new_node.prev = null;
+            } else {
+                new_node.prev = update[0];
+            }
+
+            if (new_node.forward[0]) |next| {
+                next.prev = new_node;
+            } else {
+                // This is the new tail
+                self.tail = new_node;
+            }
+
             self.len += 1;
             return null;
         }
@@ -314,6 +353,14 @@ pub fn SkipList(
                 update[i].?.forward[i] = target.forward[i];
             }
 
+            // Update backward pointers and tail
+            if (target.forward[0]) |next| {
+                next.prev = target.prev;
+            } else {
+                // target was the tail, update tail to prev
+                self.tail = target.prev;
+            }
+
             const entry = Entry{ .key = target.key, .value = target.value };
             self.allocator.destroy(target);
 
@@ -339,6 +386,7 @@ pub fn SkipList(
             self.header.forward = [_]?*Node{null} ** max_level;
             self.level = 0;
             self.len = 0;
+            self.tail = null;
         }
 
         // -- Lookup --
@@ -428,6 +476,12 @@ pub fn SkipList(
         /// Time: O(1) | Space: O(1)
         pub fn iterator(self: *const Self) Iterator {
             return Iterator{ .current = self.header.forward[0] };
+        }
+
+        /// Get a reverse iterator for traversing in descending order
+        /// Time: O(1) | Space: O(1)
+        pub fn reverseIterator(self: *const Self) ReverseIterator {
+            return ReverseIterator{ .current = self.tail };
         }
 
         /// Get a range iterator from start_key to end_key (inclusive)
@@ -1293,4 +1347,342 @@ test "skip list: initDefault range iterator with strings" {
         count += 1;
     }
     try testing.expect(count > 0);
+}
+
+// -- Tests for reverseIterator() --
+
+test "skip list: reverse iterator over empty list" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    try testing.expect(iter.next() == null);
+}
+
+test "skip list: reverse iterator with single element" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    _ = try list.insert(42, 420);
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    const entry = iter.next().?;
+    try testing.expectEqual(42, entry.key);
+    try testing.expectEqual(420, entry.value);
+    try testing.expect(iter.next() == null);
+}
+
+test "skip list: reverse iterator yields entries in descending order" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    const keys = [_]i32{ 1, 2, 3, 4, 5 };
+    for (keys) |k| {
+        _ = try list.insert(k, k * 10);
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    // Should yield in reverse order: 5, 4, 3, 2, 1
+    var prev: i32 = std.math.maxInt(i32);
+    var count: usize = 0;
+    while (iter.next()) |entry| : (count += 1) {
+        try testing.expect(entry.key < prev);
+        try testing.expectEqual(entry.key * 10, entry.value);
+        prev = entry.key;
+    }
+    try testing.expectEqual(5, count);
+}
+
+test "skip list: reverse iterator with unordered insertions" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    const keys = [_]i32{ 5, 3, 7, 1, 9, 2, 8, 4, 6 };
+    for (keys) |k| {
+        _ = try list.insert(k, k * 100);
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    // Should yield in descending order regardless of insertion order
+    var prev: i32 = std.math.maxInt(i32);
+    var count: usize = 0;
+    while (iter.next()) |entry| : (count += 1) {
+        try testing.expect(entry.key < prev);
+        try testing.expectEqual(entry.key * 100, entry.value);
+        prev = entry.key;
+    }
+    try testing.expectEqual(9, count);
+}
+
+test "skip list: reverse iterator stress test with 1000 elements" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    // Insert 1000 unique elements
+    for (0..1000) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 2));
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    var prev: i32 = std.math.maxInt(i32);
+    var count: usize = 0;
+    while (iter.next()) |entry| : (count += 1) {
+        try testing.expect(entry.key < prev);
+        try testing.expectEqual(entry.key * 2, entry.value);
+        prev = entry.key;
+    }
+    try testing.expectEqual(1000, count);
+}
+
+test "skip list: reverse iterator after removals" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    // Insert 0..99
+    for (0..100) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 10));
+    }
+
+    // Remove even numbers
+    for (0..50) |i| {
+        _ = list.remove(@intCast(i * 2));
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    var prev: i32 = std.math.maxInt(i32);
+    var count: usize = 0;
+    while (iter.next()) |entry| : (count += 1) {
+        try testing.expect(entry.key < prev);
+        try testing.expect(@rem(entry.key, 2) == 1); // Only odd numbers remain
+        prev = entry.key;
+    }
+    try testing.expectEqual(50, count);
+}
+
+test "skip list: reverse iterator consistency with forward iterator" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    const keys = [_]i32{ 10, 5, 15, 3, 7, 12, 18, 1, 20, 8 };
+    for (keys) |k| {
+        _ = try list.insert(k, k * 10);
+    }
+
+    // Collect forward iteration results
+    var forward_keys = try testing.allocator.alloc(i32, list.count());
+    defer testing.allocator.free(forward_keys);
+    {
+        var iter = list.iterator();
+        var i: usize = 0;
+        while (iter.next()) |entry| : (i += 1) {
+            forward_keys[i] = entry.key;
+        }
+    }
+
+    // Collect reverse iteration results
+    var reverse_keys = try testing.allocator.alloc(i32, list.count());
+    defer testing.allocator.free(reverse_keys);
+    {
+        var iter = list.reverseIterator();
+        defer iter.deinit();
+        var i: usize = 0;
+        while (iter.next()) |entry| : (i += 1) {
+            reverse_keys[i] = entry.key;
+        }
+    }
+
+    // Verify reverse is forward in reverse order
+    try testing.expectEqual(forward_keys.len, reverse_keys.len);
+    for (0..forward_keys.len) |i| {
+        try testing.expectEqual(forward_keys[forward_keys.len - 1 - i], reverse_keys[i]);
+    }
+}
+
+test "skip list: reverse iterator multiple iterations" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    for (0..10) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 10));
+    }
+
+    // First iteration
+    var count1: usize = 0;
+    {
+        var iter = list.reverseIterator();
+        defer iter.deinit();
+        while (iter.next()) |_| : (count1 += 1) {}
+    }
+
+    // Second iteration should also work
+    var count2: usize = 0;
+    {
+        var iter = list.reverseIterator();
+        defer iter.deinit();
+        while (iter.next()) |_| : (count2 += 1) {}
+    }
+
+    try testing.expectEqual(count1, count2);
+    try testing.expectEqual(10, count1);
+}
+
+test "skip list: reverse iterator partial iteration with deinit" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    for (0..50) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 10));
+    }
+
+    // Partial iteration then deinit - verifies no memory leaks
+    {
+        var iter = list.reverseIterator();
+        defer iter.deinit();
+        var count: usize = 0;
+        while (iter.next()) |_| : (count += 1) {
+            if (count == 10) break;
+        }
+    }
+    // testing.allocator will detect leaks
+}
+
+test "skip list: reverse iterator values are correct" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    const test_data = [_]struct { key: i32, value: i32 }{
+        .{ .key = 10, .value = 100 },
+        .{ .key = 20, .value = 200 },
+        .{ .key = 5, .value = 50 },
+        .{ .key = 30, .value = 300 },
+        .{ .key = 15, .value = 150 },
+    };
+
+    for (test_data) |item| {
+        _ = try list.insert(item.key, item.value);
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    // Verify values correspond to keys (in reverse order)
+    const expected_keys = [_]i32{ 30, 20, 15, 10, 5 };
+    const expected_values = [_]i32{ 300, 200, 150, 100, 50 };
+
+    for (expected_keys, expected_values) |exp_key, exp_val| {
+        const entry = iter.next().?;
+        try testing.expectEqual(exp_key, entry.key);
+        try testing.expectEqual(exp_val, entry.value);
+    }
+    try testing.expect(iter.next() == null);
+}
+
+test "skip list: reverse iterator with duplicate removals and insertions" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    // Insert some values
+    _ = try list.insert(1, 10);
+    _ = try list.insert(5, 50);
+    _ = try list.insert(3, 30);
+    _ = try list.insert(7, 70);
+
+    // Remove middle element
+    _ = list.remove(5);
+
+    // Re-insert at different value
+    _ = try list.insert(5, 500);
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    // Should yield 7, 5, 3, 1 in reverse order
+    var entries = try testing.allocator.alloc(SkipList(i32, i32, IntContext, IntContext.compare).Entry, 4);
+    defer testing.allocator.free(entries);
+
+    var i: usize = 0;
+    while (iter.next()) |entry| : (i += 1) {
+        entries[i] = entry;
+    }
+
+    try testing.expectEqual(4, i);
+    try testing.expectEqual(7, entries[0].key);
+    try testing.expectEqual(70, entries[0].value);
+    try testing.expectEqual(5, entries[1].key);
+    try testing.expectEqual(500, entries[1].value); // Updated value
+    try testing.expectEqual(3, entries[2].key);
+    try testing.expectEqual(30, entries[2].value);
+    try testing.expectEqual(1, entries[3].key);
+    try testing.expectEqual(10, entries[3].value);
+}
+
+test "skip list: reverse iterator with f64 keys" {
+    var list = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const values = [_]f64{ 0.5, 1.5, 2.5, 0.1, 3.2, 1.1 };
+    for (values) |v| {
+        _ = try list.insert(v, v * 10.0);
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    var prev: f64 = std.math.floatMax(f64);
+    var count: usize = 0;
+    while (iter.next()) |entry| : (count += 1) {
+        try testing.expect(entry.key < prev);
+        try testing.expectEqual(entry.key * 10.0, entry.value);
+        prev = entry.key;
+    }
+    try testing.expectEqual(6, count);
+}
+
+test "skip list: reverse iterator with string keys" {
+    var list = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
+    defer list.deinit();
+
+    const words = [_][]const u8{ "zebra", "apple", "monkey", "cat", "dog", "banana" };
+    for (words, 0..) |w, i| {
+        _ = try list.insert(w, @intCast(i));
+    }
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    var prev: []const u8 = "zzz";
+    var count: usize = 0;
+    while (iter.next()) |entry| : (count += 1) {
+        try testing.expect(std.mem.order(u8, entry.key, prev) == .lt);
+        prev = entry.key;
+    }
+    try testing.expectEqual(6, count);
+}
+
+test "skip list: reverse iterator empty after clear" {
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    defer list.deinit();
+
+    for (0..10) |i| {
+        _ = try list.insert(@intCast(i), @intCast(i * 10));
+    }
+
+    list.clearRetainingCapacity();
+
+    var iter = list.reverseIterator();
+    defer iter.deinit();
+
+    try testing.expect(iter.next() == null);
 }
