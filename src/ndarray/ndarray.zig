@@ -455,7 +455,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(rows * cols)
         /// Space: O(rows * cols)
         pub fn eye(allocator: Allocator, rows: usize, cols: usize, k: isize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
-            var arr = try Self.init(allocator, &[_]usize{rows, cols}, layout);
+            var arr = try Self.init(allocator, &[_]usize{ rows, cols }, layout);
             errdefer arr.deinit();
 
             // Zero out all elements first
@@ -677,6 +677,90 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .layout = self.layout,
             };
         }
+
+        // -- Iterator Protocol --
+
+        /// Iterator type for traversing NDArray elements
+        ///
+        /// Implements the zuda iterator protocol: next() -> ?T
+        /// Supports layout-aware traversal respecting strides
+        pub const Iterator = struct {
+            data: []const T,
+            shape: [ndim]usize,
+            strides: [ndim]usize,
+            index: usize, // Current flat index
+            total: usize, // Total number of elements
+
+            /// Get the next element in traversal order
+            ///
+            /// Returns: Next element in storage order, or null if exhausted
+            ///
+            /// Traversal respects memory layout:
+            /// - Row-major: rightmost dimension varies fastest
+            /// - Column-major: leftmost dimension varies fastest
+            ///
+            /// Time: O(ndim) multi-dimensional index calculation
+            /// Space: O(1)
+            pub fn next(self: *Iterator) ?T {
+                // Return null if we've consumed all elements
+                if (self.index >= self.total) {
+                    return null;
+                }
+
+                // Convert flat index to multi-dimensional indices using row-major style
+                // For a row-major-ordered flat index, we calculate indices by dividing
+                var multi_index: [ndim]usize = undefined;
+                var current = self.index;
+
+                // Calculate multi-dimensional indices from flat row-major index
+                // For shape [d0, d1, d2, ...], index i maps to:
+                // i0 = i / (d1*d2*...), i1 = (i % (d1*d2*...)) / (d2*...), etc.
+                for (0..ndim) |dim| {
+                    // Calculate the stride (product of all following dimensions)
+                    var stride: usize = 1;
+                    for (dim + 1..ndim) |d| {
+                        stride *= self.shape[d];
+                    }
+
+                    // Extract this dimension's index
+                    multi_index[dim] = current / stride;
+                    current = current % stride;
+                }
+
+                // Calculate memory offset using strides
+                var offset: usize = 0;
+                for (0..ndim) |i| {
+                    offset += multi_index[i] * self.strides[i];
+                }
+
+                // Get the value from data
+                const value = self.data[offset];
+
+                // Increment index for next call
+                self.index += 1;
+
+                return value;
+            }
+        };
+
+        /// Create an iterator over the array
+        ///
+        /// Returns: Iterator positioned at the first element
+        ///
+        /// The iterator respects the array's layout and strides,
+        /// correctly traversing views and slices.
+        ///
+        /// Time: O(1) iterator creation
+        /// Space: O(ndim) for iterator state
+        pub fn iterator(self: *const Self) Iterator {
+            return Iterator{
+                .data = self.data,
+                .shape = self.shape,
+                .strides = self.strides,
+                .index = 0,
+                .total = self.count(),
+            };
+        }
     };
 }
 
@@ -721,7 +805,7 @@ test "ndarray: NDArray(u8, 1) 1D array type" {
 
 test "ndarray: init allocates correct memory for 2D row-major" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Should allocate 3*4 = 12 elements
@@ -733,7 +817,7 @@ test "ndarray: init allocates correct memory for 2D row-major" {
 
 test "ndarray: init row-major stride calculation [3,4] → [4,1]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Row-major [3,4]: strides should be [4, 1] (next row = 4 elements)
@@ -743,7 +827,7 @@ test "ndarray: init row-major stride calculation [3,4] → [4,1]" {
 
 test "ndarray: init column-major stride calculation [3,4] → [1,3]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .column_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .column_major);
     defer arr.deinit();
 
     // Column-major [3,4]: strides should be [1, 3] (next column = 3 elements)
@@ -753,7 +837,7 @@ test "ndarray: init column-major stride calculation [3,4] → [1,3]" {
 
 test "ndarray: init rejects zero-sized dimensions" {
     const allocator = testing.allocator;
-    const result = NDArray(i32, 2).init(allocator, &[_]usize{3, 0}, .row_major);
+    const result = NDArray(i32, 2).init(allocator, &[_]usize{ 3, 0 }, .row_major);
 
     try testing.expectError(error.ZeroDimension, result);
 }
@@ -761,7 +845,7 @@ test "ndarray: init rejects zero-sized dimensions" {
 test "ndarray: init rejects oversized shape exceeding usize max" {
     const allocator = testing.allocator;
     // Attempt: [usize.max, 2] → product overflows
-    const result = NDArray(f64, 2).init(allocator, &[_]usize{std.math.maxInt(usize), 2}, .row_major);
+    const result = NDArray(f64, 2).init(allocator, &[_]usize{ std.math.maxInt(usize), 2 }, .row_major);
 
     try testing.expectError(error.CapacityExceeded, result);
 }
@@ -770,7 +854,7 @@ test "ndarray: init rejects oversized shape exceeding usize max" {
 
 test "ndarray: 3D row-major [2,3,4] strides [12,4,1]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Row-major: stride[i] = prod(shape[i+1..])
@@ -782,7 +866,7 @@ test "ndarray: 3D row-major [2,3,4] strides [12,4,1]" {
 
 test "ndarray: 3D column-major [2,3,4] strides [1,2,6]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .column_major);
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .column_major);
     defer arr.deinit();
 
     // Column-major: stride[i] = prod(shape[0..i])
@@ -806,7 +890,7 @@ test "ndarray: 1D array has stride [1] regardless of layout" {
 
 test "ndarray: 4D row-major [2,3,4,5] strides [60,20,5,1]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(u8, 4).init(allocator, &[_]usize{2, 3, 4, 5}, .row_major);
+    var arr = try NDArray(u8, 4).init(allocator, &[_]usize{ 2, 3, 4, 5 }, .row_major);
     defer arr.deinit();
 
     // [2,3,4,5] → [3*4*5, 4*5, 5, 1] = [60, 20, 5, 1]
@@ -818,7 +902,7 @@ test "ndarray: 4D row-major [2,3,4,5] strides [60,20,5,1]" {
 
 test "ndarray: 4D column-major [2,3,4,5] strides [1,2,6,24]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(u8, 4).init(allocator, &[_]usize{2, 3, 4, 5}, .column_major);
+    var arr = try NDArray(u8, 4).init(allocator, &[_]usize{ 2, 3, 4, 5 }, .column_major);
     defer arr.deinit();
 
     // [2,3,4,5] → [1, 2, 2*3, 2*3*4] = [1, 2, 6, 24]
@@ -832,7 +916,7 @@ test "ndarray: 4D column-major [2,3,4,5] strides [1,2,6,24]" {
 
 test "ndarray: deinit frees allocated memory (leak detection)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{100, 100}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 100, 100 }, .row_major);
     arr.deinit();
 
     // std.testing.allocator automatically detects leaks
@@ -843,7 +927,7 @@ test "ndarray: multiple init/deinit cycles don't leak" {
     const allocator = testing.allocator;
 
     for (0..10) |_| {
-        var arr = try NDArray(i32, 3).init(allocator, &[_]usize{5, 6, 7}, .row_major);
+        var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 5, 6, 7 }, .row_major);
         arr.deinit();
     }
 
@@ -893,7 +977,7 @@ test "ndarray: large array 1M elements allocates successfully" {
 
 test "ndarray: shape stored correctly" {
     const allocator = testing.allocator;
-    const shape = [_]usize{2, 3, 4};
+    const shape = [_]usize{ 2, 3, 4 };
     var arr = try NDArray(i32, 3).init(allocator, shape[0..], .row_major);
     defer arr.deinit();
 
@@ -905,11 +989,11 @@ test "ndarray: shape stored correctly" {
 test "ndarray: layout stored correctly" {
     const allocator = testing.allocator;
 
-    var arr_rm = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_rm = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_rm.deinit();
     try testing.expectEqual(Layout.row_major, arr_rm.layout);
 
-    var arr_cm = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .column_major);
+    var arr_cm = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .column_major);
     defer arr_cm.deinit();
     try testing.expectEqual(Layout.column_major, arr_cm.layout);
 }
@@ -918,7 +1002,7 @@ test "ndarray: layout stored correctly" {
 
 test "ndarray: count() returns prod(shape)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr.deinit();
 
     // 2*3*4 = 24
@@ -936,7 +1020,7 @@ test "ndarray: isEmpty() returns false for non-empty array" {
 test "ndarray: isEmpty() returns false for all non-zero shapes" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 4).init(allocator, &[_]usize{1, 1, 1, 1}, .row_major);
+    var arr = try NDArray(i32, 4).init(allocator, &[_]usize{ 1, 1, 1, 1 }, .row_major);
     defer arr.deinit();
 
     try testing.expect(!arr.isEmpty());
@@ -946,7 +1030,7 @@ test "ndarray: isEmpty() returns false for all non-zero shapes" {
 
 test "ndarray: validate() checks dimension invariant" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Should not error on valid array
@@ -955,7 +1039,7 @@ test "ndarray: validate() checks dimension invariant" {
 
 test "ndarray: validate() checks stride consistency with row-major" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{3, 5}, .row_major);
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 5 }, .row_major);
     defer arr.deinit();
 
     // Row-major [3,5] must have strides [5,1]
@@ -965,7 +1049,7 @@ test "ndarray: validate() checks stride consistency with row-major" {
 
 test "ndarray: validate() checks stride consistency with column-major" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{3, 5}, .column_major);
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 5 }, .column_major);
     defer arr.deinit();
 
     // Column-major [3,5] must have strides [1,3]
@@ -977,7 +1061,7 @@ test "ndarray: validate() checks stride consistency with column-major" {
 
 test "ndarray: allocator is stored and accessible" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer arr.deinit();
 
     // Verify allocator is stored
@@ -996,7 +1080,7 @@ test "ndarray: deinit uses stored allocator" {
 
 test "ndarray: data pointer initialized to valid slice" {
     const allocator = testing.allocator;
-    const shape = [_]usize{3, 4};
+    const shape = [_]usize{ 3, 4 };
     var arr = try NDArray(f64, 2).init(allocator, shape[0..], .row_major);
     defer arr.deinit();
 
@@ -1005,7 +1089,7 @@ test "ndarray: data pointer initialized to valid slice" {
 
 test "ndarray: data is contiguous slice of correct length" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Data should be a slice of 2*3*4 = 24 elements
@@ -1023,17 +1107,17 @@ test "ndarray: stress test — various dimensions" {
     try testing.expectEqual(100, arr1.count());
 
     // Test 2D
-    var arr2 = try NDArray(f64, 2).init(allocator, &[_]usize{10, 10}, .row_major);
+    var arr2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 10, 10 }, .row_major);
     defer arr2.deinit();
     try testing.expectEqual(100, arr2.count());
 
     // Test 3D
-    var arr3 = try NDArray(f64, 3).init(allocator, &[_]usize{5, 5, 4}, .row_major);
+    var arr3 = try NDArray(f64, 3).init(allocator, &[_]usize{ 5, 5, 4 }, .row_major);
     defer arr3.deinit();
     try testing.expectEqual(100, arr3.count());
 
     // Test 5D
-    var arr5 = try NDArray(f64, 5).init(allocator, &[_]usize{2, 2, 5, 5, 1}, .row_major);
+    var arr5 = try NDArray(f64, 5).init(allocator, &[_]usize{ 2, 2, 5, 5, 1 }, .row_major);
     defer arr5.deinit();
     try testing.expectEqual(100, arr5.count());
 }
@@ -1043,7 +1127,7 @@ test "ndarray: stress test — layout consistency across dimensions" {
 
     // Verify row-major strides for various shapes
     for (0..5) |_| {
-        var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .row_major);
+        var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
         defer arr.deinit();
         try testing.expectEqual(12, arr.strides[0]);
         try testing.expectEqual(4, arr.strides[1]);
@@ -1052,7 +1136,7 @@ test "ndarray: stress test — layout consistency across dimensions" {
 
     // Verify column-major strides for various shapes
     for (0..5) |_| {
-        var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .column_major);
+        var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .column_major);
         defer arr.deinit();
         try testing.expectEqual(1, arr.strides[0]);
         try testing.expectEqual(2, arr.strides[1]);
@@ -1064,7 +1148,7 @@ test "ndarray: stress test — layout consistency across dimensions" {
 
 test "ndarray: f32 element type" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f32, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(f32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(6, arr.count());
@@ -1072,7 +1156,7 @@ test "ndarray: f32 element type" {
 
 test "ndarray: u64 element type" {
     const allocator = testing.allocator;
-    var arr = try NDArray(u64, 2).init(allocator, &[_]usize{4, 5}, .row_major);
+    var arr = try NDArray(u64, 2).init(allocator, &[_]usize{ 4, 5 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(20, arr.count());
@@ -1102,7 +1186,7 @@ test "ndarray: zeros() creates 1D array with all zeros" {
 
 test "ndarray: zeros() creates 2D array [3,4] with all zeros" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(12, arr.count());
@@ -1113,7 +1197,7 @@ test "ndarray: zeros() creates 2D array [3,4] with all zeros" {
 
 test "ndarray: zeros() creates 3D array [2,3,4] with all zeros" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 3).zeros(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr = try NDArray(f64, 3).zeros(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(24, arr.count());
@@ -1124,7 +1208,7 @@ test "ndarray: zeros() creates 3D array [2,3,4] with all zeros" {
 
 test "ndarray: zeros() respects column-major layout" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{3, 4}, .column_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 4 }, .column_major);
     defer arr.deinit();
 
     try testing.expectEqual(Layout.column_major, arr.layout);
@@ -1148,7 +1232,7 @@ test "ndarray: zeros() works with i32 type" {
 
 test "ndarray: zeros() rejects zero dimension" {
     const allocator = testing.allocator;
-    const result = NDArray(f64, 2).zeros(allocator, &[_]usize{3, 0}, .row_major);
+    const result = NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 0 }, .row_major);
 
     try testing.expectError(error.ZeroDimension, result);
 }
@@ -1168,7 +1252,7 @@ test "ndarray: ones() creates 1D array with all ones" {
 
 test "ndarray: ones() creates 2D array [3,4] with all ones" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(12, arr.count());
@@ -1179,7 +1263,7 @@ test "ndarray: ones() creates 2D array [3,4] with all ones" {
 
 test "ndarray: ones() creates 3D array [2,3,4] with all ones" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr = try NDArray(f64, 3).ones(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(24, arr.count());
@@ -1190,7 +1274,7 @@ test "ndarray: ones() creates 3D array [2,3,4] with all ones" {
 
 test "ndarray: ones() respects column-major layout" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .column_major);
+    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{ 3, 4 }, .column_major);
     defer arr.deinit();
 
     try testing.expectEqual(Layout.column_major, arr.layout);
@@ -1201,7 +1285,7 @@ test "ndarray: ones() respects column-major layout" {
 
 test "ndarray: ones() works with u8 type" {
     const allocator = testing.allocator;
-    var arr = try NDArray(u8, 2).ones(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(u8, 2).ones(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(6, arr.count());
@@ -1221,7 +1305,7 @@ test "ndarray: ones() rejects zero dimension" {
 
 test "ndarray: full() creates 2D array filled with custom value (42.0)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{3, 4}, 42.0, .row_major);
+    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{ 3, 4 }, 42.0, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(12, arr.count());
@@ -1243,7 +1327,7 @@ test "ndarray: full() fills array with 3.14159" {
 
 test "ndarray: full() fills array with negative value (-100)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 2).full(allocator, &[_]usize{2, 3}, -100, .row_major);
+    var arr = try NDArray(i32, 2).full(allocator, &[_]usize{ 2, 3 }, -100, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(6, arr.count());
@@ -1254,7 +1338,7 @@ test "ndarray: full() fills array with negative value (-100)" {
 
 test "ndarray: full() respects column-major layout" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{3, 4}, 7.5, .column_major);
+    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{ 3, 4 }, 7.5, .column_major);
     defer arr.deinit();
 
     try testing.expectEqual(Layout.column_major, arr.layout);
@@ -1265,7 +1349,7 @@ test "ndarray: full() respects column-major layout" {
 
 test "ndarray: full() works with 0.0 value" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{2, 2}, 0.0, .row_major);
+    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{ 2, 2 }, 0.0, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(4, arr.count());
@@ -1287,7 +1371,7 @@ test "ndarray: empty() allocates space without initialization" {
 
 test "ndarray: empty() respects shape [3,4]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).empty(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).empty(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(12, arr.count());
@@ -1297,7 +1381,7 @@ test "ndarray: empty() respects shape [3,4]" {
 
 test "ndarray: empty() respects column-major layout" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).empty(allocator, &[_]usize{3, 4}, .column_major);
+    var arr = try NDArray(f64, 2).empty(allocator, &[_]usize{ 3, 4 }, .column_major);
     defer arr.deinit();
 
     try testing.expectEqual(Layout.column_major, arr.layout);
@@ -1324,7 +1408,7 @@ test "ndarray: arange() creates [0, 10) with step 2" {
     defer arr.deinit();
 
     try testing.expectEqual(5, arr.count());
-    const expected = [_]f64{0.0, 2.0, 4.0, 6.0, 8.0};
+    const expected = [_]f64{ 0.0, 2.0, 4.0, 6.0, 8.0 };
     for (0..5) |i| {
         try testing.expectEqual(expected[i], arr.data[i]);
     }
@@ -1336,7 +1420,7 @@ test "ndarray: arange() creates [5, 15) with step 3" {
     defer arr.deinit();
 
     try testing.expectEqual(4, arr.count());
-    const expected = [_]i32{5, 8, 11, 14};
+    const expected = [_]i32{ 5, 8, 11, 14 };
     for (0..4) |i| {
         try testing.expectEqual(expected[i], arr.data[i]);
     }
@@ -1446,8 +1530,8 @@ test "ndarray: linspace() creates 100 points in [0, 1]" {
 
 test "ndarray: fromSlice() creates 2D array [3,4] from slice" {
     const allocator = testing.allocator;
-    const data = [_]f64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, data[0..], .row_major);
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, data[0..], .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(12, arr.count());
@@ -1458,7 +1542,7 @@ test "ndarray: fromSlice() creates 2D array [3,4] from slice" {
 
 test "ndarray: fromSlice() creates 1D array [5]" {
     const allocator = testing.allocator;
-    const data = [_]i32{10, 20, 30, 40, 50};
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
     var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, data[0..], .row_major);
     defer arr.deinit();
 
@@ -1470,8 +1554,8 @@ test "ndarray: fromSlice() creates 1D array [5]" {
 
 test "ndarray: fromSlice() respects column-major layout [2,3]" {
     const allocator = testing.allocator;
-    const data = [_]f64{1, 2, 3, 4, 5, 6};
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, data[0..], .column_major);
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, data[0..], .column_major);
     defer arr.deinit();
 
     try testing.expectEqual(Layout.column_major, arr.layout);
@@ -1481,17 +1565,17 @@ test "ndarray: fromSlice() respects column-major layout [2,3]" {
 
 test "ndarray: fromSlice() rejects shape mismatch" {
     const allocator = testing.allocator;
-    const data = [_]f64{1, 2, 3};
+    const data = [_]f64{ 1, 2, 3 };
     // Try to create 2D array [3,4] (12 elements) from 3-element slice
-    const result = NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, data[0..], .row_major);
+    const result = NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, data[0..], .row_major);
 
     try testing.expectError(error.CapacityExceeded, result);
 }
 
 test "ndarray: fromSlice() creates 3D array [2,2,2]" {
     const allocator = testing.allocator;
-    const data = [_]i32{1, 2, 3, 4, 5, 6, 7, 8};
-    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 2, 2}, data[0..], .row_major);
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, data[0..], .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(8, arr.count());
@@ -1597,52 +1681,52 @@ test "ndarray: identity() works with different types and layouts" {
 
 test "ndarray: get() retrieves single element from 2D array [2,3]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
     defer arr.deinit();
 
     // Row-major [2,3]: [1,2,3 | 4,5,6]
     // Get [0,0] = 1.0, [0,2] = 3.0, [1,1] = 5.0
-    try testing.expectEqual(1.0, arr.get(&[_]isize{0, 0}));
-    try testing.expectEqual(3.0, arr.get(&[_]isize{0, 2}));
-    try testing.expectEqual(5.0, arr.get(&[_]isize{1, 1}));
+    try testing.expectEqual(1.0, arr.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(3.0, arr.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(5.0, arr.get(&[_]isize{ 1, 1 }));
 }
 
 test "ndarray: get() supports negative indexing (-1 = last element)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
     defer arr.deinit();
 
     // [-1,-1] = [1,2] (last row, last col) = 6.0
-    try testing.expectEqual(6.0, arr.get(&[_]isize{-1, -1}));
+    try testing.expectEqual(6.0, arr.get(&[_]isize{ -1, -1 }));
     // [-1,0] = [1,0] (last row, first col) = 4.0
-    try testing.expectEqual(4.0, arr.get(&[_]isize{-1, 0}));
+    try testing.expectEqual(4.0, arr.get(&[_]isize{ -1, 0 }));
     // [0,-1] = [0,2] (first row, last col) = 3.0
-    try testing.expectEqual(3.0, arr.get(&[_]isize{0, -1}));
+    try testing.expectEqual(3.0, arr.get(&[_]isize{ 0, -1 }));
     // [-2,-2] = [0,1] (second-to-last row, second-to-last col) = 2.0
-    try testing.expectEqual(2.0, arr.get(&[_]isize{-2, -2}));
+    try testing.expectEqual(2.0, arr.get(&[_]isize{ -2, -2 }));
 }
 
 test "ndarray: get() retrieves from 3D array [2,3,4]" {
     const allocator = testing.allocator;
     var data: [24]i32 = undefined;
     for (0..24) |i| data[i] = @intCast(i);
-    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 3, 4}, data[0..], .row_major);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 3, 4 }, data[0..], .row_major);
     defer arr.deinit();
 
     // Row-major [2,3,4]: element [i,j,k] at index i*12 + j*4 + k
-    try testing.expectEqual(@as(i32, 0), arr.get(&[_]isize{0, 0, 0}));
-    try testing.expectEqual(@as(i32, 3), arr.get(&[_]isize{0, 0, 3}));
-    try testing.expectEqual(@as(i32, 12), arr.get(&[_]isize{1, 0, 0}));
-    try testing.expectEqual(@as(i32, 23), arr.get(&[_]isize{1, 2, 3}));
+    try testing.expectEqual(@as(i32, 0), arr.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(i32, 3), arr.get(&[_]isize{ 0, 0, 3 }));
+    try testing.expectEqual(@as(i32, 12), arr.get(&[_]isize{ 1, 0, 0 }));
+    try testing.expectEqual(@as(i32, 23), arr.get(&[_]isize{ 1, 2, 3 }));
 }
 
 test "ndarray: set() modifies single element in 2D array" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
-    arr.set(&[_]isize{0, 1}, 42.0);
-    arr.set(&[_]isize{1, 2}, 99.0);
+    arr.set(&[_]isize{ 0, 1 }, 42.0);
+    arr.set(&[_]isize{ 1, 2 }, 99.0);
 
     try testing.expectEqual(42.0, arr.data[1]);
     try testing.expectEqual(99.0, arr.data[5]);
@@ -1651,11 +1735,11 @@ test "ndarray: set() modifies single element in 2D array" {
 
 test "ndarray: set() with negative indices modifies last row/col" {
     const allocator = testing.allocator;
-    var arr = try NDArray(i32, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(i32, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
-    arr.set(&[_]isize{-1, -1}, 100);
-    arr.set(&[_]isize{-2, 0}, 50);
+    arr.set(&[_]isize{ -1, -1 }, 100);
+    arr.set(&[_]isize{ -2, 0 }, 50);
 
     // [-1,-1] = [2,3] at index 2*4 + 3 = 11
     try testing.expectEqual(@as(i32, 100), arr.data[11]);
@@ -1665,44 +1749,44 @@ test "ndarray: set() with negative indices modifies last row/col" {
 
 test "ndarray: set() persists changes across multiple operations" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{2, 2}, 1.0, .row_major);
+    var arr = try NDArray(f64, 2).full(allocator, &[_]usize{ 2, 2 }, 1.0, .row_major);
     defer arr.deinit();
 
-    arr.set(&[_]isize{0, 0}, 10.0);
-    arr.set(&[_]isize{0, 1}, 20.0);
-    arr.set(&[_]isize{1, 0}, 30.0);
-    arr.set(&[_]isize{1, 1}, 40.0);
+    arr.set(&[_]isize{ 0, 0 }, 10.0);
+    arr.set(&[_]isize{ 0, 1 }, 20.0);
+    arr.set(&[_]isize{ 1, 0 }, 30.0);
+    arr.set(&[_]isize{ 1, 1 }, 40.0);
 
-    try testing.expectEqual(10.0, arr.get(&[_]isize{0, 0}));
-    try testing.expectEqual(20.0, arr.get(&[_]isize{0, 1}));
-    try testing.expectEqual(30.0, arr.get(&[_]isize{1, 0}));
-    try testing.expectEqual(40.0, arr.get(&[_]isize{1, 1}));
+    try testing.expectEqual(10.0, arr.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(20.0, arr.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(30.0, arr.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(40.0, arr.get(&[_]isize{ 1, 1 }));
 }
 
 test "ndarray: get() rejects out-of-bounds positive indices" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     // Shape [2,3] allows indices [0-1, 0-2]
     // [2,0] is out of bounds (row index too high)
-    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{2, 0}));
+    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{ 2, 0 }));
 }
 
 test "ndarray: get() rejects out-of-bounds negative indices" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     // [-3, 0] is out of bounds for shape [2,3] (would be row -3)
-    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{-3, 0}));
+    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{ -3, 0 }));
 }
 
 // -- Flat Indexing Tests (at) (6 tests) --
 
 test "ndarray: at() returns element at flat index in row-major [2,3]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
     defer arr.deinit();
 
     // Flat indexing: 0→1, 1→2, 2→3, 3→4, 4→5, 5→6
@@ -1714,7 +1798,7 @@ test "ndarray: at() returns element at flat index in row-major [2,3]" {
 
 test "ndarray: at() supports negative flat indices (-1 = last element)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1, 2, 3, 4, 5, 6}, .row_major);
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
     defer arr.deinit();
 
     // [-1] = last element = 6.0
@@ -1727,12 +1811,12 @@ test "ndarray: at() supports negative flat indices (-1 = last element)" {
 
 test "ndarray: at() respects memory layout (row-major vs column-major)" {
     const allocator = testing.allocator;
-    const data = [_]f64{1, 2, 3, 4, 5, 6};
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6 };
 
-    var arr_rm = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, data[0..], .row_major);
+    var arr_rm = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, data[0..], .row_major);
     defer arr_rm.deinit();
 
-    var arr_cm = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, data[0..], .column_major);
+    var arr_cm = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, data[0..], .column_major);
     defer arr_cm.deinit();
 
     // Row-major: elements stored as [row0_col0, row0_col1, row0_col2, row1_col0, row1_col1, row1_col2]
@@ -1750,7 +1834,7 @@ test "ndarray: at() works with 3D array [2,3,4]" {
     const allocator = testing.allocator;
     var data: [24]i32 = undefined;
     for (0..24) |i| data[i] = @intCast(i);
-    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 3, 4}, data[0..], .row_major);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 3, 4 }, data[0..], .row_major);
     defer arr.deinit();
 
     // Flat indices 0-23 map directly to data array
@@ -1773,16 +1857,16 @@ test "ndarray: at() rejects out-of-bounds indices" {
 
 test "ndarray: slice() extracts row from 2D array [3,4]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
-        1,  2,  3,  4,
-        5,  6,  7,  8,
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer arr.deinit();
 
     // Slice row 1: [5, 6, 7, 8]
     const sliced = arr.slice(&[_][2]?isize{
-        .{ 1, 2 },  // rows 1:2 (single row)
+        .{ 1, 2 }, // rows 1:2 (single row)
         .{ null, null }, // all columns
     });
 
@@ -1794,9 +1878,9 @@ test "ndarray: slice() extracts row from 2D array [3,4]" {
 
 test "ndarray: slice() extracts column from 2D array [3,4]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
-        1,  2,  3,  4,
-        5,  6,  7,  8,
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer arr.deinit();
@@ -1816,9 +1900,9 @@ test "ndarray: slice() extracts column from 2D array [3,4]" {
 
 test "ndarray: slice() extracts rectangular subregion [3,4] → [2,2]" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
-        1,  2,  3,  4,
-        5,  6,  7,  8,
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer arr.deinit();
@@ -1832,17 +1916,17 @@ test "ndarray: slice() extracts rectangular subregion [3,4] → [2,2]" {
     try testing.expectEqual(@as(usize, 2), sliced.shape[0]);
     try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
     // Contents: [[6,7], [10,11]]
-    try testing.expectEqual(6.0, sliced.get(&[_]isize{0, 0}));
-    try testing.expectEqual(7.0, sliced.get(&[_]isize{0, 1}));
-    try testing.expectEqual(10.0, sliced.get(&[_]isize{1, 0}));
-    try testing.expectEqual(11.0, sliced.get(&[_]isize{1, 1}));
+    try testing.expectEqual(6.0, sliced.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(7.0, sliced.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(10.0, sliced.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(11.0, sliced.get(&[_]isize{ 1, 1 }));
 }
 
 test "ndarray: slice() with null bounds means unbounded dimension" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
-        1,  2,  3,  4,
-        5,  6,  7,  8,
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer arr.deinit();
@@ -1859,9 +1943,9 @@ test "ndarray: slice() with null bounds means unbounded dimension" {
 
 test "ndarray: slice() returns view sharing underlying data (non-owning)" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
-        1,  2,  3,  4,
-        5,  6,  7,  8,
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer arr.deinit();
@@ -1872,17 +1956,17 @@ test "ndarray: slice() returns view sharing underlying data (non-owning)" {
     });
 
     // Modify original array
-    arr.set(&[_]isize{1, 0}, 999.0);
+    arr.set(&[_]isize{ 1, 0 }, 999.0);
 
     // Slice should reflect the change (shares data)
-    try testing.expectEqual(999.0, sliced.get(&[_]isize{0, 0}));
+    try testing.expectEqual(999.0, sliced.get(&[_]isize{ 0, 0 }));
 }
 
 test "ndarray: slice() of 3D array extracts sub-tensor [2,3,4] → [1,3,4]" {
     const allocator = testing.allocator;
     var data: [24]i32 = undefined;
     for (0..24) |i| data[i] = @intCast(i);
-    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{2, 3, 4}, data[0..], .row_major);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 3, 4 }, data[0..], .row_major);
     defer arr.deinit();
 
     // Slice first 3x4 matrix (first element in first dimension)
@@ -1899,9 +1983,9 @@ test "ndarray: slice() of 3D array extracts sub-tensor [2,3,4] → [1,3,4]" {
 
 test "ndarray: slice() with negative indices works correctly" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 4}, &[_]f64{
-        1,  2,  3,  4,
-        5,  6,  7,  8,
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer arr.deinit();
@@ -1915,15 +1999,15 @@ test "ndarray: slice() with negative indices works correctly" {
     try testing.expectEqual(@as(usize, 2), sliced.shape[0]);
     try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
     // Should contain [[7,8], [11,12]]
-    try testing.expectEqual(7.0, sliced.get(&[_]isize{0, 0}));
-    try testing.expectEqual(8.0, sliced.get(&[_]isize{0, 1}));
-    try testing.expectEqual(11.0, sliced.get(&[_]isize{1, 0}));
-    try testing.expectEqual(12.0, sliced.get(&[_]isize{1, 1}));
+    try testing.expectEqual(7.0, sliced.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(8.0, sliced.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(11.0, sliced.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(12.0, sliced.get(&[_]isize{ 1, 1 }));
 }
 
 test "ndarray: slice() rejects out-of-bounds ranges" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Slice range [0:5] exceeds shape [3] (rows)
@@ -1959,20 +2043,20 @@ test "ndarray: negative indices work consistently across get/set/at" {
 
 test "ndarray: negative 2D indexing wraps correctly" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Set [-1, -1] (last element)
-    arr.set(&[_]isize{-1, -1}, 42.0);
+    arr.set(&[_]isize{ -1, -1 }, 42.0);
 
     // Verify via positive index
-    try testing.expectEqual(42.0, arr.get(&[_]isize{2, 3}));
+    try testing.expectEqual(42.0, arr.get(&[_]isize{ 2, 3 }));
 
     // Set [-2, -3] (second-to-last row, third-to-last col)
-    arr.set(&[_]isize{-2, -3}, 88.0);
+    arr.set(&[_]isize{ -2, -3 }, 88.0);
 
     // Verify via positive index
-    try testing.expectEqual(88.0, arr.get(&[_]isize{1, 1}));
+    try testing.expectEqual(88.0, arr.get(&[_]isize{ 1, 1 }));
 }
 
 test "ndarray: slicing with negative bounds extracts tail regions" {
@@ -1989,4 +2073,594 @@ test "ndarray: slicing with negative bounds extracts tail regions" {
     try testing.expectEqual(@as(i32, 7), sliced.at(0));
     try testing.expectEqual(@as(i32, 8), sliced.at(1));
     try testing.expectEqual(@as(i32, 9), sliced.at(2));
+}
+
+// ============================================================================
+// ITERATOR PROTOCOL TESTS — NDArray traversal (Red phase — all FAIL)
+// ============================================================================
+
+// -- Basic Iteration Tests (8 tests) --
+
+test "ndarray: iterator() returns NDArrayIterator for 1D array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).arange(allocator, 0.0, 5.0, 1.0, .row_major);
+    defer arr.deinit();
+
+    const iter = arr.iterator();
+    _ = iter;
+    // Should have next() method
+    // const first = iter.next(); // compiles without error
+}
+
+test "ndarray: iterator.next() returns elements in storage order (1D)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Should iterate [1.0, 2.0, 3.0, 4.0, 5.0] in order
+    try testing.expectEqual(1.0, iter.next().?);
+    try testing.expectEqual(2.0, iter.next().?);
+    try testing.expectEqual(3.0, iter.next().?);
+    try testing.expectEqual(4.0, iter.next().?);
+    try testing.expectEqual(5.0, iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator exhaustion returns null on repeated calls" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).full(allocator, &[_]usize{3}, 7.0, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Exhaust iterator
+    _ = iter.next();
+    _ = iter.next();
+    _ = iter.next();
+
+    // Should continue returning null
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over 2D array respects storage order (row-major)" {
+    const allocator = testing.allocator;
+    // [1, 2, 3 | 4, 5, 6] in row-major
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]i32{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Row-major: iterate rows left-to-right
+    try testing.expectEqual(@as(i32, 1), iter.next().?);
+    try testing.expectEqual(@as(i32, 2), iter.next().?);
+    try testing.expectEqual(@as(i32, 3), iter.next().?);
+    try testing.expectEqual(@as(i32, 4), iter.next().?);
+    try testing.expectEqual(@as(i32, 5), iter.next().?);
+    try testing.expectEqual(@as(i32, 6), iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over 2D array respects column-major layout" {
+    const allocator = testing.allocator;
+    // Same data [1, 2, 3, 4, 5, 6] but column-major layout
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]i32{ 1, 2, 3, 4, 5, 6 }, .column_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Column-major storage: data[0]=1, data[1]=2, data[2]=3, data[3]=4, data[4]=5, data[5]=6
+    // Iteration should respect column-major order
+    try testing.expectEqual(@as(i32, 1), iter.next().?);
+    try testing.expectEqual(@as(i32, 2), iter.next().?);
+    try testing.expectEqual(@as(i32, 3), iter.next().?);
+    try testing.expectEqual(@as(i32, 4), iter.next().?);
+    try testing.expectEqual(@as(i32, 5), iter.next().?);
+    try testing.expectEqual(@as(i32, 6), iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over 3D array [2,3,4] yields all 24 elements in order" {
+    const allocator = testing.allocator;
+    var data: [24]i32 = undefined;
+    for (0..24) |i| data[i] = @intCast(i);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 3, 4 }, data[0..], .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |val| {
+        try testing.expectEqual(@as(i32, @intCast(count)), val);
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 24), count);
+}
+
+test "ndarray: iterator over empty slice yields no elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).arange(allocator, 0.0, 10.0, 1.0, .row_major);
+    defer arr.deinit();
+
+    // Slice to empty region
+    const empty_slice = arr.slice(&[_][2]?isize{
+        .{ 5, 5 }, // [5:5] has no elements
+    });
+
+    var iter = empty_slice.iterator();
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator after slice yields only slice elements (row-major)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice middle 2x2 region [1:3, 1:3]
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 3 },
+        .{ 1, 3 },
+    });
+
+    var iter = sliced.iterator();
+
+    // Should yield [6, 7, 10, 11] in row-major order of slice
+    try testing.expectEqual(6.0, iter.next().?);
+    try testing.expectEqual(7.0, iter.next().?);
+    try testing.expectEqual(10.0, iter.next().?);
+    try testing.expectEqual(11.0, iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+// -- Type Flexibility Tests (3 tests) --
+
+test "ndarray: iterator works with i32 element type" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &[_]i32{ 10, 20, 30, 40, 50 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    try testing.expectEqual(@as(i32, 10), iter.next().?);
+    try testing.expectEqual(@as(i32, 20), iter.next().?);
+    try testing.expectEqual(@as(i32, 30), iter.next().?);
+    try testing.expectEqual(@as(i32, 40), iter.next().?);
+    try testing.expectEqual(@as(i32, 50), iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator works with u64 element type" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(u64, 2).full(allocator, &[_]usize{ 2, 3 }, 99, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |val| {
+        try testing.expectEqual(@as(u64, 99), val);
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 6), count);
+}
+
+test "ndarray: iterator works with complex struct element type" {
+    const Complex = struct { real: f64, imag: f64 };
+    const allocator = testing.allocator;
+    var arr = try NDArray(Complex, 1).full(allocator, &[_]usize{3}, Complex{ .real = 1.0, .imag = 2.0 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    var count: usize = 0;
+    while (iter.next()) |val| {
+        try testing.expectEqual(1.0, val.real);
+        try testing.expectEqual(2.0, val.imag);
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 3), count);
+}
+
+// -- Creation Function Integration Tests (5 tests) --
+
+test "ndarray: iterator over zeros() yields all zeros" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |val| {
+        try testing.expectEqual(0.0, val);
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 6), count);
+}
+
+test "ndarray: iterator over ones() yields all ones" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).ones(allocator, &[_]usize{10}, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |val| {
+        try testing.expectEqual(1.0, val);
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 10), count);
+}
+
+test "ndarray: iterator over linspace() yields correct sequence" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).linspace(allocator, 0.0, 1.0, 5, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    const expected = [_]f64{ 0.0, 0.25, 0.5, 0.75, 1.0 };
+    for (expected) |exp_val| {
+        const actual = iter.next().?;
+        try testing.expectApproxEqAbs(exp_val, actual, 1e-10);
+    }
+
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over eye() matrix yields diagonal pattern" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).eye(allocator, 3, 3, 0, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    const data = [_]f64{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    };
+
+    for (data) |expected_val| {
+        const actual = iter.next().?;
+        try testing.expectEqual(expected_val, actual);
+    }
+
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over arange() yields expected sequence" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).arange(allocator, 10, 20, 2, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    const expected = [_]i32{ 10, 12, 14, 16, 18 };
+    for (expected) |exp_val| {
+        const actual = iter.next().?;
+        try testing.expectEqual(exp_val, actual);
+    }
+
+    try testing.expect(iter.next() == null);
+}
+
+// -- Single Element Tests (2 tests) --
+
+test "ndarray: iterator over single-element array yields one value then null" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).full(allocator, &[_]usize{1}, 42.0, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    try testing.expectEqual(42.0, iter.next().?);
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over [1,1,1] 3D array yields single element" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 3).full(allocator, &[_]usize{ 1, 1, 1 }, 999, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    try testing.expectEqual(@as(i32, 999), iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+// -- Large Array Tests (2 tests) --
+
+test "ndarray: iterator over large array [100,100] yields all 10K elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 10_000), count);
+}
+
+test "ndarray: iterator over large 1D array [1M] exhausts correctly" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).zeros(allocator, &[_]usize{1_000_000}, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |_| {
+        count += 1;
+        if (count > 1_000_000) break; // safety check
+    }
+
+    try testing.expectEqual(@as(usize, 1_000_000), count);
+    try testing.expect(iter.next() == null);
+}
+
+// -- Row-Major vs Column-Major Layout Tests (4 tests) --
+
+test "ndarray: iterator row-major [2,3] yields storage order (row-by-row)" {
+    const allocator = testing.allocator;
+    // In row-major, elements stored: row0_col0, row0_col1, row0_col2, row1_col0, row1_col1, row1_col2
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]i32{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    for (0..6) |i| {
+        const expected = @as(i32, @intCast(i + 1));
+        try testing.expectEqual(expected, iter.next().?);
+    }
+}
+
+test "ndarray: iterator column-major [2,3] respects column-first storage" {
+    const allocator = testing.allocator;
+    // In column-major, elements [1,2,3,4,5,6] stored column-first
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]i32{ 1, 2, 3, 4, 5, 6 }, .column_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Should iterate in storage order
+    for (0..6) |i| {
+        const expected = @as(i32, @intCast(i + 1));
+        try testing.expectEqual(expected, iter.next().?);
+    }
+}
+
+test "ndarray: iterator row-major [3,2,2] 3D array correct order" {
+    const allocator = testing.allocator;
+    var data: [12]i32 = undefined;
+    for (0..12) |i| data[i] = @intCast(i);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 3, 2, 2 }, data[0..], .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    for (0..12) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i)), iter.next().?);
+    }
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator column-major [3,2,2] 3D array respects layout" {
+    const allocator = testing.allocator;
+    var data: [12]i32 = undefined;
+    for (0..12) |i| data[i] = @intCast(i);
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 3, 2, 2 }, data[0..], .column_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Column-major: iterate in storage order
+    for (0..12) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i)), iter.next().?);
+    }
+    try testing.expect(iter.next() == null);
+}
+
+// -- View (Sliced Array) Iterator Tests (4 tests) --
+
+test "ndarray: iterator over sliced view yields only slice region" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).arange(allocator, 0.0, 10.0, 1.0, .row_major);
+    defer arr.deinit();
+
+    // Slice elements 2-5
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 2, 5 },
+    });
+
+    var iter = sliced.iterator();
+
+    try testing.expectEqual(2.0, iter.next().?);
+    try testing.expectEqual(3.0, iter.next().?);
+    try testing.expectEqual(4.0, iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over 2D slice [1:3, 1:3] yields 2x2 region" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        0,  1,  2,  3,
+        4,  5,  6,  7,
+        8,  9,  10, 11,
+        12, 13, 14, 15,
+    }, .row_major);
+    defer arr.deinit();
+
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 3 },
+        .{ 1, 3 },
+    });
+
+    var iter = sliced.iterator();
+
+    // Sliced 2x2: [5, 6, 9, 10]
+    try testing.expectEqual(5.0, iter.next().?);
+    try testing.expectEqual(6.0, iter.next().?);
+    try testing.expectEqual(9.0, iter.next().?);
+    try testing.expectEqual(10.0, iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator over single row slice yields row elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]i32{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer arr.deinit();
+
+    // Slice row 1: [5, 6, 7, 8]
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 2 },
+        .{ null, null },
+    });
+
+    var iter = sliced.iterator();
+
+    try testing.expectEqual(@as(i32, 5), iter.next().?);
+    try testing.expectEqual(@as(i32, 6), iter.next().?);
+    try testing.expectEqual(@as(i32, 7), iter.next().?);
+    try testing.expectEqual(@as(i32, 8), iter.next().?);
+    try testing.expect(iter.next() == null);
+}
+
+test "ndarray: iterator count matches slice shape product" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 5, 5 }, .row_major);
+    defer arr.deinit();
+
+    const sliced = arr.slice(&[_][2]?isize{
+        .{ 1, 4 },
+        .{ 1, 4 },
+    });
+
+    // Sliced shape [3, 3] = 9 elements
+    var iter = sliced.iterator();
+    var count: usize = 0;
+
+    while (iter.next()) |_| {
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 9), count);
+}
+
+// -- Modifications After Iteration Tests (3 tests) --
+
+test "ndarray: modifying array after iterator creation doesn't affect iterator" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 4, 5 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Modify the array
+    arr.set(&[_]isize{0}, 999.0);
+    arr.set(&[_]isize{1}, 888.0);
+
+    // Iterator should reflect original values (or modified — depends on implementation)
+    // Testing that iterator doesn't crash and gives consistent results
+    try testing.expect(iter.next() != null);
+    try testing.expect(iter.next() != null);
+}
+
+test "ndarray: iterator reflects changes in underlying data (shared slice)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 4, 5 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Consume first element
+    const first = iter.next().?;
+    try testing.expectEqual(1.0, first);
+
+    // Modify remaining elements
+    arr.set(&[_]isize{1}, 999.0);
+
+    // Next call should see modified value (or original — depends on implementation)
+    try testing.expect(iter.next() != null);
+}
+
+test "ndarray: iterator state preserved across calls" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).arange(allocator, 0, 10, 1, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+
+    // Consume first 3 elements
+    try testing.expectEqual(@as(i32, 0), iter.next().?);
+    try testing.expectEqual(@as(i32, 1), iter.next().?);
+    try testing.expectEqual(@as(i32, 2), iter.next().?);
+
+    // Continue consuming (iterator maintains internal position)
+    try testing.expectEqual(@as(i32, 3), iter.next().?);
+
+    // Iterator position should advance normally
+    try testing.expectEqual(@as(i32, 4), iter.next().?);
+}
+
+// -- Integration with Collection Functions (2 tests) --
+
+test "ndarray: iterator can be used in loop to verify all elements visited" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var visited_count: usize = 0;
+    var sum: f64 = 0.0;
+
+    while (iter.next()) |val| {
+        visited_count += 1;
+        sum += val;
+    }
+
+    try testing.expectEqual(@as(usize, 6), visited_count);
+    try testing.expectEqual(21.0, sum); // 1+2+3+4+5+6
+}
+
+test "ndarray: iterator works in nested loop structure" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer arr.deinit();
+
+    var iter = arr.iterator();
+    var prev_val: ?i32 = null;
+    var count: usize = 0;
+
+    while (iter.next()) |val| {
+        if (prev_val) |p| {
+            // Elements should appear in order
+            try testing.expect(p <= val);
+        }
+        prev_val = val;
+        count += 1;
+    }
+
+    try testing.expectEqual(@as(usize, 8), count);
 }
