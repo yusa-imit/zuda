@@ -47,39 +47,32 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-20 - Hour 19)
+## Recent Progress (Session 2026-03-20 - Hour 23)
+**FEATURE MODE → v1.15.0 DOCUMENTATION COMPLETE:**
+- ✅ **Iterator Adaptor Documentation** (commit fe55c2f)
+  - **Added**: FlatMap, TakeWhile, SkipWhile, Partition to docs/GUIDE.md adaptor table
+  - **Usage examples**: 4 complete code examples with output annotations
+  - **Real-world example**: Log processing scenarios demonstrating all 4 adaptors in context
+  - **Complexity table**: Time/space analysis for each new adaptor
+  - **Lines added**: 146 lines of comprehensive documentation
+- 📊 **v1.15.0 Status**: COMPLETE + DOCUMENTED (100%)
+  - [x] FlatMap adaptor ✅ (16 tests, documented)
+  - [x] TakeWhile adaptor ✅ (25 tests, documented)
+  - [x] SkipWhile adaptor ✅ (29 tests, documented)
+  - [x] Partition adaptor ✅ (22 tests, documented)
+  - [x] GUIDE.md documentation ✅ (NEW)
+- 🎯 **Total**: 92 new tests + comprehensive docs, all passing
+- 📋 **Note**: v1.15.0 was already released (tag exists), documentation came post-release
+- 🎯 **Next Priority**: v2.0 track — NDArray work-in-progress (core structure implemented)
+
+## Previous Progress (Session 2026-03-20 - Hour 19)
 **FEATURE MODE → v1.15.0 ITERATOR ADAPTOR EXPANSION — MILESTONE COMPLETE:**
 - ✅ **FlatMap(T, U, BaseIter, InnerIter)** (commit bf6a837)
-  - **Implementation**: Lazy flattening of nested iterables with mapFn transformation
-  - **Algorithm**: Maintain current_inner iterator, advance outer when inner exhausted
-  - **Tests**: 16 comprehensive tests (nested arrays, type transformation, stress 55 elements, early termination)
-  - **Complexity**: O(1) amortized per element, O(1) space (single inner iterator)
-  - **Use case**: `items.flatMap(parseLines).collect()` — parse file lines in single pass
 - ✅ **TakeWhile(T, BaseIter, predicateFn)** (commit 1c71712)
-  - **Implementation**: Yield elements while predicate returns true, stop on first false
-  - **Algorithm**: Check predicate before yielding, set stopped flag on failure
-  - **Tests**: 25 comprehensive tests (basic, edge cases, types i32/f32/bool/string, chaining)
-  - **Complexity**: O(1) per element, O(1) space (stopped flag)
-  - **Use case**: `stream.takeWhile(lessThan100).sum()` — sum until threshold
 - ✅ **SkipWhile(T, BaseIter, predicateFn)** (commit ddf6a78)
-  - **Implementation**: Skip elements while predicate true, yield remaining after first false
-  - **Algorithm**: Lazy skip loop in next(), toggle skipping flag on first failure
-  - **Tests**: 29 comprehensive tests (mirror semantics to TakeWhile, boundary values, nested chaining)
-  - **Complexity**: O(n) first non-skipped element, O(1) thereafter, O(1) space
-  - **Use case**: `log.skipWhile(isOld).collect()` — skip old entries, keep recent
 - ✅ **Partition(T, BaseIter, predicateFn)** (commit 45ef4de)
-  - **Implementation**: Split input into true_iter and false_iter based on predicate
-  - **Algorithm**: Consume base_iter fully, partition into two pre-allocated slices
-  - **Tests**: 22 comprehensive tests (composability, order preservation, memory safety, state isolation)
-  - **Complexity**: O(n) time, O(n) space (buffering), requires deinit()
-  - **Use case**: `const part = nums.partition(allocator, isEven); defer part.deinit()`
 - 📊 **v1.15.0 Status**: 4/4 categories COMPLETE (100%)
-  - [x] FlatMap adaptor ✅ (16 tests)
-  - [x] TakeWhile adaptor ✅ (25 tests)
-  - [x] SkipWhile adaptor ✅ (29 tests)
-  - [x] Partition adaptor ✅ (22 tests)
 - 🎯 **Total**: 92 new tests, all passing, 4 commits
-- 🎯 **Next Priority**: Update docs/GUIDE.md with new adaptor documentation
 
 ## Previous Progress (Session 2026-03-20 - Hour 15)
 **FEATURE MODE → v1.14.0 ERGONOMIC ENHANCEMENTS — BIDIRECTIONAL ITERATORS (2/3):**
