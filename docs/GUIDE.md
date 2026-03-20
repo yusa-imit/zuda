@@ -702,6 +702,10 @@ const SliceIterator = struct {
 | `Take(T, BaseIter)` | Take first n elements | O(1) per element | O(1) |
 | `Skip(T, BaseIter)` | Skip first n elements | O(n) upfront | O(1) |
 | `Enumerate(T, BaseIter)` | Yield (index, value) pairs | O(1) per element | O(1) |
+| `FlatMap(T, U, BaseIter, InnerIter)` | Flatten nested iterators | O(1) amortized | O(1) |
+| `TakeWhile(T, BaseIter)` | Take while predicate true | O(1) per element | O(1) |
+| `SkipWhile(T, BaseIter)` | Skip while predicate true | O(n) first, O(1) rest | O(1) |
+| `Partition(T, BaseIter)` | Split into true/false iterators | O(n) init | O(n) |
 | `collect(T, allocator, iter)` | Collect into ArrayList | O(n) total | O(n) |
 
 ### Basic Usage
@@ -806,6 +810,82 @@ while (enumerate.next()) |pair| {
 }
 ```
 
+#### FlatMap — Flatten Nested Iterators
+
+```zig
+// Transform each element into an iterator, then flatten all results
+fn toRange(n: i32) SliceIterator(i32) {
+    // In practice, you'd allocate a slice [1..n] and return an iterator
+    // This example shows the concept
+}
+
+var outer = [_]i32{1, 2, 3};
+var outer_iter = SliceIterator(i32).init(&outer);
+var flat = zuda.iterators.FlatMap(i32, i32, SliceIterator(i32), SliceIterator(i32)).init(outer_iter, &toRange);
+
+while (flat.next()) |val| {
+    // Output: 1, 1, 2, 1, 2, 3
+    // (1 produces [1], 2 produces [1,2], 3 produces [1,2,3])
+}
+```
+
+#### TakeWhile — Take Elements While Condition Holds
+
+```zig
+fn lessThan5(x: i32) bool {
+    return x < 5;
+}
+
+var numbers = [_]i32{1, 2, 3, 4, 5, 6, 7};
+var slice_iter = SliceIterator(i32).init(&numbers);
+var take_while = zuda.iterators.TakeWhile(i32, SliceIterator(i32)).init(slice_iter, &lessThan5);
+
+while (take_while.next()) |val| {
+    std.debug.print("{} ", .{val}); // Output: 1 2 3 4
+    // Stops at 5, even though iterator has 6, 7
+}
+```
+
+#### SkipWhile — Skip Elements While Condition Holds
+
+```zig
+fn lessThan5(x: i32) bool {
+    return x < 5;
+}
+
+var numbers = [_]i32{1, 2, 3, 4, 5, 6, 7};
+var slice_iter = SliceIterator(i32).init(&numbers);
+var skip_while = zuda.iterators.SkipWhile(i32, SliceIterator(i32)).init(slice_iter, &lessThan5);
+
+while (skip_while.next()) |val| {
+    std.debug.print("{} ", .{val}); // Output: 5 6 7
+    // Skips 1, 2, 3, 4, then yields rest
+}
+```
+
+#### Partition — Split Into Two Iterators
+
+```zig
+fn isEven(x: i32) bool {
+    return x % 2 == 0;
+}
+
+var numbers = [_]i32{1, 2, 3, 4, 5, 6};
+var slice_iter = SliceIterator(i32).init(&numbers);
+var partition = try zuda.iterators.Partition(i32, SliceIterator(i32)).init(allocator, slice_iter, &isEven);
+defer partition.deinit();
+
+// Process even numbers (predicate = true)
+while (partition.true_iter.next()) |val| {
+    std.debug.print("even: {} ", .{val}); // Output: even: 2 even: 4 even: 6
+}
+
+// Process odd numbers (predicate = false)
+while (partition.false_iter.next()) |val| {
+    std.debug.print("odd: {} ", .{val}); // Output: odd: 1 odd: 3 odd: 5
+}
+```
+
 ### Chaining Adaptors
 
 The real power comes from composing multiple adaptors. Since each adaptor is itself an iterator, you can chain them arbitrarily:
@@ -875,6 +955,72 @@ var first_100 = TakeIter.init(fahrenheit, 100);
 
 var result = try zuda.iterators.collect(f32, allocator, &first_100);
 defer result.deinit(allocator);
+```
+
+### Real-World Example: Log Processing with New Adaptors
+
+```zig
+const LogEntry = struct {
+    timestamp: u64,
+    level: enum { DEBUG, INFO, WARN, ERROR },
+    message: []const u8,
+};
+
+fn isError(entry: LogEntry) bool {
+    return entry.level == .ERROR;
+}
+
+fn isRecentLog(entry: LogEntry) bool {
+    const cutoff = getTimestamp() - 3600; // Last hour
+    return entry.timestamp >= cutoff;
+}
+
+fn parseLines(text: []const u8) SliceIterator([]const u8) {
+    // Split text by newlines and return iterator
+}
+
+// Example 1: TakeWhile — Process logs until first error
+var logs: []const LogEntry = getAllLogs();
+var log_iter = SliceIterator(LogEntry).init(logs);
+var until_error = zuda.iterators.TakeWhile(LogEntry, SliceIterator(LogEntry)).init(log_iter, &isError);
+
+while (until_error.next()) |entry| {
+    // Process logs until ERROR appears
+}
+
+// Example 2: SkipWhile — Skip old logs, process recent ones
+var logs2: []const LogEntry = getAllLogs();
+var log_iter2 = SliceIterator(LogEntry).init(logs2);
+var recent = zuda.iterators.SkipWhile(LogEntry, SliceIterator(LogEntry)).init(log_iter2, &isRecentLog);
+
+while (recent.next()) |entry| {
+    // Process only recent logs (skip everything older than 1 hour)
+}
+
+// Example 3: Partition — Separate errors from non-errors
+var logs3: []const LogEntry = getAllLogs();
+var log_iter3 = SliceIterator(LogEntry).init(logs3);
+var split = try zuda.iterators.Partition(LogEntry, SliceIterator(LogEntry)).init(allocator, log_iter3, &isError);
+defer split.deinit();
+
+// Process errors separately
+while (split.true_iter.next()) |error_entry| {
+    sendAlert(error_entry);
+}
+
+// Archive non-errors
+while (split.false_iter.next()) |normal_entry| {
+    archiveLog(normal_entry);
+}
+
+// Example 4: FlatMap — Parse multi-line log file into individual lines
+var file_chunks: []const []const u8 = getFileChunks(); // Each chunk is part of log file
+var chunk_iter = SliceIterator([]const u8).init(file_chunks);
+var flat = zuda.iterators.FlatMap([]const u8, []const u8, SliceIterator([]const u8), SliceIterator([]const u8)).init(chunk_iter, &parseLines);
+
+while (flat.next()) |line| {
+    // Process each individual log line, regardless of which chunk it came from
+}
 ```
 
 ### Performance Characteristics
