@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.12.0 (released 2026-03-19) — Practical Utilities & Enhancements
+- **Version**: 1.13.0 (released 2026-03-20) — Consumer Migration Support
 - **Phase**: v1.13.0 COMPLETE (5/5 categories complete — 100%)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.13.0 COMPLETE — Consumer Migration Support (PR drafted for zr)
-- **Next Priority**: Release v1.13.0
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 722/722 tests passing)
+- **Latest Milestone**: v1.13.0 RELEASED ✅ — Consumer Migration Support (3 guides, 3 compat layers, 6 examples, 1 PR drafted)
+- **Next Priority**: Establish next milestone (< 2 active milestones rule)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
