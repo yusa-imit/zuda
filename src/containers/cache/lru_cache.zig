@@ -37,6 +37,7 @@ pub fn LRUCache(
             value: V,
             prev: ?*Entry = null,
             next: ?*Entry = null,
+            pin_count: usize = 0, // Reference count for pinning (buffer pool use case)
         };
 
         pub const Iterator = struct {
@@ -111,6 +112,35 @@ pub fn LRUCache(
         /// Time: O(1) | Space: O(1)
         pub fn contains(self: *const Self, key: K) bool {
             return self.map.contains(key);
+        }
+
+        /// Pin an entry, preventing it from being evicted.
+        /// Increments the pin count. Pinned entries (pin_count > 0) will not be evicted.
+        /// Multiple pins stack — must call unpin() the same number of times.
+        /// Returns error.KeyNotFound if key does not exist.
+        /// Time: O(1) | Space: O(1)
+        pub fn pin(self: *Self, key: K) !void {
+            const entry = self.map.get(key) orelse return error.KeyNotFound;
+            entry.pin_count += 1;
+        }
+
+        /// Unpin an entry, allowing it to be evicted again.
+        /// Decrements the pin count. When pin_count reaches 0, entry can be evicted.
+        /// Returns error.KeyNotFound if key does not exist.
+        /// Returns error.NotPinned if entry is already unpinned (pin_count == 0).
+        /// Time: O(1) | Space: O(1)
+        pub fn unpin(self: *Self, key: K) !void {
+            const entry = self.map.get(key) orelse return error.KeyNotFound;
+            if (entry.pin_count == 0) return error.NotPinned;
+            entry.pin_count -= 1;
+        }
+
+        /// Check if an entry is currently pinned (pin_count > 0).
+        /// Returns false if key does not exist.
+        /// Time: O(1) | Space: O(1)
+        pub fn isPinned(self: *const Self, key: K) bool {
+            const entry = self.map.get(key) orelse return false;
+            return entry.pin_count > 0;
         }
 
         /// Insert or update a key-value pair.
@@ -241,20 +271,33 @@ pub fn LRUCache(
             entry.next = null;
         }
 
-        /// Evict the least recently used entry (tail).
+        /// Evict the least recently used unpinned entry.
+        /// Walks from tail (LRU) toward head (MRU) to find first unpinned entry.
+        /// Returns error.NoPinnableEntries if all entries are pinned.
         fn evictLRU(self: *Self) !void {
-            const lru = self.tail orelse return error.EmptyCache;
-            const key = lru.key;
-            const value = lru.value;
+            // Find first unpinned entry from LRU end
+            var candidate = self.tail;
+            while (candidate) |entry| {
+                if (entry.pin_count == 0) {
+                    // Found unpinned entry, evict it
+                    const key = entry.key;
+                    const value = entry.value;
 
-            // Call eviction callback if provided
-            if (evictFn) |evict| {
-                evict(key, value);
+                    // Call eviction callback if provided
+                    if (evictFn) |evict| {
+                        evict(key, value);
+                    }
+
+                    _ = self.map.remove(key);
+                    self.removeFromList(entry);
+                    self.allocator.destroy(entry);
+                    return;
+                }
+                candidate = entry.prev; // Move toward head (MRU)
             }
 
-            _ = self.map.remove(key);
-            self.removeFromList(lru);
-            self.allocator.destroy(lru);
+            // All entries are pinned
+            return error.NoPinnableEntries;
         }
     };
 }
@@ -524,4 +567,134 @@ test "LRUCache: memory leak detection" {
 
     try cache.validate();
     // std.testing.allocator will detect leaks automatically
+}
+
+test "LRUCache: pin prevents eviction" {
+    const Cache = LRUCache(u32, u32, std.hash_map.AutoContext(u32), null);
+    var cache = Cache.init(std.testing.allocator, 3);
+    defer cache.deinit();
+
+    // Fill cache
+    _ = try cache.put(1, 10);
+    _ = try cache.put(2, 20);
+    _ = try cache.put(3, 30);
+
+    // Pin the LRU entry (key 1)
+    try cache.pin(1);
+    try std.testing.expect(cache.isPinned(1));
+    try std.testing.expect(!cache.isPinned(2));
+
+    // Insert 4th item → should evict key 2 (not 1, because 1 is pinned)
+    _ = try cache.put(4, 40);
+    try std.testing.expectEqual(@as(usize, 3), cache.count());
+    try std.testing.expectEqual(@as(?u32, 10), cache.get(1)); // pinned, not evicted
+    try std.testing.expectEqual(@as(?u32, null), cache.get(2)); // evicted
+    try std.testing.expectEqual(@as(?u32, 30), cache.get(3));
+    try std.testing.expectEqual(@as(?u32, 40), cache.get(4));
+
+    // Unpin key 1
+    try cache.unpin(1);
+    try std.testing.expect(!cache.isPinned(1));
+
+    // Now key 1 can be evicted
+    _ = try cache.put(5, 50);
+    try std.testing.expectEqual(@as(?u32, null), cache.get(1)); // now evicted
+    try cache.validate();
+}
+
+test "LRUCache: multiple pins stack" {
+    const Cache = LRUCache(u32, u32, std.hash_map.AutoContext(u32), null);
+    var cache = Cache.init(std.testing.allocator, 2);
+    defer cache.deinit();
+
+    _ = try cache.put(1, 10);
+    _ = try cache.put(2, 20);
+
+    // Pin key 1 twice and key 2 once
+    try cache.pin(1);
+    try cache.pin(1);
+    try cache.pin(2);
+    try std.testing.expect(cache.isPinned(1));
+    try std.testing.expect(cache.isPinned(2));
+
+    // Try to insert 3rd item → fails because both entries are pinned
+    const result1 = cache.put(3, 30);
+    try std.testing.expectError(error.NoPinnableEntries, result1);
+
+    // Unpin key 2 → now unpinned
+    try cache.unpin(2);
+    try std.testing.expect(!cache.isPinned(2));
+    try std.testing.expect(cache.isPinned(1)); // still pinned x2
+
+    // Now can evict key 2
+    _ = try cache.put(3, 30);
+    try std.testing.expectEqual(@as(?u32, null), cache.get(2)); // evicted
+    try std.testing.expectEqual(@as(?u32, 10), cache.get(1)); // still present, pinned x2
+    try std.testing.expectEqual(@as(?u32, 30), cache.get(3)); // newly inserted
+
+    // Unpin key 1 once → still pinned
+    try cache.unpin(1);
+    try std.testing.expect(cache.isPinned(1));
+
+    // Unpin again → now unpinned
+    try cache.unpin(1);
+    try std.testing.expect(!cache.isPinned(1));
+
+    // Now both can be evicted
+    _ = try cache.put(4, 40);
+    try cache.validate();
+}
+
+test "LRUCache: pin non-existent key" {
+    const Cache = LRUCache(u32, u32, std.hash_map.AutoContext(u32), null);
+    var cache = Cache.init(std.testing.allocator, 3);
+    defer cache.deinit();
+
+    // Pin non-existent key
+    try std.testing.expectError(error.KeyNotFound, cache.pin(99));
+}
+
+test "LRUCache: unpin non-existent key" {
+    const Cache = LRUCache(u32, u32, std.hash_map.AutoContext(u32), null);
+    var cache = Cache.init(std.testing.allocator, 3);
+    defer cache.deinit();
+
+    _ = try cache.put(1, 10);
+
+    // Unpin non-existent key
+    try std.testing.expectError(error.KeyNotFound, cache.unpin(99));
+}
+
+test "LRUCache: unpin already unpinned" {
+    const Cache = LRUCache(u32, u32, std.hash_map.AutoContext(u32), null);
+    var cache = Cache.init(std.testing.allocator, 3);
+    defer cache.deinit();
+
+    _ = try cache.put(1, 10);
+
+    // Unpin unpinned entry
+    try std.testing.expectError(error.NotPinned, cache.unpin(1));
+}
+
+test "LRUCache: all entries pinned scenario" {
+    const Cache = LRUCache(u32, u32, std.hash_map.AutoContext(u32), null);
+    var cache = Cache.init(std.testing.allocator, 2);
+    defer cache.deinit();
+
+    _ = try cache.put(1, 10);
+    _ = try cache.put(2, 20);
+
+    // Pin all entries
+    try cache.pin(1);
+    try cache.pin(2);
+
+    // Try to insert → should fail because all entries are pinned
+    const result = cache.put(3, 30);
+    try std.testing.expectError(error.NoPinnableEntries, result);
+
+    // Cache should still have original 2 entries
+    try std.testing.expectEqual(@as(usize, 2), cache.count());
+    try std.testing.expectEqual(@as(?u32, 10), cache.get(1));
+    try std.testing.expectEqual(@as(?u32, 20), cache.get(2));
+    try cache.validate();
 }
