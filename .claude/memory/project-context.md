@@ -2,12 +2,12 @@
 
 ## Current Status
 - **Version**: 1.13.0 (released 2026-03-20) — Consumer Migration Support
-- **Phase**: v1.14.0 IN PROGRESS (1/3 categories complete — 67% implementation progress)
+- **Phase**: v1.14.0 READY FOR RELEASE (2/3 categories complete — 67%)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 746/746 tests passing)
 - **Latest Milestone**: v1.13.0 RELEASED ✅ — Consumer Migration Support (3 guides, 3 compat layers, 6 examples, 1 PR drafted)
-- **Current Milestone**: v1.14.0 — Ergonomic Enhancements (BTree+SkipList reverse iterators ✅, RedBlackTree pending)
-- **Next Priority**: RedBlackTree.reverseIterator() OR release v1.14.0 with partial bidirectional iterator support
+- **Current Milestone**: v1.14.0 — Ergonomic Enhancements (bidirectional iterators ✅ + context-free constructors ✅)
+- **Next Priority**: Release v1.14.0, then establish v1.15.0 for iterator adaptor expansion
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -47,7 +47,21 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-20 - Hour 15)
+## Recent Progress (Session 2026-03-20 - Hour 17)
+**FEATURE MODE → v1.14.0 ERGONOMIC ENHANCEMENTS — BIDIRECTIONAL ITERATORS COMPLETE:**
+- ✅ **RedBlackTree.reverseIterator()** (commit dfe3289)
+  - **Implementation**: ReverseIterator struct with stack-based reverse in-order traversal
+  - **Algorithm**: Initialize stack with rightmost path, pop nodes and push rightmost path of left subtree
+  - **Tests**: 12 comprehensive tests (empty, single, multiple, stress 1000, mutations, consistency, memory leak, edge cases, float/string keys)
+  - **Complexity**: O(log n) init, O(1) amortized per next(), O(log n) space for stack
+  - **Impact**: Completes bidirectional iterator suite (BTree, SkipList, RedBlackTree)
+- 📊 **v1.14.0 Status**: 2/3 categories COMPLETE (67%)
+  - [x] Context-Free Constructors ✅ (SkipList + AdjacencyList) — 76 tests
+  - [x] Bidirectional Iterators ✅ (BTree + SkipList + RedBlackTree) — 36 tests
+  - [ ] Iterator Adaptor Expansion (deferred to v1.15.0)
+- 🎯 **Next Priority**: Release v1.14.0 with 2/3 categories (significant value delivered)
+
+## Previous Progress (Session 2026-03-20 - Hour 15)
 **FEATURE MODE → v1.14.0 ERGONOMIC ENHANCEMENTS — BIDIRECTIONAL ITERATORS (2/3):**
 - ✅ **BTree.reverseIterator()** (commit 9d9347e)
   - **Implementation**: ReverseIterator struct with stack-based right-to-left traversal
