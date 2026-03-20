@@ -226,6 +226,14 @@ pub fn CuckooFilter(
             const capacity = self.buckets.len * BUCKET_SIZE;
             return @as(f64, @floatFromInt(self.num_items)) / @as(f64, @floatFromInt(capacity));
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            std.debug.assert(self.buckets.len > 0);
+            const capacity = self.buckets.len * BUCKET_SIZE;
+            std.debug.assert(self.num_items <= capacity);
+        }
     };
 }
 

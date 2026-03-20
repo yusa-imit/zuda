@@ -459,6 +459,17 @@ pub fn PersistentArray(comptime T: type) type {
 
             return new_root;
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            std.debug.assert(self.tail.len <= BRANCH_FACTOR);
+            if (self.size == 0) {
+                std.debug.assert(self.root == null);
+                std.debug.assert(self.tail.len == 0);
+                std.debug.assert(self.height == 0);
+            }
+        }
     };
 }
 

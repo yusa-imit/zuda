@@ -247,6 +247,16 @@ pub fn LockFreeStack(comptime T: type) type {
             const head = TaggedPtr.unpack(head_packed);
             return if (head.ptr) |node| node.data else null;
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        /// Note: Full validation in lock-free structures is complex and expensive
+        pub fn validate(self: *const Self) void {
+            _ = self;
+            // Lock-free data structures rely on atomic operations for correctness.
+            // Full invariant checking would require stopping all threads (linearization).
+            // This is a placeholder for compatibility with the container protocol.
+        }
     };
 }
 

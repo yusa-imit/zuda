@@ -186,6 +186,16 @@ pub fn FenwickTree(comptime T: type) type {
             _ = options;
             try writer.print("FenwickTree(n={})", .{self.n});
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            if (self.n == 0) {
+                std.debug.assert(self.tree.len == 0);
+            } else {
+                std.debug.assert(self.tree.len == self.n + 1);
+            }
+        }
     };
 }
 

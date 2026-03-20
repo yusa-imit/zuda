@@ -144,6 +144,15 @@ pub fn MinHash(
             return mh;
         }
 
+        // ── Debug & validation ───────────────────────────────────────────
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            std.debug.assert(self.signature.len == num_hashes);
+            std.debug.assert(self.params.len == num_hashes);
+        }
+
         // ── Private helpers ──────────────────────────────────────────────
 
         /// Universal hash function: h(x) = (ax + b) mod 2^64

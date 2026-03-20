@@ -157,6 +157,17 @@ pub fn CountMinSketch(
             const error_bound = epsilon * @as(f64, @floatFromInt(self.total));
             return @as(u64, @intFromFloat(@ceil(error_bound)));
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            std.debug.assert(self.d > 0);
+            std.debug.assert(self.w > 0);
+            std.debug.assert(self.table.len == self.d);
+            for (self.table) |row| {
+                std.debug.assert(row.len == self.w);
+            }
+        }
     };
 }
 

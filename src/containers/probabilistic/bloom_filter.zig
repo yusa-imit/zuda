@@ -167,6 +167,15 @@ pub fn BloomFilter(
             // Approximate count (may underestimate)
             self.count = @min(self.count, other.count);
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            const expected_words = (self.m + 63) / 64;
+            std.debug.assert(self.bits.len == expected_words);
+            std.debug.assert(self.m > 0);
+            std.debug.assert(self.k > 0);
+        }
     };
 }
 

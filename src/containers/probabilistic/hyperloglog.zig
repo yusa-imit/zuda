@@ -148,6 +148,14 @@ pub fn HyperLogLog(
         pub fn memoryUsage(self: *const Self) usize {
             return self.registers.len;
         }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: *const Self) void {
+            std.debug.assert(self.p >= 4 and self.p <= 18);
+            std.debug.assert(self.m == (@as(usize, 1) << self.p));
+            std.debug.assert(self.registers.len == self.m);
+        }
     };
 }
 
