@@ -1,13 +1,13 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.14.0 (released 2026-03-20) — Ergonomic Enhancements
-- **Phase**: v1.15.0 — Iterator Adaptor Expansion
+- **Version**: 1.15.0 (released 2026-03-20) — Iterator Adaptor Expansion
+- **Phase**: v2.0 Track (Phase 6) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 746/746 tests passing)
-- **Latest Milestone**: v1.14.0 RELEASED ✅ — Ergonomic Enhancements (bidirectional iterators + context-free constructors, 112 new tests)
-- **Current Milestone**: v1.15.0 — Iterator Adaptor Expansion (FlatMap, TakeWhile, SkipWhile, Partition)
-- **Next Priority**: Implement FlatMap adaptor (first of 4 in v1.15.0)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
+- **Latest Milestone**: v1.15.0 RELEASED ✅ — Iterator Adaptor Expansion (FlatMap, TakeWhile, SkipWhile, Partition adaptors)
+- **Current Milestone**: v1.16.0 — NDArray Core (Phase 6: Scientific Computing)
+- **Next Priority**: Complete v1.16.0 NDArray Core (3/4 categories done: creation ✅, indexing ✅, iteration ✅)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -47,23 +47,48 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Recent Progress (Session 2026-03-20 - Hour 23)
-**FEATURE MODE → v1.15.0 DOCUMENTATION COMPLETE:**
-- ✅ **Iterator Adaptor Documentation** (commit fe55c2f)
-  - **Added**: FlatMap, TakeWhile, SkipWhile, Partition to docs/GUIDE.md adaptor table
-  - **Usage examples**: 4 complete code examples with output annotations
-  - **Real-world example**: Log processing scenarios demonstrating all 4 adaptors in context
-  - **Complexity table**: Time/space analysis for each new adaptor
-  - **Lines added**: 146 lines of comprehensive documentation
-- 📊 **v1.15.0 Status**: COMPLETE + DOCUMENTED (100%)
-  - [x] FlatMap adaptor ✅ (16 tests, documented)
-  - [x] TakeWhile adaptor ✅ (25 tests, documented)
-  - [x] SkipWhile adaptor ✅ (29 tests, documented)
-  - [x] Partition adaptor ✅ (22 tests, documented)
-  - [x] GUIDE.md documentation ✅ (NEW)
-- 🎯 **Total**: 92 new tests + comprehensive docs, all passing
-- 📋 **Note**: v1.15.0 was already released (tag exists), documentation came post-release
-- 🎯 **Next Priority**: v2.0 track — NDArray work-in-progress (core structure implemented)
+## Phase 6 Progress (v2.0 Track) — IN PROGRESS
+- [x] **NDArray type definition** ✅ — NDArray(T, ndim) comptime-generic structure
+- [x] **Creation functions** (9/9) ✅ — zeros, ones, full, empty, arange, linspace, fromSlice, eye, identity
+- [x] **Indexing & slicing** (4/4) ✅ — get, set, at, slice (negative indexing, non-owning views)
+- [x] **Iterator protocol** ✅ — NDArrayIterator with next() -> ?T, layout-aware traversal
+- [ ] **fromOwnedSlice** — Move semantics variant of fromSlice
+- [ ] **Reshape & Transform** — reshape, transpose, permute, flatten, ravel, squeeze, unsqueeze, contiguous
+- [ ] **Element-wise operations** — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, trig functions
+- [ ] **Broadcasting** — NumPy-compatible broadcasting rules
+- [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
+- [ ] **I/O** — save, load (binary), fromCSV, toCSV
+
+## Recent Progress (Session 2026-03-21 - Hour 01)
+**FEATURE MODE → v1.16.0 NDARRAY CORE — 3/4 CATEGORIES COMPLETE:**
+- 🐛 **Bug Fix**: Partition iterator double-consumption bug (commit 21ddde5)
+  - **Root cause**: Iterator consumed twice (count pass + populate pass)
+  - **Fix**: Single-pass ArrayList collection, then toOwnedSlice()
+  - **Impact**: Fixed test failures, -6 lines, cleaner implementation
+  - Closed issue #11
+- ✅ **NDArray Creation Functions** (commit 16ae435)
+  - **Implemented**: zeros, ones, full, empty, arange, linspace, fromSlice, eye, identity (9 functions)
+  - **Features**: Row-major/column-major layout support, type flexibility, error handling
+  - **Tests**: 44 new tests (36 → 80 total NDArray tests)
+  - **Milestone**: v1.16.0 category 1/4 COMPLETE
+- ✅ **NDArray Indexing & Slicing** (commits b435c6a, f02b1b0)
+  - **Implemented**: get, set, at, slice (4 functions)
+  - **Features**: Negative indexing, non-owning views, layout-aware stride-based access
+  - **Tests**: 24 new tests (80 → 104 total NDArray tests)
+  - **Milestone**: v1.16.0 category 2/4 COMPLETE
+- ✅ **NDArray Iterator Protocol** (commits b435c6a, cba6e50)
+  - **Implemented**: Iterator struct with next() -> ?T
+  - **Features**: Stride-aware traversal, works with slices, respects layout (row/column-major)
+  - **Algorithm**: Flat index → multi-dim indices → stride-based offset
+  - **Tests**: 33 new tests (104 → 137 total NDArray tests)
+  - **Milestone**: v1.16.0 category 3/4 COMPLETE
+- 📊 **v1.16.0 Status**: 3/4 categories COMPLETE (75%)
+  - [x] Creation functions ✅ (9 functions, 44 tests)
+  - [x] Indexing & slicing ✅ (4 functions, 24 tests)
+  - [x] Iterator protocol ✅ (1 Iterator, 33 tests)
+  - [ ] fromOwnedSlice & matrix creation enhancements (pending)
+- 🎯 **Total**: 101 new tests this session (746 → ~847 total), 5 commits
+- 📋 **Next Priority**: Complete v1.16.0 remaining items OR start v1.17.0 NDArray Operations
 
 ## Previous Progress (Session 2026-03-20 - Hour 19)
 **FEATURE MODE → v1.15.0 ITERATOR ADAPTOR EXPANSION — MILESTONE COMPLETE:**
