@@ -26,6 +26,9 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Clear Zig cache
+        run: rm -rf .zig-cache zig-out
+
       - name: Build
         run: zig build
 
@@ -53,6 +56,9 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
+
+      - name: Clear Zig cache
+        run: rm -rf .zig-cache zig-out
 
       - name: Build for ${{ matrix.target }}
         run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
