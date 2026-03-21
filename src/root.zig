@@ -350,6 +350,12 @@ pub const ndarray = struct {
     pub const Layout = @import("ndarray/ndarray.zig").Layout;
 };
 
+/// Linear algebra operations (v2.0 track)
+pub const linalg = struct {
+    /// BLAS Level 1 — Vector-vector operations
+    pub const blas = @import("linalg/blas.zig");
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
