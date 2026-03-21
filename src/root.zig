@@ -360,6 +360,8 @@ pub const linalg = struct {
     pub const lu = @import("linalg/lu.zig");
     /// Linear system solver — solve(A, b)
     pub const solve = @import("linalg/solve.zig");
+    /// Matrix properties — rank, condition number
+    pub const properties = @import("linalg/properties.zig");
 };
 
 /// Internal utilities (not part of public API)
