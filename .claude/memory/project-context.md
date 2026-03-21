@@ -62,11 +62,36 @@
   - Trig: sin, cos, tan, asin, acos, atan, atan2 (7)
   - Logarithms: log, log2, log10 (3)
   - Comparison: eq, ne, lt, le, gt, ge (6)
-- [ ] **Broadcasting** — NumPy-compatible broadcasting rules (shape validation complete, full broadcast pending)
+- [x] **Broadcasting** ✅ — NumPy-compatible broadcasting (61 tests, commit f040962)
 - [x] **Reduction operations** ✅ — sum, prod, mean, min, max, argmin, argmax, cumsum, cumprod, all, any (16 methods, 61 tests, commits 56b9da4, 05b798b)
 - [x] **I/O** ✅ — save, load (binary format with magic/version/metadata) — 10 tests, commit 90cf470
 
-## Recent Progress (Session 2026-03-21 - Hour 12)
+## Recent Progress (Session 2026-03-21 - Hour 13)
+**FEATURE MODE → BROADCASTING COMPLETE:**
+
+### Broadcasting Implementation (commit f040962) ✅
+- ✅ **NumPy-Compatible Broadcasting for NDArray**
+  - **Core function**: `broadcastShapes()` — computes result shape following NumPy rules
+    - Aligns shapes from right to left
+    - Dimensions compatible if equal OR one is 1
+    - Result dimension is maximum of the two
+    - Returns `error.IncompatibleShapes` for incompatible shapes
+  - **Binary operation helpers**:
+    - `applyBinaryOp()` — generic framework for arithmetic operations with broadcasting
+    - `applyBinaryCompOp()` — generic framework for comparison operations with broadcasting
+    - Both handle stride-based indexing and map result indices to source arrays
+  - **Updated operations** (11 total):
+    - Arithmetic (5): `add`, `sub`, `mul`, `div`, `mod`
+    - Comparison (6): `eq`, `ne`, `lt`, `le`, `gt`, `ge`
+  - **Test coverage**: 61 comprehensive tests
+    - broadcastShapes function: 12 tests (same shape, dim-1 broadcast, rank mismatch, scalar, 4D, incompatible)
+    - Element-wise operations: 31 tests (all binary ops with various broadcasting scenarios)
+    - Edge cases: 18 tests (large arrays, layout preservation, stress tests)
+  - **Complexity**: O(result_size) time, O(result_size) space for binary operations
+  - **CI Status**: ✅ All tests passing
+  - **Impact**: Phase 6 Broadcasting milestone complete — NDArray now feature-compatible with NumPy broadcasting
+
+## Previous Progress (Session 2026-03-21 - Hour 12)
 **STABILIZATION MODE → zr_dag COMPAT ENHANCEMENT:**
 
 ### Part 1: Missing Functions Implementation (commit 528d505) ✅
