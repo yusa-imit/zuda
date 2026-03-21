@@ -1458,3 +1458,668 @@ test "ger: negative values in vectors" {
     try testing.expectApproxEqAbs(6.0, A.data[2], 1e-10);
     try testing.expectApproxEqAbs(-8.0, A.data[3], 1e-10);
 }
+
+// ============================================================================
+// BLAS Level 3 — Matrix-Matrix Operations
+// ============================================================================
+
+/// General matrix-matrix multiply: C = αAB + βC
+///
+/// Performs the standard matrix-matrix multiplication with scalar scaling.
+/// A is an m×k matrix, B is a k×n matrix, C is an m×n matrix.
+/// The result is stored in-place in C.
+///
+/// This is the most important BLAS Level 3 operation, fundamental for:
+/// - Neural network layer computations (dense layer = gemm)
+/// - Scientific computing and numerical methods
+/// - Graphics and linear algebra algorithms
+/// - Cache-optimized blocking transformations
+///
+/// Parameters:
+/// - alpha: Scalar multiplier for AB
+/// - A: Matrix (2D NDArray with shape [m, k]) — not modified
+/// - B: Matrix (2D NDArray with shape [k, n]) — not modified
+/// - beta: Scalar multiplier for C
+/// - C: Result matrix (2D NDArray with shape [m, n]) — modified in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if A.shape[1] != B.shape[0] (k dimension mismatch)
+/// - error.DimensionMismatch if C.shape[0] != A.shape[0] (m dimension mismatch)
+/// - error.DimensionMismatch if C.shape[1] != B.shape[1] (n dimension mismatch)
+///
+/// Time: O(m*n*k) where A is m×k, B is k×n, C is m×n
+/// Space: O(1) (modifies C in-place)
+///
+/// Example:
+/// ```zig
+/// // A = [[1, 2], [3, 4]]  (2×2 matrix)
+/// // B = [[5, 6], [7, 8]]  (2×2 matrix)
+/// // C = [[1, 1], [1, 1]]  (2×2 matrix)
+/// // gemm(1.0, A, B, 1.0, &C)
+/// // AB = [[1*5 + 2*7, 1*6 + 2*8], [3*5 + 4*7, 3*6 + 4*8]]
+/// //    = [[19, 22], [43, 50]]
+/// // C = [[19, 22], [43, 50]] + [[1, 1], [1, 1]]
+/// //   = [[20, 23], [44, 51]]
+/// ```
+pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    // Validate dimensions
+    // A: m×k, B: k×n, C: m×n
+    const m = A.shape[0];
+    const k = A.shape[1];
+    const n = B.shape[1];
+
+    // Check A.columns == B.rows
+    if (A.shape[1] != B.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    // Check C.rows == A.rows
+    if (C.shape[0] != A.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    // Check C.columns == B.columns
+    if (C.shape[1] != B.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    // Operation: C = α*A*B + β*C
+    // First scale C by beta, then accumulate α*A*B
+    // Loop order: i (rows of C), j (cols of C), k (inner dimension)
+
+    // Step 1: Scale C by beta
+    for (0..m * n) |idx| {
+        C.data[idx] = beta * C.data[idx];
+    }
+
+    // Step 2: Accumulate α*A*B
+    // For each row i of C, for each column j of C:
+    //   C[i,j] += α * Σ_k (A[i,k] * B[k,j])
+    for (0..m) |i| {
+        for (0..n) |j| {
+            var sum: T = 0;
+            for (0..k) |p| {
+                // A[i,p] is at flat index: i*k + p
+                // B[p,j] is at flat index: p*n + j
+                const a_val = A.data[i * k + p];
+                const b_val = B.data[p * n + j];
+                sum += a_val * b_val;
+            }
+            // C[i,j] is at flat index: i*n + j
+            C.data[i * n + j] += alpha * sum;
+        }
+    }
+}
+
+// ============================================================================
+// gemm Tests
+// ============================================================================
+
+test "gemm: basic 2x2 matrix multiply" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]  (2×2 matrix)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // B = [[5, 6], [7, 8]]  (2×2 matrix)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    // C = [[1, 1], [1, 1]]  (2×2 matrix)
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer C.deinit();
+
+    // AB = [[1*5 + 2*7, 1*6 + 2*8], [3*5 + 4*7, 3*6 + 4*8]]
+    //    = [[19, 22], [43, 50]]
+    // C = 1.0*AB + 1.0*C = [[20, 23], [44, 51]]
+    try gemm(f64, 1.0, A, B, 1.0, &C);
+
+    try testing.expectApproxEqAbs(20.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(23.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(44.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(51.0, C.data[3], 1e-10);
+}
+
+test "gemm: 3x3 matrix multiply with identity" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]  (3×3 matrix)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer A.deinit();
+
+    // I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]  (3×3 identity)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer B.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // C = A*I + 0*C = A
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(1.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[3], 1e-10);
+    try testing.expectApproxEqAbs(5.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(6.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(7.0, C.data[6], 1e-10);
+    try testing.expectApproxEqAbs(8.0, C.data[7], 1e-10);
+    try testing.expectApproxEqAbs(9.0, C.data[8], 1e-10);
+}
+
+test "gemm: 1x1 matrix (scalar case)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{2}, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{3}, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer C.deinit();
+
+    // C = 2*2*3 + 3*5 = 12 + 15 = 27
+    try gemm(f64, 2.0, A, B, 3.0, &C);
+
+    try testing.expectApproxEqAbs(27.0, C.data[0], 1e-10);
+}
+
+test "gemm: rectangular matrix 2x3 times 3x2" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]]  (2×3 matrix)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // B = [[7, 8], [9, 10], [11, 12]]  (3×2 matrix)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer B.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 matrix)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[1*7 + 2*9 + 3*11, 1*8 + 2*10 + 3*12], [4*7 + 5*9 + 6*11, 4*8 + 5*10 + 6*12]]
+    //     = [[58, 64], [139, 154]]
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(58.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(64.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(139.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(154.0, C.data[3], 1e-10);
+}
+
+test "gemm: rectangular matrix 3x2 times 2x3 results in 3x3" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4], [5, 6]]  (3×2 matrix)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // B = [[7, 8, 9], [10, 11, 12]]  (2×3 matrix)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer B.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]  (3×3 matrix)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[1*7 + 2*10, 1*8 + 2*11, 1*9 + 2*12], ...]
+    //     = [[27, 30, 33], [61, 68, 75], [95, 106, 117]]
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(27.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(30.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(33.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(61.0, C.data[3], 1e-10);
+    try testing.expectApproxEqAbs(68.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(75.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(95.0, C.data[6], 1e-10);
+    try testing.expectApproxEqAbs(106.0, C.data[7], 1e-10);
+    try testing.expectApproxEqAbs(117.0, C.data[8], 1e-10);
+}
+
+test "gemm: alpha = 0 (C = beta*C only)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 100, 200, 300, 400 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 10, 20, 30, 40 }, .row_major);
+    defer C.deinit();
+
+    // C = 0*A*B + 2*C = 2*[[10, 20], [30, 40]] = [[20, 40], [60, 80]]
+    try gemm(f64, 0.0, A, B, 2.0, &C);
+
+    try testing.expectApproxEqAbs(20.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(40.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(60.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(80.0, C.data[3], 1e-10);
+}
+
+test "gemm: beta = 0 (C = alpha*A*B)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 999, 999, 999 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[19, 22], [43, 50]]
+    // C = 2*[[19, 22], [43, 50]] + 0*C = [[38, 44], [86, 100]]
+    try gemm(f64, 2.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(38.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(44.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(86.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(100.0, C.data[3], 1e-10);
+}
+
+test "gemm: alpha = 1, beta = 1 (standard accumulation)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 2 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 3, 0, 0, 3 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[2*3 + 1*0, 2*0 + 1*3], [1*3 + 2*0, 1*0 + 2*3]] = [[6, 3], [3, 6]]
+    // C = [[6, 3], [3, 6]] + [[1, 1], [1, 1]] = [[7, 4], [4, 7]]
+    try gemm(f64, 1.0, A, B, 1.0, &C);
+
+    try testing.expectApproxEqAbs(7.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(7.0, C.data[3], 1e-10);
+}
+
+test "gemm: negative alpha" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 3, 4, 5 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 10, 10, 10, 10 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[1*2 + 1*4, 1*3 + 1*5], [1*2 + 1*4, 1*3 + 1*5]] = [[6, 8], [6, 8]]
+    // C = -1*[[6, 8], [6, 8]] + 1*[[10, 10], [10, 10]] = [[-6, -8], [-6, -8]] + [[10, 10], [10, 10]] = [[4, 2], [4, 2]]
+    try gemm(f64, -1.0, A, B, 1.0, &C);
+
+    try testing.expectApproxEqAbs(4.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(2.0, C.data[3], 1e-10);
+}
+
+test "gemm: negative beta" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 3, 2, 4 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 10, 10, 10, 10 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[1*5 + 0*2, 1*3 + 0*4], [0*5 + 1*2, 0*3 + 1*4]] = [[5, 3], [2, 4]]
+    // C = 1*[[5, 3], [2, 4]] + -2*[[10, 10], [10, 10]] = [[5, 3], [2, 4]] + [[-20, -20], [-20, -20]] = [[-15, -17], [-18, -16]]
+    try gemm(f64, 1.0, A, B, -2.0, &C);
+
+    try testing.expectApproxEqAbs(-15.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-17.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-18.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(-16.0, C.data[3], 1e-10);
+}
+
+test "gemm: zero matrix B" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[0, 0], [0, 0]]
+    // C = 0 + 2*[[5, 6], [7, 8]] = [[10, 12], [14, 16]]
+    try gemm(f64, 1.0, A, B, 2.0, &C);
+
+    try testing.expectApproxEqAbs(10.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(12.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(14.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(16.0, C.data[3], 1e-10);
+}
+
+test "gemm: zero matrix A" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 10, 20, 30, 40 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[0, 0], [0, 0]]
+    // C = 0 + 3*[[10, 20], [30, 40]] = [[30, 60], [90, 120]]
+    try gemm(f64, 2.0, A, B, 3.0, &C);
+
+    try testing.expectApproxEqAbs(30.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(60.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(90.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(120.0, C.data[3], 1e-10);
+}
+
+test "gemm: identity matrices" {
+    const allocator = testing.allocator;
+
+    // A = I
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    // B = I
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer B.deinit();
+
+    // C = zeros
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // I*I = I
+    // C = 1*I + 0*0 = I
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    // Verify C is identity
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 3 + j], 1e-10);
+        }
+    }
+}
+
+test "gemm: negative values in matrices" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ -1, 2, 3, -4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, -2, -3, 1 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[-1*5 + 2*(-3), -1*(-2) + 2*1], [3*5 + (-4)*(-3), 3*(-2) + (-4)*1]]
+    //     = [[-5 - 6, 2 + 2], [15 + 12, -6 - 4]]
+    //     = [[-11, 4], [27, -10]]
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(-11.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(27.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(-10.0, C.data[3], 1e-10);
+}
+
+test "gemm: dimension mismatch A columns != B rows" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    const result = gemm(f64, 1.0, A, B, 0.0, &C);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gemm: dimension mismatch C rows != A rows" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer C.deinit();
+
+    const result = gemm(f64, 1.0, A, B, 0.0, &C);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gemm: dimension mismatch C columns != B columns" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer C.deinit();
+
+    const result = gemm(f64, 1.0, A, B, 0.0, &C);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gemm: f32 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 0.5, 1.5, 2.5, 3.5 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2.0, 1.0, 1.0, 2.0 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[0.5*2 + 1.5*1, 0.5*1 + 1.5*2], [2.5*2 + 3.5*1, 2.5*1 + 3.5*2]]
+    //     = [[2.5, 3.5], [7.5, 9.5]]
+    try gemm(f32, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(@as(f32, 2.5), C.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.5), C.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 7.5), C.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 9.5), C.data[3], 1e-5);
+}
+
+test "gemm: 32x32 stress test with random values" {
+    const allocator = testing.allocator;
+
+    // Create 32x32 matrices with simple predictable values
+    var A_data = try allocator.alloc(f64, 32 * 32);
+    defer allocator.free(A_data);
+    for (0..32 * 32) |i| {
+        A_data[i] = @as(f64, @floatFromInt((i % 32) + 1));
+    }
+
+    var B_data = try allocator.alloc(f64, 32 * 32);
+    defer allocator.free(B_data);
+    for (0..32 * 32) |i| {
+        B_data[i] = @as(f64, @floatFromInt((i / 32) + 1));
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 32 }, A_data, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 32 }, B_data, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+    defer C.deinit();
+
+    // Just verify it runs and produces reasonable non-zero results
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    // Check that result is non-zero (at least some elements computed)
+    var sum: f64 = 0;
+    for (C.data) |val| {
+        sum += @abs(val);
+    }
+    try testing.expect(sum > 0);
+}
+
+test "gemm: 64x64 stress test for larger matrices" {
+    const allocator = testing.allocator;
+
+    var A_data = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(A_data);
+    for (0..64 * 32) |i| {
+        A_data[i] = 1.0;
+    }
+
+    var B_data = try allocator.alloc(f64, 32 * 64);
+    defer allocator.free(B_data);
+    for (0..32 * 64) |i| {
+        B_data[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, A_data, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 64 }, B_data, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // All 1s * all 1s with k=32 should produce all 32s
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    // Spot check a few values
+    try testing.expectApproxEqAbs(32.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(32.0, C.data[64 * 64 - 1], 1e-10);
+}
+
+test "gemm: accumulation pattern (multiple adds to C)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer B.deinit();
+
+    // Start with C = [[1, 1], [1, 1]]
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer C.deinit();
+
+    // First: C = 1*A*B + 1*C = [[2, 2], [2, 2]] + [[1, 1], [1, 1]] = [[3, 3], [3, 3]]
+    try gemm(f64, 1.0, A, B, 1.0, &C);
+
+    for (0..4) |i| {
+        try testing.expectApproxEqAbs(3.0, C.data[i], 1e-10);
+    }
+
+    // Second: C = 1*A*B + 1*C = [[2, 2], [2, 2]] + [[3, 3], [3, 3]] = [[5, 5], [5, 5]]
+    try gemm(f64, 1.0, A, B, 1.0, &C);
+
+    for (0..4) |i| {
+        try testing.expectApproxEqAbs(5.0, C.data[i], 1e-10);
+    }
+}
+
+test "gemm: various scalar combinations" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 0, 2 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 3, 0, 0, 3 }, .row_major);
+    defer B.deinit();
+
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 4, 4, 4, 4 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[6, 0], [0, 6]]
+    // C = 0.5*[[6, 0], [0, 6]] + 1.5*[[4, 4], [4, 4]]
+    //   = [[3, 0], [0, 3]] + [[6, 6], [6, 6]]
+    //   = [[9, 6], [6, 9]]
+    try gemm(f64, 0.5, A, B, 1.5, &C);
+
+    try testing.expectApproxEqAbs(9.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(9.0, C.data[3], 1e-10);
+}
+
+test "gemm: row vector (1xk) times column vector result (k x 1) = 1x1" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3]]  (1×3 matrix, row vector)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 3 }, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[4], [5], [6]]  (3×1 matrix, column vector)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer B.deinit();
+
+    // C = [[0]]  (1×1 matrix, scalar)
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{0}, .row_major);
+    defer C.deinit();
+
+    // C = 1*([1*4 + 2*5 + 3*6]) + 0*0 = 1*32 = 32
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(32.0, C.data[0], 1e-10);
+}
+
+test "gemm: column vector (mx1) times row vector (1xn) produces outer product" {
+    const allocator = testing.allocator;
+
+    // A = [[1], [2], [3]]  (3×1 matrix, column vector)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[4, 5]]  (1×2 matrix, row vector)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 2 }, &[_]f64{ 4, 5 }, .row_major);
+    defer B.deinit();
+
+    // C = [[0, 0], [0, 0], [0, 0]]  (3×2 matrix)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer C.deinit();
+
+    // A*B = [[1*4, 1*5], [2*4, 2*5], [3*4, 3*5]] = [[4, 5], [8, 10], [12, 15]]
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    try testing.expectApproxEqAbs(4.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(8.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(10.0, C.data[3], 1e-10);
+    try testing.expectApproxEqAbs(12.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(15.0, C.data[5], 1e-10);
+}
