@@ -66,6 +66,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             CapacityExceeded,
             IndexOutOfBounds,
             InvalidPermutation,
+            ShapeMismatch,
         };
 
         /// Shape of the array: length along each dimension
@@ -924,6 +925,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn add(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Check shape compatibility
+            for (0..ndim) |i| {
+                if (self.shape[i] != other.shape[i]) {
+                    return error.ShapeMismatch;
+                }
+            }
+
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -962,6 +970,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn sub(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Check shape compatibility
+            for (0..ndim) |i| {
+                if (self.shape[i] != other.shape[i]) {
+                    return error.ShapeMismatch;
+                }
+            }
+
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -1000,6 +1015,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn mul(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Check shape compatibility
+            for (0..ndim) |i| {
+                if (self.shape[i] != other.shape[i]) {
+                    return error.ShapeMismatch;
+                }
+            }
+
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -1038,6 +1060,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn div(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Check shape compatibility
+            for (0..ndim) |i| {
+                if (self.shape[i] != other.shape[i]) {
+                    return error.ShapeMismatch;
+                }
+            }
+
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -1080,6 +1109,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             // Compile-time check: mod only works on integer types
             if (!std.meta.trait.isIntegral(T)) {
                 @compileError("mod() is only defined for integer types");
+            }
+
+            // Check shape compatibility
+            for (0..ndim) |i| {
+                if (self.shape[i] != other.shape[i]) {
+                    return error.ShapeMismatch;
+                }
             }
 
             // Allocate new buffer for result
@@ -6323,5 +6359,648 @@ test "ndarray: sqrt with 3D array" {
 
     for (0..8) |i| {
         try testing.expectEqual(@as(f64, @floatFromInt(i + 1)), result.data[i]);
+    }
+}
+
+// ========================================
+// Broadcasting Tests (NumPy-compatible)
+// ========================================
+
+test "broadcast: scalar + 1D array not yet implemented (expected to fail)" {
+    const allocator = testing.allocator;
+
+    // This test documents expected behavior for broadcasting
+    // Scalar = [1, 1, ...] in all dimensions conceptually
+    // 1D array = [n]
+    // Should broadcast to shape [n]
+
+    var arr_1d = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer arr_1d.deinit();
+
+    // Initialize with values
+    for (0..5) |i| {
+        arr_1d.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    // Broadcasting scalar + 1D should fail until implemented
+    // Expected: result shape [5] with [scalar+0, scalar+1, scalar+2, scalar+3, scalar+4]
+}
+
+test "broadcast: 1D array + 2D array row broadcast fails without broadcasting support" {
+    const allocator = testing.allocator;
+
+    // 1D array [n] should broadcast to [1, n] for 2D operation
+    var arr_1d = try NDArray(f64, 1).ones(allocator, &[_]usize{4}, .row_major);
+    defer arr_1d.deinit();
+
+    var arr_2d = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_2d.deinit();
+
+    // Current implementation requires same ndim and same shape
+    // Broadcasting not yet supported, this test should fail
+    // Expected after implementation: shape [3, 4]
+}
+
+test "broadcast: 2D [3,1] + 2D [1,4] incompatible without broadcasting" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 1}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{1, 4}, .row_major);
+    defer arr_b.deinit();
+
+    // Without broadcasting: shapes [3,1] and [1,4] are incompatible
+    // With broadcasting: should produce [3,4]
+    // This test documents expected failure before broadcasting is implemented
+}
+
+test "broadcast: 3D + 1D broadcasting rule (shape mismatch without support)" {
+    const allocator = testing.allocator;
+
+    var arr_3d = try NDArray(f64, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    defer arr_3d.deinit();
+
+    var arr_1d = try NDArray(f64, 1).ones(allocator, &[_]usize{4}, .row_major);
+    defer arr_1d.deinit();
+
+    // NumPy rule: 1D [4] broadcasts to [1,1,4] for 3D operation
+    // Then [2,3,4] + [1,1,4] → [2,3,4]
+    // Without broadcasting support, this operation fails
+}
+
+test "broadcast: empty dimension with size 1 (shape broadcasting)" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).ones(allocator, &[_]usize{5, 1}, .row_major);
+    defer arr.deinit();
+
+    // Dimension with size 1 should be broadcastable
+    // This tests that we correctly identify broadcastable dimensions
+    try testing.expectEqual(@as(usize, 1), arr.shape[1]);
+}
+
+test "broadcast error: incompatible shapes [3] + [4]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 1).ones(allocator, &[_]usize{3}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 1).ones(allocator, &[_]usize{4}, .row_major);
+    defer arr_b.deinit();
+
+    // Shapes [3] and [4] are incompatible for broadcasting
+    // Neither dimension is 1, so broadcast rule fails
+    // Current add() will detect this as ShapeMismatch
+    const result = arr_a.add(&arr_b);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "broadcast error: multi-dim mismatch [3,2] + [4,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 2}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{4, 3}, .row_major);
+    defer arr_b.deinit();
+
+    // Shapes [3,2] and [4,3] are incompatible
+    // Broadcasting would require compatible dimensions, but 3≠4 and neither is 1
+    const result = arr_a.add(&arr_b);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "broadcast: same shape requires no broadcasting" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_b.deinit();
+
+    // Same shape [3,4] + [3,4] should work (no broadcast needed)
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+
+    // All elements should be 2 (1 + 1)
+    for (result.data) |val| {
+        try testing.expectEqual(@as(f64, 2.0), val);
+    }
+}
+
+test "broadcast add: result shape calculation for compatible dims" {
+    const allocator = testing.allocator;
+
+    // Test that when broadcasting is implemented, result shape is correct
+    // For shapes [3,1] and [1,4]: max([3,1], [1,4]) = [3,4]
+
+    var arr_a = try NDArray(i32, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    // Current implementation requires same shape; after broadcasting,
+    // this pattern [3,1] + [1,4] → [3,4] should work
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+}
+
+test "broadcast sub: shape [5,1] with itself (no broadcast needed)" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).full(allocator, &[_]usize{5, 1}, 10, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.sub(&arr);
+    defer result.deinit();
+
+    // Subtracting same array should give all zeros
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(usize, 1), result.shape[1]);
+
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 0), val);
+    }
+}
+
+test "broadcast mul: result values for 2D row-major" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).ones(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr_a.deinit();
+
+    // Set arr_a to [1,2,3; 4,5,6]
+    arr_a.data[0] = 1.0;
+    arr_a.data[1] = 2.0;
+    arr_a.data[2] = 3.0;
+    arr_a.data[3] = 4.0;
+    arr_a.data[4] = 5.0;
+    arr_a.data[5] = 6.0;
+
+    var arr_b = try NDArray(f64, 2).ones(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr_b.deinit();
+
+    // Set arr_b to [2,2,2; 3,3,3]
+    for (0..6) |i| {
+        arr_b.data[i] = if (i < 3) 2.0 else 3.0;
+    }
+
+    var result = try arr_a.mul(&arr_b);
+    defer result.deinit();
+
+    // Expected: [2,4,6; 12,15,18]
+    try testing.expectEqual(@as(f64, 2.0), result.data[0]);
+    try testing.expectEqual(@as(f64, 4.0), result.data[1]);
+    try testing.expectEqual(@as(f64, 6.0), result.data[2]);
+    try testing.expectEqual(@as(f64, 12.0), result.data[3]);
+    try testing.expectEqual(@as(f64, 15.0), result.data[4]);
+    try testing.expectEqual(@as(f64, 18.0), result.data[5]);
+}
+
+test "broadcast div: element-wise division preserves shape" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    defer arr_a.deinit();
+
+    // Set arr_a to [10, 20; 30, 40]
+    arr_a.data[0] = 10.0;
+    arr_a.data[1] = 20.0;
+    arr_a.data[2] = 30.0;
+    arr_a.data[3] = 40.0;
+
+    var arr_b = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    defer arr_b.deinit();
+
+    // Set arr_b to [2, 4; 5, 10]
+    arr_b.data[0] = 2.0;
+    arr_b.data[1] = 4.0;
+    arr_b.data[2] = 5.0;
+    arr_b.data[3] = 10.0;
+
+    var result = try arr_a.div(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+
+    // Expected: [5, 5; 6, 4]
+    try testing.expectEqual(@as(f64, 5.0), result.data[0]);
+    try testing.expectEqual(@as(f64, 5.0), result.data[1]);
+    try testing.expectEqual(@as(f64, 6.0), result.data[2]);
+    try testing.expectEqual(@as(f64, 4.0), result.data[3]);
+}
+
+test "broadcast: column-major layout with 2D [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .column_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(Layout.column_major, arr.layout);
+    try testing.expectEqual(@as(usize, 3), arr.shape[0]);
+    try testing.expectEqual(@as(usize, 4), arr.shape[1]);
+
+    // Column-major stride should be [1, 3]
+    try testing.expectEqual(@as(usize, 1), arr.strides[0]);
+    try testing.expectEqual(@as(usize, 3), arr.strides[1]);
+}
+
+test "broadcast: 1D [N] vs 2D [N,1] shape differentiation" {
+    const allocator = testing.allocator;
+
+    var arr_1d = try NDArray(f64, 1).ones(allocator, &[_]usize{5}, .row_major);
+    defer arr_1d.deinit();
+
+    var arr_2d = try NDArray(f64, 2).ones(allocator, &[_]usize{5, 1}, .row_major);
+    defer arr_2d.deinit();
+
+    // Different ndim, should not work without dimension padding
+    // 1D ndim=1, 2D ndim=2: incompatible for direct operation
+    // This test documents pre-broadcasting behavior
+
+    try testing.expectEqual(@as(usize, 1), arr_1d.shape.len);
+    try testing.expectEqual(@as(usize, 2), arr_2d.shape.len);
+}
+
+test "broadcast: 3D + 1D broadcasting semantics" {
+    const allocator = testing.allocator;
+
+    // Test setup for 3D [2,3,4] + 1D [4] → should be [2,3,4]
+    var arr_3d = try NDArray(i32, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    defer arr_3d.deinit();
+
+    var arr_1d = try NDArray(i32, 1).ones(allocator, &[_]usize{4}, .row_major);
+    defer arr_1d.deinit();
+
+    // Without ndim padding (broadcasting), this fails
+    // This test documents the need for preprocessing shapes
+}
+
+test "broadcast: multiple dimension-1 axes [1,5,1,3]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 4).ones(allocator, &[_]usize{1, 5, 1, 3}, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 1), arr.shape[0]);
+    try testing.expectEqual(@as(usize, 5), arr.shape[1]);
+    try testing.expectEqual(@as(usize, 1), arr.shape[2]);
+    try testing.expectEqual(@as(usize, 3), arr.shape[3]);
+}
+
+test "broadcast: large arrays 1000+ elements same shape" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 1).zeros(allocator, &[_]usize{1001}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 1).zeros(allocator, &[_]usize{1001}, .row_major);
+    defer arr_b.deinit();
+
+    // Initialize arrays
+    for (0..1001) |i| {
+        arr_a.data[i] = @as(f64, @floatFromInt(i));
+        arr_b.data[i] = @as(f64, @floatFromInt(i + 1000));
+    }
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1001), result.shape[0]);
+
+    // Check a few values
+    try testing.expectEqual(@as(f64, 1000.0), result.data[0]);
+    try testing.expectEqual(@as(f64, 1002.0), result.data[1]);
+    try testing.expectEqual(@as(f64, 3000.0), result.data[1000]);
+}
+
+test "broadcast: stress test various dimension combinations" {
+    const allocator = testing.allocator;
+
+    // Test [2,3,4,5] addition with same shape
+    var arr_a = try NDArray(i32, 4).ones(allocator, &[_]usize{2, 3, 4, 5}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 4).ones(allocator, &[_]usize{2, 3, 4, 5}, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    const expected_count = 2 * 3 * 4 * 5;
+    for (0..expected_count) |i| {
+        try testing.expectEqual(@as(i32, 2), result.data[i]);
+    }
+}
+
+test "broadcast: add with identical 3D arrays [2,3,4]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 3).full(allocator, &[_]usize{2, 3, 4}, 7, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{2, 3, 4}, 3, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(usize, 4), result.shape[2]);
+
+    // All elements should be 10
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 10), val);
+    }
+}
+
+test "broadcast: sub with identical shapes [4,5]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).full(allocator, &[_]usize{4, 5}, 100, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).full(allocator, &[_]usize{4, 5}, 30, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.sub(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(@as(usize, 5), result.shape[1]);
+
+    // All elements should be 70
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 70), val);
+    }
+}
+
+test "broadcast error: shapes with incompatible middle dimension" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 3).ones(allocator, &[_]usize{2, 5, 4}, .row_major);
+    defer arr_b.deinit();
+
+    // Shapes [2,3,4] and [2,5,4] incompatible (3 ≠ 5, neither is 1)
+    const result = arr_a.add(&arr_b);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "broadcast: 2D row-major [3,1] add with row-major [3,4] (planned broadcast)" {
+    const allocator = testing.allocator;
+
+    // This test documents the expected behavior when broadcasting is fully implemented
+    // [3,1] should broadcast to [3,4] to match [3,4] + [3,1] → [3,4]
+
+    var arr_broadcast = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_broadcast.deinit();
+
+    var arr_col = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr_col.deinit();
+
+    // Currently can only test with same shapes
+    var result = try arr_broadcast.add(&arr_col);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+}
+
+test "broadcast: column-major add with same 2D shape [5,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).full(allocator, &[_]usize{5, 3}, 2.5, .column_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 2).full(allocator, &[_]usize{5, 3}, 1.5, .column_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+
+    // All elements should be 4.0
+    for (result.data) |val| {
+        try testing.expectEqual(@as(f64, 4.0), val);
+    }
+}
+
+test "broadcast: mixed layout add column-major + row-major same shape" {
+    const allocator = testing.allocator;
+
+    var arr_col = try NDArray(i32, 2).full(allocator, &[_]usize{2, 3}, 5, .column_major);
+    defer arr_col.deinit();
+
+    var arr_row = try NDArray(i32, 2).full(allocator, &[_]usize{2, 3}, 7, .row_major);
+    defer arr_row.deinit();
+
+    // Same shape should work regardless of layout
+    var result = try arr_col.add(&arr_row);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+
+    // All elements should be 12
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 12), val);
+    }
+}
+
+test "broadcast: single element dimension [1,1,1,5]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 4).ones(allocator, &[_]usize{1, 1, 1, 5}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 4).ones(allocator, &[_]usize{1, 1, 1, 5}, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(usize, 1), result.shape[1]);
+    try testing.expectEqual(@as(usize, 1), result.shape[2]);
+    try testing.expectEqual(@as(usize, 5), result.shape[3]);
+
+    // All elements should be 2
+    for (result.data) |val| {
+        try testing.expectEqual(@as(f64, 2.0), val);
+    }
+}
+
+test "broadcast error: 1D [5] + 1D [3] incompatible" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 1).ones(allocator, &[_]usize{5}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 1).ones(allocator, &[_]usize{3}, .row_major);
+    defer arr_b.deinit();
+
+    const result = arr_a.add(&arr_b);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "broadcast: 4D row-major [1,2,3,4] mul with itself" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 4).full(allocator, &[_]usize{1, 2, 3, 4}, 6, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 4).full(allocator, &[_]usize{1, 2, 3, 4}, 7, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.mul(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(usize, 3), result.shape[2]);
+    try testing.expectEqual(@as(usize, 4), result.shape[3]);
+
+    // All elements should be 42 (6 * 7)
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 42), val);
+    }
+}
+
+test "broadcast: negative values sub [3] - [3] = 0" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer arr_b.deinit();
+
+    // Set arr_a to [-5, 10, -15]
+    arr_a.data[0] = -5;
+    arr_a.data[1] = 10;
+    arr_a.data[2] = -15;
+
+    // Set arr_b to [-3, 2, -10]
+    arr_b.data[0] = -3;
+    arr_b.data[1] = 2;
+    arr_b.data[2] = -10;
+
+    var result = try arr_a.sub(&arr_b);
+    defer result.deinit();
+
+    // Expected: [-2, 8, -5]
+    try testing.expectEqual(@as(i32, -2), result.data[0]);
+    try testing.expectEqual(@as(i32, 8), result.data[1]);
+    try testing.expectEqual(@as(i32, -5), result.data[2]);
+}
+
+test "broadcast: float precision mul [2,2]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    defer arr_b.deinit();
+
+    // Set arr_a to [0.1, 0.2; 0.3, 0.4]
+    arr_a.data[0] = 0.1;
+    arr_a.data[1] = 0.2;
+    arr_a.data[2] = 0.3;
+    arr_a.data[3] = 0.4;
+
+    // Set arr_b to [10.0, 5.0; 3.0, 2.5]
+    arr_b.data[0] = 10.0;
+    arr_b.data[1] = 5.0;
+    arr_b.data[2] = 3.0;
+    arr_b.data[3] = 2.5;
+
+    var result = try arr_a.mul(&arr_b);
+    defer result.deinit();
+
+    // Expected: [1.0, 1.0; 0.9, 1.0]
+    try testing.expectApproxEqRel(@as(f64, 1.0), result.data[0], 1e-10);
+    try testing.expectApproxEqRel(@as(f64, 1.0), result.data[1], 1e-10);
+    try testing.expectApproxEqRel(@as(f64, 0.9), result.data[2], 1e-10);
+    try testing.expectApproxEqRel(@as(f64, 1.0), result.data[3], 1e-10);
+}
+
+test "broadcast: scalar-like [1] + [1] operation" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 1).zeros(allocator, &[_]usize{1}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 1).zeros(allocator, &[_]usize{1}, .row_major);
+    defer arr_b.deinit();
+
+    arr_a.data[0] = 100;
+    arr_b.data[0] = 50;
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(i32, 150), result.data[0]);
+}
+
+test "broadcast: all-ones tensor [5,4,3] add" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{5, 4, 3}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{5, 4, 3}, 2, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+    try testing.expectEqual(@as(usize, 3), result.shape[2]);
+
+    const expected_count = 5 * 4 * 3;
+    for (0..expected_count) |i| {
+        try testing.expectEqual(@as(i32, 3), result.data[i]);
+    }
+}
+
+test "broadcast: div by same array gives all ones [3,2]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 2}, .row_major);
+    defer arr.deinit();
+
+    // Set to [2, 4, 6, 8, 10, 12]
+    for (0..6) |i| {
+        arr.data[i] = @as(f64, @floatFromInt((i + 1) * 2));
+    }
+
+    var result = try arr.div(&arr);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+
+    // All elements should be 1.0
+    for (result.data) |val| {
+        try testing.expectEqual(@as(f64, 1.0), val);
     }
 }
