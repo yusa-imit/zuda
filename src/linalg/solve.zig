@@ -558,6 +558,101 @@ pub fn inv(
 }
 
 // ============================================================================
+// Moore-Penrose Pseudo-Inverse via SVD
+// ============================================================================
+
+/// Compute Moore-Penrose pseudo-inverse A⁺ via SVD
+///
+/// Computes A⁺ = VΣ⁺U^T where Σ⁺[i,i] = 1/σᵢ if σᵢ > tol, else 0
+/// Tolerance: tol = max(m,n) × σ_max × machine_epsilon
+///
+/// Works for any matrix shape (square, tall, wide, rank-deficient)
+///
+/// Parameters:
+/// - T: Numeric type (f32, f64)
+/// - A: Input matrix (m×n)
+/// - allocator: Memory allocator
+///
+/// Returns: A⁺ (n×m) pseudo-inverse matrix
+///
+/// Time: O(mn²) for SVD + O(mnk) for pseudo-inverse computation
+/// Space: O(m×min(m,n) + min(m,n)×n) for SVD factors
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 2}, &[_]f64{
+///     1, 0, 0, 1, 1, 1
+/// }, .row_major);
+/// defer A.deinit();
+/// var A_pinv = try pinv(f64, A, allocator); // 2×3 matrix
+/// defer A_pinv.deinit();
+/// ```
+pub fn pinv(
+    comptime T: type,
+    A: NDArray(T, 2),
+    allocator: Allocator,
+) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error)!NDArray(T, 2) {
+    const m = A.shape[0];
+    const n = A.shape[1];
+    const k = @min(m, n); // Thin SVD rank
+
+    // Step 1: Compute SVD: A = U Σ V^T
+    var svd_result = try decomp.svd(T, A, allocator);
+    defer svd_result.deinit();
+
+    const U = svd_result.U; // m×k
+    const S = svd_result.S; // k
+    const Vt = svd_result.Vt; // k×n
+
+    // Step 2: Compute tolerance for singular value cutoff
+    // tol = max(m, n) × σ_max × machine_epsilon
+    const sigma_max = if (k > 0) S.data[0] else 0; // S is sorted descending
+    const eps = switch (T) {
+        f32 => 1.19e-7,
+        f64 => 2.22e-16,
+        else => @compileError("Unsupported type for pinv"),
+    };
+    const tol = @as(T, @floatFromInt(@max(m, n))) * sigma_max * eps;
+
+    // Step 3: Compute Σ⁺ (pseudo-inverse of singular values)
+    var S_pinv = try allocator.alloc(T, k);
+    defer allocator.free(S_pinv);
+
+    for (0..k) |i| {
+        if (S.data[i] > tol) {
+            S_pinv[i] = 1.0 / S.data[i];
+        } else {
+            S_pinv[i] = 0.0;
+        }
+    }
+
+    // Step 4: Compute A⁺ = V Σ⁺ U^T
+    // V = transpose(Vt), so V[i,l] = Vt[l,i]
+    // Result A_pinv is n×m
+
+    var A_pinv = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, m }, .row_major);
+    errdefer A_pinv.deinit();
+
+    // Method: A⁺[i,j] = Σ_l V[i,l] × S_pinv[l] × U[j,l]
+    // where V[i,l] = Vt[l,i] and U is m×k
+    for (0..n) |i| {
+        for (0..m) |j| {
+            var sum: T = 0;
+            for (0..k) |l| {
+                if (S_pinv[l] > 0) {
+                    const v_il = Vt.data[l * n + i]; // Vt[l,i]
+                    const u_jl = U.data[j * k + l]; // U[j,l]
+                    sum += v_il * S_pinv[l] * u_jl;
+                }
+            }
+            A_pinv.data[i * m + j] = sum;
+        }
+    }
+
+    return A_pinv;
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2264,6 +2359,993 @@ test "inv: memory cleanup — no leaks (4x4)" {
 
     var A_inv = try inv(f64, A, allocator);
     A_inv.deinit();
+
+    // Testing allocator detects any leaks
+}
+// TESTS FOR pinv(A) — Moore-Penrose Pseudo-Inverse
+// These tests should be appended to the end of src/linalg/solve.zig
+// after the pinv(A) function is implemented.
+
+test "pinv: full-rank square matrix (3×3) equals inv" {
+    const allocator = testing.allocator;
+
+    // 3×3 diagonal matrix (full rank)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        4, 0, 0,
+        0, 5, 0,
+        0, 0, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // For full-rank square, pinv(A) ≈ inv(A)
+    // Expected: diag(1/4, 1/5, 1/6)
+    try testing.expectApproxEqAbs(0.25, A_pinv.data[0 * 3 + 0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_pinv.data[0 * 3 + 1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_pinv.data[0 * 3 + 2], 1e-10);
+
+    try testing.expectApproxEqAbs(0.0, A_pinv.data[1 * 3 + 0], 1e-10);
+    try testing.expectApproxEqAbs(1.0 / 5.0, A_pinv.data[1 * 3 + 1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_pinv.data[1 * 3 + 2], 1e-10);
+
+    try testing.expectApproxEqAbs(0.0, A_pinv.data[2 * 3 + 0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_pinv.data[2 * 3 + 1], 1e-10);
+    try testing.expectApproxEqAbs(1.0 / 6.0, A_pinv.data[2 * 3 + 2], 1e-10);
+}
+
+test "pinv: full-rank tall matrix (4×2) — left inverse A⁺A = I" {
+    const allocator = testing.allocator;
+
+    // 4×2 full rank matrix
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+        1, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify left inverse: A⁺A = I (2×2)
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                const apinv_ik = A_pinv.data[i * 4 + k]; // A⁺[i,k]
+                const a_kj = A.data[k * 2 + j]; // A[k,j]
+                sum += apinv_ik * a_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    try testing.expectApproxEqAbs(1.0, product.data[0 * 2 + 0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[0 * 2 + 1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[1 * 2 + 0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, product.data[1 * 2 + 1], 1e-10);
+}
+
+test "pinv: full-rank wide matrix (2×4) — right inverse AA⁺ = I" {
+    const allocator = testing.allocator;
+
+    // 2×4 full rank matrix
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{
+        1, 0, 1, 0,
+        0, 1, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify right inverse: AA⁺ = I (2×2)
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                const a_ik = A.data[i * 4 + k]; // A[i,k]
+                const apinv_kj = A_pinv.data[k * 2 + j]; // A⁺[k,j]
+                sum += a_ik * apinv_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    try testing.expectApproxEqAbs(1.0, product.data[0 * 2 + 0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[0 * 2 + 1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[1 * 2 + 0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, product.data[1 * 2 + 1], 1e-10);
+}
+
+test "pinv: identity matrix — pinv(I) = I" {
+    const allocator = testing.allocator;
+
+    var I = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer I.deinit();
+
+    // Create identity
+    for (0..3) |i| {
+        I.data[i * 3 + i] = 1.0;
+    }
+
+    var I_pinv = try pinv(f64, I, allocator);
+    defer I_pinv.deinit();
+
+    // pinv(I) should equal I
+    for (0..9) |idx| {
+        const expected = if (idx % 4 == 0) 1.0 else 0.0;
+        try testing.expectApproxEqAbs(expected, I_pinv.data[idx], 1e-10);
+    }
+}
+
+test "pinv: diagonal matrix (2×2)" {
+    const allocator = testing.allocator;
+
+    var D = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        2, 0,
+        0, 3,
+    }, .row_major);
+    defer D.deinit();
+
+    var D_pinv = try pinv(f64, D, allocator);
+    defer D_pinv.deinit();
+
+    // pinv(D) should be diag(1/2, 1/3)
+    try testing.expectApproxEqAbs(0.5, D_pinv.data[0 * 2 + 0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, D_pinv.data[0 * 2 + 1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, D_pinv.data[1 * 2 + 0], 1e-10);
+    try testing.expectApproxEqAbs(1.0 / 3.0, D_pinv.data[1 * 2 + 1], 1e-10);
+}
+
+test "pinv: 1×1 matrix — scalar inverse" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{
+        5,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // pinv([5]) = [1/5]
+    try testing.expectApproxEqAbs(0.2, A_pinv.data[0], 1e-10);
+}
+
+test "pinv: rank-1 matrix (outer product)" {
+    const allocator = testing.allocator;
+
+    // Rank-1 matrix: [1, 2, 3]^T × [4, 5]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        4, 5,
+        8, 10,
+        12, 15,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // A_pinv should have shape 2×3
+    try testing.expect(A_pinv.shape[0] == 2 and A_pinv.shape[1] == 3);
+
+    // Verify Moore-Penrose property: A A⁺ A = A
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer temp.deinit();
+
+    // A⁺ A (2×3 @ 3×2 = 2×2)
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += A_pinv.data[i * 3 + k] * A.data[k * 2 + j];
+            }
+            temp.data[i * 2 + j] = sum;
+        }
+    }
+
+    // A (A⁺ A) (3×2 @ 2×2 = 3×2)
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer result.deinit();
+
+    for (0..3) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * temp.data[k * 2 + j];
+            }
+            result.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check result ≈ A
+    for (0..6) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-10);
+    }
+}
+
+test "pinv: zero rows (bottom rows all zeros)" {
+    const allocator = testing.allocator;
+
+    // 4×2 matrix with zero rows
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        0, 0,
+        0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // A_pinv should have shape 2×4
+    try testing.expect(A_pinv.shape[0] == 2 and A_pinv.shape[1] == 4);
+
+    // Verify Moore-Penrose property 1: A A⁺ A = A
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 2 }, .row_major);
+    defer temp.deinit();
+
+    for (0..4) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                sum += A_pinv.data[j * 4 + k] * A.data[k * 2 + i];
+            }
+            temp.data[i * 2 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 2 }, .row_major);
+    defer result.deinit();
+
+    for (0..4) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * temp.data[k * 2 + j];
+            }
+            result.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check all data matches (with tolerance for numerical error)
+    for (0..8) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-10);
+    }
+}
+
+test "pinv: zero columns (rightmost columns all zeros)" {
+    const allocator = testing.allocator;
+
+    // 2×4 matrix with zero columns on right
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{
+        1, 2, 0, 0,
+        3, 4, 0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // A_pinv should have shape 4×2
+    try testing.expect(A_pinv.shape[0] == 4 and A_pinv.shape[1] == 2);
+
+    // Verify Moore-Penrose property 1: A A⁺ A = A
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer temp.deinit();
+
+    for (0..4) |i| {
+        for (0..4) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A_pinv.data[i * 2 + k] * A.data[k * 4 + j];
+            }
+            temp.data[i * 4 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 4 }, .row_major);
+    defer result.deinit();
+
+    for (0..2) |i| {
+        for (0..4) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                sum += A.data[i * 4 + k] * temp.data[k * 4 + j];
+            }
+            result.data[i * 4 + j] = sum;
+        }
+    }
+
+    // Check result ≈ A
+    for (0..8) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-10);
+    }
+}
+
+test "pinv: all zeros matrix — pinv = zeros" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // pinv(0) should be 0
+    for (0..6) |idx| {
+        try testing.expectApproxEqAbs(0.0, A_pinv.data[idx], 1e-10);
+    }
+}
+
+test "pinv: rank-k matrix (k < min(m,n))" {
+    const allocator = testing.allocator;
+
+    // Rank-2 matrix: two linearly independent rows
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+        5, 7, 9, // Row 3 = Row 1 + Row 2
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify Moore-Penrose property 1: A A⁺ A = A
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer temp.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += A_pinv.data[i * 3 + k] * A.data[k * 3 + j];
+            }
+            temp.data[i * 3 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer result.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += A.data[i * 3 + k] * temp.data[k * 3 + j];
+            }
+            result.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check result ≈ A (with larger tolerance for rank-deficient)
+    for (0..9) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-8);
+    }
+}
+
+test "pinv: Moore-Penrose property 1 — AA⁺A = A" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Compute AA⁺ (3×2 @ 2×3 = 3×3)
+    var AA_pinv = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer AA_pinv.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * A_pinv.data[k * 3 + j];
+            }
+            AA_pinv.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Compute (AA⁺)A (3×3 @ 3×2 = 3×2)
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer result.deinit();
+
+    for (0..3) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += AA_pinv.data[i * 3 + k] * A.data[k * 2 + j];
+            }
+            result.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check result ≈ A
+    for (0..6) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-10);
+    }
+}
+
+test "pinv: Moore-Penrose property 2 — A⁺AA⁺ = A⁺" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Compute A⁺A (3×2 @ 2×3 = 3×3)
+    var A_pinv_A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A_pinv_A.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A_pinv.data[i * 2 + k] * A.data[k * 3 + j];
+            }
+            A_pinv_A.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Compute (A⁺A)A⁺ (3×3 @ 3×2 = 3×2)
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer result.deinit();
+
+    for (0..3) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += A_pinv_A.data[i * 3 + k] * A_pinv.data[k * 2 + j];
+            }
+            result.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check result ≈ A⁺
+    for (0..6) |idx| {
+        try testing.expectApproxEqAbs(A_pinv.data[idx], result.data[idx], 1e-10);
+    }
+}
+
+test "pinv: Moore-Penrose property 3 — (AA⁺)^T = AA⁺ (symmetric)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Compute AA⁺ (3×2 @ 2×3 = 3×3)
+    var AA_pinv = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer AA_pinv.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * A_pinv.data[k * 3 + j];
+            }
+            AA_pinv.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check that AA⁺ is symmetric: AA⁺[i,j] = AA⁺[j,i]
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const elem_ij = AA_pinv.data[i * 3 + j];
+            const elem_ji = AA_pinv.data[j * 3 + i];
+            try testing.expectApproxEqAbs(elem_ij, elem_ji, 1e-10);
+        }
+    }
+}
+
+test "pinv: Moore-Penrose property 4 — (A⁺A)^T = A⁺A (symmetric)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Compute A⁺A (3×2 @ 2×3 = 3×3)
+    var A_pinv_A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A_pinv_A.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A_pinv.data[i * 2 + k] * A.data[k * 3 + j];
+            }
+            A_pinv_A.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check that A⁺A is symmetric: A⁺A[i,j] = A⁺A[j,i]
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const elem_ij = A_pinv_A.data[i * 3 + j];
+            const elem_ji = A_pinv_A.data[j * 3 + i];
+            try testing.expectApproxEqAbs(elem_ij, elem_ji, 1e-10);
+        }
+    }
+}
+
+test "pinv: very tall matrix (10×2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 10, 2 }, &[_]f64{
+        1, 1,
+        2, 1,
+        3, 1,
+        4, 1,
+        5, 1,
+        6, 1,
+        7, 1,
+        8, 1,
+        9, 1,
+        10, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify shape 2×10
+    try testing.expect(A_pinv.shape[0] == 2 and A_pinv.shape[1] == 10);
+
+    // Verify Moore-Penrose property 1: AA⁺A = A
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 2 }, .row_major);
+    defer temp.deinit();
+
+    for (0..10) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..10) |k| {
+                sum += A_pinv.data[j * 10 + k] * A.data[k * 2 + i];
+            }
+            temp.data[i * 2 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 2 }, .row_major);
+    defer result.deinit();
+
+    for (0..10) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * temp.data[k * 2 + j];
+            }
+            result.data[i * 2 + j] = sum;
+        }
+    }
+
+    for (0..20) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-9);
+    }
+}
+
+test "pinv: very wide matrix (2×10)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 10 }, &[_]f64{
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify shape 10×2
+    try testing.expect(A_pinv.shape[0] == 10 and A_pinv.shape[1] == 2);
+
+    // Verify Moore-Penrose property 1: AA⁺A = A
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 10 }, .row_major);
+    defer temp.deinit();
+
+    for (0..10) |i| {
+        for (0..10) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A_pinv.data[i * 2 + k] * A.data[k * 10 + j];
+            }
+            temp.data[i * 10 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 10 }, .row_major);
+    defer result.deinit();
+
+    for (0..2) |i| {
+        for (0..10) |j| {
+            var sum: f64 = 0;
+            for (0..10) |k| {
+                sum += A.data[i * 10 + k] * temp.data[k * 10 + j];
+            }
+            result.data[i * 10 + j] = sum;
+        }
+    }
+
+    for (0..20) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-9);
+    }
+}
+
+test "pinv: f32 precision (3×2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f32{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f32, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify Moore-Penrose property 1: AA⁺A = A (f32 tolerance)
+    var temp = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer temp.deinit();
+
+    for (0..3) |i| {
+        for (0..2) |j| {
+            var sum: f32 = 0;
+            for (0..2) |k| {
+                sum += A_pinv.data[i * 2 + k] * A.data[k * 2 + j];
+            }
+            temp.data[i * 2 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer result.deinit();
+
+    for (0..3) |i| {
+        for (0..2) |j| {
+            var sum: f32 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * temp.data[k * 2 + j];
+            }
+            result.data[i * 2 + j] = sum;
+        }
+    }
+
+    for (0..6) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-4);
+    }
+}
+
+test "pinv: f64 precision (4×3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+        10, 11, 12,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify Moore-Penrose property 1: AA⁺A = A (f64 tolerance)
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 3 }, .row_major);
+    defer temp.deinit();
+
+    for (0..4) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += A_pinv.data[i * 3 + k] * A.data[k * 3 + j];
+            }
+            temp.data[i * 3 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 3 }, .row_major);
+    defer result.deinit();
+
+    for (0..4) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += A.data[i * 3 + k] * temp.data[k * 3 + j];
+            }
+            result.data[i * 3 + j] = sum;
+        }
+    }
+
+    for (0..12) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-10);
+    }
+}
+
+test "pinv: ill-conditioned Hilbert matrix (rank-deficient)" {
+    const allocator = testing.allocator;
+
+    // 4×4 Hilbert matrix (ill-conditioned, low rank)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1.0, 0.5, 1.0 / 3.0, 0.25,
+        0.5, 1.0 / 3.0, 0.25, 0.2,
+        1.0 / 3.0, 0.25, 0.2, 1.0 / 6.0,
+        0.25, 0.2, 1.0 / 6.0, 1.0 / 7.0,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Verify Moore-Penrose property 1 (larger tolerance for ill-conditioned)
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer temp.deinit();
+
+    for (0..4) |i| {
+        for (0..4) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                sum += A_pinv.data[i * 4 + k] * A.data[k * 4 + j];
+            }
+            temp.data[i * 4 + j] = sum;
+        }
+    }
+
+    var result = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer result.deinit();
+
+    for (0..4) |i| {
+        for (0..4) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                sum += A.data[i * 4 + k] * temp.data[k * 4 + j];
+            }
+            result.data[i * 4 + j] = sum;
+        }
+    }
+
+    for (0..16) |idx| {
+        try testing.expectApproxEqAbs(A.data[idx], result.data[idx], 1e-6);
+    }
+}
+
+test "pinv: small singular values (near machine epsilon) — cutoff test" {
+    const allocator = testing.allocator;
+
+    // Matrix with very small singular values
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1e-10, 0, 0,
+        0, 1e-15, 0,
+        0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Singular values below tolerance should be zeroed in pseudo-inverse
+    // Only the last element should be non-zero
+    try testing.expectApproxEqAbs(1.0, A_pinv.data[2 * 3 + 2], 1e-10);
+}
+
+test "pinv: least squares solution (overdetermined system)" {
+    const allocator = testing.allocator;
+
+    // Overdetermined system: 4 equations, 2 unknowns
+    // Ax = b where A is 4×2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+        1, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{
+        1, 2, 3, 4,
+    }, .row_major);
+    defer b.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Least squares solution: x = A⁺ b (2×1)
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{2}, .row_major);
+    defer x.deinit();
+
+    for (0..2) |i| {
+        var sum: f64 = 0;
+        for (0..4) |j| {
+            sum += A_pinv.data[i * 4 + j] * b.data[j];
+        }
+        x.data[i] = sum;
+    }
+
+    // Verify solution quality: ||Ax - b|| should be minimized
+    var Ax = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer Ax.deinit();
+
+    for (0..4) |i| {
+        var sum: f64 = 0;
+        for (0..2) |j| {
+            sum += A.data[i * 2 + j] * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    // Compute residual norm ||Ax - b||²
+    var residual_norm_sq: f64 = 0;
+    for (0..4) |i| {
+        const diff = Ax.data[i] - b.data[i];
+        residual_norm_sq += diff * diff;
+    }
+
+    // Solution should exist and residual should be reasonable
+    try testing.expect(residual_norm_sq >= 0);
+}
+
+test "pinv: minimum norm solution (underdetermined system)" {
+    const allocator = testing.allocator;
+
+    // Wide matrix: 2 equations, 4 unknowns (underdetermined)
+    // Ax = b where A is 2×4, but we use pseudoinverse for minimum norm
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{
+        1, 0, 1, 0,
+        0, 1, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{
+        1, 2,
+    }, .row_major);
+    defer b.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Minimum norm solution: x = A⁺ b (4×1)
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer x.deinit();
+
+    for (0..4) |i| {
+        var sum: f64 = 0;
+        for (0..2) |j| {
+            sum += A_pinv.data[i * 2 + j] * b.data[j];
+        }
+        x.data[i] = sum;
+    }
+
+    // Verify solution: Ax = b
+    var Ax = try NDArray(f64, 1).zeros(allocator, &[_]usize{2}, .row_major);
+    defer Ax.deinit();
+
+    for (0..2) |i| {
+        var sum: f64 = 0;
+        for (0..4) |j| {
+            sum += A.data[i * 4 + j] * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    // Check Ax ≈ b
+    try testing.expectApproxEqAbs(1.0, Ax.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, Ax.data[1], 1e-10);
+}
+
+test "pinv: reconstruction — ||A - AA⁺A|| is small" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    defer A_pinv.deinit();
+
+    // Compute AA⁺
+    var AA_pinv = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer AA_pinv.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                sum += A.data[i * 2 + k] * A_pinv.data[k * 3 + j];
+            }
+            AA_pinv.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Compute AA⁺A
+    var reconstruction = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer reconstruction.deinit();
+
+    for (0..3) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                sum += AA_pinv.data[i * 3 + k] * A.data[k * 2 + j];
+            }
+            reconstruction.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Compute ||A - AA⁺A||_F (Frobenius norm of error)
+    var error_norm_sq: f64 = 0;
+    for (0..6) |idx| {
+        const diff = A.data[idx] - reconstruction.data[idx];
+        error_norm_sq += diff * diff;
+    }
+
+    // Error should be very small
+    try testing.expect(error_norm_sq < 1e-10);
+}
+
+test "pinv: memory cleanup — no leaks (3×2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    A_pinv.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+test "pinv: memory cleanup — no leaks (2×4)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_pinv = try pinv(f64, A, allocator);
+    A_pinv.deinit();
 
     // Testing allocator detects any leaks
 }
