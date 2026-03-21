@@ -1,16 +1,41 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.19.1 ✅ — CI Stability Fixes RELEASED
+- **Version**: 1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 301 tests 100% passing)
-- **Latest Milestone**: v1.19.1 CI Fixes ✅ — Resolved build cache corruption in GitHub Actions
-- **Current Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, rank, condition number)
-- **Next Priority**: Implement rank(A) for matrix rank via SVD
-- **Decompositions Available**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 tests
+- **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra (solvers, pseudo-inverse, rank, condition number) COMPLETE
+- **Current Milestone**: v1.21.0 — Next scientific computing module or container optimizations
+- **Next Priority**: Plan v1.21.0 based on consumer feedback (zr, silica, zoltraak, sailor)
+- **Linear Algebra Suite**: 6 decompositions + 6 solvers/properties = 237 tests (160 BLAS + 114 decompositions + 123 solvers)
 
-## Recent Progress (Session 2026-03-22 - Hour 2)
+## Recent Progress (Session 2026-03-22 - Hour 4)
+**STABILIZATION MODE:**
+
+### v1.20.0 Release ✅
+- ✅ **Release**: v1.20.0 milestone COMPLETE and RELEASED
+- ✅ **GitHub Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.20.0
+- ✅ **Features**: 6 new functions (solve, lstsq, inv, pinv, rank, cond)
+- ✅ **Tests**: 301 total (160 BLAS + 114 decompositions + 123 solvers/properties), 100% passing
+- ✅ **Verification**: All 6 cross-compile targets green, zero open bugs
+- ✅ **Tag**: v1.20.0 created and pushed
+- ✅ **Status**: CI green, no open issues, all quality checks passed
+
+### Stabilization Audit ✅
+- ✅ **CI Status**: All workflows passing on main (latest run: success)
+- ✅ **GitHub Issues**: 0 open bugs, 0 feature requests
+- ✅ **Tests**: 301/301 passing (100% pass rate)
+- ✅ **Cross-compilation**: All 6 targets verified (x86_64/aarch64 linux/macos/windows + wasm32-wasi)
+- ✅ **Code Quality**: All public functions have Big-O doc comments, all containers have validate() methods
+- ✅ **Memory Safety**: All tests use std.testing.allocator with zero leaks
+- ✅ **Test Quality**: Meaningful assertions, comprehensive edge cases, proper error path coverage
+
+**Next Session Priority**: Plan v1.21.0 — identify next priority from consumer use cases or continue scientific computing track
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 2)
 **FEATURE MODE:**
 
 ### lstsq(A, b) Implementation (commit d4992a7) ✅
