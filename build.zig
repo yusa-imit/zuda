@@ -1,5 +1,6 @@
 const std = @import("std");
 
+// Build configuration for zuda v1.19.0 — Matrix Decompositions (LU, QR, Cholesky, SVD, Eigendecomposition)
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
 // executed by an external runner. The functions in `std.Build` implement a DSL
