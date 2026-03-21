@@ -2,24 +2,69 @@
 
 ## Current Status
 
-- **Latest release**: v1.14.0 (2026-03-20) — Ergonomic Enhancements
-- **Current phase**: Post-v1.14.0 (completing v1.x, preparing v2.0 scientific computing track)
-- **Tests**: 746/746 passing (100%)
+- **Latest release**: v1.18.0 (2026-03-21) — BLAS & Core Linear Algebra
+- **Current phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
+- **Tests**: 160 BLAS tests passing (100%), 746 total container tests passing
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Target**: Scientific computing platform (NDArray, linear algebra, stats, FFT, numerical methods, optimization)
+- **Next Milestone**: v1.19.0 — Matrix Decompositions (LU, QR, Cholesky, SVD, Eigendecomposition)
 
 ---
 
 ## Active Milestones
 
-### v1.15.0 — Iterator Adaptor Expansion
+### v1.19.0 — Matrix Decompositions (NEXT)
+
+Implement core matrix decomposition algorithms for solving linear systems and eigenvalue problems:
+
+**Context**: v1.18.0 completed BLAS Level 1/2/3 and core operations (trace, det, norms). Decompositions are foundation for solving Ax=b, least squares, eigenvalue problems, and numerical stability analysis.
+
+**Target**: Implement 5 core decomposition algorithms with numerical stability guarantees
+
+**Categories**:
+- [ ] **LU Decomposition** — A = PLU with partial pivoting
+  - [ ] `lu(A) -> {P, L, U}` — O(n³) factorization
+  - [ ] Partial pivoting for numerical stability
+  - [ ] Singular matrix detection
+  - [ ] Tests: 20+ tests (identity, singular, rectangular, ill-conditioned, f32/f64)
+  - **Use case**: Solving Ax=b, determinant computation, matrix inversion
+- [ ] **QR Decomposition** — A = QR with Householder reflections
+  - [ ] `qr(A) -> {Q, R}` — O(mn²) factorization
+  - [ ] Householder reflections (numerically stable)
+  - [ ] Thin QR (m > n optimization)
+  - [ ] Tests: 20+ tests (square, tall, orthogonality validation, f32/f64)
+  - **Use case**: Least squares, eigenvalue algorithms, orthonormalization
+- [ ] **Cholesky Decomposition** — A = LL^T for symmetric positive definite
+  - [ ] `cholesky(A) -> L` — O(n³) factorization
+  - [ ] Symmetry and positive-definiteness validation
+  - [ ] Numerical stability checks
+  - [ ] Tests: 15+ tests (2×2, 3×3, non-SPD detection, f32/f64)
+  - **Use case**: Covariance matrices, optimization, linear system solving
+- [ ] **SVD (Singular Value Decomposition)** — A = UΣV^T
+  - [ ] `svd(A) -> {U, Sigma, Vt}` — O(mn²) for thin SVD
+  - [ ] Golub-Reinsch algorithm (bidiagonalization + QR iteration)
+  - [ ] Singular value ordering (descending)
+  - [ ] Tests: 20+ tests (square, rectangular, rank-deficient, condition number)
+  - **Use case**: Pseudo-inverse, low-rank approximation, PCA, condition number
+- [ ] **Eigendecomposition** — A = VΛV⁻¹ for diagonalizable matrices
+  - [ ] `eig(A) -> {eigenvalues, eigenvectors}` — O(n³) symmetric case
+  - [ ] QR algorithm for symmetric matrices
+  - [ ] Power iteration for dominant eigenvalue
+  - [ ] Tests: 15+ tests (symmetric, diagonal, identity, convergence)
+  - **Use case**: Stability analysis, Markov chains, graph spectral analysis
+
+**Success Criteria**: All 5 decompositions complete with 90+ tests, numerical stability validated
+
+**Estimated Effort**: 3-4 sessions (complex numerical algorithms, high precision requirements)
+
+### v1.15.0 — Iterator Adaptor Expansion (DEFERRED)
 
 Extend the iterator system with advanced adaptors for composable data transformation pipelines:
 
 **Context**: v1.14.0 deferred iterator adaptor expansion. v1.3.0 established the foundation (Map, Filter, Chain, Zip, Take, Skip, Enumerate, collect). Now expand with advanced adaptors for real-world data processing patterns.
 
-**Target**: Implement 4+ advanced iterator adaptors that enable zero-allocation, composable data transformation pipelines ✅
+**Target**: Implement 4+ advanced iterator adaptors that enable zero-allocation, composable data transformation pipelines
 
 **Categories**:
 - [ ] **FlatMap Adaptor** — Map then flatten nested iterables
@@ -50,6 +95,48 @@ Extend the iterator system with advanced adaptors for composable data transforma
 **Success Criteria**: All 4 adaptors complete with 60+ tests total, docs updated, zero-cost abstraction verified
 
 **Estimated Effort**: 1-2 sessions (extends v1.3.0 pattern, low-medium complexity)
+
+### v1.18.0 — BLAS & Core Linear Algebra ✅ COMPLETE
+
+Implement BLAS operations and core matrix properties for scientific computing:
+
+**Context**: v1.17.0 completed NDArray operations (element-wise, reductions, broadcasting, I/O). BLAS provides foundation for linear algebra, numerical solvers, and machine learning.
+
+**Target**: Implement BLAS Level 1/2/3 + core matrix properties (trace, det, norms)
+
+**Categories**:
+- [x] **BLAS Level 1** (5/5) — Vector-vector operations ✅
+  - ✅ dot(x, y): inner product, O(n) — 8 tests
+  - ✅ axpy(α, x, y): y = αx + y, O(n) — 8 tests
+  - ✅ nrm2(x): L2 norm, O(n) — 8 tests
+  - ✅ asum(x): sum of absolute values, O(n) — 8 tests
+  - ✅ scal(α, x): x = αx, O(n) — 8 tests
+- [x] **BLAS Level 2** (2/2) — Matrix-vector operations ✅
+  - ✅ gemv(α, A, x, β, y): y = αAx + βy, O(m*n) — 15 tests
+  - ✅ ger(α, x, y, A): rank-1 update A = A + αxy^T, O(m*n) — 13 tests
+  - ⏭️ trmv, trsv deferred (triangular operations less critical)
+- [x] **BLAS Level 3** (1/1) — Matrix-matrix operations ✅
+  - ✅ gemm(α, A, B, β, C): C = αAB + βC, O(m*n*k) — 24 tests
+  - ⏭️ trmm, trsm deferred (triangular operations)
+- [x] **Matrix Properties** (2/4) ✅
+  - ✅ trace(A): sum of diagonal, O(n) — 15 tests
+  - ✅ det(A): determinant via LU, O(n³) — 18 tests
+  - ⏭️ rank(), cond() deferred to v1.19.0 (requires SVD)
+- [x] **Norms** (4/6) ✅
+  - ✅ norm1(x): L1 norm, O(n) — 8 tests
+  - ✅ norm2(x): L2 norm, O(n) — 8 tests
+  - ✅ normInf(x): L∞ norm, O(n) — 8 tests
+  - ✅ normFrobenius(A): matrix Frobenius norm, O(m*n) — 11 tests
+  - ⏭️ spectral norm deferred to v1.19.0 (requires SVD)
+
+**Bug Fixes**:
+- [x] WorkStealingDeque.pop() memory safety (#13) ✅
+  - Fixed wraparound-safe empty check
+  - Regression test added
+
+**Success Criteria**: ✅ **ACHIEVED** — 160 BLAS tests passing, all cross-compile targets verified
+
+**Status**: ✅ **COMPLETE** (2026-03-21)
 
 ### v1.13.0 — Consumer Migration Support ✅ COMPLETE
 
