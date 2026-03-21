@@ -1405,3 +1405,1247 @@ test "cholesky: column-major layout" {
     try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
     try verifyPositiveDiagonal(f64, L);
 }
+
+// ============================================================================
+// SVD Result Type and Verification Helpers
+// ============================================================================
+
+/// Result of SVD decomposition: U, S, and Vt matrices
+pub fn SVDResult(comptime T: type) type {
+    return struct {
+        /// Left singular vectors (m×k for thin SVD, where k = min(m,n))
+        /// Orthogonal: U^T @ U = I
+        U: NDArray(T, 2),
+
+        /// Singular values (k vector, k = min(m,n))
+        /// In descending order: S[i] >= S[i+1] >= 0
+        S: NDArray(T, 1),
+
+        /// Right singular vectors transposed (k×n, where k = min(m,n))
+        /// Orthogonal: Vt @ Vt^T = I
+        Vt: NDArray(T, 2),
+
+        /// Allocator used for all allocations
+        allocator: Allocator,
+
+        /// Free all allocated memory
+        ///
+        /// Time: O(1) deallocation
+        /// Space: O(1)
+        pub fn deinit(self: *@This()) void {
+            self.U.deinit();
+            self.S.deinit();
+            self.Vt.deinit();
+        }
+    };
+}
+
+/// Compute Singular Value Decomposition (SVD) using Golub-Reinsch algorithm
+///
+/// Factorizes matrix A (m×n) into A = U @ diag(S) @ Vt where:
+/// - U is an m×k orthogonal matrix (left singular vectors), k = min(m,n)
+/// - S is a k vector of singular values in descending order (non-negative)
+/// - Vt is a k×n orthogonal matrix (right singular vectors transposed)
+///
+/// The thin SVD (k = min(m,n)) is computed, which is suitable for:
+/// - Computing low-rank approximations
+/// - Computing condition numbers
+/// - Computing pseudo-inverses
+/// - Least squares solutions
+///
+/// Algorithm: Golub-Reinsch
+/// 1. Bidiagonalize A via Householder reflections (O(mn²))
+/// 2. Apply QR iteration to bidiagonal matrix to find singular values (O(n³) worst case)
+/// 3. Accumulate orthogonal transformations to form U and V
+///
+/// Parameters:
+/// - T: Numeric type (f32, f64)
+/// - A: Input matrix (m×n, any aspect ratio)
+/// - allocator: Memory allocator for result matrices
+///
+/// Returns: SVDResult containing U, S, and Vt
+///
+/// Errors:
+/// - error.OutOfMemory if allocation fails
+///
+/// Time: O(mn²) for thin SVD (dominant: bidiagonalization)
+/// Space: O(mn) for result matrices + O(min(m,n)) workspace
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 2}, &[_]f64{
+///     1, 2, 3, 4, 5, 6
+/// }, .row_major);
+/// defer A.deinit();
+/// var result = try svd(f64, A, allocator);
+/// defer result.deinit();
+/// // Verify: A ≈ U @ diag(S) @ Vt
+/// // Verify: U^T @ U = I, Vt @ Vt^T = I
+/// // Verify: S[i] >= S[i+1] >= 0
+/// ```
+pub fn svd(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error)!SVDResult(T) {
+    const m = A.shape[0];
+    const n = A.shape[1];
+    const k = @min(m, n);
+
+    // Working copy of A (will be bidiagonalized in-place)
+    var B = try NDArray(T, 2).zeros(allocator, &[_]usize{ m, n }, .row_major);
+    errdefer B.deinit();
+
+    // Copy A into B, respecting input layout
+    for (0..m) |i| {
+        for (0..n) |j| {
+            B.data[i * n + j] = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
+        }
+    }
+
+    // Initialize U as m×k identity
+    var U = try NDArray(T, 2).zeros(allocator, &[_]usize{ m, k }, .row_major);
+    errdefer U.deinit();
+    for (0..@min(m, k)) |i| {
+        U.data[i * k + i] = 1;
+    }
+
+    // Initialize Vt as k×n identity
+    var Vt = try NDArray(T, 2).zeros(allocator, &[_]usize{ k, n }, .row_major);
+    errdefer Vt.deinit();
+    for (0..@min(k, n)) |i| {
+        Vt.data[i * n + i] = 1;
+    }
+
+    // Singular values vector
+    var S = try NDArray(T, 1).zeros(allocator, &[_]usize{k}, .row_major);
+    errdefer S.deinit();
+
+    // Bidiagonalize B and accumulate transformations
+    try bidiagonalize(T, &B, &U, &Vt, allocator);
+
+    // Extract diagonal and superdiagonal
+    var diag = try allocator.alloc(T, k);
+    defer allocator.free(diag);
+    var super = try allocator.alloc(T, k);
+    defer allocator.free(super);
+
+    for (0..k) |i| {
+        diag[i] = B.data[i * n + i];
+        if (i < k - 1 and i + 1 < n) {
+            super[i] = B.data[i * n + (i + 1)];
+        } else {
+            super[i] = 0;
+        }
+    }
+
+    // QR iteration to diagonalize
+    try qrIterateBidiagonal(T, diag, super, &U, &Vt, k, m, n, allocator);
+
+    // Copy singular values (absolute values)
+    for (0..k) |i| {
+        S.data[i] = @abs(diag[i]);
+    }
+
+    // Sort in descending order
+    sortSingularValues(T, &S, &U, &Vt, k, m, n);
+
+    B.deinit();
+
+    return SVDResult(T){
+        .U = U,
+        .S = S,
+        .Vt = Vt,
+        .allocator = allocator,
+    };
+}
+
+/// Bidiagonalize matrix B using Householder reflections
+fn bidiagonalize(comptime T: type, B: *NDArray(T, 2), U: *NDArray(T, 2), Vt: *NDArray(T, 2), allocator: Allocator) !void {
+    const m = B.shape[0];
+    const n = B.shape[1];
+    const k = @min(m, n);
+
+    var householder_v = try allocator.alloc(T, @max(m, n));
+    defer allocator.free(householder_v);
+
+    for (0..k) |i| {
+        // Left Householder to zero column i below diagonal
+        if (i < m) {
+            const col_size = m - i;
+            @memset(householder_v[0..col_size], 0);
+
+            // Extract column
+            for (i..m) |row| {
+                householder_v[row - i] = B.data[row * n + i];
+            }
+
+            // Compute Householder vector
+            var norm: T = 0;
+            for (0..col_size) |idx| {
+                norm += householder_v[idx] * householder_v[idx];
+            }
+            norm = @sqrt(norm);
+
+            if (norm > 1e-15) {
+                const sign: T = if (householder_v[0] >= 0) 1 else -1;
+                householder_v[0] += sign * norm;
+
+                var h_norm: T = 0;
+                for (0..col_size) |idx| {
+                    h_norm += householder_v[idx] * householder_v[idx];
+                }
+                h_norm = @sqrt(h_norm);
+
+                if (h_norm > 1e-15) {
+                    for (0..col_size) |idx| {
+                        householder_v[idx] /= h_norm;
+                    }
+
+                    // Apply to B[i:, i:]
+                    for (i..n) |col| {
+                        var dot: T = 0;
+                        for (i..m) |row| {
+                            dot += householder_v[row - i] * B.data[row * n + col];
+                        }
+                        for (i..m) |row| {
+                            B.data[row * n + col] -= 2 * dot * householder_v[row - i];
+                        }
+                    }
+
+                    // Apply to U
+                    for (0..m) |row| {
+                        var dot: T = 0;
+                        for (i..m) |col| {
+                            if (col < k) {
+                                dot += U.data[row * k + col] * householder_v[col - i];
+                            }
+                        }
+                        for (i..m) |col| {
+                            if (col < k) {
+                                U.data[row * k + col] -= 2 * dot * householder_v[col - i];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Right Householder to zero row i after superdiagonal
+        if (i < k - 1 and i + 1 < n) {
+            const row_size = n - i - 1;
+            @memset(householder_v[0..row_size], 0);
+
+            // Extract row
+            for (i + 1..n) |col| {
+                householder_v[col - i - 1] = B.data[i * n + col];
+            }
+
+            var norm: T = 0;
+            for (0..row_size) |idx| {
+                norm += householder_v[idx] * householder_v[idx];
+            }
+            norm = @sqrt(norm);
+
+            if (norm > 1e-15) {
+                const sign: T = if (householder_v[0] >= 0) 1 else -1;
+                householder_v[0] += sign * norm;
+
+                var h_norm: T = 0;
+                for (0..row_size) |idx| {
+                    h_norm += householder_v[idx] * householder_v[idx];
+                }
+                h_norm = @sqrt(h_norm);
+
+                if (h_norm > 1e-15) {
+                    for (0..row_size) |idx| {
+                        householder_v[idx] /= h_norm;
+                    }
+
+                    // Apply to B[i:, i+1:]
+                    for (i..m) |row| {
+                        var dot: T = 0;
+                        for (i + 1..n) |col| {
+                            dot += B.data[row * n + col] * householder_v[col - i - 1];
+                        }
+                        for (i + 1..n) |col| {
+                            B.data[row * n + col] -= 2 * dot * householder_v[col - i - 1];
+                        }
+                    }
+
+                    // Apply to Vt
+                    for (i + 1..k) |row| {
+                        if (row < Vt.shape[0]) {
+                            var dot: T = 0;
+                            for (0..n) |col| {
+                                dot += Vt.data[row * n + col] * householder_v[row - i - 1];
+                            }
+                            for (0..n) |col| {
+                                Vt.data[row * n + col] -= 2 * dot * householder_v[row - i - 1];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// QR iteration with Wilkinson shift on bidiagonal matrix
+fn qrIterateBidiagonal(comptime T: type, diag: []T, super: []T, U: *NDArray(T, 2), Vt: *NDArray(T, 2), k: usize, m: usize, n: usize, allocator: Allocator) !void {
+    _ = allocator;
+    const max_iter = 30 * k;
+    const tol = @sqrt(@as(T, switch (T) {
+        f32 => 1.19e-7,
+        f64 => 2.22e-16,
+        else => 1e-10,
+    }));
+
+    var iter: usize = 0;
+    while (iter < max_iter) : (iter += 1) {
+        // Check convergence
+        var converged = true;
+        for (0..k - 1) |i| {
+            if (@abs(super[i]) > tol * (@abs(diag[i]) + @abs(diag[i + 1]) + 1e-15)) {
+                converged = false;
+                break;
+            }
+        }
+        if (converged) break;
+
+        // Find largest unreduced block
+        var p: usize = k - 1;
+        while (p > 0) {
+            if (@abs(super[p - 1]) <= tol * (@abs(diag[p - 1]) + @abs(diag[p]) + 1e-15)) {
+                super[p - 1] = 0;
+                p -= 1;
+            } else {
+                break;
+            }
+        }
+
+        if (p == 0) break;
+
+        var q: usize = p - 1;
+        while (q > 0) {
+            if (@abs(super[q - 1]) <= tol * (@abs(diag[q - 1]) + @abs(diag[q]) + 1e-15)) {
+                super[q - 1] = 0;
+                break;
+            }
+            q -= 1;
+        }
+
+        // Wilkinson shift
+        const d = (diag[p - 1] - diag[p]) / 2;
+        const mu_sign: T = if (d >= 0) 1 else -1;
+        const denom = d + mu_sign * @sqrt(d * d + super[p - 1] * super[p - 1]);
+        const mu = if (@abs(denom) > 1e-15) diag[p] - (super[p - 1] * super[p - 1]) / denom else diag[p];
+
+        // QR sweep
+        var x = diag[q] - mu;
+        var z = super[q];
+
+        for (q..p) |i| {
+            // Givens rotation
+            const r = @sqrt(x * x + z * z);
+            if (r < tol) {
+                if (i + 1 <= p) {
+                    x = diag[i + 1];
+                    z = if (i + 1 < p) super[i + 1] else 0;
+                }
+                continue;
+            }
+
+            const c = x / r;
+            const s = z / r;
+
+            // Apply rotation (right side)
+            if (i > q) {
+                super[i - 1] = r;
+            }
+
+            const old_diag_i = diag[i];
+            const old_super_i = super[i];
+            diag[i] = c * old_diag_i + s * old_super_i;
+            super[i] = -s * old_diag_i + c * old_super_i;
+
+            z = s * diag[i + 1];
+            diag[i + 1] = c * diag[i + 1];
+
+            // Apply to Vt
+            for (0..n) |col| {
+                if (i < k and i + 1 < k) {
+                    const vi = Vt.data[i * n + col];
+                    const vi1 = Vt.data[(i + 1) * n + col];
+                    Vt.data[i * n + col] = c * vi + s * vi1;
+                    Vt.data[(i + 1) * n + col] = -s * vi + c * vi1;
+                }
+            }
+
+            // Second Givens (left side)
+            x = diag[i];
+            const r2 = @sqrt(x * x + z * z);
+            if (r2 < tol) {
+                if (i < p - 1) {
+                    x = super[i];
+                    z = 0;
+                }
+                continue;
+            }
+
+            const c2 = x / r2;
+            const s2 = z / r2;
+
+            diag[i] = r2;
+            const old_super_i2 = super[i];
+            super[i] = c2 * old_super_i2 + s2 * diag[i + 1];
+            diag[i + 1] = -s2 * old_super_i2 + c2 * diag[i + 1];
+
+            if (i < p - 1) {
+                x = super[i];
+                z = s2 * super[i + 1];
+                super[i + 1] = c2 * super[i + 1];
+            }
+
+            // Apply to U
+            for (0..m) |row| {
+                if (i < k and i + 1 < k) {
+                    const ui = U.data[row * k + i];
+                    const ui1 = U.data[row * k + (i + 1)];
+                    U.data[row * k + i] = c2 * ui + s2 * ui1;
+                    U.data[row * k + (i + 1)] = -s2 * ui + c2 * ui1;
+                }
+            }
+        }
+    }
+}
+
+/// Sort singular values in descending order and permute U, Vt accordingly
+fn sortSingularValues(comptime T: type, S: *NDArray(T, 1), U: *NDArray(T, 2), Vt: *NDArray(T, 2), k: usize, m: usize, n: usize) void {
+    for (0..k) |i| {
+        var max_idx = i;
+        for (i + 1..k) |j| {
+            if (S.data[j] > S.data[max_idx]) {
+                max_idx = j;
+            }
+        }
+
+        if (max_idx != i) {
+            // Swap singular values
+            const temp_s = S.data[i];
+            S.data[i] = S.data[max_idx];
+            S.data[max_idx] = temp_s;
+
+            // Swap columns of U
+            for (0..m) |row| {
+                const temp_u = U.data[row * k + i];
+                U.data[row * k + i] = U.data[row * k + max_idx];
+                U.data[row * k + max_idx] = temp_u;
+            }
+
+            // Swap rows of Vt
+            for (0..n) |col| {
+                const temp_vt = Vt.data[i * n + col];
+                Vt.data[i * n + col] = Vt.data[max_idx * n + col];
+                Vt.data[max_idx * n + col] = temp_vt;
+            }
+        }
+    }
+}
+
+/// Verify that U^T @ U = I (orthogonality of left singular vectors)
+///
+/// Parameters:
+/// - T: Numeric type
+/// - U: Left singular vectors
+/// - tolerance: Epsilon for floating-point comparison
+///
+/// Time: O(m²k) for matrix multiplication
+/// Space: O(k²) temporary matrix
+fn verifySVDOrthogonalityU(comptime T: type, allocator: Allocator, U: NDArray(T, 2), tolerance: T) !void {
+    const m = U.shape[0];
+    const k = U.shape[1];
+
+    // Compute U^T @ U
+    var UtU = try NDArray(T, 2).zeros(allocator, &[_]usize{ k, k }, .row_major);
+    defer UtU.deinit();
+
+    for (0..k) |i| {
+        for (0..k) |j| {
+            var sum: T = 0;
+            for (0..m) |row| {
+                sum += U.data[row * k + i] * U.data[row * k + j];
+            }
+            UtU.data[i * k + j] = sum;
+        }
+    }
+
+    // Check U^T @ U = I
+    for (0..k) |i| {
+        for (0..k) |j| {
+            const expected = if (i == j) @as(T, 1) else 0;
+            const diff = @abs(UtU.data[i * k + j] - expected);
+            try testing.expect(diff < tolerance);
+        }
+    }
+}
+
+/// Verify that Vt @ Vt^T = I (orthogonality of right singular vectors transposed)
+///
+/// Parameters:
+/// - T: Numeric type
+/// - Vt: Right singular vectors transposed (k×n)
+/// - tolerance: Epsilon for floating-point comparison
+///
+/// Time: O(k²n) for matrix multiplication
+/// Space: O(k²) temporary matrix
+fn verifySVDOrthogonalityVt(comptime T: type, allocator: Allocator, Vt: NDArray(T, 2), tolerance: T) !void {
+    const k = Vt.shape[0];
+    const n = Vt.shape[1];
+
+    // Compute Vt @ Vt^T
+    var VtVtT = try NDArray(T, 2).zeros(allocator, &[_]usize{ k, k }, .row_major);
+    defer VtVtT.deinit();
+
+    for (0..k) |i| {
+        for (0..k) |j| {
+            var sum: T = 0;
+            for (0..n) |col| {
+                sum += Vt.data[i * n + col] * Vt.data[j * n + col];
+            }
+            VtVtT.data[i * k + j] = sum;
+        }
+    }
+
+    // Check Vt @ Vt^T = I
+    for (0..k) |i| {
+        for (0..k) |j| {
+            const expected = if (i == j) @as(T, 1) else 0;
+            const diff = @abs(VtVtT.data[i * k + j] - expected);
+            try testing.expect(diff < tolerance);
+        }
+    }
+}
+
+/// Verify that singular values are in descending order and non-negative
+///
+/// Parameters:
+/// - T: Numeric type
+/// - S: Singular values vector (k elements)
+///
+/// Time: O(k)
+/// Space: O(1)
+fn verifySVDDescending(comptime T: type, S: NDArray(T, 1)) !void {
+    const k = S.shape[0];
+
+    // Check non-negative
+    for (0..k) |i| {
+        try testing.expect(S.data[i] >= 0);
+    }
+
+    // Check descending order
+    for (0..k - 1) |i| {
+        try testing.expect(S.data[i] >= S.data[i + 1]);
+    }
+}
+
+/// Verify that A ≈ U @ diag(S) @ Vt (reconstruction accuracy)
+///
+/// Parameters:
+/// - T: Numeric type
+/// - A: Original matrix (m×n)
+/// - U: Left singular vectors (m×k)
+/// - S: Singular values (k)
+/// - Vt: Right singular vectors transposed (k×n)
+/// - tolerance: Epsilon for floating-point comparison
+///
+/// Time: O(m²n) for matrix multiplication
+/// Space: O(mn) temporary matrices
+fn verifySVDReconstruction(comptime T: type, allocator: Allocator, A: NDArray(T, 2), U: NDArray(T, 2), S: NDArray(T, 1), Vt: NDArray(T, 2), tolerance: T) !void {
+    const m = A.shape[0];
+    const n = A.shape[1];
+    const k = S.shape[0];
+
+    // Compute U @ diag(S)
+    var USigma = try NDArray(T, 2).zeros(allocator, &[_]usize{ m, k }, .row_major);
+    defer USigma.deinit();
+
+    for (0..m) |i| {
+        for (0..k) |j| {
+            USigma.data[i * k + j] = U.data[i * k + j] * S.data[j];
+        }
+    }
+
+    // Compute (U @ diag(S)) @ Vt
+    var USigmaVt = try NDArray(T, 2).zeros(allocator, &[_]usize{ m, n }, .row_major);
+    defer USigmaVt.deinit();
+
+    for (0..m) |i| {
+        for (0..n) |j| {
+            var sum: T = 0;
+            for (0..k) |col| {
+                sum += USigma.data[i * k + col] * Vt.data[col * n + j];
+            }
+            USigmaVt.data[i * n + j] = sum;
+        }
+    }
+
+    // Compare ||A - U @ diag(S) @ Vt||_F
+    var max_error: T = 0;
+    for (0..m * n) |idx| {
+        const A_val = try A.get(&[_]isize{ @intCast(idx / n), @intCast(idx % n) });
+        const diff_val = @abs(A_val - USigmaVt.data[idx]);
+        if (diff_val > max_error) {
+            max_error = diff_val;
+        }
+    }
+
+    try testing.expect(max_error < tolerance);
+}
+
+// ============================================================================
+// SVD Tests
+// ============================================================================
+
+test "svd: 2x2 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 0,
+        0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Identity has singular values [1, 1]
+    try testing.expectApproxEqAbs(@as(f64, 1), result.S.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1), result.S.data[1], 1e-10);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: 3x3 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Identity has all singular values = 1
+    for (0..3) |i| {
+        try testing.expectApproxEqAbs(@as(f64, 1), result.S.data[i], 1e-10);
+    }
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: 4x4 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    for (0..4) |i| {
+        try testing.expectApproxEqAbs(@as(f64, 1), result.S.data[i], 1e-10);
+    }
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: 2x2 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        3, 0,
+        0, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Diagonal matrix: singular values are absolute values of diagonal entries (in descending order)
+    try testing.expectApproxEqAbs(@as(f64, 3), result.S.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2), result.S.data[1], 1e-10);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: 3x3 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        5, 0, 0,
+        0, 3, 0,
+        0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(@as(f64, 5), result.S.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3), result.S.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1), result.S.data[2], 1e-10);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: 2x2 non-identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Singular values should be positive and descending
+    try testing.expect(result.S.data[0] > result.S.data[1]);
+    try testing.expect(result.S.data[1] > 0);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: 3x3 non-identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 3, 1,
+        6, 13, 5,
+        2, 19, 10,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Verify ordering and positivity
+    for (0..2) |i| {
+        try testing.expect(result.S.data[i] >= result.S.data[i + 1]);
+    }
+    for (0..3) |i| {
+        try testing.expect(result.S.data[i] >= 0);
+    }
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-9);
+}
+
+test "svd: 4x4 non-identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 2,  3,  4,
+        5, 6,  7,  8,
+        9, 10, 11, 12,
+        13, 14, 15, 17,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-9);
+}
+
+test "svd: tall matrix 4x2 (m > n)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+        1, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Thin SVD: U is 4x2, S is 2, Vt is 2x2
+    try testing.expectEqual(@as(usize, 4), result.U.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.U.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.S.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.Vt.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.Vt.shape[1]);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: tall matrix 5x3 (m > n)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+        10, 11, 12,
+        13, 14, 15,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Thin SVD: U is 5x3, S is 3, Vt is 3x3
+    try testing.expectEqual(@as(usize, 5), result.U.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.U.shape[1]);
+    try testing.expectEqual(@as(usize, 3), result.S.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.Vt.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.Vt.shape[1]);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-9);
+}
+
+test "svd: tall matrix 6x2 (m > n)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 6, 2 }, &[_]f64{
+        1, 0,
+        2, 1,
+        3, 2,
+        4, 3,
+        5, 4,
+        6, 5,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 6), result.U.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.U.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.S.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.Vt.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.Vt.shape[1]);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: wide matrix 2x4 (m < n)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Thin SVD: U is 2x2, S is 2, Vt is 2x4
+    try testing.expectEqual(@as(usize, 2), result.U.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.U.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.S.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.Vt.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.Vt.shape[1]);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: wide matrix 3x5 (m < n)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 5 }, &[_]f64{
+        1, 2, 3, 4, 5,
+        6, 7, 8, 9, 10,
+        11, 12, 13, 14, 15,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Thin SVD: U is 3x3, S is 3, Vt is 3x5
+    try testing.expectEqual(@as(usize, 3), result.U.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.U.shape[1]);
+    try testing.expectEqual(@as(usize, 3), result.S.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.Vt.shape[0]);
+    try testing.expectEqual(@as(usize, 5), result.Vt.shape[1]);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-9);
+}
+
+test "svd: all zeros matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        0, 0, 0,
+        0, 0, 0,
+        0, 0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Zero matrix: all singular values are 0
+    for (0..3) |i| {
+        try testing.expectApproxEqAbs(@as(f64, 0), result.S.data[i], 1e-10);
+    }
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: rank-deficient matrix (zero column)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 2,
+        2, 0, 4,
+        3, 0, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Rank-deficient: at least one singular value should be ≈ 0
+    try testing.expect(result.S.data[2] < 1e-8);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-8);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-8);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8);
+}
+
+test "svd: rank-deficient matrix (proportional rows)" {
+    const allocator = testing.allocator;
+
+    // Second row is 2x first row, so rank 1
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        2, 4,
+        1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Rank 1: exactly one large singular value, one near zero
+    try testing.expect(result.S.data[0] > 1);
+    try testing.expect(result.S.data[1] < 1e-8);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-8);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-8);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8);
+}
+
+test "svd: ones matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 1, 1,
+        1, 1, 1,
+        1, 1, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Ones matrix (rank 1): first singular value is sqrt(9) = 3, rest are 0
+    try testing.expectApproxEqAbs(@as(f64, 3), result.S.data[0], 1e-10);
+    try testing.expect(result.S.data[1] < 1e-8);
+    try testing.expect(result.S.data[2] < 1e-8);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-8);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-8);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8);
+}
+
+test "svd: negative values" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        -1, 2,  -3,
+        4,  -5, 6,
+        -7, 8,  -9,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Singular values must be non-negative
+    for (0..3) |i| {
+        try testing.expect(result.S.data[i] >= 0);
+    }
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-9);
+}
+
+test "svd: f32 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f32{
+        1.5, 2.5,
+        3.5, 4.5,
+        5.5, 6.5,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f32, A, allocator);
+    defer result.deinit();
+
+    // Larger tolerance for f32
+    try verifySVDOrthogonalityU(f32, allocator, result.U, 1e-5);
+    try verifySVDOrthogonalityVt(f32, allocator, result.Vt, 1e-5);
+    try verifySVDDescending(f32, result.S);
+    try verifySVDReconstruction(f32, allocator, A, result.U, result.S, result.Vt, 1e-5);
+}
+
+test "svd: f64 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, &[_]f64{
+        0.12, 0.34, 0.56,
+        0.78, 0.90, 0.12,
+        0.34, 0.56, 0.78,
+        0.90, 0.12, 0.34,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Standard f64 tolerance
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: small values (numerical stability)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1e-10, 2e-10, 3e-10,
+        4e-10, 5e-10, 6e-10,
+        7e-10, 8e-10, 9e-10,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Small values should still decompose correctly
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-8);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-8);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8);
+}
+
+test "svd: large values (numerical stability)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1e10, 2e10, 3e10,
+        4e10, 5e10, 6e10,
+        7e10, 8e10, 9e10,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Large values should still decompose correctly
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-8);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-8);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8);
+}
+
+test "svd: Hilbert matrix (ill-conditioned)" {
+    const allocator = testing.allocator;
+
+    // 4x4 Hilbert matrix (very ill-conditioned)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1,      0.5,    1.0/3, 0.25,
+        0.5,    1.0/3,  0.25,  0.2,
+        1.0/3,  0.25,   0.2,   1.0/6,
+        0.25,   0.2,    1.0/6, 1.0/7,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Ill-conditioned: singular values decay rapidly
+    try testing.expect(result.S.data[0] > result.S.data[1]);
+    try testing.expect(result.S.data[1] > result.S.data[2]);
+    try testing.expect(result.S.data[2] > result.S.data[3]);
+
+    // Condition number should be large
+    const condition_number = result.S.data[0] / result.S.data[3];
+    try testing.expect(condition_number > 1000);
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-7);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-7);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-7);
+}
+
+test "svd: singular value ordering" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 5, 0,
+        0, 0, 3,
+        0, 0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Singular values should be in descending order: [5, 3, 1]
+    try testing.expect(result.S.data[0] >= 5 - 1e-10);
+    try testing.expect(result.S.data[1] >= 3 - 1e-10);
+    try testing.expect(result.S.data[1] <= 3 + 1e-10);
+    try testing.expect(result.S.data[2] >= 1 - 1e-10);
+    try testing.expect(result.S.data[2] <= 1 + 1e-10);
+
+    try verifySVDDescending(f64, result.S);
+}
+
+test "svd: memory cleanup — no leaks" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    result.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+test "svd: column-major layout" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 3,
+        2, 4,
+    }, .column_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-10);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-10);
+    try verifySVDDescending(f64, result.S);
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-10);
+}
+
+test "svd: low-rank approximation use case" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, &[_]f64{
+        1, 0, 1,
+        0, 2, 0,
+        1, 0, 1,
+        0, 2, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Verify first singular value dominates (rank-2 approximation)
+    try testing.expect(result.S.data[0] > result.S.data[1]);
+
+    // Truncate to rank 2 by zeroing out small singular values
+    result.S.data[2] = 0;
+
+    // Reconstructed low-rank approximation should still be orthogonal
+    try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-9);
+    try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-9);
+}
+
+test "svd: condition number computation" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 2, 0,
+        0, 0, 0.1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try svd(f64, A, allocator);
+    defer result.deinit();
+
+    // Condition number = sigma_max / sigma_min (for non-zero singular values)
+    const condition = result.S.data[0] / result.S.data[2];
+    try testing.expectApproxEqAbs(condition, @as(f64, 20), 1e-10);
+}
