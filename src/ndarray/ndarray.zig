@@ -67,6 +67,12 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             IndexOutOfBounds,
             InvalidPermutation,
             ShapeMismatch,
+            InvalidFormat,
+            UnsupportedVersion,
+            DimensionMismatch,
+            TypeMismatch,
+            UnexpectedEOF,
+            EmptyArray,
         };
 
         /// Shape of the array: length along each dimension
@@ -1894,6 +1900,191 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+            };
+        }
+
+        // -- I/O Operations --
+
+        /// Type tag for serialization - identifies element type in binary format
+        const TypeTag = enum(u8) {
+            i8 = 0,
+            i16 = 1,
+            i32 = 2,
+            i64 = 3,
+            u8 = 4,
+            u16 = 5,
+            u32 = 6,
+            u64 = 7,
+            f32 = 8,
+            f64 = 9,
+            bool_type = 10,
+
+            fn fromType(comptime Type: type) TypeTag {
+                return switch (Type) {
+                    i8 => .i8,
+                    i16 => .i16,
+                    i32 => .i32,
+                    i64 => .i64,
+                    u8 => .u8,
+                    u16 => .u16,
+                    u32 => .u32,
+                    u64 => .u64,
+                    f32 => .f32,
+                    f64 => .f64,
+                    bool => .bool_type,
+                    else => @compileError("Unsupported type for NDArray serialization"),
+                };
+            }
+
+            fn toTypeInfo(self: TypeTag) std.builtin.Type {
+                return switch (self) {
+                    .i8 => @typeInfo(i8),
+                    .i16 => @typeInfo(i16),
+                    .i32 => @typeInfo(i32),
+                    .i64 => @typeInfo(i64),
+                    .u8 => @typeInfo(u8),
+                    .u16 => @typeInfo(u16),
+                    .u32 => @typeInfo(u32),
+                    .u64 => @typeInfo(u64),
+                    .f32 => @typeInfo(f32),
+                    .f64 => @typeInfo(f64),
+                    .bool_type => @typeInfo(bool),
+                };
+            }
+        };
+
+        /// Save NDArray to binary file
+        ///
+        /// Binary format:
+        /// - 4 bytes: magic "NDAR" (0x4E444152)
+        /// - 4 bytes: version (u32, currently 1)
+        /// - 1 byte: ndim (u8)
+        /// - 1 byte: type tag (u8)
+        /// - 1 byte: layout (u8) - 0=row_major, 1=column_major
+        /// - ndim * 8 bytes: shape array
+        /// - ndim * 8 bytes: strides array
+        /// - count * sizeof(T) bytes: data
+        ///
+        /// Time: O(n) | Space: O(1) - writes directly to file
+        pub fn save(self: *const Self, path: []const u8) !void {
+            const file = try std.fs.cwd().createFile(path, .{});
+            defer file.close();
+
+            const writer = file.writer();
+
+            // Write magic number "NDAR"
+            try writer.writeInt(u32, 0x4E444152, .little);
+
+            // Write version (1)
+            try writer.writeInt(u32, 1, .little);
+
+            // Write ndim
+            try writer.writeByte(@intCast(ndim));
+
+            // Write type tag
+            const type_tag = TypeTag.fromType(T);
+            try writer.writeByte(@intFromEnum(type_tag));
+
+            // Write layout (0=row_major, 1=column_major)
+            try writer.writeByte(if (self.layout == .row_major) 0 else 1);
+
+            // Write shape array
+            for (self.shape) |dim| {
+                try writer.writeInt(usize, dim, .little);
+            }
+
+            // Write strides array
+            for (self.strides) |stride| {
+                try writer.writeInt(usize, stride, .little);
+            }
+
+            // Write data
+            const bytes = std.mem.sliceAsBytes(self.data);
+            try writer.writeAll(bytes);
+        }
+
+        /// Load NDArray from binary file
+        ///
+        /// Validates magic number, version, ndim, and type compatibility.
+        /// Allocates new data buffer and reads array contents.
+        ///
+        /// Errors:
+        /// - error.InvalidFormat if magic number doesn't match
+        /// - error.UnsupportedVersion if version is not 1
+        /// - error.DimensionMismatch if file ndim doesn't match type parameter
+        /// - error.TypeMismatch if file type doesn't match T
+        ///
+        /// Time: O(n) | Space: O(n) for data allocation
+        pub fn load(allocator: std.mem.Allocator, path: []const u8) !Self {
+            const file = try std.fs.cwd().openFile(path, .{});
+            defer file.close();
+
+            const reader = file.reader();
+
+            // Read and validate magic number
+            const magic = try reader.readInt(u32, .little);
+            if (magic != 0x4E444152) {
+                return error.InvalidFormat;
+            }
+
+            // Read and validate version
+            const version = try reader.readInt(u32, .little);
+            if (version != 1) {
+                return error.UnsupportedVersion;
+            }
+
+            // Read ndim
+            const file_ndim = try reader.readByte();
+            if (file_ndim != ndim) {
+                return error.DimensionMismatch;
+            }
+
+            // Read and validate type tag
+            const type_tag_byte = try reader.readByte();
+            const file_type_tag: TypeTag = @enumFromInt(type_tag_byte);
+            const expected_type_tag = TypeTag.fromType(T);
+            if (file_type_tag != expected_type_tag) {
+                return error.TypeMismatch;
+            }
+
+            // Read layout
+            const layout_byte = try reader.readByte();
+            const layout: Layout = if (layout_byte == 0) .row_major else .column_major;
+
+            // Read shape
+            var shape: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                shape[i] = try reader.readInt(usize, .little);
+            }
+
+            // Read strides
+            var strides: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                strides[i] = try reader.readInt(usize, .little);
+            }
+
+            // Calculate total elements
+            var total: usize = 1;
+            for (shape) |dim| {
+                total *= dim;
+            }
+
+            // Allocate and read data
+            const data = try allocator.alloc(T, total);
+            errdefer allocator.free(data);
+
+            const bytes = std.mem.sliceAsBytes(data);
+            const bytes_read = try reader.readAll(bytes);
+            if (bytes_read != bytes.len) {
+                return error.UnexpectedEOF;
+            }
+
+            return Self{
+                .shape = shape,
+                .strides = strides,
+                .data = data,
+                .allocator = allocator,
+                .layout = layout,
             };
         }
 
@@ -9528,4 +9719,245 @@ test "advanced reduction: argmax() column-major layout" {
 
     const result = try arr.argmax();
     try testing.expectEqual(@as(usize, 3), result);
+}
+
+test "ndarray: save and load 1D i32 array" {
+    const allocator = testing.allocator;
+
+    // Create and populate array
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 1;
+    arr.data[1] = 2;
+    arr.data[2] = 3;
+    arr.data[3] = 4;
+    arr.data[4] = 5;
+
+    // Save to file
+    try arr.save("/tmp/test_ndarray_1d.bin");
+
+    // Load back
+    var loaded = try NDArray(i32, 1).load(allocator, "/tmp/test_ndarray_1d.bin");
+    defer loaded.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 5), loaded.shape[0]);
+
+    // Verify data
+    try testing.expectEqual(@as(i32, 1), loaded.data[0]);
+    try testing.expectEqual(@as(i32, 2), loaded.data[1]);
+    try testing.expectEqual(@as(i32, 3), loaded.data[2]);
+    try testing.expectEqual(@as(i32, 4), loaded.data[3]);
+    try testing.expectEqual(@as(i32, 5), loaded.data[4]);
+
+    // Verify layout
+    try testing.expectEqual(Layout.row_major, loaded.layout);
+
+    // Clean up
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_1d.bin");
+}
+
+test "ndarray: save and load 2D f64 array" {
+    const allocator = testing.allocator;
+
+    // Create 2x3 array
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 1.1;
+    arr.data[1] = 2.2;
+    arr.data[2] = 3.3;
+    arr.data[3] = 4.4;
+    arr.data[4] = 5.5;
+    arr.data[5] = 6.6;
+
+    // Save
+    try arr.save("/tmp/test_ndarray_2d.bin");
+
+    // Load
+    var loaded = try NDArray(f64, 2).load(allocator, "/tmp/test_ndarray_2d.bin");
+    defer loaded.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 3), loaded.shape[1]);
+
+    // Verify data
+    try testing.expectApproxEqAbs(1.1, loaded.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.2, loaded.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.3, loaded.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.4, loaded.data[3], 1e-10);
+    try testing.expectApproxEqAbs(5.5, loaded.data[4], 1e-10);
+    try testing.expectApproxEqAbs(6.6, loaded.data[5], 1e-10);
+
+    // Clean up
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_2d.bin");
+}
+
+test "ndarray: save and load 3D u8 array column-major" {
+    const allocator = testing.allocator;
+
+    // Create 2x2x2 array
+    var arr = try NDArray(u8, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .column_major);
+    defer arr.deinit();
+
+    for (0..8) |i| {
+        arr.data[i] = @intCast(i * 10);
+    }
+
+    // Save
+    try arr.save("/tmp/test_ndarray_3d.bin");
+
+    // Load
+    var loaded = try NDArray(u8, 3).load(allocator, "/tmp/test_ndarray_3d.bin");
+    defer loaded.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 2), loaded.shape[1]);
+    try testing.expectEqual(@as(usize, 2), loaded.shape[2]);
+
+    // Verify layout
+    try testing.expectEqual(Layout.column_major, loaded.layout);
+
+    // Verify data
+    for (0..8) |i| {
+        try testing.expectEqual(@as(u8, @intCast(i * 10)), loaded.data[i]);
+    }
+
+    // Clean up
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_3d.bin");
+}
+
+test "ndarray: save and load bool array" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = true;
+    arr.data[1] = false;
+    arr.data[2] = true;
+    arr.data[3] = false;
+
+    try arr.save("/tmp/test_ndarray_bool.bin");
+
+    var loaded = try NDArray(bool, 1).load(allocator, "/tmp/test_ndarray_bool.bin");
+    defer loaded.deinit();
+
+    try testing.expect(loaded.data[0] == true);
+    try testing.expect(loaded.data[1] == false);
+    try testing.expect(loaded.data[2] == true);
+    try testing.expect(loaded.data[3] == false);
+
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_bool.bin");
+}
+
+test "ndarray: load with wrong ndim fails" {
+    const allocator = testing.allocator;
+
+    // Create 1D array
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    for (0..5) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    try arr.save("/tmp/test_ndarray_wrong_ndim.bin");
+
+    // Try to load as 2D (should fail)
+    const result = NDArray(i32, 2).load(allocator, "/tmp/test_ndarray_wrong_ndim.bin");
+    try testing.expectError(error.DimensionMismatch, result);
+
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_wrong_ndim.bin");
+}
+
+test "ndarray: load with wrong type fails" {
+    const allocator = testing.allocator;
+
+    // Create i32 array
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    for (0..5) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    try arr.save("/tmp/test_ndarray_wrong_type.bin");
+
+    // Try to load as f64 (should fail)
+    const result = NDArray(f64, 1).load(allocator, "/tmp/test_ndarray_wrong_type.bin");
+    try testing.expectError(error.TypeMismatch, result);
+
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_wrong_type.bin");
+}
+
+test "ndarray: load nonexistent file fails" {
+    const allocator = testing.allocator;
+
+    const result = NDArray(i32, 1).load(allocator, "/tmp/nonexistent_ndarray_file.bin");
+    try testing.expectError(error.FileNotFound, result);
+}
+
+test "ndarray: save preserves strides" {
+    const allocator = testing.allocator;
+
+    // Create array and get a transposed view (different strides)
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..12) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    var transposed = try arr.transpose();
+    defer transposed.deinit();
+
+    // Save transposed (shape [4,3], different strides)
+    try transposed.save("/tmp/test_ndarray_strides.bin");
+
+    // Load back
+    var loaded = try NDArray(i32, 2).load(allocator, "/tmp/test_ndarray_strides.bin");
+    defer loaded.deinit();
+
+    // Verify shape is transposed
+    try testing.expectEqual(@as(usize, 4), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 3), loaded.shape[1]);
+
+    // Verify strides were preserved
+    try testing.expectEqual(transposed.strides[0], loaded.strides[0]);
+    try testing.expectEqual(transposed.strides[1], loaded.strides[1]);
+
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_strides.bin");
+}
+
+test "ndarray: save and load large array" {
+    const allocator = testing.allocator;
+
+    // Create 100x100 array
+    var arr = try NDArray(i64, 2).init(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..10000) |i| {
+        arr.data[i] = @intCast(i);
+    }
+
+    try arr.save("/tmp/test_ndarray_large.bin");
+
+    var loaded = try NDArray(i64, 2).load(allocator, "/tmp/test_ndarray_large.bin");
+    defer loaded.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 100), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 100), loaded.shape[1]);
+
+    // Verify a few values
+    try testing.expectEqual(@as(i64, 0), loaded.data[0]);
+    try testing.expectEqual(@as(i64, 5000), loaded.data[5000]);
+    try testing.expectEqual(@as(i64, 9999), loaded.data[9999]);
+
+    try std.fs.cwd().deleteFile("/tmp/test_ndarray_large.bin");
 }
