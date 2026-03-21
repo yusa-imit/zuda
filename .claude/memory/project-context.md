@@ -4,12 +4,68 @@
 - **Version**: 1.18.0 ✅ — BLAS & Core Linear Algebra RELEASED
 - **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform (v1.19.0 IN PROGRESS)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 183 linalg tests passing)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 226+ linalg tests passing)
 - **Latest Milestone**: v1.18.0 BLAS & Core Linear Algebra ✅ — BLAS L1/L2/L3, trace, det, norms complete
-- **Next Milestone**: v1.19.0 — Matrix Decompositions (1/5 complete: LU ✅, QR, Cholesky, SVD, Eigendecomposition)
-- **Next Priority**: QR decomposition with Householder reflections
+- **Next Milestone**: v1.19.0 — Matrix Decompositions (3/5 complete: LU ✅, QR ✅, Cholesky ✅, SVD, Eigendecomposition)
+- **Next Priority**: SVD (Singular Value Decomposition)
 
-## Recent Progress (Session 2026-03-21 - Hour 17)
+## Recent Progress (Session 2026-03-21 - Hour 19)
+**FEATURE MODE:**
+
+### QR Decomposition Implementation (commit 775c244) ✅
+- ✅ **qr(A) → {Q, R}**: QR decomposition with Householder reflections, O(mn²)
+- ✅ **Algorithm**: Householder reflections for numerically stable orthogonalization
+- ✅ **Full QR**: Q is m×m orthogonal, R is m×n upper triangular
+- ✅ **Properties**: A = QR, Q^TQ = I, R upper triangular
+- ✅ **Tests**: 24 comprehensive tests
+  - Identity matrices (2×2, 3×3, 4×4)
+  - Non-identity matrices (2×2, 3×3, 4×4)
+  - Tall matrices (4×2, 5×3, 6×2) — m > n optimization
+  - Orthogonality validation (Q^T @ Q = I)
+  - Reconstruction accuracy (||A - QR|| < ε)
+  - Upper triangular verification
+  - Edge cases: zero columns, diagonal, already triangular
+  - Precision: f32 (1e-5) and f64 (1e-10) tolerances
+  - Column-major layout support
+  - Numerical stability: small (1e-10) and large (1e10) values
+  - Memory safety: zero leaks with std.testing.allocator
+  - Error paths: m < n returns InvalidDimensions
+- ✅ **Use cases**: Least squares, QR iteration for eigenvalues, orthonormalization
+
+### Cholesky Decomposition Implementation (commit 5afdd1b) ✅
+- ✅ **cholesky(A) → L**: Cholesky decomposition for SPD matrices, O(n³)
+- ✅ **Algorithm**: Cholesky-Banachiewicz (row-wise factorization)
+- ✅ **L is lower triangular**: A = LL^T where L[i,j] = 0 for i < j
+- ✅ **SPD requirement**: A must be symmetric positive definite
+- ✅ **Non-SPD detection**: Negative/zero diagonal → error.NotPositiveDefinite
+- ✅ **Tests**: 19 comprehensive tests
+  - Identity matrices (2×2, 3×3, 4×4) — L = I
+  - Simple SPD matrices (2×2, 3×3, 4×4) — verified A = LL^T
+  - Diagonal SPD matrix — efficient factorization
+  - Lower triangular verification — upper triangle is zero
+  - Reconstruction accuracy — ||A - LL^T|| < ε
+  - Positive diagonal property — L[i,i] > 0
+  - Precision: f32 (1e-5) and f64 (1e-10) tolerances
+  - Memory safety: zero leaks with std.testing.allocator
+  - Error cases: non-SPD (negative diagonal), singular, non-square, non-symmetric
+  - Numerical stability: small (1e-8) and large (1e10) values
+  - Real-world use case: covariance matrix [[1, 0.5], [0.5, 1]]
+  - Column-major layout support
+  - 5×5 larger SPD matrix (stress test)
+- ✅ **Use cases**: SPD linear systems, covariance matrices, optimization, Kalman filtering
+
+### v1.19.0 Milestone Progress
+- [x] LU decomposition (3/5) ✅
+- [x] QR decomposition (3/5) ✅
+- [x] Cholesky decomposition (3/5) ✅
+- [ ] SVD (0/5)
+- [ ] Eigendecomposition (0/5)
+
+**Next Session Priority**: SVD (Singular Value Decomposition)
+
+---
+
+## Previous Session (Session 2026-03-21 - Hour 17)
 **FEATURE MODE:**
 
 ### LU Decomposition Implementation (commit aebbb4f) ✅
