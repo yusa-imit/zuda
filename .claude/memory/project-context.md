@@ -57,11 +57,22 @@
 - [x] **Transpose** ✅ — transpose() zero-copy view with reversed axes (13 tests, commit 960326c)
 - [x] **Transform** ✅ — flatten, ravel, permute, contiguous (4/6 functions complete, squeeze/unsqueeze deferred)
 - [x] **Element-wise operations** ✅ — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, sin, cos, tan (14 methods, 39 tests, commit e220475)
-- [ ] **Broadcasting** — NumPy-compatible broadcasting rules
+- [ ] **Broadcasting** — NumPy-compatible broadcasting rules (shape validation complete, full broadcast pending)
 - [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
-## Recent Progress (Session 2026-03-21 - Hour 08)
+## Recent Progress (Session 2026-03-21 - Hour 09)
+**FEATURE MODE → NDArray SHAPE VALIDATION:**
+- ✅ **NDArray Shape Validation for Binary Operations** (commit d0a27b7)
+  - **Added**: `ShapeMismatch` error to NDArray.Error enum
+  - **Modified**: All binary operations (add, sub, mul, div, mod) now validate shape compatibility
+  - **Validation**: O(ndim) early check before memory allocation
+  - **Tests**: 24 broadcasting tests added (20 same-shape tests + 4 error tests)
+  - **Status**: Shape validation complete, but full NumPy-compatible broadcasting NOT yet implemented
+  - **Architectural Note**: Full broadcasting requires generic ndim handling (NDArray(T,M) + NDArray(T,N))
+  - **Next Step**: Implement broadcast shape computation and stride-aware indexing for different-ndim arrays
+
+## Previous Progress (Session 2026-03-21 - Hour 08)
 **STABILIZATION MODE → CONTAINER VALIDATE() METHOD COMPLETION:**
 - ✅ **Validate() Methods Added to 10 Containers** (commit 3e7772b)
   - **Containers updated**: All missing containers now have validate() methods
