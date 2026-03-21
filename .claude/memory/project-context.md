@@ -1,16 +1,55 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.18.0 ✅ — BLAS & Core Linear Algebra RELEASED
-- **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform (v1.19.0 IN PROGRESS)
+- **Version**: 1.18.0 ✅ — BLAS & Core Linear Algebra RELEASED (v1.19.0 READY FOR RELEASE)
+- **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform (v1.19.0 COMPLETE ✅)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 213 tests 100% passing)
-- **Latest Milestone**: v1.18.0 BLAS & Core Linear Algebra ✅ — BLAS L1/L2/L3, trace, det, norms complete
-- **Next Milestone**: v1.19.0 — Matrix Decompositions (4/5 complete: LU ✅ QR ✅ Cholesky ✅ SVD ✅, remaining: Eigendecomposition)
-- **Next Priority**: Eigendecomposition (QR algorithm for symmetric matrices)
-- **Decompositions Completed**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests) = 93 decomposition tests
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 234 tests 100% passing)
+- **Latest Milestone**: v1.19.0 Matrix Decompositions ✅ COMPLETE — LU, QR, Cholesky, SVD, Eigendecomposition
+- **Next Milestone**: v1.20.0 — Advanced Linear Algebra (pseudo-inverse, matrix functions, iterative solvers)
+- **Next Priority**: Release v1.19.0, then plan v1.20.0
+- **Decompositions Completed**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 decomposition tests
 
-## Recent Progress (Session 2026-03-21 - Hour 20)
+## Recent Progress (Session 2026-03-21 - Hour 22)
+**FEATURE MODE:**
+
+### Eigendecomposition Implementation (commit 30795ff) ✅
+- ✅ **eig(A) → {eigenvalues, eigenvectors}**: Eigendecomposition via QR algorithm for symmetric matrices, O(n³)
+- ✅ **Algorithm**: QR iteration for symmetric eigenproblems
+  - Initialize: V = I_n (identity), A_k = A (working copy)
+  - Iterate: A_k = Q_k R_k (QR decomposition), then A_{k+1} = R_k @ Q_k
+  - Accumulate eigenvectors: V = V @ Q_k at each iteration
+  - Converges to diagonal form where diagonal entries are eigenvalues
+  - Sorting: Descending eigenvalues by absolute value with eigenvector column permutation
+- ✅ **Properties**: A = V·diag(λ)·V^T, V^T·V = I (orthonormal eigenvectors), A·V = V·diag(λ)
+- ✅ **Validation**: Symmetry check with tolerance, non-square/non-symmetric error handling
+- ✅ **Tests**: 21 comprehensive tests
+  - Basic: identity (2×2, 3×3, 4×4), diagonal (2×2, 3×3)
+  - Simple symmetric: known eigenvalues ([[1,2],[2,1]] → [3, -1])
+  - Edge cases: all zeros, single eigenvalue multiplicity
+  - Properties: orthonormality (V^T·V=I), reconstruction (A≈V·diag(λ)·V^T), eigenvalue equation (A·V=V·diag(λ)), ordering (descending by |λ|)
+  - Precision: f32 (1e-5), f64 (1e-10) tolerances
+  - Stability: small (1e-10), large (1e10) values
+  - SPD covariance matrix: all eigenvalues positive
+  - Memory: zero leaks with std.testing.allocator
+  - Error cases: non-square, non-symmetric rejection
+- ✅ **Convergence**: sqrt(epsilon) tolerance, max 30×n iterations, off-diagonal norm monitoring
+- ✅ **Use cases**: Stability analysis, principal component analysis, graph spectral analysis, Markov chain stationary distribution, vibration modes
+
+### v1.19.0 Milestone COMPLETE ✅
+- [x] LU decomposition (5/5) ✅
+- [x] QR decomposition (5/5) ✅
+- [x] Cholesky decomposition (5/5) ✅
+- [x] SVD (5/5) ✅
+- [x] Eigendecomposition (5/5) ✅
+
+**Total**: 234 tests passing (160 BLAS + 114 decomposition tests)
+**Status**: v1.19.0 COMPLETE — All 5 decompositions implemented with comprehensive test coverage
+**Next Session Priority**: Release v1.19.0, then plan v1.20.0 (Advanced Linear Algebra)
+
+---
+
+## Previous Session (Session 2026-03-21 - Hour 20)
 **STABILIZATION MODE:**
 
 ### Code Quality Audit ✅

@@ -77,3 +77,5 @@
 {"timestamp":"2026-03-21T08:04:04Z","action":"subagent","agent_type":"zig-developer","task":"Implement LU decomposition with partial pivoting to pass all 23 tests","project":"zuda"}
 {"timestamp":"2026-03-21T21:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write 28 comprehensive SVD tests","project":"zuda"}
 {"timestamp":"2026-03-21T21:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement SVD with Golub-Reinsch algorithm","project":"zuda"}
+{"timestamp":"2026-03-21T13:08:39Z","action":"subagent","agent_type":"test-writer","task":"Write 20 comprehensive eigendecomposition tests (identity, diagonal, symmetric, edge cases, orthonormality, reconstruction, ordering, precision, stability, memory safety, error cases)","project":"zuda"}
+{"timestamp":"2026-03-21T13:08:39Z","action":"subagent","agent_type":"zig-developer","task":"Implement eigendecomposition (eig) with QR algorithm for symmetric matrices — QR iteration, eigenvector accumulation, eigenvalue sorting, O(n³)","project":"zuda"}
