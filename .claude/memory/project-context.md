@@ -1,13 +1,13 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.15.0 (released 2026-03-20) — Iterator Adaptor Expansion
+- **Version**: 1.16.0 (released 2026-03-20) — NDArray Core
 - **Phase**: v2.0 Track (Phase 6) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
-- **Latest Milestone**: v1.16.0 READY FOR RELEASE ✅ — NDArray Core (creation, indexing, iteration, fromOwnedSlice)
-- **Current Milestone**: v1.16.0 — NDArray Core (Phase 6: Scientific Computing)
-- **Next Priority**: Release v1.16.0 OR start v1.17.0 NDArray Operations (reshape, transform, element-wise ops)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 185 tests passing)
+- **Latest Milestone**: v1.16.0 RELEASED ✅ — NDArray Core complete
+- **Current Milestone**: v1.17.0 — NDArray Operations & Broadcasting
+- **Next Priority**: v1.17.0 NDArray Operations (element-wise complete, broadcasting in progress) OR v1.18.0 Linear Algebra
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -66,7 +66,33 @@
 - [x] **Reduction operations** ✅ — sum, prod, mean, min, max, argmin, argmax, cumsum, cumprod, all, any (16 methods, 61 tests, commits 56b9da4, 05b798b)
 - [x] **I/O** ✅ — save, load (binary format with magic/version/metadata) — 10 tests, commit 90cf470
 
-## Recent Progress (Session 2026-03-21 - Hour 11)
+## Recent Progress (Session 2026-03-21 - Hour 12)
+**STABILIZATION MODE → zr_dag COMPAT ENHANCEMENT:**
+
+### Part 1: Missing Functions Implementation (commit 528d505) ✅
+- ✅ **zr_dag Compatibility Layer Enhancement** (issue #12 → closed)
+  - **Added functions**:
+    - `nodeCount()`: O(1) return total vertex count using graph.vertexCount()
+    - `getInDegree(name)`: O(V+E) count incoming edges for a node
+  - **Implementation**: Uses AdjacencyList.hasEdge() to iterate all vertices and check edges
+  - **Error handling**: Returns 0 for non-existent nodes (matches zr behavior)
+  - **Tests**: 3 new comprehensive tests (8 total for zr_dag)
+    - nodeCount() validation (empty, incremental adds, no change on edge add)
+    - getInDegree() with various topologies (root, leaf, intermediate, isolated)
+    - getInDegree() with cycles (ensures each node counted correctly)
+  - **CI Status**: ✅ GREEN (185 tests passing, all 6 cross-compile targets pass)
+  - **Issue Resolution**: Closes #12 (zr_dag compat missing functions)
+  - **Consumer Impact**: Enables full zr migration from 715 LOC custom graph implementation
+
+### Stabilization Checklist ✅
+- [x] CI Status: GREEN (all runs passing on main)
+- [x] GitHub Issues: 1 enhancement addressed (#12 closed)
+- [x] Test Quality: All 185 tests pass, no memory leaks
+- [x] Cross-Compilation: All 6 targets build successfully
+- [x] Code Quality: All public functions have doc comments with Big-O, all containers have validate()
+- [x] Consumer Support: zr_dag compat layer now feature-complete for zr migration
+
+## Previous Progress (Session 2026-03-21 - Hour 11)
 **FEATURE MODE → ELEMENT-WISE OPERATIONS + I/O COMPLETE:**
 
 ### Part 2: I/O Operations (commit 90cf470)
