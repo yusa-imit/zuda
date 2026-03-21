@@ -2649,3 +2649,748 @@ test "svd: condition number computation" {
     const condition = result.S.data[0] / result.S.data[2];
     try testing.expectApproxEqAbs(condition, @as(f64, 20), 1e-10);
 }
+
+// ============================================================================
+// Eigendecomposition — QR Algorithm for Symmetric Matrices
+// ============================================================================
+
+/// Result of eigendecomposition: eigenvalues and eigenvectors
+pub fn EigResult(comptime T: type) type {
+    return struct {
+        /// Eigenvalues (n vector) in descending order by absolute value
+        /// For symmetric matrices, all values are real
+        eigenvalues: NDArray(T, 1),
+
+        /// Eigenvectors (n×n matrix, orthonormal columns)
+        /// V[i][j] is the j-th component of the i-th eigenvector
+        /// Satisfies: V^T @ V = I (orthonormal)
+        /// Reconstruction: A = V @ diag(eigenvalues) @ V^T
+        eigenvectors: NDArray(T, 2),
+
+        /// Allocator used for all allocations
+        allocator: Allocator,
+
+        /// Free all allocated memory
+        ///
+        /// Time: O(1) deallocation
+        /// Space: O(1)
+        pub fn deinit(self: *@This()) void {
+            self.eigenvalues.deinit();
+            self.eigenvectors.deinit();
+        }
+    };
+}
+
+/// Verify that eigenvectors form an orthonormal set: V^T @ V = I
+fn verifyEigOrthonormality(comptime T: type, allocator: Allocator, V: NDArray(T, 2), tolerance: T) !void {
+    const m = V.shape[1];
+
+    // Compute V^T @ V
+    var VT = try V.transpose(allocator);
+    defer VT.deinit();
+
+    var VTV = try NDArray(T, 2).matmul(allocator, VT, V);
+    defer VTV.deinit();
+
+    // Check that V^T @ V ≈ I
+    for (0..m) |i| {
+        for (0..m) |j| {
+            const val = VTV.get(&[_]usize{ i, j });
+            if (i == j) {
+                // Diagonal should be 1
+                try testing.expectApproxEqAbs(val, @as(T, 1.0), tolerance);
+            } else {
+                // Off-diagonal should be 0
+                try testing.expectApproxEqAbs(val, @as(T, 0.0), tolerance);
+            }
+        }
+    }
+}
+
+/// Verify that matrix A ≈ V @ diag(λ) @ V^T (reconstruction)
+fn verifyEigReconstruction(comptime T: type, allocator: Allocator, A: NDArray(T, 2), V: NDArray(T, 2), eigenvalues: NDArray(T, 1), tolerance: T) !void {
+    const n = A.shape[0];
+
+    // Create diagonal matrix from eigenvalues
+    var lambda = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    defer lambda.deinit();
+    for (0..n) |i| {
+        lambda.set(&[_]usize{ i, i }, eigenvalues.data[i]);
+    }
+
+    // Compute V @ diag(λ) @ V^T
+    var V_lambda = try NDArray(T, 2).matmul(allocator, V, lambda);
+    defer V_lambda.deinit();
+
+    var VT = try V.transpose(allocator);
+    defer VT.deinit();
+
+    var A_reconstructed = try NDArray(T, 2).matmul(allocator, V_lambda, VT);
+    defer A_reconstructed.deinit();
+
+    // Check reconstruction error
+    for (0..n) |i| {
+        for (0..n) |j| {
+            const a_val = A.get(&[_]usize{ i, j });
+            const r_val = A_reconstructed.get(&[_]usize{ i, j });
+            try testing.expectApproxEqAbs(a_val, r_val, tolerance);
+        }
+    }
+}
+
+/// Verify that eigenvalues are in descending order by absolute value
+fn verifyEigDescending(comptime T: type, eigenvalues: NDArray(T, 1)) !void {
+    for (0..eigenvalues.shape[0] - 1) |i| {
+        const abs_curr = @abs(eigenvalues.data[i]);
+        const abs_next = @abs(eigenvalues.data[i + 1]);
+        try testing.expect(abs_curr >= abs_next);
+    }
+}
+
+/// Verify that A @ V = V @ diag(λ) (eigenvalue equation)
+fn verifyEigProperty(comptime T: type, allocator: Allocator, A: NDArray(T, 2), V: NDArray(T, 2), eigenvalues: NDArray(T, 1), tolerance: T) !void {
+    const n = A.shape[0];
+
+    // Compute A @ V
+    var AV = try NDArray(T, 2).matmul(allocator, A, V);
+    defer AV.deinit();
+
+    // Compute V @ diag(λ)
+    var lambda = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    defer lambda.deinit();
+    for (0..n) |i| {
+        lambda.set(&[_]usize{ i, i }, eigenvalues.data[i]);
+    }
+
+    var V_lambda = try NDArray(T, 2).matmul(allocator, V, lambda);
+    defer V_lambda.deinit();
+
+    // Check A @ V ≈ V @ diag(λ)
+    for (0..n) |i| {
+        for (0..n) |j| {
+            const av_val = AV.get(&[_]usize{ i, j });
+            const vl_val = V_lambda.get(&[_]usize{ i, j });
+            try testing.expectApproxEqAbs(av_val, vl_val, tolerance);
+        }
+    }
+}
+
+/// Verify that the input matrix is symmetric: A = A^T
+fn verifySymmetric(comptime T: type, A: NDArray(T, 2), tolerance: T) !void {
+    const n = A.shape[0];
+    try testing.expect(n == A.shape[1]);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            const a_val = A.get(&[_]usize{ i, j });
+            const at_val = A.get(&[_]usize{ j, i });
+            try testing.expectApproxEqAbs(a_val, at_val, tolerance);
+        }
+    }
+}
+
+/// Check if a matrix is symmetric: A = A^T (within tolerance)
+fn isSymmetricMatrix(comptime T: type, A: NDArray(T, 2), tolerance: T) !bool {
+    const n = A.shape[0];
+    if (n != A.shape[1]) {
+        return false;
+    }
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            const a_val = A.get(&[_]usize{ i, j });
+            const at_val = A.get(&[_]usize{ j, i });
+            const diff = @abs(a_val - at_val);
+            if (diff > tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/// Compute eigendecomposition of a symmetric matrix using QR algorithm
+///
+/// Factorizes symmetric matrix A (n×n) into A = V @ diag(λ) @ V^T where:
+/// - V is an n×n orthogonal matrix with eigenvectors as columns
+/// - λ is an n vector of eigenvalues (real for symmetric matrices)
+///
+/// The QR algorithm iteratively applies QR decomposition:
+/// - A_k = Q_k R_k
+/// - A_{k+1} = R_k Q_k
+/// - Converges to diagonal form with eigenvalues on diagonal
+///
+/// Parameters:
+/// - T: Numeric type (f32, f64)
+/// - A: Input symmetric matrix (n×n)
+/// - allocator: Memory allocator for result matrices
+///
+/// Returns: EigResult containing eigenvalues and orthonormal eigenvectors
+///
+/// Errors:
+/// - error.InvalidDimensions if matrix is not square
+/// - error.NonSymmetricMatrix if A != A^T
+/// - error.OutOfMemory if allocation fails
+///
+/// Time: O(n³) for QR iteration (typically 30*n iterations)
+/// Space: O(n²) for working matrices
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+///     3, 1, 1, 2
+/// }, .row_major);
+/// defer A.deinit();
+/// var result = try eig(f64, A, allocator);
+/// defer result.deinit();
+/// // result.eigenvalues contains [3.618..., 1.381...] (descending)
+/// // result.eigenvectors columns are orthonormal eigenvectors
+/// ```
+pub fn eig(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{InvalidDimensions, NonSymmetricMatrix})!EigResult(T) {
+    const n = A.shape[0];
+    const m = A.shape[1];
+
+    // Verify square matrix
+    if (n != m) {
+        return error.InvalidDimensions;
+    }
+
+    // Type-aware tolerance for convergence and symmetry check
+    const tolerance: T = @sqrt(std.math.floatEps(T));
+
+    // Verify symmetry with tolerance
+    const is_symmetric = try isSymmetricMatrix(T, A, tolerance);
+    if (!is_symmetric) {
+        return error.NonSymmetricMatrix;
+    }
+
+    // Initialize V as identity matrix (will accumulate eigenvectors)
+    var V = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    errdefer V.deinit();
+    for (0..n) |i| {
+        V.data[i * n + i] = 1;
+    }
+
+    // Working copy of A (will be iteratively diagonalized)
+    var A_k = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    errdefer A_k.deinit();
+    for (0..n) |i| {
+        for (0..n) |j| {
+            A_k.data[i * n + j] = A.get(&[_]usize{ i, j });
+        }
+    }
+
+    // QR iteration: max iterations = 30 * n (empirical choice)
+    const max_iterations = 30 * n;
+    const convergence_tol = tolerance;
+
+    var iteration: usize = 0;
+    while (iteration < max_iterations) : (iteration += 1) {
+        // QR decomposition of A_k
+        var qr_result = qr(T, A_k, allocator) catch |err| {
+            switch (err) {
+                error.InvalidDimensions => return error.InvalidDimensions,
+                else => return err,
+            }
+        };
+        defer qr_result.deinit();
+
+        // Update: A_{k+1} = R_k @ Q_k (matrix multiplication)
+        const R_Q = try NDArray(T, 2).matmul(allocator, qr_result.R, qr_result.Q);
+
+        // Accumulate eigenvectors: V = V @ Q_k
+        const V_new = try NDArray(T, 2).matmul(allocator, V, qr_result.Q);
+        V.deinit();
+        V = V_new;
+
+        // Check convergence: if off-diagonal elements are small, stop
+        var off_diag_norm: T = 0;
+        for (0..n) |i| {
+            for (0..n) |j| {
+                if (i != j) {
+                    const val = R_Q.data[i * n + j];
+                    off_diag_norm += val * val;
+                }
+            }
+        }
+        off_diag_norm = @sqrt(off_diag_norm);
+
+        // Replace A_k with R_Q
+        A_k.deinit();
+        A_k = R_Q;
+
+        // Convergence check
+        if (off_diag_norm < convergence_tol) {
+            break;
+        }
+    }
+
+    // Extract eigenvalues from diagonal of converged A_k
+    var eigenvalues = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    errdefer eigenvalues.deinit();
+
+    for (0..n) |i| {
+        eigenvalues.data[i] = A_k.data[i * n + i];
+    }
+
+    A_k.deinit();
+
+    // Sort eigenvalues in descending order by absolute value and permute eigenvectors
+    // Create indices array for sorting
+    var indices = try allocator.alloc(usize, n);
+    defer allocator.free(indices);
+    for (0..n) |i| {
+        indices[i] = i;
+    }
+
+    // Sort indices by absolute value of eigenvalues (descending)
+    var sorted = true;
+    while (sorted) {
+        sorted = false;
+        for (0..n - 1) |i| {
+            const abs_curr = @abs(eigenvalues.data[indices[i]]);
+            const abs_next = @abs(eigenvalues.data[indices[i + 1]]);
+            if (abs_curr < abs_next) {
+                const temp = indices[i];
+                indices[i] = indices[i + 1];
+                indices[i + 1] = temp;
+                sorted = true;
+            }
+        }
+    }
+
+    // Create sorted eigenvalues
+    var sorted_eigenvalues = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    errdefer sorted_eigenvalues.deinit();
+    for (0..n) |i| {
+        sorted_eigenvalues.data[i] = eigenvalues.data[indices[i]];
+    }
+
+    // Create permuted eigenvectors (reorder columns of V)
+    var sorted_eigenvectors = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    errdefer sorted_eigenvectors.deinit();
+    for (0..n) |i| {
+        for (0..n) |j| {
+            const old_col = indices[j];
+            sorted_eigenvectors.data[i * n + j] = V.data[i * n + old_col];
+        }
+    }
+
+    eigenvalues.deinit();
+    V.deinit();
+
+    return EigResult(T){
+        .eigenvalues = sorted_eigenvalues,
+        .eigenvectors = sorted_eigenvectors,
+        .allocator = allocator,
+    };
+}
+
+test "eig: 2x2 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 0,
+        0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // For identity matrix, all eigenvalues should be 1
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 1.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 1.0), 1e-10);
+
+    // Eigenvectors should be orthonormal
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+
+    // Verify reconstruction
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: 3x3 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // All eigenvalues should be 1
+    for (0..3) |i| {
+        try testing.expectApproxEqAbs(result.eigenvalues.data[i], @as(f64, 1.0), 1e-10);
+    }
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: 4x4 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // All eigenvalues should be 1
+    for (0..4) |i| {
+        try testing.expectApproxEqAbs(result.eigenvalues.data[i], @as(f64, 1.0), 1e-10);
+    }
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: 2x2 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        3, 0,
+        0, 5,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // For diagonal matrix, eigenvalues are the diagonal entries (in descending order)
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 5.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 3.0), 1e-10);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: 3x3 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 0, 0,
+        0, 5, 0,
+        0, 0, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Eigenvalues should be the diagonal entries in descending order
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 5.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 3.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[2], @as(f64, 2.0), 1e-10);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: 2x2 simple symmetric matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        2, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // For [[1, 2], [2, 1]], eigenvalues are 3 and -1
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1.0), 1e-10);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+    try verifyEigProperty(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: 3x3 simple symmetric matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 2, 0,
+        0, 0, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Eigenvalues should be 3, 2, 1 in descending order
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 2.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[2], @as(f64, 1.0), 1e-10);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: all zeros matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        0, 0, 0,
+        0, 0, 0,
+        0, 0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // All eigenvalues should be 0
+    for (0..3) |i| {
+        try testing.expectApproxEqAbs(result.eigenvalues.data[i], @as(f64, 0.0), 1e-10);
+    }
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: single eigenvalue with multiplicity" {
+    const allocator = testing.allocator;
+
+    // 2×2 matrix with eigenvalue 2 with multiplicity 2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        2, 0,
+        0, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Both eigenvalues should be 2
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 2.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 2.0), 1e-10);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: orthonormality validation" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        4, 1, 0, 0,
+        1, 3, 0, 1,
+        0, 0, 2, 1,
+        0, 1, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Verify V^T @ V = I
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+}
+
+test "eig: reconstruction accuracy" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 1, 0,
+        1, 3, 1,
+        0, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Verify A ≈ V @ diag(λ) @ V^T
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: eigenvalue ordering (descending)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 0, 0, 0,
+        0, 4, 0, 0,
+        0, 0, 2, 0,
+        0, 0, 0, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Verify eigenvalues are in descending order by absolute value
+    try verifyEigDescending(f64, result.eigenvalues);
+}
+
+test "eig: f32 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{
+        1, 2,
+        2, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f32, A, allocator);
+    defer result.deinit();
+
+    // For [[1, 2], [2, 1]], eigenvalues are 3 and -1
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f32, 3.0), 1e-5);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f32, -1.0), 1e-5);
+
+    try verifyEigOrthonormality(f32, allocator, result.eigenvectors, 1e-5);
+}
+
+test "eig: f64 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        2, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // For [[1, 2], [2, 1]], eigenvalues are 3 and -1
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3.0), 1e-10);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1.0), 1e-10);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+}
+
+test "eig: small values (numerical stability)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1e-10, 2e-10,
+        2e-10, 1e-10,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Eigenvalues should be 3e-10 and -1e-10
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3e-10), 1e-15);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1e-10), 1e-15);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-8);
+}
+
+test "eig: large values (numerical stability)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1e10, 2e10,
+        2e10, 1e10,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Eigenvalues should be 3e10 and -1e10
+    try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3e10), 1e5);
+    try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1e10), 1e5);
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-8);
+}
+
+test "eig: memory cleanup — no leaks" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 2, 0,
+        2, 3, 1,
+        0, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    result.deinit();
+
+    // If allocator is testing.allocator, memory leaks are detected
+    // This test passes if no leaks occur
+}
+
+test "eig: positive definite covariance matrix" {
+    const allocator = testing.allocator;
+
+    // Covariance-like SPD matrix
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        4, 1, 0.5,
+        1, 3, 0.2,
+        0.5, 0.2, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // All eigenvalues should be positive for SPD matrix
+    for (0..3) |i| {
+        try testing.expect(result.eigenvalues.data[i] > 0);
+    }
+
+    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: eigenvalue equation A @ V = V @ diag(λ)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 1, 1,
+        1, 3, 0,
+        1, 0, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var result = try eig(f64, A, allocator);
+    defer result.deinit();
+
+    // Verify A @ V = V @ diag(λ)
+    try verifyEigProperty(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
+}
+
+test "eig: non-square matrix rejection" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    const result = eig(f64, A, allocator);
+    try testing.expectError(error.InvalidDimensions, result);
+}
+
+test "eig: non-symmetric matrix rejection" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    const result = eig(f64, A, allocator);
+    try testing.expectError(error.NonSymmetricMatrix, result);
+}
