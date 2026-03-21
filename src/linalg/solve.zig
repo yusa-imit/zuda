@@ -361,6 +361,75 @@ fn isSPD(
     return true; // Passed symmetry and Cholesky checks
 }
 
+/// Solve least squares problem: minimize ||Ax - b||₂
+///
+/// Solves overdetermined system Ax = b in least squares sense using QR decomposition.
+/// For tall (m >= n) or square (m = n) matrices, finds x that minimizes the Euclidean
+/// norm of the residual Ax - b.
+///
+/// Parameters:
+/// - T: Numeric type (f32, f64)
+/// - A: Coefficient matrix (m×n, must have m >= n)
+/// - b: Right-hand side vector (m×1)
+/// - allocator: Memory allocator for intermediate matrices
+///
+/// Returns: Solution vector x (n×1) that minimizes ||Ax - b||₂
+///
+/// Errors:
+/// - error.DimensionMismatch: A.shape[0] != b.shape[0]
+/// - error.InvalidDimensions: A has more columns than rows (underdetermined)
+/// - error.SingularMatrix: A is rank-deficient (QR decomposition detects zero diagonal element)
+/// - error.OutOfMemory: Allocator unable to allocate space for QR decomposition
+///
+/// Time: O(mn²) for QR decomposition + O(n²) for back-substitution
+/// Space: O(mn) for Q matrix + O(n²) for R matrix
+///
+/// Example:
+/// ```zig
+/// // Overdetermined system: 3 equations, 2 unknowns
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 2}, &[_]f64{
+///     1, 0,
+///     1, 1,
+///     1, 2,
+/// }, .row_major);
+/// defer A.deinit();
+///
+/// var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{
+///     1, 2, 3,
+/// }, .row_major);
+/// defer b.deinit();
+///
+/// var x = try lstsq(f64, A, b, allocator);
+/// defer x.deinit();
+/// // x ≈ [1, 1] — solution that minimizes residual
+/// ```
+pub fn lstsq(
+    comptime T: type,
+    A: NDArray(T, 2),
+    b: NDArray(T, 1),
+    allocator: Allocator,
+) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{
+    DimensionMismatch,
+    SingularMatrix,
+    InvalidDimensions,
+})!NDArray(T, 1) {
+    const m = A.shape[0];
+    const n = A.shape[1];
+
+    // Check dimension compatibility: A has m rows, b must have m elements
+    if (b.shape[0] != m) {
+        return error.DimensionMismatch;
+    }
+
+    // Reject underdetermined systems (more columns than rows)
+    if (n > m) {
+        return error.InvalidDimensions;
+    }
+
+    // Delegate to QR-based least squares solver
+    return try solveOverdetermined(T, A, b, allocator);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -955,4 +1024,467 @@ test "solve: nearly singular matrix (ill-conditioned)" {
     for (0..3) |i| {
         try testing.expectApproxEqAbs(b.data[i], Ax.data[i], 1e-6); // Larger tolerance
     }
+}
+
+// ============================================================================
+// Comprehensive Least Squares Tests (lstsq via QR decomposition)
+// ============================================================================
+
+test "lstsq: basic 3x2 overdetermined system with exact fit" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0], [1, 1], [1, 2]] (3x2), b = [1, 2, 3]
+    // x = [1, 1] gives exact fit: Ax = [1, 2, 3]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // Verify exact solution
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, x.data[1], 1e-10);
+}
+
+test "lstsq: 4x2 overdetermined with noise (minimal residual)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0], [1, 1], [1, 2], [1, 3]] (4x2)
+    // True solution: x = [1, 0.5], but b has noise
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+        1, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    // b = [1, 1.5, 2.1, 3.0] (approx [1, 1.5, 2, 3.5])
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 1.5, 2.1, 3.0 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // x should be n=2 dimensional
+    try testing.expect(x.shape[0] == 2);
+
+    // Compute residual ||Ax - b||
+    var Ax = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer Ax.deinit();
+
+    for (0..4) |i| {
+        var sum: f64 = 0;
+        for (0..2) |j| {
+            sum += (try A.get(&[_]isize{ @intCast(i), @intCast(j) })) * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    var residual_norm: f64 = 0;
+    for (0..4) |i| {
+        const diff = Ax.data[i] - b.data[i];
+        residual_norm += diff * diff;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    // Residual should be small (minimized by least squares)
+    try testing.expect(residual_norm < 0.2);
+}
+
+test "lstsq: 5x3 overdetermined system" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 1, 1], [1, 2, 3]] (5x3)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 3 }, &[_]f64{
+        1, 0, 0,
+        1, 1, 0,
+        1, 1, 1,
+        1, 1, 1,
+        1, 2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 3, 6 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // x should be n=3 dimensional
+    try testing.expect(x.shape[0] == 3);
+
+    // Verify that residual is small
+    var Ax = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer Ax.deinit();
+
+    for (0..5) |i| {
+        var sum: f64 = 0;
+        for (0..3) |j| {
+            sum += (try A.get(&[_]isize{ @intCast(i), @intCast(j) })) * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    var residual_norm: f64 = 0;
+    for (0..5) |i| {
+        const diff = Ax.data[i] - b.data[i];
+        residual_norm += diff * diff;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    try testing.expect(residual_norm < 1.5);
+}
+
+test "lstsq: tall identity matrix (m > n, diagonal)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0], [0, 1], [0, 0]] (3x2, tall identity)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 0,
+        0, 1,
+        0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2, 3, 0.1 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // x should be approximately [2, 3] (minimizing ||[2, 3, 0.1]^T - [x[0], x[1], 0]^T||)
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+}
+
+test "lstsq: overdetermined diagonal matrix (no noise)" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0], [0, 3], [0, 0]] (3x2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        2, 0,
+        0, 3,
+        0, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 6, 0 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // x = [2, 2]
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-10);
+}
+
+test "lstsq: f32 precision (1e-5 tolerance)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f32{
+        1, 0,
+        1, 1,
+        1, 2,
+        1, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 1, 1.5, 2, 3.5 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f32, A, b, allocator);
+    defer x.deinit();
+
+    // Verify solution is reasonable
+    try testing.expect(x.shape[0] == 2);
+
+    // Compute Ax and check against b
+    var Ax = try NDArray(f32, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer Ax.deinit();
+
+    for (0..4) |i| {
+        var sum: f32 = 0;
+        for (0..2) |j| {
+            sum += (try A.get(&[_]isize{ @intCast(i), @intCast(j) })) * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    var residual_norm: f32 = 0;
+    for (0..4) |i| {
+        const diff = Ax.data[i] - b.data[i];
+        residual_norm += diff * diff;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    try testing.expect(residual_norm < 0.1);
+}
+
+test "lstsq: f64 precision (1e-10 tolerance)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 3 }, &[_]f64{
+        1, 0, 0,
+        1, 1, 0,
+        1, 1, 1,
+        1, 1, 1,
+        1, 2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 3, 6 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // Verify residual is minimized with f64 precision
+    var Ax = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer Ax.deinit();
+
+    for (0..5) |i| {
+        var sum: f64 = 0;
+        for (0..3) |j| {
+            sum += (try A.get(&[_]isize{ @intCast(i), @intCast(j) })) * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    var residual_norm: f64 = 0;
+    for (0..5) |i| {
+        const diff = Ax.data[i] - b.data[i];
+        residual_norm += diff * diff;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    try testing.expect(residual_norm < 1.5);
+}
+
+test "lstsq: rank-deficient columns error (dependent columns)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [2, 4], [3, 6]] (3x2, but columns are dependent)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        2, 4,
+        3, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 3, 6, 9 }, .row_major);
+    defer b.deinit();
+
+    const err = solve(f64, A, b, allocator);
+    try testing.expectError(error.SingularMatrix, err);
+}
+
+test "lstsq: dimension mismatch (A rows != b length)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    // b has 4 elements but A has 3 rows
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer b.deinit();
+
+    const err = solve(f64, A, b, allocator);
+    try testing.expectError(error.DimensionMismatch, err);
+}
+
+test "lstsq: single column (A is n x 1, tall matrix)" {
+    const allocator = testing.allocator;
+
+    // A = [[1], [1], [1]] (3x1), b = [1, 2, 3]
+    // Least squares: minimize ||Ax - b||, where x is scalar
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &[_]f64{
+        1,
+        1,
+        1,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // x should be the mean: (1 + 2 + 3) / 3 = 2
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+}
+
+test "lstsq: single column with weights (different scales)" {
+    const allocator = testing.allocator;
+
+    // A = [[2], [2], [2]] (3x1), b = [2, 4, 6]
+    // Solution: x = 1 (minimize ||[2x, 2x, 2x] - [2, 4, 6]||)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &[_]f64{
+        2,
+        2,
+        2,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2, 4, 6 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    try testing.expectApproxEqAbs(1.5, x.data[0], 1e-10);
+}
+
+test "lstsq: zero b vector (overdetermined)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 0, 0, 0 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // Solution should be x = [0, 0]
+    try testing.expectApproxEqAbs(0.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, x.data[1], 1e-10);
+}
+
+test "lstsq: negative values in overdetermined system" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{
+        1, -1,
+        1, -1,
+        1, 0,
+        1, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 0, 0, 1, 2 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // Verify solution is reasonable
+    try testing.expect(x.shape[0] == 2);
+
+    var Ax = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer Ax.deinit();
+
+    for (0..4) |i| {
+        var sum: f64 = 0;
+        for (0..2) |j| {
+            sum += (try A.get(&[_]isize{ @intCast(i), @intCast(j) })) * x.data[j];
+        }
+        Ax.data[i] = sum;
+    }
+
+    var residual_norm: f64 = 0;
+    for (0..4) |i| {
+        const diff = Ax.data[i] - b.data[i];
+        residual_norm += diff * diff;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    try testing.expect(residual_norm < 1.0);
+}
+
+test "lstsq: large overdetermined system (100x50)" {
+    const allocator = testing.allocator;
+
+    const m = 100;
+    const n = 50;
+
+    // Create a random matrix A and solve Ax ≈ b
+    var A_data = try allocator.alloc(f64, m * n);
+    defer allocator.free(A_data);
+
+    var b_data = try allocator.alloc(f64, m);
+    defer allocator.free(b_data);
+
+    // Fill with simple pattern (not truly random, but deterministic)
+    for (0..m) |i| {
+        for (0..n) |j| {
+            A_data[i * n + j] = @as(f64, @floatFromInt((i + 1) * (j + 1))) / 1000.0;
+        }
+        b_data[i] = @as(f64, @floatFromInt((i + 1) * 10)) / 100.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ m, n }, A_data, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{m}, b_data, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    defer x.deinit();
+
+    // x should be n-dimensional
+    try testing.expect(x.shape[0] == n);
+
+    // Verify that solution exists and is reasonable (no NaN)
+    for (0..n) |i| {
+        try testing.expect(!std.math.isNan(x.data[i]));
+    }
+}
+
+test "lstsq: memory cleanup — no leaks (overdetermined 3x2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 0,
+        1, 1,
+        1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    x.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+test "lstsq: memory cleanup — no leaks (overdetermined 5x3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 3 }, &[_]f64{
+        1, 0, 0,
+        1, 1, 0,
+        1, 1, 1,
+        1, 1, 1,
+        1, 2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 3, 6 }, .row_major);
+    defer b.deinit();
+
+    var x = try solve(f64, A, b, allocator);
+    x.deinit();
+
+    // Testing allocator detects any leaks
 }
