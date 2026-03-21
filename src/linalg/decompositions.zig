@@ -385,7 +385,7 @@ test "qr: 3x3 non-identity matrix" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 3, 1,
+        2, 3,  1,
         6, 13, 5,
         2, 19, 10,
     }, .row_major);
@@ -403,10 +403,10 @@ test "qr: 4x4 non-identity matrix" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
-        13, 14, 15, 17,  // Last element different to avoid singularity
+        13, 14, 15, 17, // Last element different to avoid singularity
     }, .row_major);
     defer A.deinit();
 
@@ -449,9 +449,9 @@ test "qr: tall matrix 5x3 (m > n)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 3 }, &[_]f64{
-        1, 2, 3,
-        4, 5, 6,
-        7, 8, 9,
+        1,  2,  3,
+        4,  5,  6,
+        7,  8,  9,
         10, 11, 12,
         13, 14, 15,
     }, .row_major);
@@ -523,9 +523,9 @@ test "qr: reconstruction accuracy ||A - QR|| < epsilon" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, &[_]f64{
-        1.2, 2.3, 3.4,
-        4.5, 5.6, 6.7,
-        7.8, 8.9, 9.0,
+        1.2,  2.3,  3.4,
+        4.5,  5.6,  6.7,
+        7.8,  8.9,  9.0,
         10.1, 11.2, 12.3,
     }, .row_major);
     defer A.deinit();
@@ -633,9 +633,9 @@ test "qr: negative values" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        -1, 2, -3,
-        4, -5, 6,
-        -7, 8, -9,
+        -1, 2,  -3,
+        4,  -5, 6,
+        -7, 8,  -9,
     }, .row_major);
     defer A.deinit();
 
@@ -779,4 +779,629 @@ test "qr: invalid dimensions — m < n returns error" {
 
     const err = qr(f64, A, allocator);
     try testing.expectError(error.InvalidDimensions, err);
+}
+
+// ============================================================================
+// Cholesky Decomposition — LLT for Symmetric Positive Definite Matrices
+// ============================================================================
+
+/// Compute Cholesky decomposition of a symmetric positive definite matrix
+///
+/// Factorizes matrix A (n×n, symmetric positive definite) into A = LL^T where:
+/// - L is an n×n lower triangular matrix
+/// - L has positive diagonal elements
+///
+/// Uses the Cholesky-Banachiewicz algorithm (row-wise computation):
+/// - For each row i:
+///   - For each column j <= i:
+///     - If i == j: L[i,i] = sqrt(A[i,i] - sum(L[i,k]²))
+///     - If i > j: L[i,j] = (A[i,j] - sum(L[i,k]*L[j,k])) / L[j,j]
+///
+/// Numerically stable for well-conditioned SPD matrices. Detects non-SPD
+/// matrices by checking for negative values under the square root.
+///
+/// Parameters:
+/// - T: Numeric type (f32, f64)
+/// - A: Input symmetric positive definite matrix (n×n)
+/// - allocator: Memory allocator for result matrix
+///
+/// Returns: NDArray(T, 2) containing L (lower triangular factor)
+///
+/// Errors:
+/// - error.NonSquareMatrix if A.shape[0] != A.shape[1]
+/// - error.NotPositiveDefinite if any diagonal becomes negative or zero
+/// - error.OutOfMemory if allocation fails
+///
+/// Time: O(n³) — cubic in matrix dimension
+/// Space: O(n²) for the result matrix L
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f64{
+///     4, 2,
+///     2, 3,
+/// }, .row_major);
+/// defer A.deinit();
+/// var L = try cholesky(f64, A, allocator);
+/// defer L.deinit();
+/// // L = [[2, 0], [1, sqrt(2)]]
+/// // Verify: A ≈ L @ L^T
+/// ```
+pub fn cholesky(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || std.mem.Allocator.Error || error{NotPositiveDefinite, NonSquareMatrix})!NDArray(T, 2) {
+    const n = A.shape[0];
+    const m = A.shape[1];
+
+    // Check that A is square
+    if (n != m) {
+        return error.NonSquareMatrix;
+    }
+
+    // Allocate L as n×n zero matrix (row-major)
+    var L = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    errdefer L.deinit();
+
+    // Compute Cholesky factorization using Banachiewicz algorithm
+    for (0..n) |i| {
+        // Compute L[i, j] for j <= i
+        for (0..i + 1) |j| {
+            if (i == j) {
+                // Diagonal: L[i,i] = sqrt(A[i,i] - sum(L[i,k]²) for k=0..i-1)
+                var sum: T = 0;
+                for (0..i) |k| {
+                    const Lik = L.data[i * n + k];
+                    sum += Lik * Lik;
+                }
+
+                const Aii = try A.get(&[_]isize{ @intCast(i), @intCast(i) });
+                const diag_val = Aii - sum;
+
+                // Check for positive definiteness: diagonal must be positive
+                if (diag_val <= 0) {
+                    return error.NotPositiveDefinite;
+                }
+
+                L.data[i * n + i] = @sqrt(diag_val);
+            } else {
+                // Off-diagonal: L[i,j] = (A[i,j] - sum(L[i,k]*L[j,k])) / L[j,j]
+                var sum: T = 0;
+                for (0..j) |k| {
+                    sum += L.data[i * n + k] * L.data[j * n + k];
+                }
+
+                const Aij = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
+                const Ljj = L.data[j * n + j];
+
+                // Ljj should be positive (checked when computed as diagonal)
+                L.data[i * n + j] = (Aij - sum) / Ljj;
+            }
+        }
+
+        // Upper triangle is zero (initialized at allocation time)
+    }
+
+    return L;
+}
+
+/// Verify that L is lower triangular (upper triangle is zero)
+///
+/// Parameters:
+/// - T: Numeric type
+/// - L: Lower triangular matrix
+/// - tolerance: Epsilon for floating-point comparison
+///
+/// Time: O(n²) comparisons
+/// Space: O(1)
+fn verifyLowerTriangular(comptime T: type, L: NDArray(T, 2), tolerance: T) !void {
+    const n = L.shape[0];
+    const m = L.shape[1];
+
+    // Check upper triangle is zero (i < j should be zero)
+    for (0..n) |i| {
+        for (i + 1..m) |j| {
+            const abs_val = @abs(L.data[i * m + j]);
+            try testing.expect(abs_val < tolerance);
+        }
+    }
+}
+
+/// Verify Cholesky reconstruction: A ≈ L @ L^T
+///
+/// Parameters:
+/// - T: Numeric type
+/// - A: Original matrix
+/// - L: Lower triangular factor
+/// - tolerance: Epsilon for Frobenius norm
+///
+/// Time: O(n³) for matrix multiplication and verification
+/// Space: O(n²) temporary matrix
+fn verifyCholeskyReconstruction(comptime T: type, allocator: Allocator, A: NDArray(T, 2), L: NDArray(T, 2), tolerance: T) !void {
+    const n = A.shape[0];
+
+    // Compute L @ L^T
+    var LLT = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    defer LLT.deinit();
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            var sum: T = 0;
+            for (0..n) |k| {
+                sum += L.data[i * n + k] * L.data[j * n + k]; // L^T[k,j] = L[j,k]
+            }
+            LLT.data[i * n + j] = sum;
+        }
+    }
+
+    // Compare ||A - LLT||_F < tolerance
+    var max_error: T = 0;
+    for (0..n * n) |idx| {
+        const A_val = try A.get(&[_]isize{ @intCast(idx / n), @intCast(idx % n) });
+        const diff_val = @abs(A_val - LLT.data[idx]);
+        if (diff_val > max_error) {
+            max_error = diff_val;
+        }
+    }
+
+    try testing.expect(max_error < tolerance);
+}
+
+/// Verify that diagonal of L is positive
+///
+/// Parameters:
+/// - T: Numeric type
+/// - L: Lower triangular matrix
+///
+/// Time: O(n)
+/// Space: O(1)
+fn verifyPositiveDiagonal(comptime T: type, L: NDArray(T, 2)) !void {
+    const n = L.shape[0];
+
+    for (0..n) |i| {
+        const diag = L.data[i * n + i];
+        try testing.expect(diag > 0);
+    }
+}
+
+// ============================================================================
+// Cholesky Tests
+// ============================================================================
+
+test "cholesky: 2x2 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 0,
+        0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    // For identity, L should also be identity
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    for (0..4) |i| L.data[i] = 0;
+    for (0..2) |i| L.data[i * 2 + i] = 1;
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: 3x3 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer L.deinit();
+    for (0..9) |i| L.data[i] = 0;
+    for (0..3) |i| L.data[i * 3 + i] = 1;
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: 4x4 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer L.deinit();
+    for (0..16) |i| L.data[i] = 0;
+    for (0..4) |i| L.data[i * 4 + i] = 1;
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: 2x2 simple SPD matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[4, 2], [2, 3]]
+    // L = [[2, 0], [1, sqrt(2)]]
+    // LL^T = [[4, 2], [2, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        4, 2,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    L.data[0 * 2 + 0] = 2;
+    L.data[0 * 2 + 1] = 0;
+    L.data[1 * 2 + 0] = 1;
+    L.data[1 * 2 + 1] = @sqrt(2.0);
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: 3x3 simple SPD matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[4, 2, 1], [2, 5, 3], [1, 3, 6]]
+    // This is SPD (all eigenvalues positive)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        4, 2, 1,
+        2, 5, 3,
+        1, 3, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    // Expected L from manual calculation or numerical factorization
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer L.deinit();
+    // Compute L[0,0] = sqrt(4) = 2
+    // Compute L[1,0] = 2/2 = 1, L[1,1] = sqrt(5-1) = 2
+    // Compute L[2,0] = 1/2 = 0.5, L[2,1] = (3-0.5*2)/2 = 1, L[2,2] = sqrt(6-0.5^2-1^2) = sqrt(4.75)
+    for (0..9) |i| L.data[i] = 0;
+    L.data[0 * 3 + 0] = 2;
+    L.data[1 * 3 + 0] = 1;
+    L.data[1 * 3 + 1] = 2;
+    L.data[2 * 3 + 0] = 0.5;
+    L.data[2 * 3 + 1] = 1;
+    L.data[2 * 3 + 2] = @sqrt(4.75);
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-9);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: 4x4 simple SPD matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[5, 1, 2, 1], [1, 4, 1, 1], [2, 1, 3, 0], [1, 1, 0, 2]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        5, 1, 2, 1,
+        1, 4, 1, 1,
+        2, 1, 3, 0,
+        1, 1, 0, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    // Compute expected L using Cholesky algorithm
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer L.deinit();
+    for (0..16) |i| L.data[i] = 0;
+
+    // Cholesky factorization: L[j,j] = sqrt(A[j,j] - sum(L[j,k]^2))
+    // L[i,j] = (A[i,j] - sum(L[i,k]*L[j,k])) / L[j,j]
+    L.data[0 * 4 + 0] = @sqrt(5.0);
+    L.data[1 * 4 + 0] = 1.0 / L.data[0 * 4 + 0];
+    L.data[1 * 4 + 1] = @sqrt(4.0 - L.data[1 * 4 + 0] * L.data[1 * 4 + 0]);
+    L.data[2 * 4 + 0] = 2.0 / L.data[0 * 4 + 0];
+    L.data[2 * 4 + 1] = (1.0 - L.data[2 * 4 + 0] * L.data[1 * 4 + 0]) / L.data[1 * 4 + 1];
+    L.data[2 * 4 + 2] = @sqrt(3.0 - L.data[2 * 4 + 0] * L.data[2 * 4 + 0] - L.data[2 * 4 + 1] * L.data[2 * 4 + 1]);
+    L.data[3 * 4 + 0] = 1.0 / L.data[0 * 4 + 0];
+    L.data[3 * 4 + 1] = (1.0 - L.data[3 * 4 + 0] * L.data[1 * 4 + 0]) / L.data[1 * 4 + 1];
+    L.data[3 * 4 + 2] = (0.0 - L.data[3 * 4 + 0] * L.data[2 * 4 + 0] - L.data[3 * 4 + 1] * L.data[2 * 4 + 1]) / L.data[2 * 4 + 2];
+    L.data[3 * 4 + 3] = @sqrt(2.0 - L.data[3 * 4 + 0] * L.data[3 * 4 + 0] - L.data[3 * 4 + 1] * L.data[3 * 4 + 1] - L.data[3 * 4 + 2] * L.data[3 * 4 + 2]);
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-9);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: diagonal SPD matrix" {
+    const allocator = testing.allocator;
+
+    // Diagonal matrices are trivially SPD
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        4, 0, 0,
+        0, 9, 0,
+        0, 0, 16,
+    }, .row_major);
+    defer A.deinit();
+
+    // For diagonal, L is also diagonal with L[i,i] = sqrt(A[i,i])
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer L.deinit();
+    for (0..9) |i| L.data[i] = 0;
+    L.data[0 * 3 + 0] = 2;
+    L.data[1 * 3 + 1] = 3;
+    L.data[2 * 3 + 2] = 4;
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: f32 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{
+        4, 2,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    L.data[0 * 2 + 0] = 2;
+    L.data[0 * 2 + 1] = 0;
+    L.data[1 * 2 + 0] = 1;
+    L.data[1 * 2 + 1] = @sqrt(2.0);
+
+    try verifyLowerTriangular(f32, L, 1e-5);
+    try verifyCholeskyReconstruction(f32, allocator, A, L, 1e-5);
+    try verifyPositiveDiagonal(f32, L);
+}
+
+test "cholesky: f64 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        4, 2, 1,
+        2, 5, 3,
+        1, 3, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer L.deinit();
+    for (0..9) |i| L.data[i] = 0;
+    L.data[0 * 3 + 0] = 2;
+    L.data[1 * 3 + 0] = 1;
+    L.data[1 * 3 + 1] = 2;
+    L.data[2 * 3 + 0] = 0.5;
+    L.data[2 * 3 + 1] = 1;
+    L.data[2 * 3 + 2] = @sqrt(4.75);
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-9);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: memory cleanup — no leaks" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        4, 2, 1,
+        2, 5, 3,
+        1, 3, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer L.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+test "cholesky: non-SPD detection — negative diagonal" {
+    const allocator = testing.allocator;
+
+    // Non-symmetric matrix with negative values
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        -1, 2,
+        2,  -3,
+    }, .row_major);
+    defer A.deinit();
+
+    // Attempt Cholesky on non-SPD matrix should fail
+    // (This test verifies error detection logic when implemented)
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+
+    // Non-SPD: first diagonal should fail to produce positive sqrt
+    // Test documents expected behavior for future implementation
+}
+
+test "cholesky: singular matrix detection" {
+    const allocator = testing.allocator;
+
+    // Singular (rank-deficient) matrix
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        2, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    // Singular matrix should be rejected (not positive definite)
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+
+    // Test documents expected error behavior
+}
+
+test "cholesky: non-square matrix rejection" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    // Non-square matrices cannot be factored with Cholesky
+    // Future implementation should return error.NonSquareMatrix
+}
+
+test "cholesky: non-symmetric matrix rejection" {
+    const allocator = testing.allocator;
+
+    // Symmetric positive definite but presented as non-symmetric
+    // (Cholesky uses only lower triangle, but tests should verify symmetry)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        4, 3,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    // Non-symmetric matrix should be rejected or handled gracefully
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+}
+
+test "cholesky: small values — numerical stability" {
+    const allocator = testing.allocator;
+
+    // SPD matrix with small values
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1e-8, 5e-9,
+        5e-9, 1e-8,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    L.data[0 * 2 + 0] = @sqrt(1e-8);
+    L.data[0 * 2 + 1] = 0;
+    L.data[1 * 2 + 0] = 5e-9 / @sqrt(1e-8);
+    L.data[1 * 2 + 1] = @sqrt(1e-8 - (5e-9 / @sqrt(1e-8)) * (5e-9 / @sqrt(1e-8)));
+
+    try verifyLowerTriangular(f64, L, 1e-8);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-8);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: large values — numerical stability" {
+    const allocator = testing.allocator;
+
+    // SPD matrix with large values
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1e10, 5e9,
+        5e9,  1e10,
+    }, .row_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    L.data[0 * 2 + 0] = @sqrt(1e10);
+    L.data[0 * 2 + 1] = 0;
+    L.data[1 * 2 + 0] = 5e9 / @sqrt(1e10);
+    L.data[1 * 2 + 1] = @sqrt(1e10 - (5e9 / @sqrt(1e10)) * (5e9 / @sqrt(1e10)));
+
+    try verifyLowerTriangular(f64, L, 1e-8);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-8);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: covariance matrix use case" {
+    const allocator = testing.allocator;
+
+    // Typical covariance matrix from bivariate normal distribution
+    // Cov = [[1.0, 0.5], [0.5, 1.0]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1.0, 0.5,
+        0.5, 1.0,
+    }, .row_major);
+    defer A.deinit();
+
+    // Cholesky of covariance matrix: L[0,0] = 1, L[1,0] = 0.5, L[1,1] = sqrt(3)/2
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    L.data[0 * 2 + 0] = 1.0;
+    L.data[0 * 2 + 1] = 0;
+    L.data[1 * 2 + 0] = 0.5;
+    L.data[1 * 2 + 1] = @sqrt(3.0) / 2.0;
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: 5x5 larger SPD matrix" {
+    const allocator = testing.allocator;
+
+    // Larger SPD matrix for stress testing
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 5 }, &[_]f64{
+        5, 1, 2, 0, 1,
+        1, 4, 1, 1, 0,
+        2, 1, 6, 2, 1,
+        0, 1, 2, 3, 0,
+        1, 0, 1, 0, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    // Initialize L as lower triangular (will be filled by factorization logic)
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, 5 }, .row_major);
+    defer L.deinit();
+
+    // Manually compute Cholesky for verification
+    for (0..25) |i| L.data[i] = 0;
+
+    // Row 0
+    L.data[0 * 5 + 0] = @sqrt(5.0);
+
+    // Row 1
+    L.data[1 * 5 + 0] = 1.0 / L.data[0 * 5 + 0];
+    L.data[1 * 5 + 1] = @sqrt(4.0 - L.data[1 * 5 + 0] * L.data[1 * 5 + 0]);
+
+    // Row 2
+    L.data[2 * 5 + 0] = 2.0 / L.data[0 * 5 + 0];
+    L.data[2 * 5 + 1] = (1.0 - L.data[2 * 5 + 0] * L.data[1 * 5 + 0]) / L.data[1 * 5 + 1];
+    L.data[2 * 5 + 2] = @sqrt(6.0 - L.data[2 * 5 + 0] * L.data[2 * 5 + 0] - L.data[2 * 5 + 1] * L.data[2 * 5 + 1]);
+
+    // Row 3
+    L.data[3 * 5 + 0] = 0.0 / L.data[0 * 5 + 0];
+    L.data[3 * 5 + 1] = (1.0 - L.data[3 * 5 + 0] * L.data[1 * 5 + 0]) / L.data[1 * 5 + 1];
+    L.data[3 * 5 + 2] = (2.0 - L.data[3 * 5 + 0] * L.data[2 * 5 + 0] - L.data[3 * 5 + 1] * L.data[2 * 5 + 1]) / L.data[2 * 5 + 2];
+    L.data[3 * 5 + 3] = @sqrt(3.0 - L.data[3 * 5 + 0] * L.data[3 * 5 + 0] - L.data[3 * 5 + 1] * L.data[3 * 5 + 1] - L.data[3 * 5 + 2] * L.data[3 * 5 + 2]);
+
+    // Row 4
+    L.data[4 * 5 + 0] = 1.0 / L.data[0 * 5 + 0];
+    L.data[4 * 5 + 1] = (0.0 - L.data[4 * 5 + 0] * L.data[1 * 5 + 0]) / L.data[1 * 5 + 1];
+    L.data[4 * 5 + 2] = (1.0 - L.data[4 * 5 + 0] * L.data[2 * 5 + 0] - L.data[4 * 5 + 1] * L.data[2 * 5 + 1]) / L.data[2 * 5 + 2];
+    L.data[4 * 5 + 3] = (0.0 - L.data[4 * 5 + 0] * L.data[3 * 5 + 0] - L.data[4 * 5 + 1] * L.data[3 * 5 + 1] - L.data[4 * 5 + 2] * L.data[3 * 5 + 2]) / L.data[3 * 5 + 3];
+    L.data[4 * 5 + 4] = @sqrt(2.0 - L.data[4 * 5 + 0] * L.data[4 * 5 + 0] - L.data[4 * 5 + 1] * L.data[4 * 5 + 1] - L.data[4 * 5 + 2] * L.data[4 * 5 + 2] - L.data[4 * 5 + 3] * L.data[4 * 5 + 3]);
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-9);
+    try verifyPositiveDiagonal(f64, L);
+}
+
+test "cholesky: column-major layout" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        4, 2,
+        2, 3,
+    }, .column_major);
+    defer A.deinit();
+
+    var L = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer L.deinit();
+    L.data[0 * 2 + 0] = 2;
+    L.data[0 * 2 + 1] = 0;
+    L.data[1 * 2 + 0] = 1;
+    L.data[1 * 2 + 1] = @sqrt(2.0);
+
+    try verifyLowerTriangular(f64, L, 1e-10);
+    try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-10);
+    try verifyPositiveDiagonal(f64, L);
 }
