@@ -56,12 +56,31 @@
 - [x] **Reshape** ✅ — reshape() with zero-copy optimization (16 tests, commit 5f6ff16)
 - [x] **Transpose** ✅ — transpose() zero-copy view with reversed axes (13 tests, commit 960326c)
 - [x] **Transform** ✅ — flatten, ravel, permute, contiguous (4/6 functions complete, squeeze/unsqueeze deferred)
-- [x] **Element-wise operations** ✅ — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, sin, cos, tan (14 methods, 39 tests, commit e220475)
+- [x] **Element-wise operations** ✅ — COMPLETE (27 methods, 56 tests, commits e220475, 69a55ab)
+  - Arithmetic: add, sub, mul, div, mod, neg (6)
+  - Math: abs, exp, log, sqrt, pow (5)
+  - Trig: sin, cos, tan, asin, acos, atan, atan2 (7)
+  - Logarithms: log, log2, log10 (3)
+  - Comparison: eq, ne, lt, le, gt, ge (6)
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules (shape validation complete, full broadcast pending)
 - [x] **Reduction operations** ✅ — sum, prod, mean, min, max, argmin, argmax, cumsum, cumprod, all, any (16 methods, 61 tests, commits 56b9da4, 05b798b)
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
-## Recent Progress (Session 2026-03-21 - Hour 10)
+## Recent Progress (Session 2026-03-21 - Hour 11)
+**FEATURE MODE → ELEMENT-WISE OPERATIONS COMPLETE (27 methods total):**
+- ✅ **Advanced Element-wise Operations** (commit 69a55ab)
+  - **Comparison operations** (6 methods): eq(), ne(), lt(), le(), gt(), ge() → return NDArray(bool, ndim)
+  - **Inverse trig** (4 methods): asin(), acos(), atan(), atan2() → all float-only
+  - **Advanced logarithms** (2 methods): log2(), log10() → float-only
+  - **Tests**: 17 comprehensive tests
+    - Mathematical correctness (special angles, powers)
+    - Shape mismatch validation
+    - Type compatibility (i32, f64, bool results)
+  - **Time**: O(n) for all, **Space**: O(n) for result allocation
+  - **Element-wise operations now complete**: 27 total methods covering all NumPy-equivalent operations
+  - **Next Priority**: Broadcasting implementation OR I/O operations
+
+## Previous Progress (Session 2026-03-21 - Hour 10)
 **FEATURE MODE → NDArray REDUCTION OPERATIONS (16 methods complete):**
 - ✅ **Basic Reduction Operations** (commit 56b9da4)
   - **Methods**: sum(), prod(), mean(), min(), max() + axis variants (10 methods)
