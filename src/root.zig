@@ -368,6 +368,11 @@ pub const linalg = struct {
 pub const stats = struct {
     /// Descriptive statistics — mean, median, mode, variance, std, quantile, skewness, kurtosis
     pub const descriptive = @import("stats/descriptive.zig");
+
+    /// Probability distributions — Uniform, Normal, Exponential, etc.
+    pub const distributions = struct {
+        pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
+    };
 };
 
 /// Internal utilities (not part of public API)
