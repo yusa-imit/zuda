@@ -259,3 +259,63 @@ test "validate invariants" {
 ```
 
 **Key principle**: Every test must verify actual behavior, not just "doesn't crash". Tests should fail when the implementation is wrong, not just when it panics.
+
+## NDArray Reduction Operation Testing Pattern (2026-03-21)
+
+For multi-dimensional reductions (sum, prod, mean, min, max), test structure:
+
+```zig
+// Pattern for full reductions (returns scalar T)
+test "reduction: sum() full 1D array i32" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set data
+    for (0..5) |i| {
+        arr.data[i] = @intCast(i + 1);  // [1, 2, 3, 4, 5]
+    }
+
+    // Test assertion
+    const result = try arr.sum();
+    try testing.expectEqual(@as(i32, 15), result);  // 1+2+3+4+5
+}
+
+// Pattern for axis reductions (returns NDArray with reduced shape)
+test "reduction: sum() axis 0 on 2D array [3,4]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr.deinit();
+
+    // Set data: [[1,2,3,4], [5,6,7,8], [9,10,11,12]]
+    for (0..12) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    // Test axis reduction
+    const result = try arr.sumAxis(allocator, 0);  // [3,4] -> [4]
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    // Result: [1+5+9=15, 2+6+10=18, 3+7+11=21, 4+8+12=24]
+    try testing.expectEqual(@as(i32, 15), result.data[0]);
+    try testing.expectEqual(@as(i32, 18), result.data[1]);
+}
+
+// Key testing principles for reductions:
+// 1. Full reductions: verify scalar output equals mathematical result
+// 2. Axis reductions: verify shape is correct (remove reduced dimension)
+// 3. Use sequential fill (0..n) for predictable hand-computed sums
+// 4. For floats, use testing.expectApproxEqAbs() with epsilon 1e-10
+// 5. Test all axes on multi-dimensional arrays (axis 0, 1, 2 for 3D, etc.)
+// 6. Edge cases: negative values, zeros, single element, layout variation
+// 7. Type conversions: mean() always returns f64 even for i32 arrays
+// 8. Error paths: axis out of bounds, empty arrays (if disallowed)
+```
+
+**Design decisions**:
+- Full reductions: sum/prod/min/max return `T`, mean always returns `f64`
+- Axis reductions: Return new NDArray with removed dimension (allocate fresh)
+- Layout independence: Results same regardless of row/column-major
+- Type safety: Integer operations stay in type T, mean promotes to f64
+- Error handling: IndexOutOfBounds for invalid axis, (TBD) ZeroDimension or similar for empty
