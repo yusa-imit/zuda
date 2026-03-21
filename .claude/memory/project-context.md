@@ -22,16 +22,41 @@
 
 ### v1.20.0 Milestone Planning ✅
 - ✅ **Milestone defined**: Advanced Linear Algebra (6 functions)
-  - solve(A, b) — Linear system solver with auto-decomposition selection
-  - lstsq(A, b) — Least squares via QR
-  - inv(A) — Matrix inverse via LU
-  - pinv(A) — Moore-Penrose pseudo-inverse via SVD
-  - rank(A) — Matrix rank via SVD
-  - cond(A) — Condition number via SVD
 - ✅ **Documentation**: `docs/milestones.md` updated with v1.20.0 roadmap
 - ✅ **Context**: `.claude/memory/project-context.md` updated
 
-**Next Session Priority**: Implement solve(A, b) with Cholesky/LU/QR auto-selection
+### solve(A, b) Implementation (commit 7fb305e, b66ca8a) ✅
+- ✅ **solve(A, b)**: Linear system solver with auto-decomposition selection, O(n³)
+- ✅ **Strategy selection**:
+  - SPD matrices → Cholesky (symmetry check + factorization attempt)
+  - General square → LU with partial pivoting
+  - Overdetermined (m>n) → QR least squares
+- ✅ **Algorithms**:
+  - Cholesky: Forward substitution (Ly = b), backward (L^Tx = y)
+  - LU: Forward substitution (Ly = Pb), backward (Ux = y)
+  - QR: Least squares via Q^Tb and backward substitution on R
+- ✅ **Error handling**: Singular, dimension mismatch, underdetermined systems
+- ✅ **Tests**: 24 comprehensive tests
+  - SPD (4): identity, diagonal, symmetric positive definite
+  - General square (3): non-symmetric, general, 1×1 edge case
+  - Overdetermined (2): tall matrices with least squares
+  - Error paths (4): singular, rank-deficient, dimension mismatch, underdetermined
+  - Precision (2): f32/f64 with tolerances
+  - Reconstruction (3): verify ||Ax - b|| < ε
+  - Memory safety (3): zero leaks for all solver paths
+  - Robustness (3): negative values, large values, ill-conditioned
+- ✅ **File**: `src/linalg/solve.zig` (365 LOC implementation + 593 LOC tests)
+- ✅ **Use cases**: Solving linear systems in numerical simulation, optimization, regression
+
+### v1.20.0 Progress
+- [x] solve(A, b) (1/6) ✅
+- [ ] lstsq(A, b) (0/6)
+- [ ] inv(A) (0/6)
+- [ ] pinv(A) (0/6)
+- [ ] rank(A) (0/6)
+- [ ] cond(A) (0/6)
+
+**Next Session Priority**: Implement lstsq(A, b) for least squares via QR
 
 ---
 
