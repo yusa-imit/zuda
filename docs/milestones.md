@@ -4,11 +4,11 @@
 
 - **Latest release**: v1.18.0 (2026-03-21) — BLAS & Core Linear Algebra
 - **Current phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
-- **Tests**: 185 tests passing (100%) — 160 BLAS + 25 decomposition tests
+- **Tests**: 213 tests passing (100%) — 160 BLAS + 93 decomposition tests
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Target**: Scientific computing platform (NDArray, linear algebra, stats, FFT, numerical methods, optimization)
-- **Next Milestone**: v1.19.0 — Matrix Decompositions (3/5 complete: LU✅ QR✅ Cholesky✅, remaining: SVD, Eigendecomposition)
+- **Next Milestone**: v1.19.0 — Matrix Decompositions (4/5 complete: LU✅ QR✅ Cholesky✅ SVD✅, remaining: Eigendecomposition)
 
 ---
 
@@ -44,12 +44,13 @@ Implement core matrix decomposition algorithms for solving linear systems and ei
   - [x] Tests: 19 tests (2×2, 3×3, non-SPD detection, f32/f64)
   - **Use case**: Covariance matrices, optimization, linear system solving
   - **File**: `src/linalg/decompositions.zig`
-- [ ] **SVD (Singular Value Decomposition)** — A = UΣV^T
-  - [ ] `svd(A) -> {U, Sigma, Vt}` — O(mn²) for thin SVD
-  - [ ] Golub-Reinsch algorithm (bidiagonalization + QR iteration)
-  - [ ] Singular value ordering (descending)
-  - [ ] Tests: 20+ tests (square, rectangular, rank-deficient, condition number)
-  - **Use case**: Pseudo-inverse, low-rank approximation, PCA, condition number
+- [x] **SVD (Singular Value Decomposition)** — A = UΣV^T ✅
+  - [x] `svd(A) -> {U, Sigma, Vt}` — O(mn²) for thin SVD
+  - [x] Golub-Reinsch algorithm (bidiagonalization + QR iteration with Wilkinson shift)
+  - [x] Singular value ordering (descending, non-negative)
+  - [x] Tests: 28 tests (square, tall, wide, rank-deficient, ill-conditioned, f32/f64)
+  - **Use case**: Pseudo-inverse, low-rank approximation, PCA, condition number, image compression
+  - **File**: `src/linalg/decompositions.zig`
 - [ ] **Eigendecomposition** — A = VΛV⁻¹ for diagonalizable matrices
   - [ ] `eig(A) -> {eigenvalues, eigenvectors}` — O(n³) symmetric case
   - [ ] QR algorithm for symmetric matrices
@@ -59,9 +60,9 @@ Implement core matrix decomposition algorithms for solving linear systems and ei
 
 **Success Criteria**: All 5 decompositions complete with 90+ tests, numerical stability validated
 
-**Progress**: 3/5 decompositions complete (LU, QR, Cholesky) with 65 tests. Remaining: SVD (20+ tests), Eigendecomposition (15+ tests)
+**Progress**: 4/5 decompositions complete (LU, QR, Cholesky, SVD) with 93 tests. Remaining: Eigendecomposition (15+ tests)
 
-**Estimated Effort**: 3-4 sessions (complex numerical algorithms, high precision requirements) — 60% complete
+**Estimated Effort**: 3-4 sessions (complex numerical algorithms, high precision requirements) — 80% complete
 
 ### v1.15.0 — Iterator Adaptor Expansion (DEFERRED)
 
