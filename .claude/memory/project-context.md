@@ -1,13 +1,13 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.16.0 (released 2026-03-20) — NDArray Core
-- **Phase**: v2.0 Track (Phase 6) — Scientific Computing Platform
+- **Version**: 1.17.0-dev — NDArray Operations & BLAS
+- **Phase**: v2.0 Track (Phase 6 → 7) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 185 tests passing)
-- **Latest Milestone**: v1.16.0 RELEASED ✅ — NDArray Core complete
-- **Current Milestone**: v1.17.0 — NDArray Operations & Broadcasting
-- **Next Priority**: v1.17.0 NDArray Operations (element-wise complete, broadcasting in progress) OR v1.18.0 Linear Algebra
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, tests passing)
+- **Latest Milestone**: v1.17.0 NDArray Operations ✅ — Broadcasting, reductions, I/O complete
+- **Current Milestone**: v1.18.0 — BLAS & Core Linear Algebra
+- **Next Priority**: BLAS Level 2 (gemv, trmv, trsv, ger) → Level 3 (gemm optimization)
 
 ## Phase 1 Progress — ✅ COMPLETE
 - [x] Project scaffolding: CI, testing harness, benchmark framework
@@ -47,7 +47,7 @@
 - [x] **C API & FFI**: C header (zuda.h), Python bindings (ctypes), Node.js bindings (ffi-napi), FFI README — **COMPLETE**
 - [x] **Documentation & v1.0**: API reference, algorithm explainers, decision-tree guide, getting started — **COMPLETE**
 
-## Phase 6 Progress (v2.0 Track) — IN PROGRESS
+## Phase 6 Progress (v2.0 Track) — ✅ COMPLETE (v1.17.0)
 - [x] **NDArray type definition** ✅ — NDArray(T, ndim) comptime-generic structure
 - [x] **Creation functions** (9/9) ✅ — zeros, ones, full, empty, arange, linspace, fromSlice, eye, identity
 - [x] **Indexing & slicing** (4/4) ✅ — get, set, at, slice (negative indexing, non-owning views)
@@ -66,7 +66,79 @@
 - [x] **Reduction operations** ✅ — sum, prod, mean, min, max, argmin, argmax, cumsum, cumprod, all, any (16 methods, 61 tests, commits 56b9da4, 05b798b)
 - [x] **I/O** ✅ — save, load (binary format with magic/version/metadata) — 10 tests, commit 90cf470
 
-## Recent Progress (Session 2026-03-21 - Hour 13)
+## Phase 7 Progress (v2.0 Track) — IN PROGRESS (v1.18.0)
+- [x] **BLAS Level 1** (5/5) ✅ — Vector-vector operations (commit 44447bb)
+  - dot(x, y): inner product, O(n)
+  - axpy(α, x, y): y = αx + y in-place, O(n)
+  - nrm2(x): L2 norm (Euclidean), O(n)
+  - asum(x): sum of absolute values, O(n)
+  - scal(α, x): x = αx in-place, O(n)
+  - Tests: 40 comprehensive tests (edge cases, f32/f64, large vectors, error paths)
+- [ ] **BLAS Level 2** (0/4) — Matrix-vector operations
+  - gemv(): y = αAx + βy
+  - trmv(), trsv(): triangular matrix operations
+  - ger(): outer product (rank-1 update)
+- [ ] **BLAS Level 3** (0/3) — Matrix-matrix operations
+  - gemm(): C = αAB + βC (core operation with cache blocking)
+  - trmm(), trsm(): triangular matrix operations
+- [ ] **Matrix Properties** (0/4) — Scalar properties
+  - det(), trace(), rank(), cond()
+- [ ] **Norms** (0/2) — Vector/matrix norms
+  - Vector: L1, L2, L∞
+  - Matrix: Frobenius, spectral
+
+## Recent Progress (Session 2026-03-21 - Hour 14)
+**FEATURE MODE → BLAS LEVEL 1 COMPLETE:**
+
+### BLAS Level 1 Implementation (commit 44447bb) ✅
+- ✅ **Linear Algebra Module Created** — `src/linalg/blas.zig` (762 lines)
+  - **New module**: `linalg` namespace added to `src/root.zig`
+  - **5 vector-vector operations**: All generic over numeric types (f32, f64, i32, etc.)
+  - **40 comprehensive tests**: Edge cases, precision, error paths, stress tests
+  - **Iterator protocol**: Uses NDArray(T, 1) with layout-aware traversal
+  - **Zero allocations**: In-place operations or scalar returns matching BLAS semantics
+
+- ✅ **Functions Implemented**:
+  1. `dot(x: NDArray(T, 1), y: NDArray(T, 1)) -> T`
+     - Inner product: sum(x[i] * y[i])
+     - Uses iterator protocol for cache-friendly traversal
+     - Tests: basic, single element, zeros, negatives, large (1000+), f32/f64, dimension mismatch, orthogonal
+
+  2. `axpy(alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)) -> void`
+     - Vector update: y = αx + y (in-place)
+     - Iterates over x, accumulates into y with scaling
+     - Tests: alpha variations (0, 1, -1, 2.0), single element, large vectors, f32, dimension mismatch
+
+  3. `nrm2(x: NDArray(T, 1)) -> T`
+     - L2 norm: sqrt(sum(x[i]²))
+     - Accumulates sum of squares, returns sqrt
+     - Tests: 3-4-5 triangle (norm 5), unit vector, zeros, negatives, large vectors, f32, scaled
+
+  4. `asum(x: NDArray(T, 1)) -> T`
+     - Sum of absolute values: sum(|x[i]|)
+     - Uses @abs() for element-wise absolute value
+     - Tests: mixed signs, all positive, all negative, zeros, single element, large vectors, f32, fractions
+
+  5. `scal(alpha: T, x: *NDArray(T, 1)) -> void`
+     - In-place scaling: x = αx
+     - Direct loop over x.data for minimum overhead
+     - Tests: basic, alpha variations (0, 1, -1, 0.5), single/large vectors, f32, fractions, zero invariance
+
+- **Test Quality**:
+  - Edge cases: empty/single/1000+ element vectors, zeros
+  - Precision: f32 and f64 with `expectApproxEqAbs()` and appropriate tolerances
+  - Error paths: dimension mismatch detection
+  - Mathematical correctness: 3-4-5 right triangle has norm 5
+  - No anti-patterns: meaningful assertions, no always-pass tests
+
+- **Performance**: All O(n) operations, cache-friendly iteration, zero heap allocations
+
+- **Milestone Progress**: v1.18.0 BLAS & Core Linear Algebra (5/25 functions, 20% complete)
+  - Next: BLAS Level 2 (gemv, trmv, trsv, ger)
+
+- **TDD Process**: test-writer → zig-developer → 40 tests passing
+
+## Previous Progress (Session 2026-03-21 - Hour 13)
 **FEATURE MODE → BROADCASTING COMPLETE:**
 
 ### Broadcasting Implementation (commit f040962) ✅
