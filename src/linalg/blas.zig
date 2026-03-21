@@ -2696,3 +2696,574 @@ test "det: scaling property det(cA) = c^n * det(A)" {
 
     try testing.expectApproxEqAbs(std.math.pow(f64, c, n) * detA, detC, 1e-10);
 }
+
+// ============================================================================
+// Vector and Matrix Norm Functions
+// ============================================================================
+
+/// L1 norm of a vector: sum of absolute values
+///
+/// Computes: ||x||₁ = Σ|xᵢ|
+///
+/// Parameters:
+/// - x: Vector (1D NDArray)
+///
+/// Returns: Non-negative scalar, sum of absolute values
+///
+/// Time: O(n) where n = vector length
+/// Space: O(1)
+pub fn norm1(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    // L1 norm is sum of absolute values - reuse BLAS asum
+    return asum(T, x);
+}
+
+/// L2 norm of a vector: Euclidean norm (magnitude)
+///
+/// Computes: ||x||₂ = √(Σxᵢ²)
+///
+/// Parameters:
+/// - x: Vector (1D NDArray)
+///
+/// Returns: Non-negative scalar, Euclidean norm
+///
+/// Time: O(n) where n = vector length
+/// Space: O(1)
+///
+/// Note: This reuses the existing nrm2() BLAS function
+pub fn norm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    // L2 norm is Euclidean norm - reuse BLAS nrm2
+    return nrm2(T, x);
+}
+
+/// L∞ norm of a vector: maximum absolute value
+///
+/// Computes: ||x||∞ = max|xᵢ|
+///
+/// Parameters:
+/// - x: Vector (1D NDArray)
+///
+/// Returns: Non-negative scalar, maximum absolute value
+///
+/// Time: O(n) where n = vector length
+/// Space: O(1)
+pub fn normInf(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    // L∞ norm is maximum absolute value
+    const n = x.shape[0];
+    if (n == 0) return 0;
+
+    var max_val: T = @abs(x.data[0]);
+    for (1..n) |i| {
+        const abs_val = @abs(x.data[i]);
+        if (abs_val > max_val) {
+            max_val = abs_val;
+        }
+    }
+    return max_val;
+}
+
+/// Frobenius norm of a matrix: L2 norm treating matrix as vector
+///
+/// Computes: ||A||_F = √(ΣᵢⱼAᵢⱼ²)
+///
+/// Parameters:
+/// - A: Matrix (2D NDArray, any shape m×n)
+///
+/// Returns: Non-negative scalar, Frobenius norm
+///
+/// Time: O(m*n)
+/// Space: O(1)
+pub fn normFrobenius(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
+    // Frobenius norm: sqrt(sum of squares of all elements)
+    const m = A.shape[0];
+    const n = A.shape[1];
+    const total = m * n;
+
+    if (total == 0) return 0;
+
+    var sum_sq: T = 0;
+    for (0..total) |i| {
+        sum_sq += A.data[i] * A.data[i];
+    }
+    return @sqrt(sum_sq);
+}
+
+// ============================================================================
+// Tests for norm1(), norm2(), normInf(), normFrobenius()
+// ============================================================================
+
+// --- norm1() tests ---
+
+test "norm1: vector [1, -2, 3, -4]" {
+    const allocator = testing.allocator;
+
+    // x = [1, -2, 3, -4]
+    // ||x||₁ = |1| + |-2| + |3| + |-4| = 1 + 2 + 3 + 4 = 10
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, -2, 3, -4 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f64, x);
+    try testing.expectApproxEqAbs(10.0, n, 1e-10);
+}
+
+test "norm1: zero vector" {
+    const allocator = testing.allocator;
+
+    // x = [0, 0, 0]
+    // ||x||₁ = 0
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f64, x);
+    try testing.expectApproxEqAbs(0.0, n, 1e-10);
+}
+
+test "norm1: single element" {
+    const allocator = testing.allocator;
+
+    // x = [5]
+    // ||x||₁ = |5| = 5
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{5}, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f64, x);
+    try testing.expectApproxEqAbs(5.0, n, 1e-10);
+}
+
+test "norm1: negative single element" {
+    const allocator = testing.allocator;
+
+    // x = [-7]
+    // ||x||₁ = |-7| = 7
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{-7}, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f64, x);
+    try testing.expectApproxEqAbs(7.0, n, 1e-10);
+}
+
+test "norm1: all positive values" {
+    const allocator = testing.allocator;
+
+    // x = [1.5, 2.5, 3.5]
+    // ||x||₁ = 1.5 + 2.5 + 3.5 = 7.5
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.5, 2.5, 3.5 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f64, x);
+    try testing.expectApproxEqAbs(7.5, n, 1e-10);
+}
+
+test "norm1: scaling property ||cx||₁ = |c| * ||x||₁" {
+    const allocator = testing.allocator;
+
+    // x = [1, 2, 3]
+    // ||x||₁ = 6
+    // 2x = [2, 4, 6]
+    // ||2x||₁ = 12 = 2 * 6
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var cx = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2, 4, 6 }, .row_major);
+    defer cx.deinit();
+
+    const n1 = try norm1(f64, x);
+    const n2 = try norm1(f64, cx);
+
+    try testing.expectApproxEqAbs(2.0 * n1, n2, 1e-10);
+}
+
+test "norm1: f32 precision" {
+    const allocator = testing.allocator;
+
+    // x = [1.5, -2.5, 3.5] (f32)
+    // ||x||₁ = 1.5 + 2.5 + 3.5 = 7.5
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{3}, &[_]f32{ 1.5, -2.5, 3.5 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f32, x);
+    try testing.expectApproxEqAbs(7.5, n, 1e-5);
+}
+
+test "norm1: large vector n=100" {
+    const allocator = testing.allocator;
+
+    // x = [1, 1, 1, ..., 1] (100 ones)
+    // ||x||₁ = 100
+    var data: [100]f64 = undefined;
+    for (data) |*v| v.* = 1.0;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, &data, .row_major);
+    defer x.deinit();
+
+    const n = try norm1(f64, x);
+    try testing.expectApproxEqAbs(100.0, n, 1e-10);
+}
+
+// --- norm2() tests ---
+
+test "norm2: vector [3, 4]" {
+    const allocator = testing.allocator;
+
+    // x = [3, 4]
+    // ||x||₂ = √(9 + 16) = √25 = 5
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f64, x);
+    try testing.expectApproxEqAbs(5.0, n, 1e-10);
+}
+
+test "norm2: zero vector" {
+    const allocator = testing.allocator;
+
+    // x = [0, 0, 0]
+    // ||x||₂ = 0
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f64, x);
+    try testing.expectApproxEqAbs(0.0, n, 1e-10);
+}
+
+test "norm2: unit vector [1, 0, 0]" {
+    const allocator = testing.allocator;
+
+    // x = [1, 0, 0]
+    // ||x||₂ = √(1 + 0 + 0) = 1
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 0, 0 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f64, x);
+    try testing.expectApproxEqAbs(1.0, n, 1e-10);
+}
+
+test "norm2: single element" {
+    const allocator = testing.allocator;
+
+    // x = [7]
+    // ||x||₂ = √49 = 7
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{7}, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f64, x);
+    try testing.expectApproxEqAbs(7.0, n, 1e-10);
+}
+
+test "norm2: [1, 1, 1]" {
+    const allocator = testing.allocator;
+
+    // x = [1, 1, 1]
+    // ||x||₂ = √(1 + 1 + 1) = √3 ≈ 1.732050808...
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f64, x);
+    try testing.expectApproxEqAbs(std.math.sqrt(3.0), n, 1e-10);
+}
+
+test "norm2: scaling property ||cx||₂ = |c| * ||x||₂" {
+    const allocator = testing.allocator;
+
+    // x = [3, 4]
+    // ||x||₂ = 5
+    // 2x = [6, 8]
+    // ||2x||₂ = √(36 + 64) = √100 = 10 = 2 * 5
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var cx = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 6, 8 }, .row_major);
+    defer cx.deinit();
+
+    const n1 = try norm2(f64, x);
+    const n2 = try norm2(f64, cx);
+
+    try testing.expectApproxEqAbs(2.0 * n1, n2, 1e-10);
+}
+
+test "norm2: f32 precision" {
+    const allocator = testing.allocator;
+
+    // x = [1.0, 2.0, 2.0] (f32)
+    // ||x||₂ = √(1 + 4 + 4) = √9 = 3
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{3}, &[_]f32{ 1.0, 2.0, 2.0 }, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f32, x);
+    try testing.expectApproxEqAbs(3.0, n, 1e-5);
+}
+
+test "norm2: large vector n=100" {
+    const allocator = testing.allocator;
+
+    // x = [1, 1, 1, ..., 1] (100 ones)
+    // ||x||₂ = √100 = 10
+    var data: [100]f64 = undefined;
+    for (data) |*v| v.* = 1.0;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, &data, .row_major);
+    defer x.deinit();
+
+    const n = try norm2(f64, x);
+    try testing.expectApproxEqAbs(10.0, n, 1e-10);
+}
+
+// --- normInf() tests ---
+
+test "normInf: vector [1, -5, 3]" {
+    const allocator = testing.allocator;
+
+    // x = [1, -5, 3]
+    // ||x||∞ = max(|1|, |-5|, |3|) = 5
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, -5, 3 }, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f64, x);
+    try testing.expectApproxEqAbs(5.0, n, 1e-10);
+}
+
+test "normInf: zero vector" {
+    const allocator = testing.allocator;
+
+    // x = [0, 0, 0]
+    // ||x||∞ = 0
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f64, x);
+    try testing.expectApproxEqAbs(0.0, n, 1e-10);
+}
+
+test "normInf: single element" {
+    const allocator = testing.allocator;
+
+    // x = [7]
+    // ||x||∞ = |7| = 7
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{7}, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f64, x);
+    try testing.expectApproxEqAbs(7.0, n, 1e-10);
+}
+
+test "normInf: negative single element" {
+    const allocator = testing.allocator;
+
+    // x = [-9]
+    // ||x||∞ = |-9| = 9
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{-9}, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f64, x);
+    try testing.expectApproxEqAbs(9.0, n, 1e-10);
+}
+
+test "normInf: maximum is negative" {
+    const allocator = testing.allocator;
+
+    // x = [-10, -3, -7]
+    // ||x||∞ = max(|-10|, |-3|, |-7|) = 10
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ -10, -3, -7 }, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f64, x);
+    try testing.expectApproxEqAbs(10.0, n, 1e-10);
+}
+
+test "normInf: scaling property ||cx||∞ = |c| * ||x||∞" {
+    const allocator = testing.allocator;
+
+    // x = [1, 3, 2]
+    // ||x||∞ = 3
+    // 2x = [2, 6, 4]
+    // ||2x||∞ = 6 = 2 * 3
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 3, 2 }, .row_major);
+    defer x.deinit();
+
+    var cx = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2, 6, 4 }, .row_major);
+    defer cx.deinit();
+
+    const n1 = try normInf(f64, x);
+    const n2 = try normInf(f64, cx);
+
+    try testing.expectApproxEqAbs(2.0 * n1, n2, 1e-10);
+}
+
+test "normInf: f32 precision" {
+    const allocator = testing.allocator;
+
+    // x = [1.5, -4.2, 3.1] (f32)
+    // ||x||∞ = max(1.5, 4.2, 3.1) = 4.2
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{3}, &[_]f32{ 1.5, -4.2, 3.1 }, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f32, x);
+    try testing.expectApproxEqAbs(4.2, n, 1e-5);
+}
+
+test "normInf: large vector n=100" {
+    const allocator = testing.allocator;
+
+    // x = [1, 2, 3, ..., 100]
+    // ||x||∞ = 100
+    var data: [100]f64 = undefined;
+    for (data, 0..) |*v, i| v.* = @floatFromInt(i + 1);
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, &data, .row_major);
+    defer x.deinit();
+
+    const n = try normInf(f64, x);
+    try testing.expectApproxEqAbs(100.0, n, 1e-10);
+}
+
+// --- normFrobenius() tests ---
+
+test "normFrobenius: 2x2 matrix [[1, 2], [3, 4]]" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    // ||A||_F = √(1² + 2² + 3² + 4²) = √(1 + 4 + 9 + 16) = √30
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    const n = try normFrobenius(f64, A);
+    try testing.expectApproxEqAbs(std.math.sqrt(30.0), n, 1e-10);
+}
+
+test "normFrobenius: 2x3 matrix [[1, 0, 0], [0, 1, 0]]" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0, 0], [0, 1, 0]]
+    // ||A||_F = √(1² + 0² + 0² + 0² + 1² + 0²) = √2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0 }, .row_major);
+    defer A.deinit();
+
+    const n = try normFrobenius(f64, A);
+    try testing.expectApproxEqAbs(std.math.sqrt(2.0), n, 1e-10);
+}
+
+test "normFrobenius: identity matrix 3x3" {
+    const allocator = testing.allocator;
+
+    // I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    // ||I||_F = √(1 + 1 + 1) = √3
+    var I = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer I.deinit();
+
+    const n = try normFrobenius(f64, I);
+    try testing.expectApproxEqAbs(std.math.sqrt(3.0), n, 1e-10);
+}
+
+test "normFrobenius: zero matrix" {
+    const allocator = testing.allocator;
+
+    // Z = [[0, 0], [0, 0]]
+    // ||Z||_F = 0
+    var Z = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer Z.deinit();
+
+    const n = try normFrobenius(f64, Z);
+    try testing.expectApproxEqAbs(0.0, n, 1e-10);
+}
+
+test "normFrobenius: single element matrix [[5]]" {
+    const allocator = testing.allocator;
+
+    // A = [[5]]
+    // ||A||_F = √25 = 5
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    const n = try normFrobenius(f64, A);
+    try testing.expectApproxEqAbs(5.0, n, 1e-10);
+}
+
+test "normFrobenius: negative values [[1, -2], [-3, 4]]" {
+    const allocator = testing.allocator;
+
+    // A = [[1, -2], [-3, 4]]
+    // ||A||_F = √(1² + (-2)² + (-3)² + 4²) = √(1 + 4 + 9 + 16) = √30
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, -2, -3, 4 }, .row_major);
+    defer A.deinit();
+
+    const n = try normFrobenius(f64, A);
+    try testing.expectApproxEqAbs(std.math.sqrt(30.0), n, 1e-10);
+}
+
+test "normFrobenius: scaling property ||cA||_F = |c| * ||A||_F" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    // ||A||_F = √30
+    // 2A = [[2, 4], [6, 8]]
+    // ||2A||_F = √(4 + 16 + 36 + 64) = √120 = 2√30
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var CA = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 4, 6, 8 }, .row_major);
+    defer CA.deinit();
+
+    const n1 = try normFrobenius(f64, A);
+    const n2 = try normFrobenius(f64, CA);
+
+    try testing.expectApproxEqAbs(2.0 * n1, n2, 1e-10);
+}
+
+test "normFrobenius: f32 precision" {
+    const allocator = testing.allocator;
+
+    // A = [[1.5, 2.5], [3.5, 4.5]] (f32)
+    // ||A||_F = √(2.25 + 6.25 + 12.25 + 20.25) = √41
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1.5, 2.5, 3.5, 4.5 }, .row_major);
+    defer A.deinit();
+
+    const n = try normFrobenius(f32, A);
+    try testing.expectApproxEqAbs(std.math.sqrt(41.0), n, 1e-4);
+}
+
+test "normFrobenius: rectangular matrix 3x4" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]
+    // ||A||_F = √(1 + 1 + 1) = √3
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 }, .row_major);
+    defer A.deinit();
+
+    const n = try normFrobenius(f64, A);
+    try testing.expectApproxEqAbs(std.math.sqrt(3.0), n, 1e-10);
+}
+
+test "normFrobenius: 10x10 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    // D = diag(1, 2, 3, ..., 10)
+    // ||D||_F = √(1² + 2² + 3² + ... + 10²) = √(1+4+9+16+25+36+49+64+81+100) = √385
+    var data: [100]f64 = undefined;
+    for (data) |*v| v.* = 0;
+    for (0..10) |i| {
+        data[i * 10 + i] = @floatFromInt(i + 1);
+    }
+
+    var D = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 10, 10 }, &data, .row_major);
+    defer D.deinit();
+
+    const n = try normFrobenius(f64, D);
+    // Sum of squares: 1 + 4 + 9 + 16 + 25 + 36 + 49 + 64 + 81 + 100 = 385
+    try testing.expectApproxEqAbs(std.math.sqrt(385.0), n, 1e-10);
+}
+
+test "normFrobenius: equivalence with frobenius as vector norm" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]] treated as vector [1, 2, 3, 4]
+    // ||[1, 2, 3, 4]||₂ = √30
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    const n_vec = try norm2(f64, x);
+    const n_frob = try normFrobenius(f64, A);
+
+    try testing.expectApproxEqAbs(n_vec, n_frob, 1e-10);
+}
