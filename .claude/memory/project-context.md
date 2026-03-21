@@ -4,10 +4,10 @@
 - **Version**: 1.19.1 ✅ — CI Stability Fixes RELEASED
 - **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 250 tests 100% passing)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 275 tests 100% passing)
 - **Latest Milestone**: v1.19.1 CI Fixes ✅ — Resolved build cache corruption in GitHub Actions
 - **Current Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, rank, condition number)
-- **Next Priority**: Implement inv(A) for matrix inversion via LU
+- **Next Priority**: Implement pinv(A) for Moore-Penrose pseudo-inverse via SVD
 - **Decompositions Available**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 tests
 
 ## Recent Progress (Session 2026-03-22 - Hour 2)
@@ -15,33 +15,40 @@
 
 ### lstsq(A, b) Implementation (commit d4992a7) ✅
 - ✅ **lstsq(A, b)**: Least squares solver for overdetermined systems, O(mn²)
-- ✅ **Algorithm**: QR decomposition via delegation to internal solveOverdetermined()
-- ✅ **Purpose**: Minimize ||Ax - b||₂ for systems with m > n (more equations than unknowns)
-- ✅ **Implementation**:
-  - Public API wrapper exposing existing QR least squares path
-  - Dimension validation (m >= n, A.rows == b.length)
-  - Delegates to solveOverdetermined() which uses QR factorization
-  - Forward: compute c = Q^T b, O(mn)
-  - Backward: solve Rx = c where R is upper triangular, O(n²)
-- ✅ **Error handling**: DimensionMismatch, InvalidDimensions (underdetermined), SingularMatrix
-- ✅ **Tests**: 16 comprehensive tests (461 LOC)
-  - Basic (4): 3×2/4×2/5×3 overdetermined, tall identity
-  - Edge cases (4): diagonal, single column, zero b, weighted mean
-  - Precision (4): f32/f64 tolerances, negative values, large 100×50 system
-  - Error paths (2): rank-deficient, dimension mismatch
-  - Memory safety (2): leak detection for small/medium systems
-- ✅ **File**: `src/linalg/solve.zig` (+532 lines: 68 implementation + 461 tests + 3 doc)
+- ✅ **Tests**: 16 comprehensive tests (532 lines)
 - ✅ **Use cases**: Linear regression, curve fitting, overdetermined system solving
 
+### inv(A) Implementation (commit 3c939b3) ✅
+- ✅ **inv(A)**: Matrix inversion via LU decomposition, O(n³)
+- ✅ **Algorithm**: Solve AX = I column-by-column using single LU factorization
+- ✅ **Implementation**:
+  - Computes LU decomposition with partial pivoting (lu_mod.lu)
+  - For each column i: solve Ax = e_i via forward+backward substitution
+  - Applies permutation matrix P to each RHS
+  - Stores solutions as columns of result matrix
+- ✅ **Error handling**: NonSquareMatrix (m != n), SingularMatrix (det = 0)
+- ✅ **Tests**: 25 comprehensive tests (779 LOC)
+  - Basic (5): 1×1, 2×2, 3×3 identity/diagonal, known inverse
+  - Inverse property (4): A@A⁻¹=I and A⁻¹@A=I (both directions)
+  - Singular detection (3): zeros, rank-deficient, zero determinant
+  - Non-square errors (2): 2×3, 3×2 matrices
+  - Value ranges (4): negative, large (1e3), small (1e-3), ill-conditioned Hilbert
+  - Precision (2): f32 (1e-5), f64 (1e-10) tolerances
+  - Memory safety (3): leak detection for 2×2, 3×3, 4×4
+  - Larger system (1): 4×4 matrix
+- ✅ **Verification**: A@A⁻¹=I reconstruction, determinant consistency det(A⁻¹)=1/det(A)
+- ✅ **File**: `src/linalg/solve.zig` (+779 lines: 88 implementation + 691 tests)
+- ✅ **Use cases**: Control theory, covariance inverse, analytical solutions
+
 ### v1.20.0 Progress
-- [x] solve(A, b) (2/6) ✅
-- [x] lstsq(A, b) (2/6) ✅
-- [ ] inv(A) (0/6)
+- [x] solve(A, b) (3/6) ✅
+- [x] lstsq(A, b) (3/6) ✅
+- [x] inv(A) (3/6) ✅
 - [ ] pinv(A) (0/6)
 - [ ] rank(A) (0/6)
 - [ ] cond(A) (0/6)
 
-**Next Session Priority**: Implement inv(A) for matrix inversion via LU
+**Next Session Priority**: Implement pinv(A) for Moore-Penrose pseudo-inverse via SVD
 
 ---
 

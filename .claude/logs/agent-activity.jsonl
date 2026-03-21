@@ -84,3 +84,5 @@
 {"timestamp":"2026-03-22T01:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement solve(A,b)","project":"zuda"}
 {"timestamp":"2026-03-22T02:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write 16 comprehensive tests for lstsq(A,b) least squares solver","project":"zuda"}
 {"timestamp":"2026-03-22T02:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement lstsq(A,b) public function using QR decomposition","project":"zuda"}
+{"timestamp":"2026-03-22T02:45:00Z","action":"subagent","agent_type":"test-writer","task":"Write 25 comprehensive tests for inv(A) matrix inversion","project":"zuda"}
+{"timestamp":"2026-03-22T03:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement inv(A) matrix inversion via LU decomposition","project":"zuda"}
