@@ -354,6 +354,8 @@ pub const ndarray = struct {
 pub const linalg = struct {
     /// BLAS Level 1 — Vector-vector operations
     pub const blas = @import("linalg/blas.zig");
+    /// Matrix decompositions — LU, QR, SVD, Cholesky
+    pub const decompositions = @import("linalg/decompositions.zig");
     /// LU decomposition with partial pivoting
     pub const lu = @import("linalg/lu.zig");
 };
