@@ -73,6 +73,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             TypeMismatch,
             UnexpectedEOF,
             EmptyArray,
+            IncompatibleShapes,
         };
 
         /// Shape of the array: length along each dimension
@@ -931,36 +932,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn add(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) T {
+                    return a + b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(T, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays in element order and add
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val + other_val;
-                idx += 1;
-            }
-
-            return Self{
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise subtraction: self - other
@@ -976,36 +952,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn sub(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) T {
+                    return a - b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(T, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays in element order and subtract
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val - other_val;
-                idx += 1;
-            }
-
-            return Self{
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise multiplication: self * other
@@ -1021,36 +972,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn mul(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) T {
+                    return a * b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(T, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays in element order and multiply
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val * other_val;
-                idx += 1;
-            }
-
-            return Self{
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise division: self / other
@@ -1066,36 +992,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
         pub fn div(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) T {
+                    return a / b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(T, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays in element order and divide
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val / other_val;
-                idx += 1;
-            }
-
-            return Self{
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise modulo: self % other (integer types only)
@@ -1117,36 +1018,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 @compileError("mod() is only defined for integer types");
             }
 
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) T {
+                    return a % b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(T, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays in element order and compute modulo
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val % other_val;
-                idx += 1;
-            }
-
-            return Self{
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         // -- Element-wise Unary Operations --
@@ -1691,216 +1567,66 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn eq(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) bool {
+                    return a == b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(bool, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays and compare
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val == other_val;
-                idx += 1;
-            }
-
-            return NDArray(bool, ndim){
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise inequality comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn ne(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) bool {
+                    return a != b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(bool, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays and compare
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val != other_val;
-                idx += 1;
-            }
-
-            return NDArray(bool, ndim){
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise less-than comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn lt(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) bool {
+                    return a < b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(bool, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays and compare
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val < other_val;
-                idx += 1;
-            }
-
-            return NDArray(bool, ndim){
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
-        /// Element-wise less-than-or-equal comparison - returns boolean array
+        /// Element-wise less-or-equal comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn le(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) bool {
+                    return a <= b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(bool, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays and compare
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val <= other_val;
-                idx += 1;
-            }
-
-            return NDArray(bool, ndim){
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         /// Element-wise greater-than comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn gt(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) bool {
+                    return a > b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(bool, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays and compare
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val > other_val;
-                idx += 1;
-            }
-
-            return NDArray(bool, ndim){
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
-        /// Element-wise greater-than-or-equal comparison - returns boolean array
+        /// Element-wise greater-or-equal comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn ge(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
-            // Check shape compatibility
-            for (0..ndim) |i| {
-                if (self.shape[i] != other.shape[i]) {
-                    return error.ShapeMismatch;
+            return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
+                pub fn op(a: T, b: T) bool {
+                    return a >= b;
                 }
-            }
-
-            // Allocate new buffer for result
-            const total = self.count();
-            const result_data = try self.allocator.alloc(bool, total);
-            errdefer self.allocator.free(result_data);
-
-            // Traverse both arrays and compare
-            var self_iter = self.iterator();
-            var other_iter = other.iterator();
-
-            var idx: usize = 0;
-            while (self_iter.next()) |self_val| {
-                const other_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = self_val >= other_val;
-                idx += 1;
-            }
-
-            return NDArray(bool, ndim){
-                .shape = self.shape,
-                .strides = self.strides,
-                .data = result_data,
-                .allocator = self.allocator,
-                .layout = self.layout,
-            };
+            }.op);
         }
 
         // -- I/O Operations --
@@ -9960,4 +9686,771 @@ test "ndarray: save and load large array" {
     try testing.expectEqual(@as(i64, 9999), loaded.data[9999]);
 
     try std.fs.cwd().deleteFile("/tmp/test_ndarray_large.bin");
+}
+
+// ============================================================================
+// BROADCASTING TESTS — NumPy-compatible shape broadcasting
+// ============================================================================
+// Tests for broadcastShapes() function and element-wise operations with broadcasting
+// Following NumPy broadcasting rules:
+// 1. Compare shapes element-wise from right to left
+// 2. Dimensions are compatible when equal OR one is 1
+// 3. Prepend 1s to shorter-rank shapes to match ranks
+// 4. Result shape is max of each dimension pair
+
+// -- broadcastShapes Helper Function Tests --
+
+test "broadcast: broadcastShapes same 2D shape [3,4] + [3,4] → [3,4]" {
+    const allocator = testing.allocator;
+
+    const shape_a = [_]usize{ 3, 4 };
+    const shape_b = [_]usize{ 3, 4 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 2), result.len);
+    try testing.expectEqual(@as(usize, 3), result[0]);
+    try testing.expectEqual(@as(usize, 4), result[1]);
+}
+
+test "broadcast: broadcastShapes dimension-1 broadcast [3,1] + [1,4] → [3,4]" {
+    const allocator = testing.allocator;
+
+    const shape_a = [_]usize{ 3, 1 };
+    const shape_b = [_]usize{ 1, 4 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 2), result.len);
+    try testing.expectEqual(@as(usize, 3), result[0]);
+    try testing.expectEqual(@as(usize, 4), result[1]);
+}
+
+test "broadcast: broadcastShapes rank mismatch [5,3] + [3] → [5,3]" {
+    const allocator = testing.allocator;
+
+    // [5, 3] + [3] should prepend 1 to [3] → [1, 3]
+    // Then broadcast [5,3] and [1,3] → [5,3]
+    const shape_a = [_]usize{ 5, 3 };
+    const shape_b = [_]usize{3};
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 2), result.len);
+    try testing.expectEqual(@as(usize, 5), result[0]);
+    try testing.expectEqual(@as(usize, 3), result[1]);
+}
+
+test "broadcast: broadcastShapes scalar (rank 0) broadcasts to any shape [3,4]" {
+    const allocator = testing.allocator;
+
+    // Scalar [] should broadcast to any shape [3, 4] → [3, 4]
+    const shape_a = [_]usize{};
+    const shape_b = [_]usize{ 3, 4 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 2), result.len);
+    try testing.expectEqual(@as(usize, 3), result[0]);
+    try testing.expectEqual(@as(usize, 4), result[1]);
+}
+
+test "broadcast: broadcastShapes complex 4D [5,1,4,1] + [3,1,2] → [5,3,4,2]" {
+    const allocator = testing.allocator;
+
+    // [5, 1, 4, 1] + [3, 1, 2]
+    // Prepend 1 to second: [5, 1, 4, 1] + [1, 3, 1, 2]
+    // Broadcast: [5, max(1,3), 4, max(1,2)] = [5, 3, 4, 2]
+    const shape_a = [_]usize{ 5, 1, 4, 1 };
+    const shape_b = [_]usize{ 3, 1, 2 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 4), result.len);
+    try testing.expectEqual(@as(usize, 5), result[0]);
+    try testing.expectEqual(@as(usize, 3), result[1]);
+    try testing.expectEqual(@as(usize, 4), result[2]);
+    try testing.expectEqual(@as(usize, 2), result[3]);
+}
+
+test "broadcast: broadcastShapes incompatible shapes [3] + [4] → error.IncompatibleShapes" {
+    const allocator = testing.allocator;
+
+    // [3] and [4] are incompatible: 3 ≠ 4 and neither is 1
+    const shape_a = [_]usize{3};
+    const shape_b = [_]usize{4};
+
+    const result = broadcastShapes(&shape_a, &shape_b, allocator);
+    try testing.expectError(error.IncompatibleShapes, result);
+}
+
+test "broadcast: broadcastShapes incompatible multi-dim [3,2] + [4,3] → error.IncompatibleShapes" {
+    const allocator = testing.allocator;
+
+    // [3,2] and [4,3]: comparing from right to left
+    // dim 1: 2 vs 3 (neither is 1) → incompatible
+    const shape_a = [_]usize{ 3, 2 };
+    const shape_b = [_]usize{ 4, 3 };
+
+    const result = broadcastShapes(&shape_a, &shape_b, allocator);
+    try testing.expectError(error.IncompatibleShapes, result);
+}
+
+test "broadcast: broadcastShapes left shape broadcasts to right [1,4,1] + [3,4,5] → [3,4,5]" {
+    const allocator = testing.allocator;
+
+    const shape_a = [_]usize{ 1, 4, 1 };
+    const shape_b = [_]usize{ 3, 4, 5 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 3), result.len);
+    try testing.expectEqual(@as(usize, 3), result[0]);
+    try testing.expectEqual(@as(usize, 4), result[1]);
+    try testing.expectEqual(@as(usize, 5), result[2]);
+}
+
+test "broadcast: broadcastShapes empty shape (rank 0) broadcasts correctly" {
+    const allocator = testing.allocator;
+
+    // Both empty (scalars) should work
+    const shape_a = [_]usize{};
+    const shape_b = [_]usize{};
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "broadcast: broadcastShapes scalar broadcasts left to 3D array [2,3,4]" {
+    const allocator = testing.allocator;
+
+    // [] + [2, 3, 4] → [2, 3, 4]
+    const shape_a = [_]usize{};
+    const shape_b = [_]usize{ 2, 3, 4 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 3), result.len);
+    try testing.expectEqual(@as(usize, 2), result[0]);
+    try testing.expectEqual(@as(usize, 3), result[1]);
+    try testing.expectEqual(@as(usize, 4), result[2]);
+}
+
+test "broadcast: broadcastShapes all-ones tensor [1,1,1] + [5,4,3] → [5,4,3]" {
+    const allocator = testing.allocator;
+
+    const shape_a = [_]usize{ 1, 1, 1 };
+    const shape_b = [_]usize{ 5, 4, 3 };
+
+    const result = try broadcastShapes(&shape_a, &shape_b, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(@as(usize, 3), result.len);
+    try testing.expectEqual(@as(usize, 5), result[0]);
+    try testing.expectEqual(@as(usize, 4), result[1]);
+    try testing.expectEqual(@as(usize, 3), result[2]);
+}
+
+test "broadcast: broadcastShapes error on incompatible [2,3,4] + [2,3,5]" {
+    const allocator = testing.allocator;
+
+    // Last dimension: 4 vs 5, neither is 1 → incompatible
+    const shape_a = [_]usize{ 2, 3, 4 };
+    const shape_b = [_]usize{ 2, 3, 5 };
+
+    const result = broadcastShapes(&shape_a, &shape_b, allocator);
+    try testing.expectError(error.IncompatibleShapes, result);
+}
+
+// -- Element-wise Operations with Broadcasting Tests --
+
+test "broadcast: add with compatible shapes [3,1] + [1,4] produces [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 1 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{ 1, 4 }, .row_major);
+    defer arr_b.deinit();
+
+    // After broadcasting: [3,1] + [1,4] → [3,4]
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+
+    // All elements should be 2 (1 + 1)
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 2), val);
+    }
+}
+
+test "broadcast: mul with shapes [2,3,1] * [4] broadcasts to [2,3,4]" {
+    const allocator = testing.allocator;
+
+    // [2, 3, 1] * [4]
+    // Prepend 1 to [4] → [2, 3, 1] * [1, 1, 4]
+    // Result: [2, 3, 4]
+    var arr_a = try NDArray(f64, 3).full(allocator, &[_]usize{ 2, 3, 1 }, 2.0, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 1).full(allocator, &[_]usize{4}, 3.0, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.mul(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape.len);
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(usize, 4), result.shape[2]);
+
+    // All elements should be 6.0 (2 * 3)
+    for (result.data) |val| {
+        try testing.expectApproxEqAbs(@as(f64, 6.0), val, 1e-10);
+    }
+}
+
+test "broadcast: sub with scalar-like [1] - [5,3] broadcasts to [5,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 1).full(allocator, &[_]usize{1}, 10, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).full(allocator, &[_]usize{ 5, 3 }, 3, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.sub(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape.len);
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+
+    // All elements should be 7 (10 - 3)
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 7), val);
+    }
+}
+
+test "broadcast: div with [4,1,3] / [1,2,1] broadcasts to [4,2,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 3).full(allocator, &[_]usize{ 4, 1, 3 }, 10.0, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 3).full(allocator, &[_]usize{ 1, 2, 1 }, 2.0, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.div(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape.len);
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(usize, 3), result.shape[2]);
+
+    // All elements should be 5.0 (10 / 2)
+    for (result.data) |val| {
+        try testing.expectApproxEqAbs(@as(f64, 5.0), val, 1e-10);
+    }
+}
+
+test "broadcast: comparison eq with shapes [3,1] and [1,4] broadcasts to [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 1 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{ 1, 4 }, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.eq(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+
+    // All elements should be true (1 == 1)
+    for (result.data) |val| {
+        try testing.expectEqual(true, val);
+    }
+}
+
+test "broadcast: comparison lt with [2,1,4] < [2,3,1] broadcasts to [2,3,4]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 3).full(allocator, &[_]usize{ 2, 1, 4 }, 1, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{ 2, 3, 1 }, 2, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.lt(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape.len);
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(usize, 4), result.shape[2]);
+
+    // All elements should be true (1 < 2)
+    for (result.data) |val| {
+        try testing.expectEqual(true, val);
+    }
+}
+
+test "broadcast: math function exp broadcasts with shape [1,3] broadcasted to [2,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).full(allocator, &[_]usize{ 1, 3 }, 0.0, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 2).full(allocator, &[_]usize{ 2, 3 }, 0.0, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.exp();
+    defer result.deinit();
+
+    // exp(0) = 1 for all elements
+    for (result.data) |val| {
+        try testing.expectApproxEqAbs(@as(f64, 1.0), val, 1e-10);
+    }
+}
+
+test "broadcast: error on incompatible add [3,2] + [4,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{ 4, 3 }, .row_major);
+    defer arr_b.deinit();
+
+    const result = arr_a.add(&arr_b);
+    try testing.expectError(error.IncompatibleShapes, result);
+}
+
+test "broadcast: error on incompatible mul [5] * [3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 1).ones(allocator, &[_]usize{5}, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 1).ones(allocator, &[_]usize{3}, .row_major);
+    defer arr_b.deinit();
+
+    const result = arr_a.mul(&arr_b);
+    try testing.expectError(error.IncompatibleShapes, result);
+}
+
+test "broadcast: error on incompatible sub [2,3,4] - [2,3,5]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 3).ones(allocator, &[_]usize{ 2, 3, 5 }, .row_major);
+    defer arr_b.deinit();
+
+    const result = arr_a.sub(&arr_b);
+    try testing.expectError(error.IncompatibleShapes, result);
+}
+
+test "broadcast: add with rank mismatch [2,3] + [3] broadcasts to [2,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 1).full(allocator, &[_]usize{3}, 2, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+
+    // All elements should be 3 (1 + 2)
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 3), val);
+    }
+}
+
+test "broadcast: mul with 4D + 1D [2,3,4,5] * [5] broadcasts to [2,3,4,5]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 4).full(allocator, &[_]usize{ 2, 3, 4, 5 }, 2.0, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 1).full(allocator, &[_]usize{5}, 3.0, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.mul(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape.len);
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(usize, 4), result.shape[2]);
+    try testing.expectEqual(@as(usize, 5), result.shape[3]);
+
+    // All elements should be 6.0 (2 * 3)
+    for (result.data) |val| {
+        try testing.expectApproxEqAbs(@as(f64, 6.0), val, 1e-10);
+    }
+}
+
+test "broadcast: layout preservation row-major [3,1] + [1,4] broadcasts to row-major [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 1 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{ 1, 4 }, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+    try testing.expectEqual(.row_major, result.layout);
+}
+
+test "broadcast: large arrays 1000x1000 + [1,1000] broadcasts correctly" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(f64, 2).full(allocator, &[_]usize{ 1000, 1000 }, 1.0, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(f64, 2).full(allocator, &[_]usize{ 1, 1000 }, 2.0, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1000), result.shape[0]);
+    try testing.expectEqual(@as(usize, 1000), result.shape[1]);
+    try testing.expectEqual(@as(usize, 1_000_000), result.data.len);
+
+    // Check a few elements
+    for (result.data) |val| {
+        try testing.expectEqual(@as(f64, 3.0), val);
+    }
+}
+
+test "broadcast: stress test [5,1,1,3] + [1,4,2,1] broadcasts to [5,4,2,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 4).ones(allocator, &[_]usize{ 5, 1, 1, 3 }, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 4).ones(allocator, &[_]usize{ 1, 4, 2, 1 }, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.add(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape.len);
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.shape[2]);
+    try testing.expectEqual(@as(usize, 3), result.shape[3]);
+
+    // All elements should be 2 (1 + 1)
+    try testing.expectEqual(@as(usize, 120), result.data.len);
+    for (result.data) |val| {
+        try testing.expectEqual(@as(i32, 2), val);
+    }
+}
+
+test "broadcast: comparison ne with mismatched values [1,2] != [3,1] broadcasts to [3,2]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).full(allocator, &[_]usize{ 1, 2 }, 1, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).full(allocator, &[_]usize{ 3, 1 }, 2, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.ne(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+
+    // All elements should be true (1 != 2)
+    for (result.data) |val| {
+        try testing.expectEqual(true, val);
+    }
+}
+
+test "broadcast: comparison ge with [2,1] >= [1,3] broadcasts to [2,3]" {
+    const allocator = testing.allocator;
+
+    var arr_a = try NDArray(i32, 2).full(allocator, &[_]usize{ 2, 1 }, 5, .row_major);
+    defer arr_a.deinit();
+
+    var arr_b = try NDArray(i32, 2).full(allocator, &[_]usize{ 1, 3 }, 2, .row_major);
+    defer arr_b.deinit();
+
+    var result = try arr_a.ge(&arr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+
+    // All elements should be true (5 >= 2)
+    for (result.data) |val| {
+        try testing.expectEqual(true, val);
+    }
+}
+
+/// Compute broadcasted shape following NumPy rules.
+/// Shapes are compared element-wise from right to left (trailing dimensions).
+/// Two dimensions are compatible when they are equal OR one of them is 1.
+/// If shapes have different ranks, prepend 1s to the shorter shape.
+/// Result shape is the maximum of each dimension pair.
+///
+/// Examples:
+///   [3, 1] + [1, 4] → [3, 4]
+///   [5, 3] + [3] → [5, 3] (second becomes [1, 3])
+///   [3] + [4] → error.IncompatibleShapes
+///
+/// Time: O(max(ndim_a, ndim_b))
+/// Space: O(max(ndim_a, ndim_b))
+fn broadcastShapes(shape_a: []const usize, shape_b: []const usize, allocator: std.mem.Allocator) !([]usize) {
+    // Determine result rank
+    const result_rank = @max(shape_a.len, shape_b.len);
+
+    // Allocate result array
+    const result = try allocator.alloc(usize, result_rank);
+    errdefer allocator.free(result);
+
+    // Compute offset for each shape (how many leading dimensions to skip)
+    const offset_a = result_rank - shape_a.len;
+    const offset_b = result_rank - shape_b.len;
+
+    // Iterate from left to right, computing the broadcast shape
+    for (0..result_rank) |i| {
+        // Get dimension from shape_a (or 1 if beyond its rank)
+        const dim_a = if (i < offset_a) 1 else shape_a[i - offset_a];
+
+        // Get dimension from shape_b (or 1 if beyond its rank)
+        const dim_b = if (i < offset_b) 1 else shape_b[i - offset_b];
+
+        // Compute the broadcast dimension
+        if (dim_a == dim_b) {
+            result[i] = dim_a;
+        } else if (dim_a == 1) {
+            result[i] = dim_b;
+        } else if (dim_b == 1) {
+            result[i] = dim_a;
+        } else {
+            // Incompatible dimensions
+            allocator.free(result);
+            return error.IncompatibleShapes;
+        }
+    }
+
+    return result;
+}
+
+/// Apply a binary operation with broadcasting support
+/// Operation function signature: fn(a: T, b: T) T
+fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim),
+    other: *const NDArray(T, ndim), allocator: std.mem.Allocator,
+    comptime op: fn (T, T) T) !(NDArray(T, ndim)) {
+
+    const Self = NDArray(T, ndim);
+
+    // Compute broadcasted shape
+    const broadcast_shape = try broadcastShapes(&self.shape, &other.shape, allocator);
+    defer allocator.free(broadcast_shape);
+
+    // Validate broadcast shape
+    if (broadcast_shape.len != ndim) {
+        return error.ShapeMismatch;
+    }
+
+    // Calculate total elements
+    var total: usize = 1;
+    for (broadcast_shape) |dim| {
+        total *= dim;
+    }
+
+    // Allocate result
+    const result_data = try allocator.alloc(T, total);
+    errdefer allocator.free(result_data);
+
+    // Compute result strides
+    var result_strides: [ndim]usize = undefined;
+    if (self.layout == .row_major) {
+        result_strides[ndim - 1] = 1;
+        if (ndim > 1) {
+            var i: i32 = @intCast(ndim - 2);
+            while (i >= 0) : (i -= 1) {
+                result_strides[@intCast(i)] = result_strides[@intCast(i + 1)] * broadcast_shape[@intCast(i + 1)];
+            }
+        }
+    } else {
+        result_strides[0] = 1;
+        for (1..ndim) |i| {
+            result_strides[i] = result_strides[i - 1] * broadcast_shape[i - 1];
+        }
+    }
+
+    // Apply operation element-wise
+    var result_idx: [ndim]usize = undefined;
+
+    for (0..total) |flat_idx| {
+        // Convert flat index to multi-dimensional index
+        var current = flat_idx;
+        for (0..ndim) |i| {
+            const dim_idx = ndim - 1 - i;
+            result_idx[dim_idx] = current % broadcast_shape[dim_idx];
+            current /= broadcast_shape[dim_idx];
+        }
+
+        // Map to source indices
+        var self_idx: [ndim]usize = undefined;
+        var other_idx: [ndim]usize = undefined;
+
+        for (0..ndim) |i| {
+            self_idx[i] = if (self.shape[i] == 1) 0 else result_idx[i];
+            other_idx[i] = if (other.shape[i] == 1) 0 else result_idx[i];
+        }
+
+        // Compute offsets
+        var self_offset: usize = 0;
+        var other_offset: usize = 0;
+        var result_offset: usize = 0;
+
+        for (0..ndim) |i| {
+            self_offset += self_idx[i] * self.strides[i];
+            other_offset += other_idx[i] * other.strides[i];
+            result_offset += result_idx[i] * result_strides[i];
+        }
+
+        result_data[result_offset] = op(self.data[self_offset], other.data[other_offset]);
+    }
+
+    // Create broadcast shape array
+    var result_shape: [ndim]usize = undefined;
+    for (0..ndim) |i| {
+        result_shape[i] = broadcast_shape[i];
+    }
+
+    return Self{
+        .shape = result_shape,
+        .strides = result_strides,
+        .data = result_data,
+        .allocator = allocator,
+        .layout = self.layout,
+    };
+}
+
+/// Apply a binary comparison operation with broadcasting support
+/// Operation function signature: fn(a: T, b: T) bool
+/// Returns an NDArray(bool, ndim) with the comparison result
+fn applyBinaryCompOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim),
+    other: *const NDArray(T, ndim), allocator: std.mem.Allocator,
+    comptime op: fn (T, T) bool) !(NDArray(bool, ndim)) {
+
+    // Compute broadcasted shape
+    const broadcast_shape = try broadcastShapes(&self.shape, &other.shape, allocator);
+    defer allocator.free(broadcast_shape);
+
+    // Validate broadcast shape
+    if (broadcast_shape.len != ndim) {
+        return error.ShapeMismatch;
+    }
+
+    // Calculate total elements
+    var total: usize = 1;
+    for (broadcast_shape) |dim| {
+        total *= dim;
+    }
+
+    // Allocate result
+    const result_data = try allocator.alloc(bool, total);
+    errdefer allocator.free(result_data);
+
+    // Compute result strides
+    var result_strides: [ndim]usize = undefined;
+    if (self.layout == .row_major) {
+        result_strides[ndim - 1] = 1;
+        if (ndim > 1) {
+            var i: i32 = @intCast(ndim - 2);
+            while (i >= 0) : (i -= 1) {
+                result_strides[@intCast(i)] = result_strides[@intCast(i + 1)] * broadcast_shape[@intCast(i + 1)];
+            }
+        }
+    } else {
+        result_strides[0] = 1;
+        for (1..ndim) |i| {
+            result_strides[i] = result_strides[i - 1] * broadcast_shape[i - 1];
+        }
+    }
+
+    // Apply operation element-wise
+    var result_idx: [ndim]usize = undefined;
+
+    for (0..total) |flat_idx| {
+        // Convert flat index to multi-dimensional index
+        var current = flat_idx;
+        for (0..ndim) |i| {
+            const dim_idx = ndim - 1 - i;
+            result_idx[dim_idx] = current % broadcast_shape[dim_idx];
+            current /= broadcast_shape[dim_idx];
+        }
+
+        // Map to source indices
+        var self_idx: [ndim]usize = undefined;
+        var other_idx: [ndim]usize = undefined;
+
+        for (0..ndim) |i| {
+            self_idx[i] = if (self.shape[i] == 1) 0 else result_idx[i];
+            other_idx[i] = if (other.shape[i] == 1) 0 else result_idx[i];
+        }
+
+        // Compute offsets
+        var self_offset: usize = 0;
+        var other_offset: usize = 0;
+        var result_offset: usize = 0;
+
+        for (0..ndim) |i| {
+            self_offset += self_idx[i] * self.strides[i];
+            other_offset += other_idx[i] * other.strides[i];
+            result_offset += result_idx[i] * result_strides[i];
+        }
+
+        result_data[result_offset] = op(self.data[self_offset], other.data[other_offset]);
+    }
+
+    // Create broadcast shape array
+    var result_shape: [ndim]usize = undefined;
+    for (0..ndim) |i| {
+        result_shape[i] = broadcast_shape[i];
+    }
+
+    return NDArray(bool, ndim){
+        .shape = result_shape,
+        .strides = result_strides,
+        .data = result_data,
+        .allocator = allocator,
+        .layout = self.layout,
+    };
 }
