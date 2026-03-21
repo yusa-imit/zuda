@@ -84,7 +84,10 @@ pub fn WorkStealingDeque(comptime T: type) type {
 
             const t = self.top.load(.seq_cst); // Upgraded to seq_cst to act as fence
 
-            if (t <= b) {
+            // Check if deque is non-empty: count = b - t + 1 (accounting for wraparound)
+            // When empty: bottom=0, top=0 → b=max_usize, count would wrap to 0
+            const count = b -% t +% 1;
+            if (count > 0 and t <= b) {
                 // Non-empty deque
                 const task = self.items[b % self.capacity];
 
@@ -495,4 +498,23 @@ test "WorkStealingDeque: string type" {
     try testing.expectEqualStrings("foo", deque.pop().?);
     try testing.expectEqualStrings("hello", deque.steal().?);
     try testing.expectEqualStrings("world", deque.pop().?);
+}
+
+test "WorkStealingDeque: pop on empty deque returns null (issue #13)" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    // Empty deque should return null, not garbage
+    const result = deque.pop();
+    try testing.expectEqual(@as(?u32, null), result);
+
+    // Also test steal on empty deque
+    const stolen = deque.steal();
+    try testing.expectEqual(@as(?u32, null), stolen);
+
+    // Test pop after push+pop (returns to empty)
+    try deque.push(42);
+    try testing.expectEqual(@as(?u32, 42), deque.pop());
+    try testing.expectEqual(@as(?u32, null), deque.pop());
 }
