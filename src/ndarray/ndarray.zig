@@ -1758,6 +1758,122 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Index of the minimum element in the array
+        ///
+        /// Returns: Linear (flat) index of the minimum element
+        ///
+        /// Errors:
+        /// - error.ZeroDimension if array is empty (all dimensions > 0, so this shouldn't happen)
+        ///
+        /// For multiple occurrences of the minimum value, returns the index of the first occurrence.
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(1)
+        pub fn argmin(self: *const Self) Error!usize {
+            if (self.data.len == 0) {
+                return error.ZeroDimension;
+            }
+
+            var min_idx: usize = 0;
+            var min_val: T = self.data[0];
+
+            for (1..self.data.len) |i| {
+                if (self.data[i] < min_val) {
+                    min_val = self.data[i];
+                    min_idx = i;
+                }
+            }
+
+            return min_idx;
+        }
+
+        /// Index of the maximum element in the array
+        ///
+        /// Returns: Linear (flat) index of the maximum element
+        ///
+        /// Errors:
+        /// - error.ZeroDimension if array is empty (all dimensions > 0, so this shouldn't happen)
+        ///
+        /// For multiple occurrences of the maximum value, returns the index of the first occurrence.
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(1)
+        pub fn argmax(self: *const Self) Error!usize {
+            if (self.data.len == 0) {
+                return error.ZeroDimension;
+            }
+
+            var max_idx: usize = 0;
+            var max_val: T = self.data[0];
+
+            for (1..self.data.len) |i| {
+                if (self.data[i] > max_val) {
+                    max_val = self.data[i];
+                    max_idx = i;
+                }
+            }
+
+            return max_idx;
+        }
+
+        /// Cumulative sum of elements
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        ///
+        /// Returns: New NDArray with same shape containing cumulative sums
+        ///
+        /// The cumulative sum is computed by iterating through the flattened array
+        /// and accumulating running sum values.
+        /// Example: [1, 2, 3, 4, 5] → [1, 3, 6, 10, 15]
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn cumsum(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!Self {
+            // Create result array with same shape and layout
+            var result = try Self.init(allocator, self.shape[0..], self.layout);
+            errdefer result.deinit();
+
+            // Initialize first element
+            result.data[0] = self.data[0];
+
+            // Compute cumulative sum
+            for (1..self.data.len) |i| {
+                result.data[i] = result.data[i - 1] + self.data[i];
+            }
+
+            return result;
+        }
+
+        /// Cumulative product of elements
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        ///
+        /// Returns: New NDArray with same shape containing cumulative products
+        ///
+        /// The cumulative product is computed by iterating through the flattened array
+        /// and accumulating running product values.
+        /// Example: [1, 2, 3, 4, 5] → [1, 2, 6, 24, 120]
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(n) for result array
+        pub fn cumprod(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!Self {
+            // Create result array with same shape and layout
+            var result = try Self.init(allocator, self.shape[0..], self.layout);
+            errdefer result.deinit();
+
+            // Initialize first element
+            result.data[0] = self.data[0];
+
+            // Compute cumulative product
+            for (1..self.data.len) |i| {
+                result.data[i] = result.data[i - 1] * self.data[i];
+            }
+
+            return result;
+        }
+
         /// Sum along a specified axis, reducing that dimension
         ///
         /// Parameters:
@@ -2269,6 +2385,54 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .index = 0,
                 .total = self.count(),
             };
+        }
+
+        // -- Boolean Reductions (only for T == bool) --
+
+        /// Boolean AND reduction - all elements true
+        ///
+        /// Only available for NDArray(bool, ndim)
+        ///
+        /// Returns: true if all elements are true, false otherwise
+        ///
+        /// For empty arrays, returns true (vacuous truth)
+        ///
+        /// Time: O(n) worst case, O(1) best case (short-circuit on first false)
+        /// Space: O(1)
+        pub fn all(self: *const Self) bool {
+            if (T != bool) {
+                @compileError("all() is only available for NDArray(bool, ndim)");
+            }
+
+            for (self.data) |val| {
+                if (!val) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// Boolean OR reduction - any element true
+        ///
+        /// Only available for NDArray(bool, ndim)
+        ///
+        /// Returns: true if any element is true, false otherwise
+        ///
+        /// For empty arrays, returns false
+        ///
+        /// Time: O(n) worst case, O(1) best case (short-circuit on first true)
+        /// Space: O(1)
+        pub fn any(self: *const Self) bool {
+            if (T != bool) {
+                @compileError("any() is only available for NDArray(bool, ndim)");
+            }
+
+            for (self.data) |val| {
+                if (val) {
+                    return true;
+                }
+            }
+            return false;
         }
     };
 }
@@ -8110,4 +8274,571 @@ test "reduction: prod() with zero element returns zero" {
     // Expected: 2*0*4*5 = 0
     const result = arr.prod();
     try testing.expectEqual(@as(i32, 0), result);
+}
+
+// ============================================================================
+// ADVANCED REDUCTION OPERATIONS: argmin, argmax, cumsum, cumprod, all, any
+// ============================================================================
+
+test "advanced reduction: argmin() full 1D array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [5, 2, 8, 1, 9]
+    arr.data[0] = 5;
+    arr.data[1] = 2;
+    arr.data[2] = 8;
+    arr.data[3] = 1;
+    arr.data[4] = 9;
+
+    // Expected: index of min value = 3 (value 1)
+    const result = try arr.argmin();
+    try testing.expectEqual(@as(usize, 3), result);
+}
+
+test "advanced reduction: argmin() full 2D array f64" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // Set to [[4.5, 1.2, 9.8], [2.1, 3.3, 0.5]]
+    arr.data[0] = 4.5;
+    arr.data[1] = 1.2;
+    arr.data[2] = 9.8;
+    arr.data[3] = 2.1;
+    arr.data[4] = 3.3;
+    arr.data[5] = 0.5;
+
+    // Expected: index 5 (linear index where 0.5 is stored)
+    const result = try arr.argmin();
+    try testing.expectEqual(@as(usize, 5), result);
+}
+
+test "advanced reduction: argmin() with duplicates returns first occurrence" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    // Set to [3, 1, 5, 1, 7, 1]
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 5;
+    arr.data[3] = 1;
+    arr.data[4] = 7;
+    arr.data[5] = 1;
+
+    // Expected: index 1 (first occurrence of minimum value 1)
+    const result = try arr.argmin();
+    try testing.expectEqual(@as(usize, 1), result);
+}
+
+test "advanced reduction: argmax() full 1D array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [3, 7, 2, 9, 4]
+    arr.data[0] = 3;
+    arr.data[1] = 7;
+    arr.data[2] = 2;
+    arr.data[3] = 9;
+    arr.data[4] = 4;
+
+    // Expected: index 3 (value 9)
+    const result = try arr.argmax();
+    try testing.expectEqual(@as(usize, 3), result);
+}
+
+test "advanced reduction: argmax() full 2D array f64" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // Set to [[1.5, 2.2, 3.9], [4.1, 0.8, 5.5]]
+    arr.data[0] = 1.5;
+    arr.data[1] = 2.2;
+    arr.data[2] = 3.9;
+    arr.data[3] = 4.1;
+    arr.data[4] = 0.8;
+    arr.data[5] = 5.5;
+
+    // Expected: index 5 (value 5.5)
+    const result = try arr.argmax();
+    try testing.expectEqual(@as(usize, 5), result);
+}
+
+test "advanced reduction: argmax() with duplicates returns first occurrence" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    // Set to [3, 9, 5, 9, 7, 2]
+    arr.data[0] = 3;
+    arr.data[1] = 9;
+    arr.data[2] = 5;
+    arr.data[3] = 9;
+    arr.data[4] = 7;
+    arr.data[5] = 2;
+
+    // Expected: index 1 (first occurrence of maximum value 9)
+    const result = try arr.argmax();
+    try testing.expectEqual(@as(usize, 1), result);
+}
+
+test "advanced reduction: argmin() single element" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 42;
+
+    // Expected: index 0
+    const result = try arr.argmin();
+    try testing.expectEqual(@as(usize, 0), result);
+}
+
+test "advanced reduction: argmax() single element" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = -99;
+
+    // Expected: index 0
+    const result = try arr.argmax();
+    try testing.expectEqual(@as(usize, 0), result);
+}
+
+test "advanced reduction: cumsum() full 1D array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [1, 2, 3, 4, 5]
+    for (0..5) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const result = try arr.cumsum(allocator);
+    defer result.deinit();
+
+    // Expected: [1, 3, 6, 10, 15]
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 3), result.data[1]);
+    try testing.expectEqual(@as(i32, 6), result.data[2]);
+    try testing.expectEqual(@as(i32, 10), result.data[3]);
+    try testing.expectEqual(@as(i32, 15), result.data[4]);
+}
+
+test "advanced reduction: cumsum() full 2D array flattened i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // Set to [[1, 2, 3], [4, 5, 6]]
+    for (0..6) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const result = try arr.cumsum(allocator);
+    defer result.deinit();
+
+    // Expected cumsum on flattened: [1, 3, 6, 10, 15, 21]
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 3), result.data[1]);
+    try testing.expectEqual(@as(i32, 6), result.data[2]);
+    try testing.expectEqual(@as(i32, 10), result.data[3]);
+    try testing.expectEqual(@as(i32, 15), result.data[4]);
+    try testing.expectEqual(@as(i32, 21), result.data[5]);
+}
+
+test "advanced reduction: cumsum() with negative numbers i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    // Set to [2, -3, 1, -2]
+    arr.data[0] = 2;
+    arr.data[1] = -3;
+    arr.data[2] = 1;
+    arr.data[3] = -2;
+
+    const result = try arr.cumsum(allocator);
+    defer result.deinit();
+
+    // Expected: [2, -1, 0, -2]
+    try testing.expectEqual(@as(i32, 2), result.data[0]);
+    try testing.expectEqual(@as(i32, -1), result.data[1]);
+    try testing.expectEqual(@as(i32, 0), result.data[2]);
+    try testing.expectEqual(@as(i32, -2), result.data[3]);
+}
+
+test "advanced reduction: cumprod() full 1D array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [1, 2, 3, 4, 5]
+    for (0..5) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const result = try arr.cumprod(allocator);
+    defer result.deinit();
+
+    // Expected: [1, 2, 6, 24, 120]
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[1]);
+    try testing.expectEqual(@as(i32, 6), result.data[2]);
+    try testing.expectEqual(@as(i32, 24), result.data[3]);
+    try testing.expectEqual(@as(i32, 120), result.data[4]);
+}
+
+test "advanced reduction: cumprod() with zero element i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [2, 3, 0, 4, 5]
+    arr.data[0] = 2;
+    arr.data[1] = 3;
+    arr.data[2] = 0;
+    arr.data[3] = 4;
+    arr.data[4] = 5;
+
+    const result = try arr.cumprod(allocator);
+    defer result.deinit();
+
+    // Expected: [2, 6, 0, 0, 0]
+    try testing.expectEqual(@as(i32, 2), result.data[0]);
+    try testing.expectEqual(@as(i32, 6), result.data[1]);
+    try testing.expectEqual(@as(i32, 0), result.data[2]);
+    try testing.expectEqual(@as(i32, 0), result.data[3]);
+    try testing.expectEqual(@as(i32, 0), result.data[4]);
+}
+
+test "advanced reduction: cumprod() full 2D array flattened f64" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    defer arr.deinit();
+
+    // Set to [[2.0, 3.0], [1.0, 2.0]]
+    arr.data[0] = 2.0;
+    arr.data[1] = 3.0;
+    arr.data[2] = 1.0;
+    arr.data[3] = 2.0;
+
+    const result = try arr.cumprod(allocator);
+    defer result.deinit();
+
+    // Expected: [2, 6, 6, 12]
+    try testing.expectApproxEqAbs(@as(f64, 2.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 12.0), result.data[3], 1e-10);
+}
+
+test "advanced reduction: all() on bool array all true" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [true, true, true, true, true]
+    for (0..5) |i| {
+        arr.data[i] = true;
+    }
+
+    const result = arr.all();
+    try testing.expectEqual(true, result);
+}
+
+test "advanced reduction: all() on bool array with false" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [true, true, false, true, true]
+    arr.data[0] = true;
+    arr.data[1] = true;
+    arr.data[2] = false;
+    arr.data[3] = true;
+    arr.data[4] = true;
+
+    const result = arr.all();
+    try testing.expectEqual(false, result);
+}
+
+test "advanced reduction: all() on bool 2D array all true" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // Set all to true
+    for (0..6) |i| {
+        arr.data[i] = true;
+    }
+
+    const result = arr.all();
+    try testing.expectEqual(true, result);
+}
+
+test "advanced reduction: any() on bool array with one true" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [false, false, true, false, false]
+    arr.data[0] = false;
+    arr.data[1] = false;
+    arr.data[2] = true;
+    arr.data[3] = false;
+    arr.data[4] = false;
+
+    const result = arr.any();
+    try testing.expectEqual(true, result);
+}
+
+test "advanced reduction: any() on bool array all false" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [false, false, false, false, false]
+    for (0..5) |i| {
+        arr.data[i] = false;
+    }
+
+    const result = arr.any();
+    try testing.expectEqual(false, result);
+}
+
+test "advanced reduction: any() on bool 2D array mixed" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(bool, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    defer arr.deinit();
+
+    // Set to [[false, false, false], [false, true, false]]
+    for (0..6) |i| {
+        arr.data[i] = false;
+    }
+    arr.data[4] = true;
+
+    const result = arr.any();
+    try testing.expectEqual(true, result);
+}
+
+test "advanced reduction: single element bool all() returns that element" {
+    const allocator = testing.allocator;
+
+    var arr_true = try NDArray(bool, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr_true.deinit();
+    arr_true.data[0] = true;
+
+    var arr_false = try NDArray(bool, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr_false.deinit();
+    arr_false.data[0] = false;
+
+    try testing.expectEqual(true, arr_true.all());
+    try testing.expectEqual(false, arr_false.all());
+}
+
+test "advanced reduction: single element bool any() returns that element" {
+    const allocator = testing.allocator;
+
+    var arr_true = try NDArray(bool, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr_true.deinit();
+    arr_true.data[0] = true;
+
+    var arr_false = try NDArray(bool, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr_false.deinit();
+    arr_false.data[0] = false;
+
+    try testing.expectEqual(true, arr_true.any());
+    try testing.expectEqual(false, arr_false.any());
+}
+
+test "advanced reduction: cumsum() single element" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 42;
+
+    const result = try arr.cumsum(allocator);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(i32, 42), result.data[0]);
+}
+
+test "advanced reduction: cumprod() single element" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 7;
+
+    const result = try arr.cumprod(allocator);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(i32, 7), result.data[0]);
+}
+
+test "advanced reduction: cumsum() preserves shape" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{2, 3, 4}, .row_major);
+    defer arr.deinit();
+
+    // Fill with some values
+    for (0..24) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const result = try arr.cumsum(allocator);
+    defer result.deinit();
+
+    // Shape should be preserved
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(usize, 4), result.shape[2]);
+}
+
+test "advanced reduction: cumprod() preserves shape" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values 1-12
+    for (0..12) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const result = try arr.cumprod(allocator);
+    defer result.deinit();
+
+    // Shape should be preserved
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+}
+
+test "advanced reduction: cumsum() column-major layout" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .column_major);
+    defer arr.deinit();
+
+    // Set to [1, 2, 3, 4, 5]
+    for (0..5) |i| {
+        arr.data[i] = @intCast(i + 1);
+    }
+
+    const result = try arr.cumsum(allocator);
+    defer result.deinit();
+
+    // Expected: [1, 3, 6, 10, 15]
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 3), result.data[1]);
+    try testing.expectEqual(@as(i32, 6), result.data[2]);
+    try testing.expectEqual(@as(i32, 10), result.data[3]);
+    try testing.expectEqual(@as(i32, 15), result.data[4]);
+}
+
+test "advanced reduction: argmin() with negative values i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [-5, -2, -8, -1, -9]
+    arr.data[0] = -5;
+    arr.data[1] = -2;
+    arr.data[2] = -8;
+    arr.data[3] = -1;
+    arr.data[4] = -9;
+
+    // Expected: index 4 (value -9)
+    const result = try arr.argmin();
+    try testing.expectEqual(@as(usize, 4), result);
+}
+
+test "advanced reduction: argmax() with negative values i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [-5, -2, -8, -1, -9]
+    arr.data[0] = -5;
+    arr.data[1] = -2;
+    arr.data[2] = -8;
+    arr.data[3] = -1;
+    arr.data[4] = -9;
+
+    // Expected: index 3 (value -1)
+    const result = try arr.argmax();
+    try testing.expectEqual(@as(usize, 3), result);
+}
+
+test "advanced reduction: argmin() column-major layout" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .column_major);
+    defer arr.deinit();
+
+    // Set to [5, 2, 8, 1, 9]
+    arr.data[0] = 5;
+    arr.data[1] = 2;
+    arr.data[2] = 8;
+    arr.data[3] = 1;
+    arr.data[4] = 9;
+
+    const result = try arr.argmin();
+    try testing.expectEqual(@as(usize, 3), result);
+}
+
+test "advanced reduction: argmax() column-major layout" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .column_major);
+    defer arr.deinit();
+
+    // Set to [3, 7, 2, 9, 4]
+    arr.data[0] = 3;
+    arr.data[1] = 7;
+    arr.data[2] = 2;
+    arr.data[3] = 9;
+    arr.data[4] = 4;
+
+    const result = try arr.argmax();
+    try testing.expectEqual(@as(usize, 3), result);
 }
