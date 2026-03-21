@@ -162,6 +162,43 @@ pub const DAG = struct {
         return result;
     }
 
+    /// Returns the number of nodes in the graph.
+    ///
+    /// **zr API**: `pub fn nodeCount(self: *DAG) usize`
+    ///
+    /// Time: O(1) | Space: O(1)
+    pub fn nodeCount(self: *const Self) usize {
+        return self.graph.vertexCount();
+    }
+
+    /// Returns the in-degree of a node (number of incoming edges).
+    ///
+    /// **zr API**: `pub fn getInDegree(self: *DAG, name: []const u8) usize`
+    ///
+    /// Returns:
+    /// - 0 if the node doesn't exist (matches zr behavior)
+    /// - In-degree count otherwise
+    ///
+    /// Time: O(V + E) worst case | Space: O(1)
+    pub fn getInDegree(self: *const Self, name: []const u8) usize {
+        // Check if vertex exists
+        if (!self.graph.hasVertex(name)) {
+            return 0;
+        }
+
+        // Count incoming edges by iterating all vertices and their adjacencies
+        var count: usize = 0;
+        var vertex_it = self.graph.vertexIterator();
+        while (vertex_it.next()) |vertex| {
+            // Check if vertex has an edge to `name`
+            if (self.graph.hasEdge(vertex, name)) {
+                count += 1;
+            }
+        }
+
+        return count;
+    }
+
     /// Expose internal graph's adjacencies hashmap for compatibility with zr's API.
     /// This allows `dag.nodes.iterator()` to work in existing zr code (ascii.zig).
     pub inline fn nodes(self: *const Self) @TypeOf(self.graph.adjacencies) {
@@ -409,4 +446,83 @@ test "zr DAG compatibility - stress test" {
         const expected = try std.fmt.bufPrint(&buf, "task{d}", .{i});
         try std.testing.expectEqualStrings(expected, sorted[i]);
     }
+}
+
+test "zr DAG compatibility - nodeCount" {
+    const allocator = std.testing.allocator;
+
+    var dag = DAG.init(allocator);
+    defer dag.deinit();
+
+    // Initially empty
+    try std.testing.expectEqual(@as(usize, 0), dag.nodeCount());
+
+    // Add nodes
+    try dag.addNode("A");
+    try std.testing.expectEqual(@as(usize, 1), dag.nodeCount());
+
+    try dag.addNode("B");
+    try std.testing.expectEqual(@as(usize, 2), dag.nodeCount());
+
+    try dag.addNode("C");
+    try std.testing.expectEqual(@as(usize, 3), dag.nodeCount());
+
+    // Adding edges doesn't change node count
+    try dag.addEdge("A", "B");
+    try std.testing.expectEqual(@as(usize, 3), dag.nodeCount());
+}
+
+test "zr DAG compatibility - getInDegree" {
+    const allocator = std.testing.allocator;
+
+    var dag = DAG.init(allocator);
+    defer dag.deinit();
+
+    // Add nodes
+    try dag.addNode("A");
+    try dag.addNode("B");
+    try dag.addNode("C");
+    try dag.addNode("D");
+
+    // Initially all nodes have in-degree 0
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("A"));
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("B"));
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("C"));
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("D"));
+
+    // Create edges: A → B, A → C, B → C
+    try dag.addEdge("A", "B");
+    try dag.addEdge("A", "C");
+    try dag.addEdge("B", "C");
+
+    // Check in-degrees
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("A")); // root node
+    try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("B")); // A → B
+    try std.testing.expectEqual(@as(usize, 2), dag.getInDegree("C")); // A → C, B → C
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("D")); // isolated
+
+    // Non-existent node returns 0
+    try std.testing.expectEqual(@as(usize, 0), dag.getInDegree("NonExistent"));
+}
+
+test "zr DAG compatibility - getInDegree with cycle" {
+    const allocator = std.testing.allocator;
+
+    var dag = DAG.init(allocator);
+    defer dag.deinit();
+
+    // Add nodes
+    try dag.addNode("A");
+    try dag.addNode("B");
+    try dag.addNode("C");
+
+    // Create cycle: A → B → C → A
+    try dag.addEdge("A", "B");
+    try dag.addEdge("B", "C");
+    try dag.addEdge("C", "A");
+
+    // Each node has in-degree 1 (one incoming edge)
+    try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("A")); // C → A
+    try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("B")); // A → B
+    try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("C")); // B → C
 }
