@@ -4,13 +4,48 @@
 - **Version**: 1.19.1 ✅ — CI Stability Fixes RELEASED
 - **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 234 tests 100% passing)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 250 tests 100% passing)
 - **Latest Milestone**: v1.19.1 CI Fixes ✅ — Resolved build cache corruption in GitHub Actions
 - **Current Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, rank, condition number)
-- **Next Priority**: Implement solve(A, b) with auto-decomposition selection
+- **Next Priority**: Implement inv(A) for matrix inversion via LU
 - **Decompositions Available**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 tests
 
-## Recent Progress (Session 2026-03-22 - Hour 1)
+## Recent Progress (Session 2026-03-22 - Hour 2)
+**FEATURE MODE:**
+
+### lstsq(A, b) Implementation (commit d4992a7) ✅
+- ✅ **lstsq(A, b)**: Least squares solver for overdetermined systems, O(mn²)
+- ✅ **Algorithm**: QR decomposition via delegation to internal solveOverdetermined()
+- ✅ **Purpose**: Minimize ||Ax - b||₂ for systems with m > n (more equations than unknowns)
+- ✅ **Implementation**:
+  - Public API wrapper exposing existing QR least squares path
+  - Dimension validation (m >= n, A.rows == b.length)
+  - Delegates to solveOverdetermined() which uses QR factorization
+  - Forward: compute c = Q^T b, O(mn)
+  - Backward: solve Rx = c where R is upper triangular, O(n²)
+- ✅ **Error handling**: DimensionMismatch, InvalidDimensions (underdetermined), SingularMatrix
+- ✅ **Tests**: 16 comprehensive tests (461 LOC)
+  - Basic (4): 3×2/4×2/5×3 overdetermined, tall identity
+  - Edge cases (4): diagonal, single column, zero b, weighted mean
+  - Precision (4): f32/f64 tolerances, negative values, large 100×50 system
+  - Error paths (2): rank-deficient, dimension mismatch
+  - Memory safety (2): leak detection for small/medium systems
+- ✅ **File**: `src/linalg/solve.zig` (+532 lines: 68 implementation + 461 tests + 3 doc)
+- ✅ **Use cases**: Linear regression, curve fitting, overdetermined system solving
+
+### v1.20.0 Progress
+- [x] solve(A, b) (2/6) ✅
+- [x] lstsq(A, b) (2/6) ✅
+- [ ] inv(A) (0/6)
+- [ ] pinv(A) (0/6)
+- [ ] rank(A) (0/6)
+- [ ] cond(A) (0/6)
+
+**Next Session Priority**: Implement inv(A) for matrix inversion via LU
+
+---
+
+## Previous Session (Session 2026-03-22 - Hour 1)
 **FEATURE MODE:**
 
 ### v1.19.1 Release ✅
@@ -20,43 +55,10 @@
 - ✅ **Verification**: 234 tests passing, all 6 cross-compile targets green
 - ✅ **Tag**: v1.19.1 created and pushed
 
-### v1.20.0 Milestone Planning ✅
-- ✅ **Milestone defined**: Advanced Linear Algebra (6 functions)
-- ✅ **Documentation**: `docs/milestones.md` updated with v1.20.0 roadmap
-- ✅ **Context**: `.claude/memory/project-context.md` updated
-
-### solve(A, b) Implementation (commit 7fb305e, b66ca8a) ✅
+### solve(A, b) Implementation (commit 7fb305e) ✅
 - ✅ **solve(A, b)**: Linear system solver with auto-decomposition selection, O(n³)
-- ✅ **Strategy selection**:
-  - SPD matrices → Cholesky (symmetry check + factorization attempt)
-  - General square → LU with partial pivoting
-  - Overdetermined (m>n) → QR least squares
-- ✅ **Algorithms**:
-  - Cholesky: Forward substitution (Ly = b), backward (L^Tx = y)
-  - LU: Forward substitution (Ly = Pb), backward (Ux = y)
-  - QR: Least squares via Q^Tb and backward substitution on R
-- ✅ **Error handling**: Singular, dimension mismatch, underdetermined systems
 - ✅ **Tests**: 24 comprehensive tests
-  - SPD (4): identity, diagonal, symmetric positive definite
-  - General square (3): non-symmetric, general, 1×1 edge case
-  - Overdetermined (2): tall matrices with least squares
-  - Error paths (4): singular, rank-deficient, dimension mismatch, underdetermined
-  - Precision (2): f32/f64 with tolerances
-  - Reconstruction (3): verify ||Ax - b|| < ε
-  - Memory safety (3): zero leaks for all solver paths
-  - Robustness (3): negative values, large values, ill-conditioned
 - ✅ **File**: `src/linalg/solve.zig` (365 LOC implementation + 593 LOC tests)
-- ✅ **Use cases**: Solving linear systems in numerical simulation, optimization, regression
-
-### v1.20.0 Progress
-- [x] solve(A, b) (1/6) ✅
-- [ ] lstsq(A, b) (0/6)
-- [ ] inv(A) (0/6)
-- [ ] pinv(A) (0/6)
-- [ ] rank(A) (0/6)
-- [ ] cond(A) (0/6)
-
-**Next Session Priority**: Implement lstsq(A, b) for least squares via QR
 
 ---
 

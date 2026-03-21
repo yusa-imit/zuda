@@ -82,3 +82,5 @@
 {"timestamp":"2026-03-21T14:06:56Z","action":"stabilization","task":"Fix CI build cache failure (bench_rbtree_micro FileNotFound)","project":"zuda","outcome":"success","commits":["6ea7204","7458591"]}
 {"timestamp":"2026-03-22T01:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for solve(A,b)","project":"zuda"}
 {"timestamp":"2026-03-22T01:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement solve(A,b)","project":"zuda"}
+{"timestamp":"2026-03-22T02:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write 16 comprehensive tests for lstsq(A,b) least squares solver","project":"zuda"}
+{"timestamp":"2026-03-22T02:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement lstsq(A,b) public function using QR decomposition","project":"zuda"}
