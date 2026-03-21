@@ -358,6 +358,8 @@ pub const linalg = struct {
     pub const decompositions = @import("linalg/decompositions.zig");
     /// LU decomposition with partial pivoting
     pub const lu = @import("linalg/lu.zig");
+    /// Linear system solver — solve(A, b)
+    pub const solve = @import("linalg/solve.zig");
 };
 
 /// Internal utilities (not part of public API)
