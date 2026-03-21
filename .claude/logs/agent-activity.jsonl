@@ -61,3 +61,5 @@
 {"timestamp":"2026-03-21T00:12:45Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray shape validation","project":"zuda"}
 {"timestamp":"2026-03-21T10:05:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for NDArray reduction operations (sum, prod, mean, min, max)","project":"zuda"}
 {"timestamp":"2026-03-21T10:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NDArray reduction operations to pass 30 tests","project":"zuda"}
+{"timestamp":"2026-03-21T10:30:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for advanced NDArray reductions (argmin, argmax, cumsum, cumprod, all, any)","project":"zuda"}
+{"timestamp":"2026-03-21T10:40:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement advanced NDArray reduction operations to pass 31 tests","project":"zuda"}

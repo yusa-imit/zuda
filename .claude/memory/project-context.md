@@ -58,11 +58,31 @@
 - [x] **Transform** ✅ — flatten, ravel, permute, contiguous (4/6 functions complete, squeeze/unsqueeze deferred)
 - [x] **Element-wise operations** ✅ — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, sin, cos, tan (14 methods, 39 tests, commit e220475)
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules (shape validation complete, full broadcast pending)
-- [x] **Reduction operations** ✅ — sum, prod, mean, min, max (full + axis variants, 10 methods, 30 tests, commit 56b9da4)
+- [x] **Reduction operations** ✅ — sum, prod, mean, min, max, argmin, argmax, cumsum, cumprod, all, any (16 methods, 61 tests, commits 56b9da4, 05b798b)
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
 ## Recent Progress (Session 2026-03-21 - Hour 10)
-**FEATURE MODE → NDArray REDUCTION OPERATIONS:**
+**FEATURE MODE → NDArray REDUCTION OPERATIONS (16 methods complete):**
+- ✅ **Basic Reduction Operations** (commit 56b9da4)
+  - **Methods**: sum(), prod(), mean(), min(), max() + axis variants (10 methods)
+  - **Tests**: 30 comprehensive tests for basic reductions
+  - **Time**: O(n) for all operations, **Space**: O(1) for full reductions, O(output) for axis reductions
+
+- ✅ **Advanced Reduction Operations** (commit 05b798b)
+  - **Index-based**: argmin(), argmax() → return usize (linear index of min/max)
+  - **Cumulative**: cumsum(), cumprod() → return NDArray (same shape, cumulative operations)
+  - **Boolean**: all(), any() → return bool (short-circuit reductions for bool arrays)
+  - **Tests**: 31 comprehensive tests (1D/2D/3D, edge cases, layout invariance)
+  - **Features**:
+    - First-occurrence semantics for argmin/argmax on duplicate values
+    - Short-circuit evaluation for all/any (O(1) best case)
+    - Shape-preserving cumulative operations
+    - Iterator-based traversal for cache efficiency
+  - **Time**: O(n) for all (O(1) best case for all/any), **Space**: O(1) for argmin/argmax/all/any, O(n) for cumsum/cumprod
+  - **Next Step**: Implement I/O operations (save/load) OR start broadcasting
+
+## Previous Progress (Session 2026-03-21 - Hour 10 - Early)
+**FEATURE MODE → NDArray BASIC REDUCTION OPERATIONS:**
 - ✅ **NDArray Reduction Operations Implementation** (commit 56b9da4)
   - **Added**: 10 reduction methods (5 full + 5 axis variants)
   - **Full reductions**: sum(), prod(), mean(), min(), max() → return scalar T (mean returns f64)
