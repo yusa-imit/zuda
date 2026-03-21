@@ -4,10 +4,10 @@
 - **Version**: 1.19.1 ✅ — CI Stability Fixes RELEASED
 - **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 275 tests 100% passing)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 301 tests 100% passing)
 - **Latest Milestone**: v1.19.1 CI Fixes ✅ — Resolved build cache corruption in GitHub Actions
 - **Current Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, rank, condition number)
-- **Next Priority**: Implement pinv(A) for Moore-Penrose pseudo-inverse via SVD
+- **Next Priority**: Implement rank(A) for matrix rank via SVD
 - **Decompositions Available**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 tests
 
 ## Recent Progress (Session 2026-03-22 - Hour 2)
@@ -40,15 +40,36 @@
 - ✅ **File**: `src/linalg/solve.zig` (+779 lines: 88 implementation + 691 tests)
 - ✅ **Use cases**: Control theory, covariance inverse, analytical solutions
 
+### pinv(A) Implementation (commit 633ead7) ✅
+- ✅ **pinv(A)**: Moore-Penrose pseudo-inverse via SVD, O(mn²)
+- ✅ **Algorithm**: A⁺ = VΣ⁺U^T where Σ⁺[i,i] = 1/σᵢ if σᵢ > tol, else 0
+- ✅ **Tolerance**: max(m,n) × σ_max × machine_epsilon (f32: 1.19e-7, f64: 2.22e-16)
+- ✅ **Implementation**:
+  - Computes thin SVD: A = UΣV^T via decomp.svd()
+  - Inverts singular values above tolerance threshold
+  - Reconstructs A⁺ = VΣ⁺U^T (n×m from m×n input)
+  - Handles all matrix shapes: square, tall, wide, rank-deficient
+- ✅ **Tests**: 26 comprehensive tests (1094 LOC)
+  - Basic (6): full-rank square/tall/wide, identity, diagonal, 1×1
+  - Rank-deficient (5): rank-1, zero rows/columns, all zeros
+  - Moore-Penrose properties (4): all 4 axioms verified
+  - Rectangular (2): 10×2, 2×10 edge cases
+  - Precision (4): f32/f64, ill-conditioned Hilbert, small singular values
+  - Use cases (3): least squares, minimum norm, reconstruction
+  - Memory safety (2): leak detection 3×2, 2×4
+- ✅ **Properties verified**: AA⁺A=A, A⁺AA⁺=A⁺, (AA⁺)^T=AA⁺, (A⁺A)^T=A⁺A
+- ✅ **File**: `src/linalg/solve.zig` (+1094 lines: 94 implementation + 1000 tests)
+- ✅ **Use cases**: Solving under/overdetermined systems, generalized inverse, least-norm solutions
+
 ### v1.20.0 Progress
-- [x] solve(A, b) (3/6) ✅
-- [x] lstsq(A, b) (3/6) ✅
-- [x] inv(A) (3/6) ✅
-- [ ] pinv(A) (0/6)
+- [x] solve(A, b) (4/6) ✅
+- [x] lstsq(A, b) (4/6) ✅
+- [x] inv(A) (4/6) ✅
+- [x] pinv(A) (4/6) ✅
 - [ ] rank(A) (0/6)
 - [ ] cond(A) (0/6)
 
-**Next Session Priority**: Implement pinv(A) for Moore-Penrose pseudo-inverse via SVD
+**Next Session Priority**: Implement rank(A) for matrix rank via SVD
 
 ---
 
