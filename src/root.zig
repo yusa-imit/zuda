@@ -364,6 +364,12 @@ pub const linalg = struct {
     pub const properties = @import("linalg/properties.zig");
 };
 
+/// Statistics and data analysis
+pub const stats = struct {
+    /// Descriptive statistics — mean, median, mode, variance, std, quantile, skewness, kurtosis
+    pub const descriptive = @import("stats/descriptive.zig");
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
