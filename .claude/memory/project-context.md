@@ -64,9 +64,26 @@
   - Comparison: eq, ne, lt, le, gt, ge (6)
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules (shape validation complete, full broadcast pending)
 - [x] **Reduction operations** ✅ — sum, prod, mean, min, max, argmin, argmax, cumsum, cumprod, all, any (16 methods, 61 tests, commits 56b9da4, 05b798b)
-- [ ] **I/O** — save, load (binary), fromCSV, toCSV
+- [x] **I/O** ✅ — save, load (binary format with magic/version/metadata) — 10 tests, commit 90cf470
 
 ## Recent Progress (Session 2026-03-21 - Hour 11)
+**FEATURE MODE → ELEMENT-WISE OPERATIONS + I/O COMPLETE:**
+
+### Part 2: I/O Operations (commit 90cf470)
+- ✅ **Binary I/O Implementation**
+  - **Binary format design**: Magic "NDAR" + version + metadata (ndim, type tag, layout, shape, strides) + data
+  - **save()**: Serialize to binary file with full metadata preservation, O(n) time
+  - **load()**: Deserialize with validation (magic, version, ndim, type), O(n) time/space
+  - **Type system**: TypeTag enum for element type serialization (i8-i64, u8-u64, f32/f64, bool)
+  - **Error handling**: InvalidFormat, UnsupportedVersion, DimensionMismatch, TypeMismatch, UnexpectedEOF
+  - **Tests**: 10 comprehensive tests
+    - Round-trip correctness (1D/2D/3D, multiple types)
+    - Layout/stride preservation
+    - Error validation (wrong ndim/type, missing file)
+    - Large array (100x100)
+  - **Next Priority**: Broadcasting implementation (NumPy-compatible rules)
+
+### Part 1: Element-wise Operations Complete (commit 69a55ab)
 **FEATURE MODE → ELEMENT-WISE OPERATIONS COMPLETE (27 methods total):**
 - ✅ **Advanced Element-wise Operations** (commit 69a55ab)
   - **Comparison operations** (6 methods): eq(), ne(), lt(), le(), gt(), ge() → return NDArray(bool, ndim)
