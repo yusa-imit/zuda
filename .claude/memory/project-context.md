@@ -1,16 +1,41 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.18.0 ✅ — BLAS & Core Linear Algebra RELEASED (v1.19.0 READY FOR RELEASE)
-- **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform (v1.19.0 COMPLETE ✅)
+- **Version**: 1.19.1 ✅ — CI Stability Fixes RELEASED
+- **Phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 234 tests 100% passing, commit 6ea7204)
-- **Latest Milestone**: v1.19.0 Matrix Decompositions ✅ COMPLETE — LU, QR, Cholesky, SVD, Eigendecomposition
-- **Next Milestone**: v1.20.0 — Advanced Linear Algebra (pseudo-inverse, matrix functions, iterative solvers)
-- **Next Priority**: Release v1.19.0, then plan v1.20.0
-- **Decompositions Completed**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 decomposition tests
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 234 tests 100% passing)
+- **Latest Milestone**: v1.19.1 CI Fixes ✅ — Resolved build cache corruption in GitHub Actions
+- **Current Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, rank, condition number)
+- **Next Priority**: Implement solve(A, b) with auto-decomposition selection
+- **Decompositions Available**: LU (23 tests), QR (23 tests), Cholesky (19 tests), SVD (28 tests), Eigendecomposition (21 tests) = 114 tests
 
-## Recent Progress (Session 2026-03-21 - Hour 23)
+## Recent Progress (Session 2026-03-22 - Hour 1)
+**FEATURE MODE:**
+
+### v1.19.1 Release ✅
+- ✅ **Release**: v1.19.1 patch release for CI stability fixes
+- ✅ **GitHub Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.19.1
+- ✅ **Changes**: 2 CI fixes (cache corruption) + 2 chore commits (memory/logs)
+- ✅ **Verification**: 234 tests passing, all 6 cross-compile targets green
+- ✅ **Tag**: v1.19.1 created and pushed
+
+### v1.20.0 Milestone Planning ✅
+- ✅ **Milestone defined**: Advanced Linear Algebra (6 functions)
+  - solve(A, b) — Linear system solver with auto-decomposition selection
+  - lstsq(A, b) — Least squares via QR
+  - inv(A) — Matrix inverse via LU
+  - pinv(A) — Moore-Penrose pseudo-inverse via SVD
+  - rank(A) — Matrix rank via SVD
+  - cond(A) — Condition number via SVD
+- ✅ **Documentation**: `docs/milestones.md` updated with v1.20.0 roadmap
+- ✅ **Context**: `.claude/memory/project-context.md` updated
+
+**Next Session Priority**: Implement solve(A, b) with Cholesky/LU/QR auto-selection
+
+---
+
+## Previous Session (Session 2026-03-21 - Hour 23)
 **STABILIZATION MODE:**
 
 ### CI Failure Fix (commit 6ea7204) ✅

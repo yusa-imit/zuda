@@ -2,19 +2,73 @@
 
 ## Current Status
 
-- **Latest release**: v1.18.0 (2026-03-21) — BLAS & Core Linear Algebra (v1.19.0 READY)
+- **Latest release**: v1.19.1 (2026-03-22) — CI Stability Fixes
 - **Current phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
 - **Tests**: 234 tests passing (100%) — 160 BLAS + 114 decomposition tests
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Target**: Scientific computing platform (NDArray, linear algebra, stats, FFT, numerical methods, optimization)
-- **Next Milestone**: v1.19.0 COMPLETE ✅ — Matrix Decompositions (5/5: LU✅ QR✅ Cholesky✅ SVD✅ Eigendecomposition✅) READY FOR RELEASE
+- **Next Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, matrix properties)
 
 ---
 
 ## Active Milestones
 
-### v1.19.0 — Matrix Decompositions (NEXT)
+### v1.20.0 — Advanced Linear Algebra (NEXT)
+
+Implement linear system solvers, pseudo-inverse, and advanced matrix properties leveraging existing decompositions:
+
+**Context**: v1.19.0 completed 5 core decompositions (LU, QR, Cholesky, SVD, Eigendecomposition). These provide the foundation for solving linear systems (Ax=b), computing pseudo-inverses, and extracting matrix properties like rank and condition number.
+
+**Target**: Implement 6 solver/property functions that complete Phase 7 linear algebra requirements
+
+**Categories**:
+- [ ] **solve(A, b)** — Solve linear system Ax=b using appropriate decomposition
+  - [ ] Auto-select: Cholesky for SPD, LU for general, QR for overdetermined
+  - [ ] Returns solution vector x, O(n³) via decomposition + back-substitution
+  - [ ] Error handling: singular, under/overdetermined systems
+  - [ ] Tests: 20+ tests (SPD, general, rectangular, singular detection, f32/f64)
+  - **Use case**: Solving linear systems in numerical simulation, optimization, regression
+  - **File**: `src/linalg/solve.zig`
+- [ ] **lstsq(A, b)** — Least squares solution for overdetermined systems
+  - [ ] Uses QR decomposition for numerical stability
+  - [ ] Returns x minimizing ||Ax - b||₂, O(mn²)
+  - [ ] Tests: 15+ tests (tall matrices, rank-deficient, multiple RHS, f32/f64)
+  - **Use case**: Linear regression, curve fitting, overdetermined systems
+  - **File**: `src/linalg/solve.zig`
+- [ ] **inv(A)** — Matrix inverse via LU decomposition
+  - [ ] A⁻¹ computed by solving AX = I column-by-column, O(n³)
+  - [ ] Singular matrix detection
+  - [ ] Tests: 15+ tests (2×2, 3×3, diagonal, singular detection, ill-conditioned, f32/f64)
+  - **Use case**: Control theory, statistics (covariance inverse), analytical solutions
+  - **File**: `src/linalg/solve.zig`
+- [ ] **pinv(A)** — Moore-Penrose pseudo-inverse via SVD
+  - [ ] A⁺ = VΣ⁺U^T where Σ⁺[i,i] = 1/σᵢ if σᵢ > tol, else 0
+  - [ ] Works for any matrix shape (square, tall, wide, rank-deficient)
+  - [ ] Tolerance: max(m,n) × σ_max × machine_epsilon
+  - [ ] Tests: 20+ tests (full rank, rank-deficient, rectangular, zero rows/cols, f32/f64)
+  - **Use case**: Solving under/overdetermined systems, generalized inverse, least-norm solutions
+  - **File**: `src/linalg/solve.zig`
+- [ ] **rank(A)** — Matrix rank via SVD
+  - [ ] Count singular values > tolerance
+  - [ ] Tolerance: max(m,n) × σ_max × machine_epsilon
+  - [ ] Tests: 15+ tests (full rank, rank-deficient, zero matrix, identity, f32/f64)
+  - **Use case**: System of equations analysis, dimensionality reduction, collinearity detection
+  - **File**: `src/linalg/properties.zig`
+- [ ] **cond(A)** — Condition number via SVD
+  - [ ] κ(A) = σ_max / σ_min (ratio of largest to smallest singular value)
+  - [ ] Returns +inf for singular matrices (σ_min = 0)
+  - [ ] Tests: 15+ tests (well-conditioned, ill-conditioned, Hilbert matrix, singular, f32/f64)
+  - **Use case**: Numerical stability analysis, error propagation estimation, solver selection
+  - **File**: `src/linalg/properties.zig`
+
+**Success Criteria**: All 6 functions complete with 100+ tests total, solver auto-selection working, numerical stability validated
+
+**Estimated Effort**: 2-3 sessions (leverages existing decompositions, moderate complexity)
+
+**Status**: Planning
+
+### v1.19.0 — Matrix Decompositions ✅ COMPLETE
 
 Implement core matrix decomposition algorithms for solving linear systems and eigenvalue problems:
 
