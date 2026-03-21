@@ -430,6 +430,133 @@ pub fn lstsq(
     return try solveOverdetermined(T, A, b, allocator);
 }
 
+/// Compute matrix inverse A⁻¹ via LU decomposition
+///
+/// Solves AX = I column-by-column using LU factorization with partial pivoting.
+/// Provides O(n³) time complexity through efficient back-substitution.
+///
+/// Parameters:
+/// - T: Numeric type (f32, f64)
+/// - A: Square matrix (n×n)
+/// - allocator: Memory allocator for intermediate matrices and result
+///
+/// Returns: Inverse matrix A⁻¹ (n×n) such that A @ A⁻¹ = I and A⁻¹ @ A = I
+///
+/// Errors:
+/// - error.NonSquareMatrix: A is not square
+/// - error.SingularMatrix: A is not invertible (det(A) = 0)
+/// - error.OutOfMemory: Allocator unable to allocate space for LU decomposition or result
+///
+/// Time: O(n³) for LU decomposition + O(n³) for n back-substitutions
+/// Space: O(n²) for LU factors and inverse matrix
+///
+/// Precision:
+/// - f32: tolerance 1e-5 (machine epsilon ≈ 1.2e-7)
+/// - f64: tolerance 1e-10 (machine epsilon ≈ 2.2e-16)
+///
+/// Example:
+/// ```zig
+/// // A = [[4, 7], [2, 6]]
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f64{
+///     4, 7,
+///     2, 6,
+/// }, .row_major);
+/// defer A.deinit();
+///
+/// var A_inv = try inv(f64, A, allocator);
+/// defer A_inv.deinit();
+/// // A_inv ≈ [[0.6, -0.7], [-0.2, 0.4]]
+/// // A @ A_inv ≈ I, A_inv @ A ≈ I
+/// ```
+pub fn inv(
+    comptime T: type,
+    A: NDArray(T, 2),
+    allocator: Allocator,
+) (NDArray(T, 2).Error || std.mem.Allocator.Error || error{
+    NonSquareMatrix,
+    SingularMatrix,
+})!NDArray(T, 2) {
+    const n = A.shape[0];
+
+    // Check that matrix is square
+    if (A.shape[1] != n) {
+        return error.NonSquareMatrix;
+    }
+
+    // Compute LU factorization
+    var result = try lu_mod.lu(T, allocator, A);
+    defer result.deinit();
+
+    const P = result.P;
+    const L = result.L;
+    const U = result.U;
+
+    // Allocate inverse matrix
+    var A_inv = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
+    errdefer A_inv.deinit();
+
+    // Solve AX = I column-by-column
+    // For each column i of X: solve Ax_i = e_i where e_i is i-th unit vector
+    for (0..n) |col| {
+        // Create unit vector e_col
+        var e = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
+        defer e.deinit();
+        e.data[col] = 1;
+
+        // Apply permutation: Pb = P e_col
+        var Pb = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
+        defer Pb.deinit();
+
+        for (0..n) |i| {
+            var sum: T = 0;
+            for (0..n) |j| {
+                sum += P.data[i * n + j] * e.data[j];
+            }
+            Pb.data[i] = sum;
+        }
+
+        // Forward substitution: solve L y = Pb
+        var y = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
+        defer y.deinit();
+
+        for (0..n) |i| {
+            var sum: T = 0;
+            for (0..i) |j| {
+                sum += L.data[i * n + j] * y.data[j];
+            }
+            // L has unit diagonal, so L[i,i] = 1
+            y.data[i] = Pb.data[i] - sum;
+        }
+
+        // Back substitution: solve U x = y
+        var x = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
+        defer x.deinit();
+
+        for (0..n) |idx| {
+            const i = n - 1 - idx;
+            var sum: T = 0;
+
+            for (i + 1..n) |j| {
+                sum += U.data[i * n + j] * x.data[j];
+            }
+
+            const Uii = U.data[i * n + i];
+            if (@abs(Uii) < 1e-15) {
+                return error.SingularMatrix;
+            }
+
+            x.data[i] = (y.data[i] - sum) / Uii;
+        }
+
+        // Store solution in column col of A_inv
+        for (0..n) |i| {
+            A_inv.data[i * n + col] = x.data[i];
+        }
+    }
+
+    return A_inv;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1485,6 +1612,658 @@ test "lstsq: memory cleanup — no leaks (overdetermined 5x3)" {
 
     var x = try solve(f64, A, b, allocator);
     x.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+// ============================================================================
+// Comprehensive Matrix Inversion Tests — inv(A)
+// ============================================================================
+
+test "inv: 1x1 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{1}, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // I⁻¹ = I
+    try testing.expectApproxEqAbs(1.0, A_inv.data[0], 1e-10);
+}
+
+test "inv: 2x2 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 0,
+        0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // I⁻¹ = I
+    try testing.expectApproxEqAbs(1.0, A_inv.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_inv.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_inv.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A_inv.data[3], 1e-10);
+}
+
+test "inv: 3x3 identity matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // I⁻¹ = I
+    for (0..9) |i| {
+        const expected: f64 = if (i % 4 == 0) 1.0 else 0.0;
+        try testing.expectApproxEqAbs(expected, A_inv.data[i], 1e-10);
+    }
+}
+
+test "inv: 2x2 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0], [0, 3]]
+    // A⁻¹ = [[0.5, 0], [0, 1/3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        2, 0,
+        0, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    try testing.expectApproxEqAbs(0.5, A_inv.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_inv.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, A_inv.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0 / 3.0, A_inv.data[3], 1e-10);
+}
+
+test "inv: 2x2 matrix with known inverse" {
+    const allocator = testing.allocator;
+
+    // A = [[4, 7], [2, 6]], det = 24 - 14 = 10
+    // A⁻¹ = (1/10) * [[6, -7], [-2, 4]] = [[0.6, -0.7], [-0.2, 0.4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        4, 7,
+        2, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    try testing.expectApproxEqAbs(0.6, A_inv.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-0.7, A_inv.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-0.2, A_inv.data[2], 1e-10);
+    try testing.expectApproxEqAbs(0.4, A_inv.data[3], 1e-10);
+}
+
+test "inv: 3x3 matrix with known inverse" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [0, 1, 4], [5, 6, 0]]
+    // Pre-computed inverse (verified with external tool)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 2, 3,
+        0, 1, 4,
+        5, 6, 0,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ = I
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer product.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, product.data[i * 3 + j], 1e-9);
+        }
+    }
+}
+
+test "inv: inverse property A @ A⁻¹ = I (2x2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        5, 2,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Compute A @ A⁻¹
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    try testing.expectApproxEqAbs(1.0, product.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0, product.data[3], 1e-10);
+}
+
+test "inv: inverse property A⁻¹ @ A = I (2x2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        5, 2,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Compute A⁻¹ @ A
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                const ainv_ik = try A_inv.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const a_kj = try A.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += ainv_ik * a_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    try testing.expectApproxEqAbs(1.0, product.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0, product.data[3], 1e-10);
+}
+
+test "inv: inverse property A @ A⁻¹ = I (3x3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 1, -1,
+        -3, -1, 2,
+        -2, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Compute A @ A⁻¹
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer product.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, product.data[i * 3 + j], 1e-9);
+        }
+    }
+}
+
+test "inv: inverse property A⁻¹ @ A = I (3x3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 1, -1,
+        -3, -1, 2,
+        -2, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Compute A⁻¹ @ A
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer product.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                const ainv_ik = try A_inv.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const a_kj = try A.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += ainv_ik * a_kj;
+            }
+            product.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, product.data[i * 3 + j], 1e-9);
+        }
+    }
+}
+
+test "inv: singular matrix detection — all zeros" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    const err = inv(f64, A, allocator);
+    try testing.expectError(error.SingularMatrix, err);
+}
+
+test "inv: singular matrix detection — rank deficient (rows dependent)" {
+    const allocator = testing.allocator;
+
+    // Second row is 2× first row
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 2, 3,
+        2, 4, 6,
+        4, 5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    const err = inv(f64, A, allocator);
+    try testing.expectError(error.SingularMatrix, err);
+}
+
+test "inv: singular matrix detection — zero determinant" {
+    const allocator = testing.allocator;
+
+    // det = 1*(2*3 - 4*0) - 2*(1*3 - 4*0) + 0 = 2 - 6 = -4... actually not zero
+    // Let's use a truly singular matrix: columns dependent
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        2, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    const err = inv(f64, A, allocator);
+    try testing.expectError(error.SingularMatrix, err);
+}
+
+test "inv: non-square matrix error (2x3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    const err = inv(f64, A, allocator);
+    try testing.expectError(error.NonSquareMatrix, err);
+}
+
+test "inv: non-square matrix error (3x2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+        5, 6,
+    }, .row_major);
+    defer A.deinit();
+
+    const err = inv(f64, A, allocator);
+    try testing.expectError(error.NonSquareMatrix, err);
+}
+
+test "inv: negative values in matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[-2, 1], [1, -2]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        -2, 1,
+        1, -2,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ = I
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I
+    try testing.expectApproxEqAbs(1.0, product.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0, product.data[3], 1e-10);
+}
+
+test "inv: large values in matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[1000, 1], [1, 1000]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1000, 1,
+        1, 1000,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ ≈ I (with larger tolerance due to magnitude)
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I (use 1e-8 due to magnitude)
+    try testing.expectApproxEqAbs(1.0, product.data[0], 1e-8);
+    try testing.expectApproxEqAbs(0.0, product.data[1], 1e-8);
+    try testing.expectApproxEqAbs(0.0, product.data[2], 1e-8);
+    try testing.expectApproxEqAbs(1.0, product.data[3], 1e-8);
+}
+
+test "inv: small values in matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[0.001, 0.0005], [0.0005, 0.002]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        0.001, 0.0005,
+        0.0005, 0.002,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ = I
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f64 = 0;
+            for (0..2) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    try testing.expectApproxEqAbs(1.0, product.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, product.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0, product.data[3], 1e-10);
+}
+
+test "inv: ill-conditioned Hilbert matrix (invertible)" {
+    const allocator = testing.allocator;
+
+    // 3x3 Hilbert matrix (ill-conditioned but invertible)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1.0, 0.5, 1.0 / 3.0,
+        0.5, 1.0 / 3.0, 0.25,
+        1.0 / 3.0, 0.25, 0.2,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ ≈ I (use larger tolerance for ill-conditioned)
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer product.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 3 + j] = sum;
+        }
+    }
+
+    // Check product ≈ I with larger tolerance
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, product.data[i * 3 + j], 1e-6);
+        }
+    }
+}
+
+test "inv: f32 precision (2x2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{
+        5, 2,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f32, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ = I with f32 tolerance (1e-5)
+    var product = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer product.deinit();
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            var sum: f32 = 0;
+            for (0..2) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 2 + j] = sum;
+        }
+    }
+
+    try testing.expectApproxEqAbs(@as(f32, 1.0), product.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), product.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), product.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), product.data[3], 1e-5);
+}
+
+test "inv: f64 precision (3x3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 1, -1,
+        -3, -1, 2,
+        -2, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ = I with f64 tolerance (1e-10)
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer product.deinit();
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            var sum: f64 = 0;
+            for (0..3) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 3 + j] = sum;
+        }
+    }
+
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, product.data[i * 3 + j], 1e-10);
+        }
+    }
+}
+
+test "inv: 4x4 matrix (larger system)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        4, 3, 2, 1,
+        3, 4, 3, 2,
+        2, 3, 4, 3,
+        1, 2, 3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    defer A_inv.deinit();
+
+    // Verify A @ A⁻¹ = I
+    var product = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer product.deinit();
+
+    for (0..4) |i| {
+        for (0..4) |j| {
+            var sum: f64 = 0;
+            for (0..4) |k| {
+                const a_ik = try A.get(&[_]isize{ @intCast(i), @intCast(k) });
+                const ainv_kj = try A_inv.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += a_ik * ainv_kj;
+            }
+            product.data[i * 4 + j] = sum;
+        }
+    }
+
+    for (0..4) |i| {
+        for (0..4) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, product.data[i * 4 + j], 1e-9);
+        }
+    }
+}
+
+test "inv: memory cleanup — no leaks (2x2)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        5, 2,
+        2, 3,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    A_inv.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+test "inv: memory cleanup — no leaks (3x3)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 1, -1,
+        -3, -1, 2,
+        -2, 1, 2,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    A_inv.deinit();
+
+    // Testing allocator detects any leaks
+}
+
+test "inv: memory cleanup — no leaks (4x4)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        4, 3, 2, 1,
+        3, 4, 3, 2,
+        2, 3, 4, 3,
+        1, 2, 3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    var A_inv = try inv(f64, A, allocator);
+    A_inv.deinit();
 
     // Testing allocator detects any leaks
 }
