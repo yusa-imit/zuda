@@ -4,13 +4,47 @@
 - **Version**: 1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Phase**: v2.0 Track (Phase 8) — Statistics & Random
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 372 tests 100% passing)
+- **Last CI Status**: ✅ GREEN (all 6 cross-compile targets passing, 419 tests 100% passing)
 - **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra COMPLETE
 - **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — Probability Distributions (Normal, Uniform, Exponential, etc.)
-- **Test Count**: 372 tests (301 linalg + 71 descriptive stats)
+- **Next Priority**: Continue Phase 8 — Fix Normal distribution quantile function, then Exponential
+- **Test Count**: 419 tests (301 linalg + 71 descriptive stats + 47 Uniform distribution)
 
-## Recent Progress (Session 2026-03-22 - Hour 5)
+## Recent Progress (Session 2026-03-22 - Hour 7)
+**FEATURE MODE:**
+
+### Uniform Distribution Implementation (commit dda557c) ✅
+- ✅ **Module Created**: `src/stats/distributions/uniform.zig` (558 lines: 5 methods + 47 tests)
+- ✅ **API**: Uniform(T) comptime-generic distribution over interval [a, b]
+- ✅ **Methods**:
+  - `init(a, b)`: Validate a < b, return error.InvalidBounds
+  - `pdf(x)`: f(x) = 1/(b-a) for x in [a,b], else 0
+  - `cdf(x)`: F(x) = (x-a)/(b-a) with boundary handling (0 if x<a, 1 if x>b)
+  - `quantile(p)`: Inverse CDF Q(p) = a + p(b-a), error.InvalidProbability if p ∉ [0,1]
+  - `logpdf(x)`: -log(b-a) for numerical stability, -∞ outside [a,b]
+  - `sample(rng)`: Inverse transform sampling U ~ Uniform(0,1)
+- ✅ **Tests**: 47 comprehensive tests
+  - init (6): standard/custom/negative bounds, error cases (a≥b)
+  - pdf (8): constant value inside [a,b], boundaries, outside range, narrow interval
+  - cdf (8): monotonic, boundaries, inverse relationship with quantile
+  - quantile (9): p=0/1/0.5, error handling, sequence monotonicity
+  - logpdf (5): equals log(pdf), numerical stability test
+  - sample (7): range validation, statistical mean/variance checks (10k samples)
+  - integration (4): PDF integral ≈ 1, CDF-quantile inverse property
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - O(1) time for all operations
+  - Follows NumPy/SciPy API conventions (pdf/cdf/quantile/sample interface)
+  - Statistical tests use appropriate tolerances (2% for mean with 10k samples)
+  - No allocations (pure math functions)
+- ✅ **Export**: Added `stats.distributions.Uniform` to public API (`src/root.zig`)
+- ✅ **Status**: All 419 tests passing (301 linalg + 71 stats + 47 Uniform)
+
+**Next Session Priority**: Fix Normal distribution quantile approximation (Acklam algorithm tail regions), then continue with Exponential
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 5)
 **FEATURE MODE:**
 
 ### Descriptive Statistics Implementation (commits 79ec480, 88de254) ✅
