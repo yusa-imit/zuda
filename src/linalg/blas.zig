@@ -2123,3 +2123,576 @@ test "gemm: column vector (mx1) times row vector (1xn) produces outer product" {
     try testing.expectApproxEqAbs(12.0, C.data[4], 1e-10);
     try testing.expectApproxEqAbs(15.0, C.data[5], 1e-10);
 }
+
+/// Compute trace of a square matrix
+///
+/// The trace is the sum of diagonal elements: trace(A) = Σ A[i,i]
+///
+/// Parameters:
+/// - A: Square matrix (2D NDArray with shape[0] == shape[1])
+///
+/// Returns: Scalar sum of diagonal elements
+///
+/// Errors:
+/// - error.DimensionMismatch if matrix is not square
+///
+/// Time: O(n) where n = dimension of square matrix
+/// Space: O(1)
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2}, &[_]f64{1, 2, 3, 4}, .row_major);
+/// defer A.deinit();
+/// const tr = try trace(f64, A);  // 1 + 4 = 5
+/// ```
+pub fn trace(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
+    // Validate square matrix
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = A.shape[0];
+    var sum: T = 0;
+
+    // Sum diagonal elements: A[i,i] for i in 0..n
+    for (0..n) |i| {
+        sum += A.data[i * n + i]; // Flat index: row*cols + col
+    }
+
+    return sum;
+}
+
+/// Compute determinant of a square matrix via LU decomposition
+///
+/// Computes det(A) using in-place LU factorization with partial pivoting.
+/// The determinant is the product of diagonal elements with appropriate sign correction.
+///
+/// Parameters:
+/// - A: Square matrix (2D NDArray with shape[0] == shape[1])
+///
+/// Returns: Scalar determinant
+///
+/// Errors:
+/// - error.DimensionMismatch if matrix is not square
+///
+/// Time: O(n³) for LU decomposition
+/// Space: O(n²) for the LU matrix copy (original A is not modified)
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2}, &[_]f64{1, 2, 3, 4}, .row_major);
+/// defer A.deinit();
+/// const d = try det(f64, A);  // 1*4 - 2*3 = -2
+/// ```
+pub fn det(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
+    // Validate square matrix
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = A.shape[0];
+
+    // Clone matrix for in-place LU decomposition (don't modify original)
+    var LU = try A.clone();
+    defer LU.deinit();
+
+    var sign: T = 1.0; // Track row swaps for sign correction
+
+    // Perform LU decomposition with partial pivoting
+    for (0..n) |k| {
+        // Find pivot (largest absolute value in column k, rows k..n)
+        var max_idx = k;
+        var max_val = @abs(LU.data[k * n + k]);
+        for (k + 1..n) |i| {
+            const val = @abs(LU.data[i * n + k]);
+            if (val > max_val) {
+                max_val = val;
+                max_idx = i;
+            }
+        }
+
+        // If pivot is zero, matrix is singular → det = 0
+        if (max_val == 0) {
+            return 0;
+        }
+
+        // Swap rows k and max_idx if needed
+        if (max_idx != k) {
+            for (0..n) |j| {
+                const temp = LU.data[k * n + j];
+                LU.data[k * n + j] = LU.data[max_idx * n + j];
+                LU.data[max_idx * n + j] = temp;
+            }
+            sign = -sign; // Row swap flips determinant sign
+        }
+
+        // Eliminate column k below diagonal
+        for (k + 1..n) |i| {
+            const factor = LU.data[i * n + k] / LU.data[k * n + k];
+            LU.data[i * n + k] = factor; // Store L multiplier
+            for (k + 1..n) |j| {
+                LU.data[i * n + j] -= factor * LU.data[k * n + j];
+            }
+        }
+    }
+
+    // Determinant = sign * product of diagonal elements
+    var product: T = sign;
+    for (0..n) |i| {
+        product *= LU.data[i * n + i];
+    }
+
+    return product;
+}
+
+// ============================================================================
+// Tests for trace() and det()
+// ============================================================================
+
+// --- trace() tests ---
+
+test "trace: 2x2 identity matrix" {
+    const allocator = testing.allocator;
+
+    // I = [[1, 0], [0, 1]]
+    var I = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer I.deinit();
+
+    const tr = try trace(f64, I);
+    try testing.expectApproxEqAbs(2.0, tr, 1e-10);
+}
+
+test "trace: 2x2 known result" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    // trace = 1 + 4 = 5
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f64, A);
+    try testing.expectApproxEqAbs(5.0, tr, 1e-10);
+}
+
+test "trace: 3x3 known result" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    // trace = 1 + 5 + 9 = 15
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f64, A);
+    try testing.expectApproxEqAbs(15.0, tr, 1e-10);
+}
+
+test "trace: 3x3 identity matrix" {
+    const allocator = testing.allocator;
+
+    // I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    // trace = 3
+    var I = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer I.deinit();
+
+    const tr = try trace(f64, I);
+    try testing.expectApproxEqAbs(3.0, tr, 1e-10);
+}
+
+test "trace: zero matrix" {
+    const allocator = testing.allocator;
+
+    // Z = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    // trace = 0
+    var Z = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer Z.deinit();
+
+    const tr = try trace(f64, Z);
+    try testing.expectApproxEqAbs(0.0, tr, 1e-10);
+}
+
+test "trace: diagonal matrix" {
+    const allocator = testing.allocator;
+
+    // D = [[2, 0, 0], [0, 3, 0], [0, 0, 5]]
+    // trace = 2 + 3 + 5 = 10
+    var D = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 0, 3, 0, 0, 0, 5 }, .row_major);
+    defer D.deinit();
+
+    const tr = try trace(f64, D);
+    try testing.expectApproxEqAbs(10.0, tr, 1e-10);
+}
+
+test "trace: negative values" {
+    const allocator = testing.allocator;
+
+    // A = [[-1, 2], [3, -4]]
+    // trace = -1 + (-4) = -5
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ -1, 2, 3, -4 }, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f64, A);
+    try testing.expectApproxEqAbs(-5.0, tr, 1e-10);
+}
+
+test "trace: 1x1 scalar matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[7]]
+    // trace = 7
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{7}, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f64, A);
+    try testing.expectApproxEqAbs(7.0, tr, 1e-10);
+}
+
+test "trace: f32 precision" {
+    const allocator = testing.allocator;
+
+    // A = [[1.5, 0], [0, 2.5]] (f32)
+    // trace = 1.5 + 2.5 = 4.0
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1.5, 0, 0, 2.5 }, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f32, A);
+    try testing.expectApproxEqAbs(4.0, tr, 1e-5);
+}
+
+test "trace: large matrix 10x10" {
+    const allocator = testing.allocator;
+
+    // Create 10x10 diagonal matrix with values 1, 2, ..., 10 on diagonal
+    var data: [100]f64 = undefined;
+    for (data) |*v| v.* = 0;
+    for (0..10) |i| {
+        data[i * 10 + i] = @floatFromInt(i + 1);
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 10, 10 }, &data, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f64, A);
+    // trace = 1 + 2 + ... + 10 = 55
+    try testing.expectApproxEqAbs(55.0, tr, 1e-10);
+}
+
+test "trace: additive property trace(A+B) = trace(A) + trace(B)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]], trace(A) = 5
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // B = [[5, 6], [7, 8]], trace(B) = 13
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    // A + B = [[6, 8], [10, 12]], trace = 18
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 6, 8, 10, 12 }, .row_major);
+    defer C.deinit();
+
+    const trA = try trace(f64, A);
+    const trB = try trace(f64, B);
+    const trC = try trace(f64, C);
+
+    try testing.expectApproxEqAbs(trA + trB, trC, 1e-10);
+}
+
+test "trace: scalar multiplication property trace(cA) = c*trace(A)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]], trace(A) = 5
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // 2A = [[2, 4], [6, 8]], trace = 10
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 4, 6, 8 }, .row_major);
+    defer C.deinit();
+
+    const trA = try trace(f64, A);
+    const trC = try trace(f64, C);
+    const c = 2.0;
+
+    try testing.expectApproxEqAbs(c * trA, trC, 1e-10);
+}
+
+test "trace: non-square matrix error (2x3)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]]  (2×3 non-square)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    const result = trace(f64, A);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "trace: non-square matrix error (3x2)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4], [5, 6]]  (3×2 non-square)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    const result = trace(f64, A);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "trace: fractional values" {
+    const allocator = testing.allocator;
+
+    // A = [[0.5, 1.2], [1.5, 0.3]]
+    // trace = 0.5 + 0.3 = 0.8
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 0.5, 1.2, 1.5, 0.3 }, .row_major);
+    defer A.deinit();
+
+    const tr = try trace(f64, A);
+    try testing.expectApproxEqAbs(0.8, tr, 1e-10);
+}
+
+// --- det() tests ---
+
+test "det: 2x2 basic known result" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    // det = 1*4 - 2*3 = -2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(-2.0, d, 1e-10);
+}
+
+test "det: 2x2 identity matrix" {
+    const allocator = testing.allocator;
+
+    // I = [[1, 0], [0, 1]]
+    // det = 1
+    var I = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer I.deinit();
+
+    const d = try det(f64, I);
+    try testing.expectApproxEqAbs(1.0, d, 1e-10);
+}
+
+test "det: 3x3 identity matrix" {
+    const allocator = testing.allocator;
+
+    // I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    // det = 1
+    var I = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer I.deinit();
+
+    const d = try det(f64, I);
+    try testing.expectApproxEqAbs(1.0, d, 1e-10);
+}
+
+test "det: 3x3 known result" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [0, 1, 4], [5, 6, 0]]
+    // det = 1*(1*0 - 4*6) - 2*(0*0 - 4*5) + 3*(0*6 - 1*5)
+    //     = 1*(-24) - 2*(-20) + 3*(-5)
+    //     = -24 + 40 - 15 = 1
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 1, 4, 5, 6, 0 }, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(1.0, d, 1e-10);
+}
+
+test "det: zero matrix" {
+    const allocator = testing.allocator;
+
+    // Z = [[0, 0], [0, 0]]
+    // det = 0
+    var Z = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer Z.deinit();
+
+    const d = try det(f64, Z);
+    try testing.expectApproxEqAbs(0.0, d, 1e-10);
+}
+
+test "det: singular matrix (2x2)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [2, 4]]  (singular, second row = 2 * first row)
+    // det = 1*4 - 2*2 = 0
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 2, 4 }, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(0.0, d, 1e-10);
+}
+
+test "det: diagonal matrix" {
+    const allocator = testing.allocator;
+
+    // D = [[2, 0, 0], [0, 3, 0], [0, 0, 5]]
+    // det = 2*3*5 = 30
+    var D = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 0, 3, 0, 0, 0, 5 }, .row_major);
+    defer D.deinit();
+
+    const d = try det(f64, D);
+    try testing.expectApproxEqAbs(30.0, d, 1e-10);
+}
+
+test "det: upper triangular matrix" {
+    const allocator = testing.allocator;
+
+    // U = [[1, 2, 3], [0, 4, 5], [0, 0, 6]]
+    // det = 1*4*6 = 24
+    var U = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
+    defer U.deinit();
+
+    const d = try det(f64, U);
+    try testing.expectApproxEqAbs(24.0, d, 1e-10);
+}
+
+test "det: lower triangular matrix" {
+    const allocator = testing.allocator;
+
+    // L = [[2, 0, 0], [3, 4, 0], [5, 6, 7]]
+    // det = 2*4*7 = 56
+    var L = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 3, 4, 0, 5, 6, 7 }, .row_major);
+    defer L.deinit();
+
+    const d = try det(f64, L);
+    try testing.expectApproxEqAbs(56.0, d, 1e-10);
+}
+
+test "det: 1x1 scalar matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[5]]
+    // det = 5
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(5.0, d, 1e-10);
+}
+
+test "det: negative determinant" {
+    const allocator = testing.allocator;
+
+    // A = [[0, 1], [1, 0]]  (swap rows of identity)
+    // det = 0*0 - 1*1 = -1
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 0, 1, 1, 0 }, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(-1.0, d, 1e-10);
+}
+
+test "det: f32 precision" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [1, 3]] (f32)
+    // det = 2*3 - 1*1 = 5
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    const d = try det(f32, A);
+    try testing.expectApproxEqAbs(5.0, d, 1e-5);
+}
+
+test "det: multiplicative property det(AB) = det(A)*det(B)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]], det(A) = -2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // B = [[5, 6], [7, 8]], det(B) = -2
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    // A*B = [[19, 22], [43, 50]], det = 19*50 - 22*43 = 950 - 946 = 4
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 19, 22, 43, 50 }, .row_major);
+    defer C.deinit();
+
+    const detA = try det(f64, A);
+    const detB = try det(f64, B);
+    const detC = try det(f64, C);
+
+    try testing.expectApproxEqAbs(detA * detB, detC, 1e-10);
+}
+
+test "det: non-square matrix error (2x3)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]]  (2×3 non-square)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    const result = det(f64, A);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "det: non-square matrix error (3x2)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4], [5, 6]]  (3×2 non-square)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    const result = det(f64, A);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "det: large 5x5 matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0, 0, 0, 0],
+    //      [0, 3, 0, 0, 0],
+    //      [0, 0, 4, 0, 0],
+    //      [0, 0, 0, 5, 0],
+    //      [0, 0, 0, 0, 6]]
+    // det = 2*3*4*5*6 = 720
+    var data: [25]f64 = undefined;
+    for (data) |*v| v.* = 0;
+    data[0] = 2;
+    data[6] = 3;
+    data[12] = 4;
+    data[18] = 5;
+    data[24] = 6;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 5 }, &data, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(720.0, d, 1e-10);
+}
+
+test "det: fractional values" {
+    const allocator = testing.allocator;
+
+    // A = [[0.5, 0.2], [0.3, 0.4]]
+    // det = 0.5*0.4 - 0.2*0.3 = 0.2 - 0.06 = 0.14
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 0.5, 0.2, 0.3, 0.4 }, .row_major);
+    defer A.deinit();
+
+    const d = try det(f64, A);
+    try testing.expectApproxEqAbs(0.14, d, 1e-10);
+}
+
+test "det: scaling property det(cA) = c^n * det(A)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]], det(A) = -2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // 2A = [[2, 4], [6, 8]], det = 2^2 * (-2) = -8
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 4, 6, 8 }, .row_major);
+    defer C.deinit();
+
+    const detA = try det(f64, A);
+    const detC = try det(f64, C);
+    const c = 2.0;
+    const n = 2.0;
+
+    try testing.expectApproxEqAbs(std.math.pow(f64, c, n) * detA, detC, 1e-10);
+}
