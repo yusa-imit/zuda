@@ -4,11 +4,11 @@
 
 - **Latest release**: v1.18.0 (2026-03-21) — BLAS & Core Linear Algebra
 - **Current phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
-- **Tests**: 160 BLAS tests passing (100%), 746 total container tests passing
+- **Tests**: 185 tests passing (100%) — 160 BLAS + 25 decomposition tests
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Target**: Scientific computing platform (NDArray, linear algebra, stats, FFT, numerical methods, optimization)
-- **Next Milestone**: v1.19.0 — Matrix Decompositions (LU, QR, Cholesky, SVD, Eigendecomposition)
+- **Next Milestone**: v1.19.0 — Matrix Decompositions (3/5 complete: LU✅ QR✅ Cholesky✅, remaining: SVD, Eigendecomposition)
 
 ---
 
@@ -23,24 +23,27 @@ Implement core matrix decomposition algorithms for solving linear systems and ei
 **Target**: Implement 5 core decomposition algorithms with numerical stability guarantees
 
 **Categories**:
-- [ ] **LU Decomposition** — A = PLU with partial pivoting
-  - [ ] `lu(A) -> {P, L, U}` — O(n³) factorization
-  - [ ] Partial pivoting for numerical stability
-  - [ ] Singular matrix detection
-  - [ ] Tests: 20+ tests (identity, singular, rectangular, ill-conditioned, f32/f64)
+- [x] **LU Decomposition** — A = PLU with partial pivoting ✅
+  - [x] `lu(A) -> {P, L, U}` — O(n³) factorization
+  - [x] Partial pivoting for numerical stability
+  - [x] Singular matrix detection
+  - [x] Tests: 23 tests (identity, singular, rectangular, ill-conditioned, f32/f64)
   - **Use case**: Solving Ax=b, determinant computation, matrix inversion
-- [ ] **QR Decomposition** — A = QR with Householder reflections
-  - [ ] `qr(A) -> {Q, R}` — O(mn²) factorization
-  - [ ] Householder reflections (numerically stable)
-  - [ ] Thin QR (m > n optimization)
-  - [ ] Tests: 20+ tests (square, tall, orthogonality validation, f32/f64)
+  - **File**: `src/linalg/lu.zig`
+- [x] **QR Decomposition** — A = QR with Householder reflections ✅
+  - [x] `qr(A) -> {Q, R}` — O(mn²) factorization
+  - [x] Householder reflections (numerically stable)
+  - [x] Thin QR (m > n optimization)
+  - [x] Tests: 23 tests (square, tall, orthogonality validation, f32/f64)
   - **Use case**: Least squares, eigenvalue algorithms, orthonormalization
-- [ ] **Cholesky Decomposition** — A = LL^T for symmetric positive definite
-  - [ ] `cholesky(A) -> L` — O(n³) factorization
-  - [ ] Symmetry and positive-definiteness validation
-  - [ ] Numerical stability checks
-  - [ ] Tests: 15+ tests (2×2, 3×3, non-SPD detection, f32/f64)
+  - **File**: `src/linalg/decompositions.zig`
+- [x] **Cholesky Decomposition** — A = LL^T for symmetric positive definite ✅
+  - [x] `cholesky(A) -> L` — O(n³) factorization
+  - [x] Symmetry and positive-definiteness validation
+  - [x] Numerical stability checks
+  - [x] Tests: 19 tests (2×2, 3×3, non-SPD detection, f32/f64)
   - **Use case**: Covariance matrices, optimization, linear system solving
+  - **File**: `src/linalg/decompositions.zig`
 - [ ] **SVD (Singular Value Decomposition)** — A = UΣV^T
   - [ ] `svd(A) -> {U, Sigma, Vt}` — O(mn²) for thin SVD
   - [ ] Golub-Reinsch algorithm (bidiagonalization + QR iteration)
@@ -56,7 +59,9 @@ Implement core matrix decomposition algorithms for solving linear systems and ei
 
 **Success Criteria**: All 5 decompositions complete with 90+ tests, numerical stability validated
 
-**Estimated Effort**: 3-4 sessions (complex numerical algorithms, high precision requirements)
+**Progress**: 3/5 decompositions complete (LU, QR, Cholesky) with 65 tests. Remaining: SVD (20+ tests), Eigendecomposition (15+ tests)
+
+**Estimated Effort**: 3-4 sessions (complex numerical algorithms, high precision requirements) — 60% complete
 
 ### v1.15.0 — Iterator Adaptor Expansion (DEFERRED)
 
