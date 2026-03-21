@@ -58,10 +58,24 @@
 - [x] **Transform** ✅ — flatten, ravel, permute, contiguous (4/6 functions complete, squeeze/unsqueeze deferred)
 - [x] **Element-wise operations** ✅ — add, sub, mul, div, mod, neg, abs, exp, log, sqrt, pow, sin, cos, tan (14 methods, 39 tests, commit e220475)
 - [ ] **Broadcasting** — NumPy-compatible broadcasting rules (shape validation complete, full broadcast pending)
-- [ ] **Reduction operations** — sum, prod, mean, min, max, argmin, argmax, all, any, cumsum, cumprod
+- [x] **Reduction operations** ✅ — sum, prod, mean, min, max (full + axis variants, 10 methods, 30 tests, commit 56b9da4)
 - [ ] **I/O** — save, load (binary), fromCSV, toCSV
 
-## Recent Progress (Session 2026-03-21 - Hour 09)
+## Recent Progress (Session 2026-03-21 - Hour 10)
+**FEATURE MODE → NDArray REDUCTION OPERATIONS:**
+- ✅ **NDArray Reduction Operations Implementation** (commit 56b9da4)
+  - **Added**: 10 reduction methods (5 full + 5 axis variants)
+  - **Full reductions**: sum(), prod(), mean(), min(), max() → return scalar T (mean returns f64)
+  - **Axis reductions**: sumAxis(), prodAxis(), meanAxis(), minAxis(), maxAxis() → return NDArray with reduced dimension
+  - **Algorithm**: Iterator-based traversal for cache efficiency, O(n) time complexity
+  - **Type safety**: mean() always returns f64 for fractional results
+  - **Error handling**: EmptyArray for zero-element arrays, IndexOutOfBounds for invalid axes
+  - **Tests**: 30 comprehensive tests (1D/2D/3D arrays, multiple types, layout independence, edge cases)
+  - **Shape transformation**: axis reduction removes specified dimension (e.g., [3,4] + axis=0 → [4])
+  - **Status**: Basic reductions complete; advanced reductions (argmin, argmax, cumsum, cumprod) deferred
+  - **Next Step**: Implement remaining reduction operations OR start I/O operations (save/load)
+
+## Previous Progress (Session 2026-03-21 - Hour 09)
 **FEATURE MODE → NDArray SHAPE VALIDATION:**
 - ✅ **NDArray Shape Validation for Binary Operations** (commit d0a27b7)
   - **Added**: `ShapeMismatch` error to NDArray.Error enum
