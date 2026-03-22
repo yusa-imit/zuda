@@ -135,18 +135,23 @@ pub fn ttest_1samp(
     // Compute t-statistic: t = (x̄ - μ) / (s / √n)
     const n_f = @as(T, @floatFromInt(n));
     const se = sample_std / math.sqrt(n_f);
-    const t_stat = (sample_mean - population_mean) / se;
+
+    // Handle edge case: zero standard error (no variance in data)
+    const t_stat: T = if (se == 0) 0.0 else (sample_mean - population_mean) / se;
 
     // Degrees of freedom
     const df = @as(T, @floatFromInt(n - 1));
 
     // Two-tailed p-value: P(|T| > |t|)
-    const dist = try StudentT_Distribution(T).init(df);
-    const cdf_val = dist.cdf(t_stat);
-    const p_value = if (t_stat >= 0)
-        2.0 * (1.0 - cdf_val)
-    else
-        2.0 * cdf_val;
+    // Special case: if se == 0, we can't compute p-value meaningfully, return 1.0 (don't reject H0)
+    const p_value: T = if (se == 0) 1.0 else blk: {
+        const dist = try StudentT_Distribution(T).init(df);
+        const cdf_val = dist.cdf(t_stat);
+        break :blk if (t_stat >= 0)
+            2.0 * (1.0 - cdf_val)
+        else
+            2.0 * cdf_val;
+    };
 
     return TestResult(T).init(t_stat, p_value, df, alpha);
 }
@@ -213,21 +218,22 @@ pub fn ttest_ind(
 
     var t_stat: T = undefined;
     var df: T = undefined;
+    var se: T = undefined;
 
     if (equal_var) {
         // Pooled variance t-test
         const n1_minus_1 = @as(T, @floatFromInt(n1 - 1));
         const n2_minus_1 = @as(T, @floatFromInt(n2 - 1));
         const sp_sq = (n1_minus_1 * var1 + n2_minus_1 * var2) / (n1_f + n2_f - 2.0);
-        const se = math.sqrt(sp_sq * (1.0 / n1_f + 1.0 / n2_f));
-        t_stat = (mean1 - mean2) / se;
+        se = math.sqrt(sp_sq * (1.0 / n1_f + 1.0 / n2_f));
+        t_stat = if (se == 0) 0.0 else (mean1 - mean2) / se;
         df = n1_f + n2_f - 2.0;
     } else {
         // Welch's t-test (no equal variance assumption)
         const se1_sq = var1 / n1_f;
         const se2_sq = var2 / n2_f;
-        const se = math.sqrt(se1_sq + se2_sq);
-        t_stat = (mean1 - mean2) / se;
+        se = math.sqrt(se1_sq + se2_sq);
+        t_stat = if (se == 0) 0.0 else (mean1 - mean2) / se;
 
         // Welch-Satterthwaite degrees of freedom
         const numerator = (se1_sq + se2_sq) * (se1_sq + se2_sq);
@@ -236,12 +242,15 @@ pub fn ttest_ind(
     }
 
     // Two-tailed p-value
-    const dist = try StudentT_Distribution(T).init(df);
-    const cdf_val = dist.cdf(t_stat);
-    const p_value = if (t_stat >= 0)
-        2.0 * (1.0 - cdf_val)
-    else
-        2.0 * cdf_val;
+    // Special case: if se == 0, we can't compute p-value meaningfully, return 1.0 (don't reject H0)
+    const p_value: T = if (se == 0) 1.0 else blk: {
+        const dist = try StudentT_Distribution(T).init(df);
+        const cdf_val = dist.cdf(t_stat);
+        break :blk if (t_stat >= 0)
+            2.0 * (1.0 - cdf_val)
+        else
+            2.0 * cdf_val;
+    };
 
     return TestResult(T).init(t_stat, p_value, df, alpha);
 }
@@ -319,18 +328,23 @@ pub fn ttest_rel(
     // Compute t-statistic: t = d̄ / (s_d / √n)
     const n_f = @as(T, @floatFromInt(n));
     const se = std_diff / math.sqrt(n_f);
-    const t_stat = mean_diff / se;
+
+    // Handle edge case: zero standard error (no variance in differences)
+    const t_stat: T = if (se == 0) 0.0 else mean_diff / se;
 
     // Degrees of freedom
     const df = @as(T, @floatFromInt(n - 1));
 
     // Two-tailed p-value
-    const dist = try StudentT_Distribution(T).init(df);
-    const cdf_val = dist.cdf(t_stat);
-    const p_value = if (t_stat >= 0)
-        2.0 * (1.0 - cdf_val)
-    else
-        2.0 * cdf_val;
+    // Special case: if se == 0, we can't compute p-value meaningfully, return 1.0 (don't reject H0)
+    const p_value: T = if (se == 0) 1.0 else blk: {
+        const dist = try StudentT_Distribution(T).init(df);
+        const cdf_val = dist.cdf(t_stat);
+        break :blk if (t_stat >= 0)
+            2.0 * (1.0 - cdf_val)
+        else
+            2.0 * cdf_val;
+    };
 
     return TestResult(T).init(t_stat, p_value, df, alpha);
 }

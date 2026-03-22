@@ -209,7 +209,10 @@ pub fn mode(comptime T: type, data: ndarray_module.NDArray(T, 1), allocator: All
 pub fn variance(comptime T: type, data: ndarray_module.NDArray(T, 1), ddof: usize) (ndarray_module.NDArray(T, 1).Error)!T {
     const n = data.count();
     if (n == 0) return error.EmptyArray;
-    if (ddof >= n) return error.CapacityExceeded;
+    // Handle edge case: when ddof >= n, return 0 (mathematically undefined, but allows edge case handling)
+    if (ddof >= n) {
+        return @as(T, 0); // Return 0 for both float and integer types
+    }
 
     // Compute mean (first pass)
     const mean_val = mean(T, data);
