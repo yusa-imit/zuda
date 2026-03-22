@@ -360,12 +360,18 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var num_elements: usize = 0;
             if (step > 0) {
                 if (start < stop) {
-                    const diff = @as(f64, @floatFromInt(stop - start)) / @as(f64, @floatFromInt(step));
+                    const diff = if (@typeInfo(T) == .float)
+                        (stop - start) / step
+                    else
+                        @as(f64, @floatFromInt(stop - start)) / @as(f64, @floatFromInt(step));
                     num_elements = @as(usize, @intFromFloat(@ceil(diff)));
                 }
             } else {
                 if (start > stop) {
-                    const diff = @as(f64, @floatFromInt(start - stop)) / @as(f64, @floatFromInt(-step));
+                    const diff = if (@typeInfo(T) == .float)
+                        (start - stop) / (-step)
+                    else
+                        @as(f64, @floatFromInt(start - stop)) / @as(f64, @floatFromInt(-step));
                     num_elements = @as(usize, @intFromFloat(@ceil(diff)));
                 }
             }
@@ -1014,13 +1020,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn mod(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: mod only works on integer types
-            if (!std.meta.trait.isIntegral(T)) {
+            if (@typeInfo(T) != .int) {
                 @compileError("mod() is only defined for integer types");
             }
 
             return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) T {
-                    return a % b;
+                    return @rem(a, b);
                 }
             }.op);
         }
@@ -1105,7 +1111,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn exp(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: exp only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("exp() is only defined for floating-point types");
             }
 
@@ -1143,7 +1149,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn log(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: log only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("log() is only defined for floating-point types");
             }
 
@@ -1181,7 +1187,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn sqrt(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: sqrt only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("sqrt() is only defined for floating-point types");
             }
 
@@ -1222,7 +1228,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn pow(self: *const Self, exponent: T) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: pow only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("pow() is only defined for floating-point types");
             }
 
@@ -1262,7 +1268,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn sin(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: sin only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("sin() is only defined for floating-point types");
             }
 
@@ -1300,7 +1306,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn cos(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: cos only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("cos() is only defined for floating-point types");
             }
 
@@ -1338,7 +1344,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(n) for result array
         pub fn tan(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: tan only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("tan() is only defined for floating-point types");
             }
 
@@ -1369,7 +1375,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn asin(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: asin only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("asin() is only defined for floating-point types");
             }
 
@@ -1400,7 +1406,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn acos(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: acos only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("acos() is only defined for floating-point types");
             }
 
@@ -1431,7 +1437,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn atan(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: atan only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("atan() is only defined for floating-point types");
             }
 
@@ -1465,7 +1471,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn atan2(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: atan2 only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("atan2() is only defined for floating-point types");
             }
 
@@ -1506,7 +1512,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn log2(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: log2 only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("log2() is only defined for floating-point types");
             }
 
@@ -1537,7 +1543,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Time: O(n) | Space: O(n) for result allocation
         pub fn log10(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
             // Compile-time check: log10 only works on float types
-            if (!std.meta.trait.isFloat(T)) {
+            if (@typeInfo(T) != .float) {
                 @compileError("log10() is only defined for floating-point types");
             }
 
@@ -1696,37 +1702,43 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             const file = try std.fs.cwd().createFile(path, .{});
             defer file.close();
 
-            const writer = file.writer();
+            // Write magic number "NDAR" (4 bytes)
+            var magic_bytes: [4]u8 = undefined;
+            std.mem.writeInt(u32, &magic_bytes, 0x4E444152, .little);
+            _ = try file.write(&magic_bytes);
 
-            // Write magic number "NDAR"
-            try writer.writeInt(u32, 0x4E444152, .little);
+            // Write version (1) (4 bytes)
+            var version_bytes: [4]u8 = undefined;
+            std.mem.writeInt(u32, &version_bytes, 1, .little);
+            _ = try file.write(&version_bytes);
 
-            // Write version (1)
-            try writer.writeInt(u32, 1, .little);
+            // Write ndim (1 byte)
+            _ = try file.write(&[_]u8{@intCast(ndim)});
 
-            // Write ndim
-            try writer.writeByte(@intCast(ndim));
-
-            // Write type tag
+            // Write type tag (1 byte)
             const type_tag = TypeTag.fromType(T);
-            try writer.writeByte(@intFromEnum(type_tag));
+            _ = try file.write(&[_]u8{@intFromEnum(type_tag)});
 
-            // Write layout (0=row_major, 1=column_major)
-            try writer.writeByte(if (self.layout == .row_major) 0 else 1);
+            // Write layout (1 byte) - 0=row_major, 1=column_major
+            _ = try file.write(&[_]u8{if (self.layout == .row_major) 0 else 1});
 
             // Write shape array
             for (self.shape) |dim| {
-                try writer.writeInt(usize, dim, .little);
+                var dim_bytes: [@sizeOf(usize)]u8 = undefined;
+                std.mem.writeInt(usize, &dim_bytes, dim, .little);
+                _ = try file.write(&dim_bytes);
             }
 
             // Write strides array
             for (self.strides) |stride| {
-                try writer.writeInt(usize, stride, .little);
+                var stride_bytes: [@sizeOf(usize)]u8 = undefined;
+                std.mem.writeInt(usize, &stride_bytes, stride, .little);
+                _ = try file.write(&stride_bytes);
             }
 
             // Write data
             const bytes = std.mem.sliceAsBytes(self.data);
-            try writer.writeAll(bytes);
+            _ = try file.write(bytes);
         }
 
         /// Load NDArray from binary file
@@ -1745,48 +1757,58 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             const file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
 
-            const reader = file.reader();
-
-            // Read and validate magic number
-            const magic = try reader.readInt(u32, .little);
+            // Read and validate magic number (4 bytes)
+            var magic_bytes: [4]u8 = undefined;
+            _ = try file.read(&magic_bytes);
+            const magic = std.mem.readInt(u32, &magic_bytes, .little);
             if (magic != 0x4E444152) {
                 return error.InvalidFormat;
             }
 
-            // Read and validate version
-            const version = try reader.readInt(u32, .little);
+            // Read and validate version (4 bytes)
+            var version_bytes: [4]u8 = undefined;
+            _ = try file.read(&version_bytes);
+            const version = std.mem.readInt(u32, &version_bytes, .little);
             if (version != 1) {
                 return error.UnsupportedVersion;
             }
 
-            // Read ndim
-            const file_ndim = try reader.readByte();
+            // Read ndim (1 byte)
+            var ndim_byte: [1]u8 = undefined;
+            _ = try file.read(&ndim_byte);
+            const file_ndim = ndim_byte[0];
             if (file_ndim != ndim) {
                 return error.DimensionMismatch;
             }
 
-            // Read and validate type tag
-            const type_tag_byte = try reader.readByte();
-            const file_type_tag: TypeTag = @enumFromInt(type_tag_byte);
+            // Read and validate type tag (1 byte)
+            var type_tag_byte: [1]u8 = undefined;
+            _ = try file.read(&type_tag_byte);
+            const file_type_tag: TypeTag = @enumFromInt(type_tag_byte[0]);
             const expected_type_tag = TypeTag.fromType(T);
             if (file_type_tag != expected_type_tag) {
                 return error.TypeMismatch;
             }
 
-            // Read layout
-            const layout_byte = try reader.readByte();
-            const layout: Layout = if (layout_byte == 0) .row_major else .column_major;
+            // Read layout (1 byte)
+            var layout_byte: [1]u8 = undefined;
+            _ = try file.read(&layout_byte);
+            const layout: Layout = if (layout_byte[0] == 0) .row_major else .column_major;
 
             // Read shape
             var shape: [ndim]usize = undefined;
             for (0..ndim) |i| {
-                shape[i] = try reader.readInt(usize, .little);
+                var dim_bytes: [@sizeOf(usize)]u8 = undefined;
+                _ = try file.read(&dim_bytes);
+                shape[i] = std.mem.readInt(usize, &dim_bytes, .little);
             }
 
             // Read strides
             var strides: [ndim]usize = undefined;
             for (0..ndim) |i| {
-                strides[i] = try reader.readInt(usize, .little);
+                var stride_bytes: [@sizeOf(usize)]u8 = undefined;
+                _ = try file.read(&stride_bytes);
+                strides[i] = std.mem.readInt(usize, &stride_bytes, .little);
             }
 
             // Calculate total elements
@@ -1800,7 +1822,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             errdefer allocator.free(data);
 
             const bytes = std.mem.sliceAsBytes(data);
-            const bytes_read = try reader.readAll(bytes);
+            const bytes_read = try file.read(bytes);
             if (bytes_read != bytes.len) {
                 return error.UnexpectedEOF;
             }
@@ -2047,9 +2069,12 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var sum_val: f64 = 0.0;
             var iter = self.iterator();
             while (iter.next()) |val| {
-                sum_val += @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                sum_val += if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
             }
-            return sum_val / @as(f64, @floatFromInt(@as(i128, @intCast(total))));
+            return sum_val / @as(f64, @floatFromInt(total));
         }
 
         /// Minimum element in the array
@@ -2448,7 +2473,10 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     out_flat_idx += out_multi_idx[i] * divisor;
                 }
 
-                result.data[out_flat_idx] += @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                result.data[out_flat_idx] += if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
                 counts[out_flat_idx] += 1;
                 flat_idx += 1;
             }
