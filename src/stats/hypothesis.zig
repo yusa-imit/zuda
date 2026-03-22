@@ -592,17 +592,19 @@ test "ttest_ind: different means (t≠0, p<0.05, reject=true)" {
 }
 
 test "ttest_ind: Welch vs pooled give different results for unequal variances" {
+    // Use unequal sample sizes to see difference between Welch and pooled
+    // When n1=n2, Welch and pooled give same t-statistic even with unequal variances
     const data1 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
-    const data2 = [_]f64{ 5.0, 10.0, 15.0, 20.0, 25.0 }; // Much higher variance
+    const data2 = [_]f64{ 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0 }; // n2=7, much higher variance
     var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
     defer sample1.deinit();
-    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data2, .row_major);
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{7}, &data2, .row_major);
     defer sample2.deinit();
 
     const welch_result = try ttest_ind(f64, sample1, sample2, 0.05, false);
     const pooled_result = try ttest_ind(f64, sample1, sample2, 0.05, true);
 
-    // Welch and pooled should differ for unequal variances
+    // Welch and pooled should differ for unequal sample sizes + unequal variances
     try testing.expect(@abs(welch_result.statistic - pooled_result.statistic) > 0.01);
 }
 
