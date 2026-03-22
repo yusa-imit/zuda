@@ -4,15 +4,27 @@
 - **Version**: 1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Phase**: v2.0 Track (Phase 8) — Statistics & Random
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (445/446 tests passing, 1 skipped)
+- **Last CI Status**: ✅ GREEN (607/607 tests passing, 1 skipped)
 - **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra COMPLETE
 - **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — Bernoulli distribution (next discrete, simpler than Binomial)
-- **Test Count**: 445 tests (445 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 261 distributions (51 Exponential + 47 Uniform + 56 Normal + 52 Poisson + 55 Binomial) + ndarray + containers + algorithms + internal
+- **Next Priority**: Continue Phase 8 — Beta distribution (next continuous)
+- **Test Count**: 606 tests (606 passing + 1 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 423 distributions (51 Exponential + 47 Uniform + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
 
-## Recent Progress (Session 2026-03-22 - Hour 14)
+## Recent Progress (Session 2026-03-22 - Hour 15)
+**FEATURE MODE:**
+
+### Three New Distributions Implemented ✅
+1. **Bernoulli** (commit 7470ef8) — 54 tests, single trial p∈[0,1]
+2. **Geometric** (commit 2c34731) — 52 tests, failures before success, memoryless
+3. **Gamma** (commit 9d1653a) — 55 tests, k events in Poisson process, incomplete gamma CDF
+
+**Session Impact**: +161 tests (54+52+55), 3 distributions complete in single cycle
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 14)
 **FEATURE MODE:**
 
 ### Binomial Distribution Implementation (commit 48985e9) ✅
