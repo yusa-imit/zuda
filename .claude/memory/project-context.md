@@ -4,15 +4,62 @@
 - **Version**: 1.21.0 (to be released)
 - **Phase**: v2.0 Track (Phase 8) — Statistics & Random
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (711/712 tests passing, 1 skipped)
+- **Last CI Status**: ✅ GREEN (765/766 tests passing, 1 skipped)
 - **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — StudentT distribution (next continuous)
-- **Test Count**: 711 tests (711 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 528 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta + 52 ChiSquared) + ndarray + containers + algorithms + internal
+- **Next Priority**: Continue Phase 8 — F-distribution (next continuous)
+- **Test Count**: 765 tests (765 passing + 1 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 582 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta + 52 ChiSquared + 54 StudentT) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
 
-## Recent Progress (Session 2026-03-22 - Hour 18)
+## Recent Progress (Session 2026-03-22 - Hour 19)
+**FEATURE MODE:**
+
+### StudentT Distribution Implementation (commit 7adcbb9) ✅
+- ✅ **Module Created**: `src/stats/distributions/student_t.zig` (966 lines: 6 methods + 54 tests + 4 helpers)
+- ✅ **API**: StudentT(T) comptime-generic continuous distribution with ν degrees of freedom
+- ✅ **Implementation**: Student's t-distribution for statistical inference and hypothesis testing
+- ✅ **Methods**:
+  - `init(nu)`: Validate nu > 0, return error.InvalidParameter
+  - `pdf(x)`: f(x) = Γ((ν+1)/2) / (√(νπ) Γ(ν/2)) × (1 + x²/ν)^(-(ν+1)/2) for x ∈ ℝ
+  - `cdf(x)`: Regularized incomplete beta I(ν/(ν+x²), ν/2, 1/2) with symmetry optimization
+  - `quantile(p)`: Inverse CDF via bisection (100 iterations, 1e-12 tolerance)
+  - `logpdf(x)`: logΓ((ν+1)/2) - logΓ(ν/2) - 0.5log(νπ) - ((ν+1)/2)log(1+x²/ν) for numerical stability
+  - `sample(rng)`: Z/√(V/ν) where Z~Normal(0,1), V~ChiSquared(ν)
+- ✅ **Helper Functions**:
+  - `logGamma(x)`: Lanczos approximation (9 coefficients, g=7)
+  - `logBetaFunction(alpha, beta)`: Log-space beta function via log-gamma ratio
+  - `incompleteBeta(x, alpha, beta)`: Regularized incomplete beta via power series (1000 terms max)
+  - `gammaVariate(rng, shape)`: Marsaglia-Tsang gamma sampler for ChiSquared generation
+- ✅ **Tests**: 54/54 passing (100%)
+  - init (6): parameter validation (nu > 0), error cases
+  - pdf (11): symmetry f(-x)=f(x), mode at 0, heavier tails vs Normal, Cauchy equivalence (nu=1)
+  - cdf (10): F(0)=0.5, symmetry F(-x)=1-F(x), monotonicity, bounds [0,1]
+  - quantile (10): Q(0.5)=0, symmetry Q(1-p)=-Q(p), inverse property |F(Q(p))-p|<tolerance
+  - logpdf (5): consistency with log(pdf), numerical stability, symmetry
+  - sample (10): finite values, mean≈0 for nu>1, variance ν/(ν-2) validation, heavier tails
+  - integration (8): PDF normalization, CDF-quantile inverse, ensemble statistics, Normal limit
+- ✅ **Special Properties Verified**:
+  - StudentT(1) = Cauchy distribution (no mean/variance)
+  - StudentT(∞) → Normal(0, 1) as ν→∞
+  - Variance: ν/(ν-2) for ν>2, infinite for ν≤2
+  - Symmetry: f(-x)=f(x), F(-x)=1-F(x), Q(1-p)=-Q(p)
+  - Heavier tails than Normal (validated via sample statistics)
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - Numerical stability: all calculations in log space where appropriate
+  - Power series convergence: incompleteBeta with 1000 max terms
+  - Bisection precision: 1e-12 tolerance for quantile function
+  - No allocations (pure math functions)
+  - Special cases: Cauchy exact via atan(x)/π + 0.5
+- ✅ **Export**: Added `stats.distributions.StudentT` to public API (`src/root.zig`)
+- ✅ **Status**: All 765 tests passing (301 linalg + 71 stats + 582 distributions)
+
+**Next Session Priority**: F-distribution (next continuous distribution, ratio of two ChiSquared)
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 18)
 **FEATURE MODE:**
 
 ### ChiSquared Distribution Implementation (commit 42db233) ✅
