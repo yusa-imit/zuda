@@ -57,12 +57,13 @@ pub fn mean(comptime T: type, data: ndarray_module.NDArray(T, 1)) T {
     }
 
     // Handle both integer and float types
-    const n_as_t: T = if (std.meta.trait.isFloat(T))
-        @as(T, @floatFromInt(@as(i64, @intCast(n))))
-    else
-        @as(T, @intCast(n));
-
-    return sum / n_as_t;
+    if (@typeInfo(T) == .float) {
+        const n_f = @as(T, @floatFromInt(@as(i64, @intCast(n))));
+        return sum / n_f;
+    } else {
+        const n_i = @as(T, @intCast(n));
+        return @divTrunc(sum, n_i);
+    }
 }
 
 // ============================================================================
@@ -118,11 +119,13 @@ pub fn median(comptime T: type, data: ndarray_module.NDArray(T, 1), allocator: A
         // Even length: average of two middle elements
         const mid1 = sorted_data[n / 2 - 1];
         const mid2 = sorted_data[n / 2];
-        const divisor: T = if (std.meta.trait.isFloat(T))
-            @as(T, @floatFromInt(2))
-        else
-            @as(T, @intCast(2));
-        return (mid1 + mid2) / divisor;
+        if (@typeInfo(T) == .float) {
+            const two = @as(T, @floatFromInt(2));
+            return (mid1 + mid2) / two;
+        } else {
+            const two = @as(T, @intCast(2));
+            return @divTrunc(mid1 + mid2, two);
+        }
     }
 }
 
@@ -220,11 +223,13 @@ pub fn variance(comptime T: type, data: ndarray_module.NDArray(T, 1), ddof: usiz
     }
 
     // Return variance with degrees of freedom
-    const divisor: T = if (std.meta.trait.isFloat(T))
-        @as(T, @floatFromInt(@as(i64, @intCast(n - ddof))))
-    else
-        @as(T, @intCast(n - ddof));
-    return sum_sq_deviations / divisor;
+    if (@typeInfo(T) == .float) {
+        const divisor = @as(T, @floatFromInt(@as(i64, @intCast(n - ddof))));
+        return sum_sq_deviations / divisor;
+    } else {
+        const divisor = @as(T, @intCast(n - ddof));
+        return @divTrunc(sum_sq_deviations, divisor);
+    }
 }
 
 // ============================================================================
@@ -358,11 +363,10 @@ pub fn quantile(comptime T: type, data: ndarray_module.NDArray(T, 1), q: T, allo
 pub fn percentile(comptime T: type, data: ndarray_module.NDArray(T, 1), p: T, allocator: Allocator) (ndarray_module.NDArray(T, 1).Error || Allocator.Error)!T {
     if (p < 0 or p > 100) return error.CapacityExceeded;
 
-    const hundred: T = if (std.meta.trait.isFloat(T))
-        @as(T, @floatFromInt(100))
+    const q = if (@typeInfo(T) == .float)
+        p / @as(T, @floatFromInt(100))
     else
-        @as(T, @intCast(100));
-    const q = p / hundred;
+        @divTrunc(p, @as(T, @intCast(100)));
     return quantile(T, data, q, allocator);
 }
 
@@ -417,11 +421,13 @@ pub fn skewness(comptime T: type, data: ndarray_module.NDArray(T, 1)) (ndarray_m
     }
 
     // Return skewness: sum(((x - μ) / σ)³) / n
-    const n_as_t: T = if (std.meta.trait.isFloat(T))
-        @as(T, @floatFromInt(@as(i64, @intCast(n))))
-    else
-        @as(T, @intCast(n));
-    return sum_cubed / n_as_t;
+    if (@typeInfo(T) == .float) {
+        const n_f = @as(T, @floatFromInt(@as(i64, @intCast(n))));
+        return sum_cubed / n_f;
+    } else {
+        const n_i = @as(T, @intCast(n));
+        return @divTrunc(sum_cubed, n_i);
+    }
 }
 
 // ============================================================================
@@ -477,16 +483,17 @@ pub fn kurtosis(comptime T: type, data: ndarray_module.NDArray(T, 1)) (ndarray_m
     }
 
     // Excess kurtosis: (sum(((x - μ) / σ)⁴) / n) - 3
-    const n_as_t: T = if (std.meta.trait.isFloat(T))
-        @as(T, @floatFromInt(@as(i64, @intCast(n))))
-    else
-        @as(T, @intCast(n));
-    const kurtosis_val = sum_fourth / n_as_t;
-    const three: T = if (std.meta.trait.isFloat(T))
-        @as(T, @floatFromInt(3))
-    else
-        @as(T, @intCast(3));
-    return kurtosis_val - three;
+    if (@typeInfo(T) == .float) {
+        const n_f = @as(T, @floatFromInt(@as(i64, @intCast(n))));
+        const kurtosis_val = sum_fourth / n_f;
+        const three = @as(T, @floatFromInt(3));
+        return kurtosis_val - three;
+    } else {
+        const n_i = @as(T, @intCast(n));
+        const kurtosis_val = @divTrunc(sum_fourth, n_i);
+        const three = @as(T, @intCast(3));
+        return kurtosis_val - three;
+    }
 }
 
 // ============================================================================
