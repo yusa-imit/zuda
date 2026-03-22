@@ -1,19 +1,61 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.21.0 ✅ RELEASED (2026-03-22)
-- **Phase**: v2.0 Track (Phase 8) — Statistics & Random ✅ COMPLETE
+- **Version**: 1.21.0 (current), v1.22.0 IN PROGRESS
+- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (785/786 tests passing, 1 skipped)
+- **Last CI Status**: ⚠️ BLOCKED (NDArray compilation errors — Issue #15)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
-- **Current Milestone**: Phase 8 COMPLETE — Next: v1.22.0 Hypothesis Testing & Regression
-- **Next Priority**: Plan v1.22.0 (t-test, chi-squared test, ANOVA, linear/polynomial/logistic regression)
-- **Test Count**: 785 tests (785 passing + 1 skipped)
+- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Regression
+- **Next Priority**: Fix NDArray Zig 0.15.x compatibility (Issue #15), verify hypothesis tests
+- **Test Count**: 785 tests (785 passing + 1 skipped) + 51 hypothesis tests (ready, blocked by Issue #15)
   - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta + 52 ChiSquared + 54 StudentT + 20 F) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
   - All 12 distributions implemented: 8 continuous + 4 discrete
 
-## Recent Progress (Session 2026-03-22 - Hour 22)
+## Recent Progress (Session 2026-03-22 - Hour 23)
+**FEATURE MODE:**
+
+### Hypothesis Testing Module Implementation (commits 06897f2, 878c3bd, b1886b8) 🚧
+- 🚧 **Module Created**: `src/stats/hypothesis.zig` (969 lines: 217 implementation + 752 tests)
+- ✅ **TDD Workflow**: test-writer (51 tests) → zig-developer (implementation + descriptive.zig compatibility fixes)
+- ✅ **TestResult(T) Type**: Generic result container with fields (statistic, p_value, df, reject)
+  - `init(statistic, p_value, df, alpha)`: Constructs with rejection decision `reject = (p_value < alpha)`
+- ✅ **ttest_1samp(data, population_mean, alpha)**: One-sample t-test
+  - Formula: `t = (x̄ - μ) / (s / √n)`, df = n - 1
+  - Two-tailed p-value via StudentT distribution CDF
+  - Edge case: se==0 → t=0, p=1.0
+  - Errors: EmptyArray, InvalidAlpha
+  - Tests: 21 comprehensive (basic, edge cases n=1/2/100, f32/f64, alpha variations, symmetry, errors)
+- ✅ **ttest_ind(sample1, sample2, alpha, equal_var)**: Independent samples t-test
+  - Welch's test (equal_var=false, default): `t = (x̄₁ - x̄₂) / √(s₁²/n₁ + s₂²/n₂)` with Welch-Satterthwaite df
+  - Pooled variance (equal_var=true): sp² pooling, df = n₁ + n₂ - 2
+  - Edge case: se==0 → t=0, p=1.0
+  - Errors: EmptyArray, InvalidAlpha
+  - Tests: 20 comprehensive (Welch vs pooled, edge cases, symmetry, DF formulas, errors)
+- ✅ **ttest_rel(before, after, alpha)**: Paired samples t-test
+  - Computes differences `d = before - after`, delegates to one-sample t-test logic
+  - Edge case: se==0 → t=0, p=1.0
+  - Errors: EmptyArray, UnequalLengths, InvalidAlpha
+  - Tests: 15 comprehensive (paired differences, edge cases, symmetry, errors)
+- ✅ **Zig 0.15.x Compatibility Fixes**: Updated `src/stats/descriptive.zig`
+  - Fixed: `std.meta.trait.isFloat(T)` → `@typeInfo(T) == .float`
+  - Fixed: Integer division → `@divTrunc()` for signed integers
+  - Updated: variance() edge case (ddof >= n → return 0)
+- ⚠️ **Blocker Identified**: NDArray module has 127 compilation errors
+  - Root cause: Same deprecated API (`std.meta.trait`) used in 14 locations
+  - Impact: Blocks full test suite execution, hypothesis tests verification
+  - Action: Created GitHub Issue #15 to track NDArray Zig 0.15.x compatibility fixes
+- ✅ **Test Coverage**: 51 tests ready (5 TestResult + 21 1-samp + 20 ind + 15 rel)
+  - Status: Tests written and code implemented, verification blocked by Issue #15
+- ✅ **Export**: Added `stats.hypothesis` to public API (`src/root.zig`)
+- 🚧 **Commits**: 3 commits (test suite, descriptive compatibility, edge case handling)
+
+**Next Session Priority**: Fix NDArray Zig 0.15.x compatibility (Issue #15), then verify all 51 hypothesis tests pass. Continue v1.22.0 with chi-squared test, ANOVA, correlation, regression.
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 22)
 **FEATURE MODE:**
 
 ### v1.21.0 Release ✅
