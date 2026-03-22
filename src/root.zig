@@ -369,7 +369,7 @@ pub const stats = struct {
     /// Descriptive statistics — mean, median, mode, variance, std, quantile, skewness, kurtosis
     pub const descriptive = @import("stats/descriptive.zig");
 
-    /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, etc.
+    /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
         pub const Normal = @import("stats/distributions/normal.zig").Normal;
@@ -381,6 +381,7 @@ pub const stats = struct {
         pub const Gamma = @import("stats/distributions/gamma.zig").Gamma;
         pub const Beta = @import("stats/distributions/beta.zig").Beta;
         pub const ChiSquared = @import("stats/distributions/chi_squared.zig").ChiSquared;
+        pub const StudentT = @import("stats/distributions/student_t.zig").StudentT;
     };
 };
 
@@ -407,4 +408,5 @@ test {
     _ = @import("stats/distributions/gamma.zig");
     _ = @import("stats/distributions/beta.zig");
     _ = @import("stats/distributions/chi_squared.zig");
+    _ = @import("stats/distributions/student_t.zig");
 }
