@@ -885,12 +885,16 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 }
             }
 
-            // If already contiguous, return a copy of the struct
+            // If already contiguous, we still need to allocate new memory
+            // to avoid double-free when both arrays call deinit()
             if (is_contiguous) {
+                const new_data = try self.allocator.alloc(T, total_elements);
+                errdefer self.allocator.free(new_data);
+                @memcpy(new_data, self.data);
                 return Self{
                     .shape = self.shape,
                     .strides = self.strides,
-                    .data = self.data,
+                    .data = new_data,
                     .allocator = self.allocator,
                     .layout = self.layout,
                 };
@@ -4919,7 +4923,10 @@ test "ndarray: contiguous distinguishes contiguous from non-contiguous views" {
     var contiguous_original = try arr.contiguous();
     defer contiguous_original.deinit();
 
-    try testing.expectEqual(arr.data.ptr, contiguous_original.data.ptr);
+    // contiguous() always allocates new memory for safety (no double-free)
+    try testing.expect(arr.data.ptr != contiguous_original.data.ptr);
+    // But the data should be identical
+    try testing.expectEqualSlices(i32, arr.data, contiguous_original.data);
 
     // Permuted view is non-contiguous
     const permuted = try arr.permute(&[_]usize{ 2, 1, 0 });
