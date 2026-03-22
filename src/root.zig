@@ -369,7 +369,7 @@ pub const stats = struct {
     /// Descriptive statistics — mean, median, mode, variance, std, quantile, skewness, kurtosis
     pub const descriptive = @import("stats/descriptive.zig");
 
-    /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, etc.
+    /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
         pub const Normal = @import("stats/distributions/normal.zig").Normal;
@@ -378,6 +378,7 @@ pub const stats = struct {
         pub const Binomial = @import("stats/distributions/binomial.zig").Binomial;
         pub const Bernoulli = @import("stats/distributions/bernoulli.zig").Bernoulli;
         pub const Geometric = @import("stats/distributions/geometric.zig").Geometric;
+        pub const Gamma = @import("stats/distributions/gamma.zig").Gamma;
     };
 };
 
@@ -401,4 +402,5 @@ test {
     _ = @import("stats/distributions/binomial.zig");
     _ = @import("stats/distributions/bernoulli.zig");
     _ = @import("stats/distributions/geometric.zig");
+    _ = @import("stats/distributions/gamma.zig");
 }
