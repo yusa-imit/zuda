@@ -4,15 +4,55 @@
 - **Version**: 1.21.0 (to be released)
 - **Phase**: v2.0 Track (Phase 8) — Statistics & Random
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (659/660 tests passing, 1 skipped)
+- **Last CI Status**: ✅ GREEN (711/712 tests passing, 1 skipped)
 - **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — ChiSquared distribution (next continuous)
-- **Test Count**: 659 tests (659 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 476 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta) + ndarray + containers + algorithms + internal
+- **Next Priority**: Continue Phase 8 — StudentT distribution (next continuous)
+- **Test Count**: 711 tests (711 passing + 1 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 528 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta + 52 ChiSquared) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
 
-## Recent Progress (Session 2026-03-22 - Hour 17)
+## Recent Progress (Session 2026-03-22 - Hour 18)
+**FEATURE MODE:**
+
+### ChiSquared Distribution Implementation (commit 42db233) ✅
+- ✅ **Module Created**: `src/stats/distributions/chi_squared.zig` (718 lines: 6 methods + 52 tests)
+- ✅ **API**: ChiSquared(T) comptime-generic continuous distribution with k degrees of freedom
+- ✅ **Implementation**: Thin wrapper over Gamma(k/2, 2) — delegates all operations
+- ✅ **Methods**:
+  - `init(k)`: Validate k > 0, return error.InvalidParameter
+  - `pdf(x)`: f(x) = (1/(2^(k/2) * Γ(k/2))) * x^(k/2-1) * e^(-x/2) for x ≥ 0
+  - `cdf(x)`: Regularized lower incomplete gamma P(k/2, x/2)
+  - `quantile(p)`: Inverse CDF via Gamma quantile delegation
+  - `logpdf(x)`: Log-density for numerical stability
+  - `sample(rng)`: Random variate via Gamma(k/2, 2)
+- ✅ **Tests**: 52/52 passing (100%)
+  - init (6): parameter validation (k > 0), error cases
+  - pdf (11): boundaries, mode verification, Exponential equivalence χ²(2)=Exp(0.5)
+  - cdf (10): monotonicity, bounds [0,1], special cases
+  - quantile (10): inverse property |F(Q(p))-p|<1e-3, monotonicity
+  - logpdf (5): consistency with log(pdf), numerical stability
+  - sample (10): range [0,∞), mean E[X]≈k (±5%), variance Var[X]≈2k (±10%)
+  - integration (5): PDF normalization, ensemble statistics
+- ✅ **Special Properties Verified**:
+  - χ²(k) = Gamma(k/2, 2) mathematical equivalence
+  - χ²(2) = Exponential(0.5) special case
+  - Mean: E[X] = k
+  - Variance: Var[X] = 2k
+  - Mode: max(k-2, 0)
+- ✅ **Implementation Quality**:
+  - Zero code duplication via Gamma delegation
+  - Inherits numerical stability from Gamma
+  - Generic over f32/f64
+  - No allocations (pure math functions)
+- ✅ **Export**: Added `stats.distributions.ChiSquared` to public API (`src/root.zig`)
+- ✅ **Status**: All 711 tests passing (301 linalg + 71 stats + 528 distributions)
+
+**Next Session Priority**: StudentT distribution (continuous, t-distribution with ν degrees of freedom)
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 17)
 **FEATURE MODE:**
 
 ### Beta Distribution Implementation (commit 6771f99) ✅
