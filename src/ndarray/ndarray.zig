@@ -7754,7 +7754,7 @@ test "broadcast: error on incompatible add [3,2] + [4,3]" {
     defer arr_b.deinit();
 
     const result = arr_a.add(&arr_b);
-    try testing.expectError(error.IncompatibleShapes, result);
+    try testing.expectError(error.ShapeMismatch, result);
 }
 
 test "broadcast: error on incompatible mul [5] * [3]" {
@@ -7767,7 +7767,7 @@ test "broadcast: error on incompatible mul [5] * [3]" {
     defer arr_b.deinit();
 
     const result = arr_a.mul(&arr_b);
-    try testing.expectError(error.IncompatibleShapes, result);
+    try testing.expectError(error.ShapeMismatch, result);
 }
 
 test "broadcast: error on incompatible sub [2,3,4] - [2,3,5]" {
@@ -7780,7 +7780,7 @@ test "broadcast: error on incompatible sub [2,3,4] - [2,3,5]" {
     defer arr_b.deinit();
 
     const result = arr_a.sub(&arr_b);
-    try testing.expectError(error.IncompatibleShapes, result);
+    try testing.expectError(error.ShapeMismatch, result);
 }
 
 
@@ -7933,7 +7933,6 @@ fn broadcastShapes(shape_a: []const usize, shape_b: []const usize, allocator: st
             result[i] = dim_a;
         } else {
             // Incompatible dimensions
-            allocator.free(result);
             return error.IncompatibleShapes;
         }
     }
@@ -7950,7 +7949,9 @@ fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T,
     const Self = NDArray(T, ndim);
 
     // Compute broadcasted shape
-    const broadcast_shape = try broadcastShapes(&self.shape, &other.shape, allocator);
+    const broadcast_shape = broadcastShapes(&self.shape, &other.shape, allocator) catch |err| {
+        return if (err == error.IncompatibleShapes) error.ShapeMismatch else err;
+    };
     defer allocator.free(broadcast_shape);
 
     // Validate broadcast shape
@@ -8043,7 +8044,9 @@ fn applyBinaryCompOp(comptime T: type, comptime ndim: usize, self: *const NDArra
     comptime op: fn (T, T) bool) !(NDArray(bool, ndim)) {
 
     // Compute broadcasted shape
-    const broadcast_shape = try broadcastShapes(&self.shape, &other.shape, allocator);
+    const broadcast_shape = broadcastShapes(&self.shape, &other.shape, allocator) catch |err| {
+        return if (err == error.IncompatibleShapes) error.ShapeMismatch else err;
+    };
     defer allocator.free(broadcast_shape);
 
     // Validate broadcast shape
