@@ -1,47 +1,49 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.21.0 (to be released)
-- **Phase**: v2.0 Track (Phase 8) — Statistics & Random
+- **Version**: 1.21.0 ✅ RELEASED (2026-03-22)
+- **Phase**: v2.0 Track (Phase 8) — Statistics & Random ✅ COMPLETE
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (765/766 tests passing, 1 skipped)
-- **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra RELEASED
-- **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — F-distribution (next continuous)
-- **Test Count**: 765 tests (765 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 582 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta + 52 ChiSquared + 54 StudentT) + ndarray + containers + algorithms + internal
+- **Last CI Status**: ✅ GREEN (785/786 tests passing, 1 skipped)
+- **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
+- **Current Milestone**: Phase 8 COMPLETE — Next: v1.22.0 Hypothesis Testing & Regression
+- **Next Priority**: Plan v1.22.0 (t-test, chi-squared test, ANOVA, linear/polynomial/logistic regression)
+- **Test Count**: 785 tests (785 passing + 1 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta + 52 ChiSquared + 54 StudentT + 20 F) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
+  - All 12 distributions implemented: 8 continuous + 4 discrete
 
-## Recent Progress (Session 2026-03-22 - Hour 20)
+## Recent Progress (Session 2026-03-22 - Hour 22)
+**FEATURE MODE:**
+
+### v1.21.0 Release ✅
+- ✅ **Release**: v1.21.0 milestone COMPLETE and RELEASED
+- ✅ **GitHub Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.21.0
+- ✅ **Features**: Phase 8 complete — Descriptive statistics + 12 probability distributions
+  - Descriptive stats: 9 functions (mean, median, mode, variance, stdDev, quantile, percentile, skewness, kurtosis)
+  - Continuous distributions (8): Uniform, Exponential, Normal, Gamma, Beta, ChiSquared, StudentT, F
+  - Discrete distributions (4): Poisson, Binomial, Bernoulli, Geometric
+- ✅ **Tests**: 785/786 total (785 passing, 1 skipped), 100% pass rate
+  - 301 linalg + 71 stats descriptive + 602 distributions
+- ✅ **Verification**: All 6 cross-compile targets green, zero open bugs
+- ✅ **Tag**: v1.21.0 created and pushed
+- ✅ **Status**: CI green, no open issues, all quality checks passed
+- ✅ **Phase 8 COMPLETE**: All planned statistics & distributions implemented
+
+**Next Session Priority**: Plan v1.22.0 — Hypothesis Testing & Regression (t-test, chi-squared test, ANOVA, linear/polynomial/logistic regression)
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 20)
 **STABILIZATION MODE:**
 
 ### System Health Audit Complete ✅
 - ✅ **CI Status**: GREEN (latest run: success, 2026-03-22T10:15:06Z)
 - ✅ **GitHub Issues**: 0 open issues (no bugs, no feature requests)
 - ✅ **Test Suite**: 765/766 tests passing (99.9% pass rate, 1 skipped)
-  - Build Summary: All steps succeeded
-  - Skipped: 1 Normal distribution quantile test (Acklam approximation tail issue)
 - ✅ **Cross-compilation**: All 6 targets verified ✅
-  - x86_64-linux-gnu ✅
-  - aarch64-linux-gnu ✅
-  - x86_64-macos ✅
-  - aarch64-macos ✅
-  - x86_64-windows ✅
-  - wasm32-wasi ✅
-- ✅ **Code Quality Audit**:
-  - **Doc Comments**: All public functions have Big-O complexity annotations
-  - **Test Quality**: No trivial tests, meaningful assertions verified
-  - **StudentT verification**: 54 tests with statistical validation, numerical stability checks
+- ✅ **Code Quality Audit**: Doc comments, test quality verified
 - ✅ **Memory Safety**: All tests use `std.testing.allocator` with zero leaks
-
-### Findings
-- ✅ All stabilization checks passed
-- ✅ No CI failures to fix
-- ✅ No code quality issues detected
-- ✅ No test quality issues found
-- ✅ Ready for next feature cycle
-
-**Next Session Priority**: Continue Phase 8 — F-distribution (final continuous distribution: F(d1, d2) ratio of two ChiSquared)
 
 ---
 
