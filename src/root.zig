@@ -372,6 +372,7 @@ pub const stats = struct {
     /// Probability distributions — Uniform, Normal, Exponential, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
+        pub const Normal = @import("stats/distributions/normal.zig").Normal;
     };
 };
 
