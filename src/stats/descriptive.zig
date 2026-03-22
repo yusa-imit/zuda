@@ -219,9 +219,9 @@ pub fn mode(comptime T: type, data: ndarray_module.NDArray(T, 1), allocator: All
 pub fn variance(comptime T: type, data: ndarray_module.NDArray(T, 1), ddof: usize) (ndarray_module.NDArray(T, 1).Error)!T {
     const n = data.count();
     if (n == 0) return error.EmptyArray;
-    // Handle edge case: when ddof >= n, return 0 (mathematically undefined, but allows edge case handling)
+    // ddof >= n is mathematically invalid (negative or zero denominator)
     if (ddof >= n) {
-        return @as(T, 0); // Return 0 for both float and integer types
+        return error.CapacityExceeded;
     }
 
     // Compute mean (first pass)
@@ -1103,15 +1103,16 @@ test "kurtosis: normal-like f64" {
     try testing.expect(result > -2.0 and result < 2.0);
 }
 
-test "kurtosis: heavy-tailed f64" {
+test "kurtosis: light-tailed f64" {
     const allocator = testing.allocator;
-    // Distribution with extreme values
+    // Distribution with two extreme outliers (bimodal-like)
+    // This actually produces negative excess kurtosis (light-tailed/platykurtic)
     const data_slice = [_]f64{ -100.0, 1.0, 2.0, 3.0, 100.0 };
     var data = try ndarray_module.NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
     defer data.deinit();
     const result = try kurtosis(f64, data);
-    // Heavy tails should have positive excess kurtosis
-    try testing.expect(result > 0.0);
+    // This distribution is light-tailed (negative excess kurtosis)
+    try testing.expect(result < 0.0);
 }
 
 test "kurtosis: uniform-like f64" {
