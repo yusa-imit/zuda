@@ -782,8 +782,9 @@ test "ttest_rel: no change (before == after, t≈0, p≈1, reject=false)" {
 }
 
 test "ttest_rel: after > before (t<0, p<0.05, reject=true)" {
-    const before_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
-    const after_data = [_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 };
+    // Use data with variance in differences
+    const before_data = [_]f64{ 1.0, 2.5, 3.0, 4.5, 5.0 };
+    const after_data = [_]f64{ 6.0, 7.0, 8.5, 9.0, 10.5 };
     var before = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &before_data, .row_major);
     defer before.deinit();
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &after_data, .row_major);
@@ -796,8 +797,9 @@ test "ttest_rel: after > before (t<0, p<0.05, reject=true)" {
 }
 
 test "ttest_rel: after < before (t>0, p<0.05, reject=true)" {
-    const before_data = [_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 };
-    const after_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    // Use data with variance in differences
+    const before_data = [_]f64{ 6.0, 7.5, 8.0, 9.5, 10.0 };
+    const after_data = [_]f64{ 1.0, 2.0, 3.5, 4.0, 5.5 };
     var before = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &before_data, .row_major);
     defer before.deinit();
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &after_data, .row_major);
