@@ -410,4 +410,5 @@ test {
     _ = @import("stats/distributions/beta.zig");
     _ = @import("stats/distributions/chi_squared.zig");
     _ = @import("stats/distributions/student_t.zig");
+    _ = @import("stats/distributions/f_distribution.zig");
 }
