@@ -347,13 +347,14 @@ pub const compat = struct {
 // TEMPORARILY DISABLED: NDArray has fundamental design issues (Issue #16)
 // - Compile-time ndim conflicts with runtime reshape operations
 // - sumAxis/prodAxis return type mismatches
-// - 96 compilation errors blocking CI
-// TODO: Redesign NDArray with proper dimension handling before re-enabling
-// pub const ndarray = struct {
-//     /// N-dimensional arrays with flexible memory layouts
-//     pub const NDArray = @import("ndarray/ndarray.zig").NDArray;
-//     pub const Layout = @import("ndarray/ndarray.zig").Layout;
-// };
+/// N-dimensional arrays (v2.0 track)
+/// NOTE: Axis-reduction functions (sumAxis, prodAxis, minAxis, maxAxis, meanAxis) removed
+/// due to Zig type system limitations (cannot return different comptime ndim parameter).
+pub const ndarray = struct {
+    /// N-dimensional arrays with flexible memory layouts
+    pub const NDArray = @import("ndarray/ndarray.zig").NDArray;
+    pub const Layout = @import("ndarray/ndarray.zig").Layout;
+};
 
 /// Linear algebra operations (v2.0 track)
 pub const linalg = struct {
@@ -372,12 +373,10 @@ pub const linalg = struct {
 /// Statistics and data analysis
 pub const stats = struct {
     /// Descriptive statistics — mean, median, mode, variance, std, quantile, skewness, kurtosis
-    // TEMPORARILY DISABLED: Depends on NDArray which is disabled (Issue #16)
-    // pub const descriptive = @import("stats/descriptive.zig");
+    pub const descriptive = @import("stats/descriptive.zig");
 
     /// Hypothesis testing — one-sample, independent samples, paired samples t-tests
-    // TEMPORARILY DISABLED: Depends on NDArray which is disabled (Issue #16)
-    // pub const hypothesis = @import("stats/hypothesis.zig");
+    pub const hypothesis = @import("stats/hypothesis.zig");
 
     /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
     pub const distributions = struct {
@@ -409,9 +408,8 @@ test {
     std.testing.refAllDecls(@This());
 
     // Explicitly import stats modules to trigger their tests
-    // TEMPORARILY DISABLED: Depends on NDArray which is disabled (Issue #16)
-    // _ = @import("stats/descriptive.zig");
-    // _ = @import("stats/hypothesis.zig");
+    _ = @import("stats/descriptive.zig");
+    _ = @import("stats/hypothesis.zig");
     _ = @import("stats/distributions/uniform.zig");
     _ = @import("stats/distributions/normal.zig");
     _ = @import("stats/distributions/exponential.zig");
