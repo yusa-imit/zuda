@@ -4,15 +4,49 @@
 - **Version**: 1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Phase**: v2.0 Track (Phase 8) — Statistics & Random
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (390/391 tests passing, 1 skipped)
+- **Last CI Status**: ✅ GREEN (445/446 tests passing, 1 skipped)
 - **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra COMPLETE
 - **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — Binomial distribution (next discrete distribution)
-- **Test Count**: 390 tests (390 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 206 distributions (51 Exponential + 47 Uniform + 56 Normal + 52 Poisson) + ndarray + containers + algorithms + internal
+- **Next Priority**: Continue Phase 8 — Bernoulli distribution (next discrete, simpler than Binomial)
+- **Test Count**: 445 tests (445 passing + 1 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 261 distributions (51 Exponential + 47 Uniform + 56 Normal + 52 Poisson + 55 Binomial) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
 
-## Recent Progress (Session 2026-03-22 - Hour 13)
+## Recent Progress (Session 2026-03-22 - Hour 14)
+**FEATURE MODE:**
+
+### Binomial Distribution Implementation (commit 48985e9) ✅
+- ✅ **Module Created**: `src/stats/distributions/binomial.zig` (898 lines: 6 methods + 55 tests)
+- ✅ **API**: Binomial(T) comptime-generic discrete distribution with n trials and p success probability
+- ✅ **Methods**:
+  - `init(n, p)`: Validate p ∈ [0,1], return error.InvalidProbability
+  - `pmf(k)`: Probability mass P(X=k) = C(n,k) * p^k * (1-p)^(n-k) for k ∈ [0,n]
+  - `cdf(k)`: Cumulative distribution (sum of PMF from 0 to k), O(k)
+  - `quantile(p)`: Inverse CDF (smallest k where CDF(k) ≥ p), linear search O(n)
+  - `logpmf(k)`: log(C(n,k)) + k*log(p) + (n-k)*log(1-p) for numerical stability
+  - `sample(rng)`: Inversion (n<30) + normal approximation (n≥30), O(n) worst-case
+- ✅ **Tests**: 55/55 passing (100%)
+  - init (6): valid params, edge cases n=0/p=0/p=1, error handling
+  - pmf (11): known values, symmetry, boundaries, normalization
+  - cdf (10): monotonicity, composition, bounds [0,1]
+  - quantile (10): inverse property, median, monotonicity
+  - logpmf (5): consistency with pmf, numerical stability
+  - sample (10): range, mean/variance convergence (10k samples, E[X]≈np, Var[X]≈np(1-p))
+  - integration (7): PMF normalization, CDF-quantile inverse, ensemble statistics
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - Numerical stability: logBinomialCoefficient uses sum of log ratios (not factorials)
+  - Edge case handling: p=0/p=1 avoid 0*-∞ NaN issues
+  - Sampling strategies: inversion for small n, Box-Muller normal approximation for large n
+  - No allocations (pure math functions)
+- ✅ **Export**: Added `stats.distributions.Binomial` to public API (`src/root.zig`)
+- ✅ **Status**: All 445 tests passing (301 linalg + 71 stats + 261 distributions)
+
+**Next Session Priority**: Continue Phase 8 — Bernoulli distribution (single trial, p=Binomial(1,p))
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 13)
 **FEATURE MODE:**
 
 ### Poisson Distribution Implementation (commit 9e3d91d) ✅
