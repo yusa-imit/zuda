@@ -105,3 +105,5 @@
 {"timestamp":"2026-03-22T15:25:00Z","action":"subagent","agent_type":"test-writer","task":"Write Geometric distribution tests (52 tests)","project":"zuda"}
 {"timestamp":"2026-03-22T15:40:00Z","action":"subagent","agent_type":"test-writer","task":"Write Gamma distribution tests (55 tests)","project":"zuda"}
 {"timestamp":"2026-03-22T15:55:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Gamma distribution (fix numerical methods)","project":"zuda"}
+{"timestamp":"2026-03-22T17:05:00Z","action":"subagent","agent_type":"test-writer","task":"Write Beta distribution tests","project":"zuda"}
+{"timestamp":"2026-03-22T17:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Beta distribution","project":"zuda"}

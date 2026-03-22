@@ -4,15 +4,52 @@
 - **Version**: 1.21.0 (to be released)
 - **Phase**: v2.0 Track (Phase 8) — Statistics & Random
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (606/607 tests passing, 1 skipped)
+- **Last CI Status**: ✅ GREEN (659/660 tests passing, 1 skipped)
 - **Latest Milestone**: v1.20.0 ✅ — Advanced Linear Algebra RELEASED
 - **Current Milestone**: v1.21.0 — Descriptive Statistics & Distributions (IN PROGRESS)
-- **Next Priority**: Continue Phase 8 — Beta distribution (next continuous)
-- **Test Count**: 606 tests (606 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 423 distributions (51 Exponential + 47 Uniform + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma) + ndarray + containers + algorithms + internal
+- **Next Priority**: Continue Phase 8 — ChiSquared distribution (next continuous)
+- **Test Count**: 659 tests (659 passing + 1 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 476 distributions (47 Uniform + 51 Exponential + 56 Normal + 52 Poisson + 55 Binomial + 54 Bernoulli + 52 Geometric + 55 Gamma + 53 Beta) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
 
-## Recent Progress (Session 2026-03-22 - Hour 16)
+## Recent Progress (Session 2026-03-22 - Hour 17)
+**FEATURE MODE:**
+
+### Beta Distribution Implementation (commit 6771f99) ✅
+- ✅ **Module Created**: `src/stats/distributions/beta.zig` (882 lines: 6 methods + 53 tests)
+- ✅ **API**: Beta(T) comptime-generic continuous distribution with α, β shape parameters on [0,1] support
+- ✅ **Methods**:
+  - `init(alpha, beta)`: Validate α, β > 0, return error.InvalidParameter
+  - `pdf(x)`: f(x) = x^(α-1) * (1-x)^(β-1) / B(α,β) for x ∈ [0,1], else 0
+  - `cdf(x)`: Regularized incomplete beta I_x(α, β) via Simpson's rule (2048 points)
+  - `quantile(p)`: Inverse CDF via bisection (100 iterations, 1e-12 tolerance)
+  - `logpdf(x)`: (α-1)*log(x) + (β-1)*log(1-x) - logBeta(α,β) for numerical stability
+  - `sample(rng)`: Gamma ratio X/(X+Y) where X~Gamma(α,1), Y~Gamma(β,1)
+- ✅ **Tests**: 53/53 passing (100%)
+  - init (6): valid params, error cases (α≤0, β≤0)
+  - pdf (11): boundaries x=0/x=1, mode at (α-1)/(α+β-2), symmetry, normalization
+  - cdf (10): F(0)=0, F(1)=1, monotonicity, Uniform special case Beta(1,1)
+  - quantile (10): Q(0)=0, Q(1)=1, inverse property |cdf(Q(p))-p|<1e-3, monotonicity
+  - logpdf (5): consistency with log(pdf), numerical stability
+  - sample (10): range [0,1], mean E[X]≈α/(α+β) (±3%), variance (±10%), 10k samples
+  - integration (5): PDF normalization, CDF-quantile inverse, ensemble statistics
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - logGamma() using Lanczos approximation (g=7, 9 coefficients)
+  - Beta function: B(α,β) = Γ(α)Γ(β)/Γ(α+β) computed in log space
+  - CDF via Simpson's rule integration (highly accurate, handles all edge cases)
+  - Quantile via bisection (guaranteed convergence vs Newton-Raphson)
+  - Sampling: two Gamma variates ratio method (numerically stable)
+  - Special cases: Beta(1,1)=Uniform, symmetry Beta(α,β).pdf(x)=Beta(β,α).pdf(1-x)
+  - No allocations (pure math functions)
+- ✅ **Export**: Added `stats.distributions.Beta` to public API (`src/root.zig`)
+- ✅ **Status**: All 659 tests passing (301 linalg + 71 stats + 476 distributions)
+
+**Next Session Priority**: ChiSquared distribution (continuous, χ² with k degrees of freedom)
+
+---
+
+## Previous Progress (Session 2026-03-22 - Hour 16)
 **STABILIZATION MODE:**
 
 ### System Health Audit Complete ✅
