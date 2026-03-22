@@ -2240,6 +2240,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             data: []const T,
             shape: [ndim]usize,
             strides: [ndim]usize,
+            layout: Layout,
             index: usize, // Current flat index
             total: usize, // Total number of elements
 
@@ -2259,26 +2260,40 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     return null;
                 }
 
-                // Convert flat row-major index to multi-dimensional indices
-                // then apply strides to get correct memory offset
+                // Convert flat index to multi-dimensional indices
+                // respecting the layout (row-major or column-major)
                 var multi_index: [ndim]usize = undefined;
                 var current = self.index;
 
-                // Calculate multi-dimensional indices from flat row-major index
-                // For shape [d0, d1, d2, ...], flat index i converts to:
-                // index[0] = i / (d1*d2*...), then i %= (d1*d2*...)
-                // index[1] = i / (d2*...), then i %= (d2*...)
-                // etc.
-                for (0..ndim) |dim| {
-                    // Calculate divisor: product of all dimensions after this one
-                    var divisor: usize = 1;
-                    for (dim + 1..ndim) |d| {
-                        divisor *= self.shape[d];
+                if (self.layout == .row_major) {
+                    // Row-major: rightmost dimension varies fastest
+                    // For shape [d0, d1, d2, ...], flat index i converts to:
+                    // index[0] = i / (d1*d2*...), then i %= (d1*d2*...)
+                    // index[1] = i / (d2*...), then i %= (d2*...)
+                    for (0..ndim) |dim| {
+                        var divisor: usize = 1;
+                        for (dim + 1..ndim) |d| {
+                            divisor *= self.shape[d];
+                        }
+                        multi_index[dim] = current / divisor;
+                        current = current % divisor;
                     }
-
-                    // Extract index for this dimension
-                    multi_index[dim] = current / divisor;
-                    current = current % divisor;
+                } else {
+                    // Column-major: leftmost dimension varies fastest
+                    // For shape [d0, d1, d2, ...], flat index i converts to:
+                    // index[ndim-1] = i / (d0*d1*...), then i %= (d0*d1*...)
+                    // index[ndim-2] = i / (d0*...), then i %= (d0*...)
+                    // Work backwards from last dimension
+                    var dim_idx: usize = ndim;
+                    while (dim_idx > 0) {
+                        dim_idx -= 1;
+                        var divisor: usize = 1;
+                        for (0..dim_idx) |d| {
+                            divisor *= self.shape[d];
+                        }
+                        multi_index[dim_idx] = current / divisor;
+                        current = current % divisor;
+                    }
                 }
 
                 // Calculate memory offset using array strides
@@ -2311,6 +2326,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = self.data,
                 .shape = self.shape,
                 .strides = self.strides,
+                .layout = self.layout,
                 .index = 0,
                 .total = self.count(),
             };
