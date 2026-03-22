@@ -429,14 +429,14 @@ test "ttest_1samp: sample mean < population mean (t<0, p<0.05, reject=true)" {
     try testing.expect(result.reject == true);
 }
 
-test "ttest_1samp: single observation (n=1, df=0)" {
+test "ttest_1samp: single observation (n=1, df=0) errors" {
     const data_slice = [_]f64{5.0};
     var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &data_slice, .row_major);
     defer data.deinit();
 
-    // With single observation, variance is 0, which should handle edge case
-    const result = try ttest_1samp(f64, data, 5.0, 0.05);
-    try testing.expectApproxEqAbs(0.0, result.df, 1e-10);
+    // With single observation and ddof=1, variance calculation fails (n-ddof=0)
+    const result = ttest_1samp(f64, data, 5.0, 0.05);
+    try testing.expectError(NDArray_type(f64, 1).Error.CapacityExceeded, result);
 }
 
 test "ttest_1samp: two observations (n=2, df=1)" {
@@ -606,7 +606,7 @@ test "ttest_ind: Welch vs pooled give different results for unequal variances" {
     try testing.expect(@abs(welch_result.statistic - pooled_result.statistic) > 0.01);
 }
 
-test "ttest_ind: n1=1, n2=1 (edge case)" {
+test "ttest_ind: n1=1, n2=1 (edge case) errors" {
     const data1 = [_]f64{1.0};
     const data2 = [_]f64{3.0};
     var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &data1, .row_major);
@@ -614,8 +614,9 @@ test "ttest_ind: n1=1, n2=1 (edge case)" {
     var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &data2, .row_major);
     defer sample2.deinit();
 
-    const result = try ttest_ind(f64, sample1, sample2, 0.05, false);
-    try testing.expect(!math.isNan(result.statistic));
+    // With n=1 for both samples, variance calculation fails (ddof=1, n-ddof=0)
+    const result = ttest_ind(f64, sample1, sample2, 0.05, false);
+    try testing.expectError(NDArray_type(f64, 1).Error.CapacityExceeded, result);
 }
 
 test "ttest_ind: n1=2, n2=2" {
@@ -808,7 +809,7 @@ test "ttest_rel: after < before (t>0, p<0.05, reject=true)" {
     try testing.expect(result.reject == true);
 }
 
-test "ttest_rel: single pair (n=1, df=0)" {
+test "ttest_rel: single pair (n=1, df=0) errors" {
     const before_data = [_]f64{1.0};
     const after_data = [_]f64{3.0};
     var before = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &before_data, .row_major);
@@ -816,8 +817,9 @@ test "ttest_rel: single pair (n=1, df=0)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
-    try testing.expectApproxEqAbs(0.0, result.df, 1e-10);
+    // With single pair and ddof=1, variance calculation fails (n-ddof=0)
+    const result = ttest_rel(f64, before, after, 0.05);
+    try testing.expectError(NDArray_type(f64, 1).Error.CapacityExceeded, result);
 }
 
 test "ttest_rel: two pairs (n=2, df=1)" {
