@@ -654,7 +654,8 @@ test "Normal.sample - standard normal distribution (0, 1)" {
     }
     const sample_mean = sum / @as(f64, @floatFromInt(n_samples));
 
-    try testing.expectApproxEqRel(@as(f64, 0.0), sample_mean, 0.05);
+    // Use absolute tolerance for zero expected value (relative tolerance undefined at 0)
+    try testing.expectApproxEqAbs(@as(f64, 0.0), sample_mean, 0.2);
 }
 
 test "Normal.sample - negative mean [-10, 2]" {
