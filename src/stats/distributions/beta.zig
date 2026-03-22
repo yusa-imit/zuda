@@ -563,10 +563,11 @@ test "Beta.cdf - values bounded in [0,1]" {
 
 test "Beta.cdf - skewed distribution (α<β)" {
     const dist = try Beta(f64).init(1.0, 5.0);
-    // Should have more mass near 0
+    // Should have more mass near 0 (left-skewed)
     const cdf_near_zero = dist.cdf(0.1);
     const cdf_near_one = dist.cdf(0.9);
-    try testing.expect(cdf_near_zero > cdf_near_one - 0.5);
+    // For left-skewed: CDF(0.1) should be larger than 1-CDF(0.9) (more mass on left)
+    try testing.expect(cdf_near_zero > 1.0 - cdf_near_one);
 }
 
 // ============================================================================

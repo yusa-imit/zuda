@@ -404,4 +404,5 @@ test {
     _ = @import("stats/distributions/bernoulli.zig");
     _ = @import("stats/distributions/geometric.zig");
     _ = @import("stats/distributions/gamma.zig");
+    _ = @import("stats/distributions/beta.zig");
 }
