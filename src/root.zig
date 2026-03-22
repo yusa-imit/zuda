@@ -369,6 +369,9 @@ pub const stats = struct {
     /// Descriptive statistics — mean, median, mode, variance, std, quantile, skewness, kurtosis
     pub const descriptive = @import("stats/descriptive.zig");
 
+    /// Hypothesis testing — one-sample, independent samples, paired samples t-tests
+    pub const hypothesis = @import("stats/hypothesis.zig");
+
     /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
@@ -398,7 +401,9 @@ test {
     // Individual module tests are already run via `zig build test`, so this refAll is sufficient.
     std.testing.refAllDecls(@This());
 
-    // Explicitly import distribution modules to trigger their tests
+    // Explicitly import stats modules to trigger their tests
+    _ = @import("stats/descriptive.zig");
+    _ = @import("stats/hypothesis.zig");
     _ = @import("stats/distributions/uniform.zig");
     _ = @import("stats/distributions/normal.zig");
     _ = @import("stats/distributions/exponential.zig");
