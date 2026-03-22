@@ -373,6 +373,7 @@ pub const stats = struct {
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
         pub const Normal = @import("stats/distributions/normal.zig").Normal;
+        pub const Exponential = @import("stats/distributions/exponential.zig").Exponential;
     };
 };
 
@@ -387,4 +388,9 @@ test {
     // This caused CI to hang due to excessive compilation time (compiling 100+ test suites).
     // Individual module tests are already run via `zig build test`, so this refAll is sufficient.
     std.testing.refAllDecls(@This());
+
+    // Explicitly import distribution modules to trigger their tests
+    _ = @import("stats/distributions/uniform.zig");
+    _ = @import("stats/distributions/normal.zig");
+    _ = @import("stats/distributions/exponential.zig");
 }
