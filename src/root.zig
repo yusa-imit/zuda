@@ -379,6 +379,7 @@ pub const stats = struct {
         pub const Bernoulli = @import("stats/distributions/bernoulli.zig").Bernoulli;
         pub const Geometric = @import("stats/distributions/geometric.zig").Geometric;
         pub const Gamma = @import("stats/distributions/gamma.zig").Gamma;
+        pub const Beta = @import("stats/distributions/beta.zig").Beta;
     };
 };
 

@@ -319,3 +319,37 @@ test "reduction: sum() axis 0 on 2D array [3,4]" {
 - Layout independence: Results same regardless of row/column-major
 - Type safety: Integer operations stay in type T, mean promotes to f64
 - Error handling: IndexOutOfBounds for invalid axis, (TBD) ZeroDimension or similar for empty
+
+## Beta Distribution Test Pattern (2026-03-22)
+
+Reference implementation: `src/stats/distributions/beta.zig` (skeleton with 53 tests)
+
+**Test Structure** (adapted from Gamma/Normal pattern):
+1. **init tests (6)**: Valid params, error cases (alpha/beta ≤ 0)
+2. **pdf tests (11)**: Outside support → 0, boundary behavior (x=0, x=1), mode verification, symmetry property, normalization
+3. **cdf tests (10)**: F(0)=0, F(1)=1, monotonicity, special cases (Uniform), bounds [0,1]
+4. **quantile tests (10)**: Q(0)=0, Q(1)=1, inverse property |cdf(quantile(p))-p|<ε, monotonicity, error handling
+5. **logpdf tests (5)**: log(pdf) consistency, -∞ outside support, numerical stability
+6. **sample tests (10)**: Range [0,1], mean/variance statistical convergence (10k samples, 3-5% tolerance), edge cases
+7. **integration tests (5)**: PDF normalization via trapezoid rule, CDF-quantile inverse, ensemble statistics
+
+**Key Test Patterns**:
+- Use `expectApproxEqAbs` for equality checks (pdf/cdf values, statistical means)
+- Use `expectApproxEqRel` for relative error checks (variance with smaller absolute values)
+- Statistical tests: 10,000 samples with 3-5% tolerance for mean, 10% for variance
+- Boundary checks: test at 0.0, 1.0, and outside [0,1]
+- Special case validation: Beta(1,1)=Uniform, symmetry Beta(α,β)↔Beta(β,α)
+
+**RNG Pattern**:
+```zig
+var prng = std.Random.DefaultPrng.init(seed);
+const rng = prng.random();
+const sample = dist.sample(rng);  // NOT &rng.random()
+```
+
+**Failed Test Insights** (to guide implementation):
+- Quantile requires accurate CDF inversion (Newton-Raphson sensitive to initial guess and convergence)
+- Incomplete beta function needs higher precision than naive series (use continued fractions or more terms)
+- Beta function log: logB(α,β) = logΓ(α) + logΓ(β) - logΓ(α+β), watch for overflow/underflow
+- Edge case Beta(1,1) must be exactly Uniform: pdf(x)=1.0, cdf(x)=x, quantile(p)=p
+
