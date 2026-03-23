@@ -117,3 +117,6 @@
 {"timestamp":"2026-03-23T23:25:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement mannwhitney_u with test fixes (symmetry, empty array)","project":"zuda"}
 {"timestamp":"2026-03-24T01:45:00Z","action":"subagent","agent_type":"test-writer","task":"Write correlation regression tests","project":"zuda"}
 {"timestamp":"2026-03-24T02:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement correlation regression functions","project":"zuda"}
+{"timestamp":"2026-03-24T01:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write kendalltau tests (24 comprehensive tests)","project":"zuda"}
+{"timestamp":"2026-03-24T01:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement kendalltau function (O(n²) pairwise algorithm with tau-b correction)","project":"zuda"}
+{"timestamp":"2026-03-24T01:45:00Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 kendalltau test data issues (replace monotonic data with imperfect correlation)","project":"zuda"}

@@ -7,16 +7,53 @@
 - **Last CI Status**: ✅ GREEN (verified 2026-03-24 Hour 0)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
 - **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Correlation/Regression
-- **Next Priority**: Advanced regression (polynomial fit, logistic regression) or other v1.22.0 features
-- **Test Count**: 1360/1362 tests (1360 passing + 2 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + 53 correlation/regression + ndarray + containers + algorithms + internal
+- **Next Priority**: Advanced regression (polynomial fit, logistic regression) or histogram binning
+- **Test Count**: 1384/1386 tests (1384 passing + 2 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + 77 correlation/regression + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
   - All 12 distributions implemented: 8 continuous + 4 discrete
   - Hypothesis tests: 7 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway, ks_test, mannwhitney_u)
-  - Correlation/Regression: 3 functions (pearson, spearman, linregress) — 53 tests ✅
+  - Correlation/Regression: 4 functions (pearson, spearman, kendalltau, linregress) — 77 tests ✅
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Hour 1)
+## Recent Progress (Session 2026-03-24 - Hour 2)
+**FEATURE MODE:**
+
+### Kendall's Tau Correlation Implementation (commit c3fcf90) ✅
+- ✅ **Function**: kendalltau(x, y, allocator) !f64 — Kendall's tau-b rank correlation coefficient
+- ✅ **Algorithm**: Pairwise comparison with tau-b formula correcting for ties
+  - τ = (C - D) / sqrt((C+D+T_x)(C+D+T_y))
+  - C = concordant pairs, D = discordant pairs, T_x/T_y = tied pairs
+  - Time: O(n²) naive pairwise loop, Space: O(1)
+- ✅ **TDD Workflow**:
+  - test-writer → 24 comprehensive tests (perfect correlation, ties, symmetry, bounds, edge cases)
+  - zig-developer → implementation (lines 464-531 in correlation.zig)
+  - test-writer → fixed 2 test data issues (strictly monotonic → imperfect correlation)
+- ✅ **Tests**: 24/24 passing
+  - Perfect correlations (tau=±1): concordant, discordant, monotonic transforms
+  - Partial correlations: strong positive, moderate
+  - Properties: symmetry, bounds [-1,1], invariance, comparison with Spearman
+  - Tie handling: ties in x, ties in y, ties in both, all-tied
+  - Edge cases: n=2, n=3, identical data
+  - Error cases: empty array, dimension mismatch
+  - Large dataset: n=100
+- ✅ **Error Handling**: EmptyArray, DimensionMismatch
+- ✅ **Numerical Safety**: Result clamped to [-1, 1]
+- ✅ **Test Count**: 1360 → 1384 (+24 tests)
+- ✅ **Status**: All correlation functions complete (pearson, spearman, kendalltau, linregress)
+
+**v1.22.0 Progress**:
+- [x] Hypothesis Testing (7 tests) ✅
+- [x] Correlation (pearson, spearman, kendalltau) ✅
+- [x] Simple Linear Regression (linregress) ✅
+- [ ] Advanced Regression (polynomial fit)
+- [ ] Histogram binning (histogram, histogram2d)
+
+**Next Session Priority**: Polynomial fit (polyfit/polyval) or histogram binning
+
+---
+
+## Previous Progress (Session 2026-03-24 - Hour 1)
 **FEATURE MODE:**
 
 ### Correlation & Regression Implementation (commit d91952f) ✅
