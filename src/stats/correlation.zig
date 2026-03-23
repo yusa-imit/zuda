@@ -411,6 +411,132 @@ pub fn linregress(
 }
 
 // ============================================================================
+// KENDALL'S TAU RANK CORRELATION
+// ============================================================================
+
+/// Compute Kendall's tau-b rank correlation coefficient between two 1D arrays
+///
+/// Kendall's tau is a non-parametric rank correlation measure that counts the
+/// agreement between ranking of pairs. Tau-b formula (corrects for ties):
+///
+/// τ_b = (C - D) / sqrt((C + D + T_x)(C + D + T_y))
+///
+/// where:
+/// - C = number of concordant pairs (x[i] < x[j] and y[i] < y[j], or both greater)
+/// - D = number of discordant pairs (x[i] < x[j] and y[i] > y[j], or vice versa)
+/// - T_x = number of pairs tied in x only (x[i] == x[j], y[i] != y[j])
+/// - T_y = number of pairs tied in y only (x[i] != x[j], y[i] == y[j])
+///
+/// Interpretation:
+/// - τ ∈ [-1, 1] with same meaning as other correlation measures
+/// - τ = 1: perfect positive rank correlation (monotonically increasing)
+/// - τ = 0: no rank correlation
+/// - τ = -1: perfect negative rank correlation (monotonically decreasing)
+/// - Non-parametric: no assumption of normality, detects monotonic relationships
+/// - More conservative than Spearman for measuring strength, but invariant to
+///   monotonic transformations (not just linear)
+///
+/// Properties:
+/// - Symmetric: kendalltau(x, y) = kendalltau(y, x)
+/// - Bounded: τ ∈ [-1, 1]
+/// - Invariant to monotonic transformations (scaling, translation)
+/// - Handles ties gracefully via tau-b formula
+///
+/// Parameters:
+/// - x, y: 1D slices of f64 of equal length
+/// - allocator: (not used, provided for API consistency)
+///
+/// Returns: Kendall's tau-b ∈ [-1, 1]
+///
+/// Errors:
+/// - error.EmptyArray if either array is empty
+/// - error.DimensionMismatch if x.len != y.len
+///
+/// Time: O(n²) — naive pairwise comparison loop
+/// Space: O(1) — no heap allocation
+///
+/// Example:
+/// ```zig
+/// const x = [_]f64{ 1, 2, 3, 4, 5 };
+/// const y = [_]f64{ 1, 2, 3, 4, 5 };  // Monotonically increasing
+/// const tau = try kendalltau(&x, &y, allocator);  // tau = 1.0
+/// ```
+pub fn kendalltau(x: []const f64, y: []const f64, allocator: Allocator) !f64 {
+    _ = allocator; // Not used, but provided for API consistency
+
+    const n = x.len;
+    if (n == 0) return error.EmptyArray;
+    if (y.len != n) return error.DimensionMismatch;
+
+    // Handle trivial cases
+    if (n < 2) return 0.0;
+
+    // Count concordant, discordant, and tied pairs
+    var concordant: i64 = 0;
+    var discordant: i64 = 0;
+    var ties_x: i64 = 0;
+    var ties_y: i64 = 0;
+
+    // Compare all pairs (i, j) where i < j
+    var i: usize = 0;
+    while (i < n - 1) : (i += 1) {
+        var j = i + 1;
+        while (j < n) : (j += 1) {
+            const x_i = x[i];
+            const x_j = x[j];
+            const y_i = y[i];
+            const y_j = y[j];
+
+            // Determine if x is tied
+            const x_tied = (x_i == x_j);
+            // Determine if y is tied
+            const y_tied = (y_i == y_j);
+
+            // Skip pairs tied in both x and y
+            if (x_tied and y_tied) continue;
+
+            // Count ties
+            if (x_tied) {
+                ties_x += 1;
+            } else if (y_tied) {
+                ties_y += 1;
+            } else {
+                // Neither tied: count as concordant or discordant
+                const x_ordered = x_i < x_j;
+                const y_ordered = y_i < y_j;
+
+                if (x_ordered == y_ordered) {
+                    // Both increasing or both decreasing → concordant
+                    concordant += 1;
+                } else {
+                    // Opposite ordering → discordant
+                    discordant += 1;
+                }
+            }
+        }
+    }
+
+    // Apply Kendall tau-b formula
+    const c_f = @as(f64, @floatFromInt(concordant));
+    const d_f = @as(f64, @floatFromInt(discordant));
+    const tx_f = @as(f64, @floatFromInt(ties_x));
+    const ty_f = @as(f64, @floatFromInt(ties_y));
+
+    const numerator = c_f - d_f;
+    const denom_part1 = c_f + d_f + tx_f;
+    const denom_part2 = c_f + d_f + ty_f;
+    const denominator = math.sqrt(denom_part1 * denom_part2);
+
+    const tau: f64 = if (denominator == 0)
+        0.0
+    else
+        numerator / denominator;
+
+    // Clamp to [-1, 1] for numerical stability
+    return math.clamp(tau, -1.0, 1.0);
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 
@@ -1266,4 +1392,299 @@ test "linregress: regression result struct fields valid" {
     try testing.expect(math.isFinite(result.r_squared));
     try testing.expect(math.isFinite(result.p_value));
     try testing.expect(math.isFinite(result.std_err));
+}
+
+// ============================================================================
+// Kendall's Tau Correlation Tests (20+ tests)
+// ============================================================================
+
+test "kendalltau: perfect positive correlation (tau=1)" {
+    // Perfectly concordant pairs: y = x
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expectApproxEqAbs(1.0, tau, 1e-10);
+}
+
+test "kendalltau: perfect negative correlation (tau=-1)" {
+    // Perfectly discordant pairs: y = -x
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 5.0, 4.0, 3.0, 2.0, 1.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expectApproxEqAbs(-1.0, tau, 1e-10);
+}
+
+test "kendalltau: no correlation (tau≈0) with random permutation" {
+    // Unrelated data: tau should be near zero
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 3.0, 1.0, 5.0, 2.0, 4.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Should be small in magnitude
+    try testing.expect(@abs(tau) < 0.5);
+}
+
+test "kendalltau: bounded in [-1, 1]" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+    const y_data = [_]f64{ 1.5, 3.2, 4.1, 6.0, 7.2, 9.1, 10.5, 12.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expect(tau >= -1.0);
+    try testing.expect(tau <= 1.0);
+}
+
+test "kendalltau: symmetry property (kendalltau(x,y) = kendalltau(y,x))" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 2.0, 4.0, 5.0, 4.0, 6.0 };
+
+    const tau_xy = try kendalltau(&x_data, &y_data, test_allocator);
+    const tau_yx = try kendalltau(&y_data, &x_data, test_allocator);
+
+    try testing.expectApproxEqAbs(tau_xy, tau_yx, 1e-10);
+}
+
+test "kendalltau: two elements (one pair)" {
+    // Single pair: C=1, D=0, T_x=0, T_y=0 → tau = (1-0)/(sqrt(1*1)) = 1.0
+    const x_data = [_]f64{ 1.0, 2.0 };
+    const y_data = [_]f64{ 3.0, 5.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Single concordant pair → tau = 1
+    try testing.expectApproxEqAbs(1.0, tau, 1e-10);
+}
+
+test "kendalltau: two elements discordant (tau=-1)" {
+    // Single discordant pair: C=0, D=1 → tau = (0-1)/(sqrt(1*1)) = -1.0
+    const x_data = [_]f64{ 1.0, 2.0 };
+    const y_data = [_]f64{ 5.0, 3.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expectApproxEqAbs(-1.0, tau, 1e-10);
+}
+
+test "kendalltau: three elements simple case" {
+    // x=[1,2,3], y=[1,2,3]: all pairs concordant
+    // Pairs: (1,2)→C, (1,3)→C, (2,3)→C. Total: C=3, D=0
+    // tau = 3/(sqrt(3*3)) = 3/3 = 1.0
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 3.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expectApproxEqAbs(1.0, tau, 1e-10);
+}
+
+test "kendalltau: ties in x only" {
+    // x=[1,1,2,3], y=[1,2,3,4]
+    // One tie in x: (indices 0,1). Tau-b formula accounts for ties.
+    const x_data = [_]f64{ 1.0, 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Should still reflect strong positive correlation despite ties
+    try testing.expect(tau > 0.5);
+    try testing.expect(tau <= 1.0);
+}
+
+test "kendalltau: ties in y only" {
+    // x=[1,2,3,4], y=[1,1,2,3]
+    // One tie in y: (indices 0,1). Should handle gracefully.
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const y_data = [_]f64{ 1.0, 1.0, 2.0, 3.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Should reflect strong positive correlation
+    try testing.expect(tau > 0.5);
+    try testing.expect(tau <= 1.0);
+}
+
+test "kendalltau: ties in both x and y" {
+    // x=[1,1,2,3], y=[1,2,2,3]
+    // Ties in both variables. Tau-b formula reduces impact.
+    const x_data = [_]f64{ 1.0, 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 2.0, 3.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Should reflect positive correlation despite ties
+    try testing.expect(tau > 0.0);
+    try testing.expect(tau <= 1.0);
+}
+
+test "kendalltau: all tied values in x (same value)" {
+    // x=[5,5,5,5], y=[1,2,3,4]
+    // All x values identical: T_x = n(n-1)/2 = 6, C and D will be 0
+    // tau = (0-0)/(sqrt((0+0+6)(0+0+0))) = 0/0 → undefined/NaN or 0
+    const x_data = [_]f64{ 5.0, 5.0, 5.0, 5.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Tied x means no rank ordering: tau should be 0 or undefined
+    // Implementation should handle this gracefully (likely returning 0 or NaN)
+    try testing.expect(!math.isNan(tau)); // Should not produce NaN
+}
+
+test "kendalltau: strong positive partial correlation" {
+    // y mostly increases with x, but with some disorder
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 1.0, 3.0, 2.0, 5.0, 4.0 }; // Strong positive but imperfect correlation
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Should show positive correlation (8 concordant, 2 discordant → tau = 0.6)
+    try testing.expect(tau > 0.3);
+    try testing.expect(tau < 1.0);
+}
+
+test "kendalltau: strong negative partial correlation" {
+    // y decreases with x, but with some disorder
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 5.0, 4.0, 3.5, 2.0, 1.0 }; // Some disorder
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Should show negative correlation
+    try testing.expect(tau < -0.3);
+    try testing.expect(tau >= -1.0);
+}
+
+test "kendalltau: identical data (perfect ties)" {
+    // When all pairs are tied (all values same in both x and y)
+    const x_data = [_]f64{ 2.0, 2.0, 2.0 };
+    const y_data = [_]f64{ 3.0, 3.0, 3.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // All same values: undefined correlation
+    try testing.expect(!math.isNan(tau)); // Should handle gracefully
+}
+
+test "kendalltau: monotonic transformation (invariance)" {
+    // y = x² for x > 0: monotonic but non-linear
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 1.0, 4.0, 9.0, 16.0, 25.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Monotonic relationship → tau = 1
+    try testing.expectApproxEqAbs(1.0, tau, 1e-10);
+}
+
+test "kendalltau: large dataset (n=100)" {
+    var x_data = try test_allocator.alloc(f64, 100);
+    defer test_allocator.free(x_data);
+    var y_data = try test_allocator.alloc(f64, 100);
+    defer test_allocator.free(y_data);
+
+    for (0..100) |i| {
+        const i_f = @as(f64, @floatFromInt(i));
+        x_data[i] = i_f;
+        y_data[i] = 2.0 * i_f + 1.0; // y = 2x + 1 (monotonic)
+    }
+
+    const tau = try kendalltau(x_data, y_data, test_allocator);
+
+    // Perfect monotonic relationship
+    try testing.expectApproxEqAbs(1.0, tau, 1e-10);
+}
+
+test "kendalltau: error on empty array" {
+    const x_data: [0]f64 = .{};
+    const y_data: [0]f64 = .{};
+
+    const result = kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "kendalltau: error on dimension mismatch" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 2.0 };
+
+    const result = kendalltau(&x_data, &y_data, test_allocator);
+
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "kendalltau: known dataset correlation strength" {
+    // Dataset with known moderate to strong positive correlation
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    const y_data = [_]f64{ 2.0, 3.0, 4.0, 5.0, 7.0, 6.0 }; // Mostly monotonic with one inversion
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Moderate to strong positive: 0.4 < tau < 1.0
+    try testing.expect(tau > 0.4);
+    try testing.expect(tau < 1.0);
+}
+
+test "kendalltau: invariant under monotonic scaling" {
+    // x₁=[1,2,3,4,5], y₁=[2,4,6,8,10]
+    // x₂=[10,20,30,40,50], y₂=[20,40,60,80,100] (scaled by 10)
+    const x1_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y1_data = [_]f64{ 2.0, 4.0, 6.0, 8.0, 10.0 };
+
+    const x2_data = [_]f64{ 10.0, 20.0, 30.0, 40.0, 50.0 };
+    const y2_data = [_]f64{ 20.0, 40.0, 60.0, 80.0, 100.0 };
+
+    const tau1 = try kendalltau(&x1_data, &y1_data, test_allocator);
+    const tau2 = try kendalltau(&x2_data, &y2_data, test_allocator);
+
+    // Kendall tau should be invariant to monotonic scaling
+    try testing.expectApproxEqAbs(tau1, tau2, 1e-10);
+}
+
+test "kendalltau: invariant under monotonic translation" {
+    // x₁=[1,2,3,4,5], y₁=[2,4,6,8,10]
+    // x₂=[101,102,103,104,105], y₂=[102,104,106,108,110] (shifted by 100)
+    const x1_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y1_data = [_]f64{ 2.0, 4.0, 6.0, 8.0, 10.0 };
+
+    const x2_data = [_]f64{ 101.0, 102.0, 103.0, 104.0, 105.0 };
+    const y2_data = [_]f64{ 102.0, 104.0, 106.0, 108.0, 110.0 };
+
+    const tau1 = try kendalltau(&x1_data, &y1_data, test_allocator);
+    const tau2 = try kendalltau(&x2_data, &y2_data, test_allocator);
+
+    // Kendall tau should be invariant to translation
+    try testing.expectApproxEqAbs(tau1, tau2, 1e-10);
+}
+
+test "kendalltau: comparison with spearman on linear data" {
+    // For linear/monotonic relationships without ties, tau and rho should be similar
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 2.0, 4.0, 6.0, 8.0, 10.0 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{5}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{5}, &y_data, .row_major);
+    defer y.deinit();
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+    const rho = try spearman(x, y, test_allocator);
+
+    // Both should indicate perfect correlation for monotonic data
+    try testing.expectApproxEqAbs(1.0, tau, 1e-10);
+    try testing.expectApproxEqAbs(1.0, rho, 1e-10);
+}
+
+test "kendalltau: result is finite number" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 1.0, 3.0, 2.0, 5.0, 4.0 };
+
+    const tau = try kendalltau(&x_data, &y_data, test_allocator);
+
+    // Result should be a finite f64 (not NaN or infinity)
+    try testing.expect(math.isFinite(tau));
 }
