@@ -2099,12 +2099,33 @@ test "ks_test_1samp: good fit (Normal(0,1) data vs standard normal CDF, should n
     var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data_slice, .row_major);
     defer data.deinit();
 
-    // Standard normal CDF (approximation)
+    // Standard normal CDF (erf approximation)
     const normal_cdf = struct {
-        const Normal = @import("distributions/normal.zig").Normal;
         pub fn cdf(x: f64) f64 {
-            const dist = Normal(f64).init(0.0, 1.0);
-            return dist.cdf(x);
+            // Standard normal CDF: Φ(x) = 0.5[1 + erf(x/√2)]
+            const sqrt2 = @sqrt(2.0);
+            return 0.5 * (1.0 + erf(x / sqrt2));
+        }
+
+        // Abramowitz and Stegun approximation for erf
+        fn erf(x: f64) f64 {
+            const a1 = 0.254829592;
+            const a2 = -0.284496736;
+            const a3 = 1.421413741;
+            const a4 = -1.453152027;
+            const a5 = 1.061405429;
+            const p = 0.3275911;
+
+            const sign = if (x < 0) @as(f64, -1.0) else @as(f64, 1.0);
+            const abs_x = @abs(x);
+            const t = 1.0 / (1.0 + p * abs_x);
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const t4 = t3 * t;
+            const t5 = t4 * t;
+
+            const result = 1.0 - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * @exp(-abs_x * abs_x);
+            return sign * result;
         }
     }.cdf;
 
