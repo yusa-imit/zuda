@@ -2,21 +2,66 @@
 
 ## Current Status
 - **Version**: 1.21.0 (current), v1.22.0 IN PROGRESS
-- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing & Correlation/Regression
+- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing & Regression/Histogram
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (verified 2026-03-24 Hour 0)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
-- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Polynomial Regression
-- **Next Priority**: Logistic regression or histogram binning
-- **Test Count**: 1414/1416 tests (1414 passing + 2 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + 107 correlation/regression + ndarray + containers + algorithms + internal
+- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Regression/Histogram
+- **Next Priority**: Logistic regression or advanced regression (ridge, lasso)
+- **Test Count**: 1445/1447 tests (1445 passing + 2 skipped)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 107 correlation/regression + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
   - All 12 distributions implemented: 8 continuous + 4 discrete
   - Hypothesis tests: 7 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway, ks_test, mannwhitney_u)
   - Correlation/Regression: 6 functions (pearson, spearman, kendalltau, linregress, polyfit, polyval) — 107 tests ✅
+  - Histogram: 3 functions (histogram, histogram2d, histogramBinEdges) — 31 tests ✅
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Hour 3)
+## Recent Progress (Session 2026-03-24 - Hour 4)
+**FEATURE MODE:**
+
+### Histogram Binning Implementation (commit 00fac9b) ✅
+- ✅ **Module Extended**: `src/stats/descriptive.zig` (+825 lines: 3 functions + 31 tests)
+- ✅ **Functions**: histogram, histogram2d, histogramBinEdges — NumPy/SciPy compatible histogram binning
+- ✅ **TDD Workflow**: test-writer (31 tests + implementation) → all tests passing
+- ✅ **histogram(data, bins, allocator) !HistogramResult**:
+  - 1D histogram with evenly-spaced bins from min(data) to max(data)
+  - Returns: struct { counts: []usize, bin_edges: []f64 } (caller owns both slices)
+  - Bin assignment: edges[i] ≤ x < edges[i+1], last bin is closed [edges[n-1], edges[n]]
+  - Time: O(n) min/max scan + O(n) bin assignment, Space: O(bins)
+  - Errors: EmptyArray, InvalidParameter (bins < 1)
+  - Tests: 14 (uniform data, even binning, edge cases, boundaries, negatives, sparse data, large dataset, errors)
+- ✅ **histogram2d(x, y, bins_x, bins_y, allocator) !Histogram2DResult**:
+  - 2D histogram for joint distributions and heatmaps
+  - Returns: struct { counts: [][]usize, x_edges: []f64, y_edges: []f64 }
+  - Time: O(n) 2D bin assignment, Space: O(bins_x * bins_y)
+  - Errors: EmptyArray, DimensionMismatch, InvalidParameter
+  - Tests: 12 (grid, diagonal, corners, rectangular bins, all-same values, negative coords, errors)
+- ✅ **histogramBinEdges(data, bins, allocator) ![]f64**:
+  - Helper: compute bin edges only (for custom binning strategies)
+  - Returns bins+1 edges from min to max
+  - Tests: 5 (uniform, fractional, negative, single value, errors)
+- ✅ **Implementation Quality**:
+  - NumPy/SciPy API compatibility
+  - Exact integer comparisons for counts (expectEqual)
+  - Float tolerance 1e-10 for bin edges (expectApproxEqAbs)
+  - Invariant validation: array lengths, monotonicity, coverage, sum of counts
+  - Memory safety: zero leaks verified with std.testing.allocator
+- ✅ **Use Cases**: Data visualization, density estimation, feature engineering, image processing
+- ✅ **Test Count**: 1414 → 1445 passing (+31 tests)
+
+**v1.22.0 Progress**:
+- [x] Hypothesis Testing (7 tests) ✅
+- [x] Correlation (pearson, spearman, kendalltau) ✅
+- [x] Simple Linear Regression (linregress) ✅
+- [x] Polynomial Regression (polyfit, polyval) ✅
+- [x] Histogram binning (histogram, histogram2d, histogramBinEdges) ✅
+
+**Next Session Priority**: Logistic regression or advanced regression methods (ridge, lasso)
+
+---
+
+## Previous Progress (Session 2026-03-24 - Hour 3)
 **FEATURE MODE:**
 
 ### Polynomial Regression Implementation (commits 812329f, 5473410, f5633b0) ✅
