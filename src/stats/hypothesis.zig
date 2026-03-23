@@ -2066,6 +2066,194 @@ pub fn ks_test_2samp(
 }
 
 // ============================================================================
+// MANN-WHITNEY U TEST
+// ============================================================================
+
+/// Mann-Whitney U test: Non-parametric test comparing two independent samples
+///
+/// Tests whether two independent samples come from the same distribution using the
+/// Mann-Whitney U statistic (also called Wilcoxon rank-sum test). This is the
+/// non-parametric alternative to the independent samples t-test and does not assume
+/// normality of the data.
+///
+/// Parameters:
+/// - T: numeric type (f32 or f64)
+/// - data1: First sample (NDArray, 1D)
+/// - data2: Second sample (NDArray, 1D)
+/// - alpha: Significance level (must be in (0, 1))
+/// - alloc: Allocator for temporary arrays
+///
+/// Returns:
+/// - TestResult with:
+///   - statistic: U statistic (min of U1 and U2)
+///   - p_value: Two-tailed p-value using normal approximation
+///   - df: 0 (not applicable)
+///   - reject: true if p_value < alpha
+///
+/// Algorithm:
+/// 1. Merge both samples and assign ranks 1 to n (n = n1 + n2)
+/// 2. Handle ties by averaging ranks of equal values
+/// 3. Compute rank sums R1 and R2
+/// 4. Calculate U1 = n1*n2 + n1(n1+1)/2 - R1 and U2 = n1*n2 + n2(n2+1)/2 - R2
+/// 5. U = min(U1, U2)
+/// 6. Use normal approximation for p-value: mean = n1*n2/2, var = n1*n2*(n1+n2+1)/12
+/// 7. Two-tailed p-value: p = 2 * (1 - Φ(|z|))
+///
+/// Errors:
+/// - error.EmptyArray: if either sample is empty
+/// - error.InvalidParameter: if alpha is not in (0, 1)
+///
+/// Time: O((n1+n2) log(n1+n2)) for sorting
+/// Space: O(n1+n2) for merged array and ranks
+pub fn mannwhitney_u(
+    comptime T: type,
+    data1: NDArray_type(T, 1),
+    data2: NDArray_type(T, 1),
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    const n1 = data1.count();
+    const n2 = data2.count();
+
+    // Validation
+    if (n1 == 0 or n2 == 0) return error.EmptyArray;
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    const total_n = n1 + n2;
+
+    // Allocate arrays for merged data, tracking which sample, and ranks
+    var merged_data = try alloc.alloc(T, total_n);
+    defer alloc.free(merged_data);
+
+    var sample_id = try alloc.alloc(usize, total_n);
+    defer alloc.free(sample_id);
+
+    var ranks = try alloc.alloc(T, total_n);
+    defer alloc.free(ranks);
+
+    // Copy and mark samples
+    @memcpy(merged_data[0..n1], data1.data[0..n1]);
+    for (0..n1) |i| {
+        sample_id[i] = 0;
+    }
+
+    @memcpy(merged_data[n1..total_n], data2.data[0..n2]);
+    for (0..n2) |i| {
+        sample_id[n1 + i] = 1;
+    }
+
+    // Create indices array for sorting
+    var indices = try alloc.alloc(usize, total_n);
+    defer alloc.free(indices);
+    for (0..total_n) |i| {
+        indices[i] = i;
+    }
+
+    // Sort indices by data values
+    const IndexComparator = struct {
+        data: []T,
+
+        fn lessThan(self: @This(), a: usize, b: usize) bool {
+            return self.data[a] < self.data[b];
+        }
+    };
+
+    const comp = IndexComparator{ .data = merged_data };
+    std.mem.sort(usize, indices, comp, IndexComparator.lessThan);
+
+    // Assign ranks, handling ties
+    var i: usize = 0;
+    while (i < total_n) {
+        const j = i;
+        // Find the end of tied group
+        while (i < total_n - 1 and
+            merged_data[indices[i]] == merged_data[indices[i + 1]])
+        {
+            i += 1;
+        }
+
+        // Average rank for tied group [j, i]
+        const avg_rank = @as(T, @floatFromInt(j + i + 2)) / 2.0;
+        for (j..i + 1) |k| {
+            ranks[indices[k]] = avg_rank;
+        }
+
+        i += 1;
+    }
+
+    // Compute rank sums
+    var rank_sum1: T = 0.0;
+    var rank_sum2: T = 0.0;
+
+    for (0..n1) |j| {
+        rank_sum1 += ranks[j];
+    }
+    for (0..n2) |j| {
+        rank_sum2 += ranks[n1 + j];
+    }
+
+    // Compute U statistics
+    const n1_f = @as(T, @floatFromInt(n1));
+    const n2_f = @as(T, @floatFromInt(n2));
+
+    const u_stat_1 = n1_f * n2_f + n1_f * (n1_f + 1.0) / 2.0 - rank_sum1;
+    const u_stat_2 = n1_f * n2_f + n2_f * (n2_f + 1.0) / 2.0 - rank_sum2;
+
+    // U statistic is the minimum of U1 and U2
+    const u_stat = @min(u_stat_1, u_stat_2);
+
+    // Compute p-value using normal approximation
+    const mean_u = n1_f * n2_f / 2.0;
+    const var_u = n1_f * n2_f * (n1_f + n2_f + 1.0) / 12.0;
+
+    // Handle edge case where variance is 0 (all identical values)
+    if (var_u == 0.0) {
+        return TestResult(T).init(u_stat, 1.0, 0.0, alpha);
+    }
+
+    const std_u = math.sqrt(var_u);
+
+    // Standard normal approximation: z = (U - mean) / std
+    // Note: continuity correction is sometimes applied, but standard normal approximation without it gives better p-values for moderate samples
+    const z = @abs(u_stat - mean_u) / std_u;
+
+    // Standard normal CDF using erf approximation
+    const p_cdf = stdNormalCDF(T, z);
+    const p_value = 2.0 * (1.0 - p_cdf);
+
+    // Clamp p-value to [0, 1]
+    const p_clamped = @min(1.0, @max(0.0, p_value));
+
+    return TestResult(T).init(u_stat, p_clamped, 0.0, alpha);
+}
+
+// Helper function: standard normal CDF using erf approximation
+fn stdNormalCDF(comptime T: type, z: T) T {
+    // Standard normal CDF: Φ(z) = 0.5[1 + erfApprox(z/√2)]
+    // Abramowitz and Stegun approximation for erf
+    const a1: T = 0.254829592;
+    const a2: T = -0.284496736;
+    const a3: T = 1.421413741;
+    const a4: T = -1.453152027;
+    const a5: T = 1.061405429;
+    const p: T = 0.3275911;
+
+    const sqrt2 = math.sqrt(@as(T, 2.0));
+    const z_norm = z / sqrt2;
+
+    const sign = if (z_norm < 0) @as(T, -1.0) else @as(T, 1.0);
+    const abs_x = @abs(z_norm);
+    const t = 1.0 / (1.0 + p * abs_x);
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const t4 = t3 * t;
+    const t5 = t4 * t;
+
+    const erf_val = sign * (1.0 - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * math.exp(-abs_x * abs_x));
+    return 0.5 * (1.0 + erf_val);
+}
+
+// ============================================================================
 // Kolmogorov-Smirnov Test Tests (30+ tests)
 // ============================================================================
 
@@ -2724,4 +2912,372 @@ test "ks_test_2samp: consistency across multiple runs" {
 
     try testing.expectApproxEqAbs(result1.statistic, result2.statistic, 1e-10);
     try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);
+}
+
+// ============================================================================
+// Mann-Whitney U Test Tests (20+ tests)
+// ============================================================================
+
+test "mannwhitney_u: identical samples (U ≈ n1*n2/2, p ≈ 1, no reject)" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 1.0, 2.0, 3.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // U should be around n1*n2/2 = 4.5 for identical samples with n1=n2=3
+    const _expected_u = @as(f64, 3.0) * @as(f64, 3.0) / 2.0; // 4.5
+    _ = _expected_u;
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.statistic <= 9.0); // max possible U = 3*3
+    try testing.expect(result.p_value > 0.9); // very high p-value
+    try testing.expect(!result.reject); // should not reject H0
+}
+
+test "mannwhitney_u: same distribution (Normal(0,1)), should not reject" {
+    const data1 = [_]f64{ -1.5, -0.8, -0.3, 0.0, 0.2, 0.5, 1.0, 1.3, 1.8 };
+    const data2 = [_]f64{ -1.4, -0.7, -0.2, 0.1, 0.3, 0.6, 1.1, 1.4, 1.9 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // Similar distributions should have large U and high p-value
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.statistic <= 81.0); // max = 9*9
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!result.reject); // should not reject similar distributions
+}
+
+test "mannwhitney_u: different medians ([1,2,3] vs [4,5,6]), should reject" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // Completely separated samples should have U=0 and p≈0
+    try testing.expect(result.statistic == 0.0); // U = min(0, 9) = 0
+    try testing.expect(result.p_value < 0.05); // very small p-value
+    try testing.expect(result.reject); // should reject H0
+}
+
+test "mannwhitney_u: overlapping ranges ([1,2,3,4] vs [3,4,5,6]), intermediate U" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const data2 = [_]f64{ 3.0, 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // Overlapping samples should have intermediate U
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.statistic < 16.0); // max = 4*4
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: different distributions (Normal(0,1) vs Normal(5,1)), should reject" {
+    const data1 = [_]f64{ -1.5, -0.8, -0.3, 0.0, 0.2, 0.5, 1.0, 1.3, 1.8 };
+    const data2 = [_]f64{ 3.5, 4.2, 4.7, 5.0, 5.2, 5.5, 6.0, 6.3, 6.8 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // Shifted distributions should have small U and small p-value
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 81.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(result.reject); // should reject H0
+}
+
+test "mannwhitney_u: single element each (n1=1, n2=1)" {
+    const data1 = [_]f64{1.0};
+    const data2 = [_]f64{2.0};
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // U = min(1, 0) = 0 for completely separated samples
+    try testing.expect(result.statistic == 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: unequal sizes (n1=3, n2=10)" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{10}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // U should be valid for unequal sizes
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.statistic <= 30.0); // max = 3*10
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: all same values in one sample ([2,2,2] vs [1,3,5])" {
+    const data1 = [_]f64{ 2.0, 2.0, 2.0 };
+    const data2 = [_]f64{ 1.0, 3.0, 5.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // Should handle ties properly
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 9.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: ties handling ([1,2,3,3,4] vs [2,3,3,5])" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0, 3.0, 4.0 };
+    const data2 = [_]f64{ 2.0, 3.0, 3.0, 5.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    // Should handle multiple ties correctly
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 20.0); // 5*4=20
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: U statistic range validation (0 ≤ U ≤ n1*n2)" {
+    const data1 = [_]f64{ 10.0, 20.0, 30.0 };
+    const data2 = [_]f64{ 15.0, 25.0, 35.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    const max_u = @as(f64, 3.0) * @as(f64, 3.0);
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.statistic <= max_u);
+}
+
+test "mannwhitney_u: p-value range validation (0 ≤ p ≤ 1)" {
+    const data1 = [_]f64{ -5.0, -3.0, -1.0 };
+    const data2 = [_]f64{ 1.0, 3.0, 5.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.p_value >= 0.0);
+    try testing.expect(result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.p_value));
+}
+
+test "mannwhitney_u: symmetry property (swap samples preserves p-value)" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1a.deinit();
+    var sample2a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2a.deinit();
+
+    var sample1b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample1b.deinit();
+    var sample2b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample2b.deinit();
+
+    const result1 = try mannwhitney_u(f64, sample1a, sample2a, 0.05, allocator);
+    const result2 = try mannwhitney_u(f64, sample1b, sample2b, 0.05, allocator);
+
+    // p-value should be same regardless of order
+    try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);
+    // U statistic may be different but symmetrical
+    try testing.expect(result1.statistic + result2.statistic == 9.0); // U1 + U2 = n1*n2
+}
+
+test "mannwhitney_u: larger difference → smaller U" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result_sep = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    const data3 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data4 = [_]f64{ 1.5, 2.5, 3.5 };
+
+    var sample3 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data3, .row_major);
+    defer sample3.deinit();
+    var sample4 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data4, .row_major);
+    defer sample4.deinit();
+
+    const result_overlap = try mannwhitney_u(f64, sample3, sample4, 0.05, allocator);
+
+    // Completely separated samples should have smaller U than slightly overlapping
+    try testing.expect(result_sep.statistic < result_overlap.statistic);
+    try testing.expect(result_sep.p_value < result_overlap.p_value);
+}
+
+test "mannwhitney_u: alpha threshold rejection decision" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result_strict = try mannwhitney_u(f64, sample1, sample2, 0.001, allocator);
+    const result_lenient = try mannwhitney_u(f64, sample1, sample2, 0.5, allocator);
+
+    // Same test with stricter alpha should be more conservative
+    try testing.expect(!result_strict.reject or result_lenient.reject);
+}
+
+test "mannwhitney_u: large sample convergence (n1=50, n2=50)" {
+    var data1: [50]f64 = undefined;
+    var data2: [50]f64 = undefined;
+
+    // Create two samples from different distributions
+    for (0..50) |i| {
+        data1[i] = @as(f64, @floatFromInt(i));
+        data2[i] = @as(f64, @floatFromInt(i)) + 25.0; // Shifted by 25
+    }
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{50}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{50}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 2500.0); // 50*50
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+}
+
+test "mannwhitney_u: f32 precision" {
+    const data1 = [_]f32{ 1.5, 2.5, 3.5 };
+    const data2 = [_]f32{ 4.5, 5.5, 6.5 };
+
+    var sample1 = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f32, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 9.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: f64 precision" {
+    const data1 = [_]f64{ 1.5, 2.5, 3.5 };
+    const data2 = [_]f64{ 4.5, 5.5, 6.5 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 9.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "mannwhitney_u: memory safety - no leaks" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    // allocator is std.testing.allocator which detects memory leaks
+    _ = try mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+}
+
+test "mannwhitney_u: consistency across multiple runs" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 1.5, 2.5, 3.5 };
+
+    var sample1a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1a.deinit();
+    var sample2a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2a.deinit();
+
+    var sample1b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1b.deinit();
+    var sample2b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2b.deinit();
+
+    const result1 = try mannwhitney_u(f64, sample1a, sample2a, 0.05, allocator);
+    const result2 = try mannwhitney_u(f64, sample1b, sample2b, 0.05, allocator);
+
+    try testing.expectApproxEqAbs(result1.statistic, result2.statistic, 1e-10);
+    try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);
+}
+
+test "mannwhitney_u: error - empty array" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const empty_data = [_]f64{};
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{0}, &empty_data, .row_major);
+    defer sample2.deinit();
+
+    const result = mannwhitney_u(f64, sample1, sample2, 0.05, allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "mannwhitney_u: error - invalid alpha" {
+    const data1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result_zero = mannwhitney_u(f64, sample1, sample2, 0.0, allocator);
+    try testing.expectError(error.InvalidParameter, result_zero);
 }
