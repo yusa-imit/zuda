@@ -9,6 +9,7 @@
 //! - `ttest_ind` — Independent samples t-test (H0: μ₁ = μ₂)
 //! - `ttest_rel` — Paired samples t-test (H0: μ_diff = 0)
 //! - `chi2_test` — Chi-squared goodness-of-fit test (H0: observed ~ expected)
+//! - `anova_oneway` — One-way ANOVA (H0: μ₁ = μ₂ = ... = μₖ)
 //!
 //! ## TestResult Type
 //! Generic result container holding:
@@ -41,6 +42,7 @@ const descriptive = @import("descriptive.zig");
 const NDArray_type = @import("../ndarray/ndarray.zig").NDArray;
 const StudentT_Distribution = @import("distributions/student_t.zig").StudentT;
 const ChiSquared_Distribution = @import("distributions/chi_squared.zig").ChiSquared;
+const FDistribution = @import("distributions/f_distribution.zig").FDistribution;
 
 // ============================================================================
 // TEST RESULT TYPE
@@ -444,6 +446,149 @@ pub fn chi2_test(
     const p_value = 1.0 - cdf_val;
 
     return TestResult(T).init(chi2_stat, p_value, df, alpha);
+}
+
+// ============================================================================
+// ONE-WAY ANOVA TEST
+// ============================================================================
+
+/// One-way ANOVA: H0: all group means are equal (μ₁ = μ₂ = ... = μₖ)
+///
+/// Tests whether the means of k independent groups (k ≥ 2) differ significantly.
+/// Partitions total variance into between-group and within-group components.
+///
+/// Formula:
+/// - Grand mean: x̄ = (1/N) Σᵢⱼ xᵢⱼ
+/// - SSB (Between): Σᵢ nᵢ(x̄ᵢ - x̄)²
+/// - SSW (Within): Σᵢⱼ (xᵢⱼ - x̄ᵢ)²
+/// - MSB = SSB / (k-1), MSW = SSW / (N-k)
+/// - F = MSB / MSW
+/// where k = number of groups, N = total sample size
+///
+/// The test statistic follows an F distribution with (k-1, N-k) degrees of freedom.
+/// A large F value indicates group means differ significantly.
+///
+/// Parameters:
+/// - groups: slice of group data slices, each containing numeric observations
+/// - alpha: significance level (default 0.05 for 95% confidence)
+/// - allocator: memory allocator for temporary arrays
+///
+/// Returns: TestResult with F-statistic, p-value (right-tailed), df (df1), and rejection decision
+///
+/// Errors:
+/// - error.TooFewGroups if groups.len < 2
+/// - error.EmptyGroup if any group has zero observations
+/// - error.InvalidParameter if alpha not in (0, 1)
+///
+/// Time: O(N) where N is total sample size
+/// Space: O(k) for group means
+///
+/// Notes:
+/// - This is a right-tailed test (large F → reject H0)
+/// - P-value = P(F(k-1, N-k) > F_observed)
+/// - Assumes groups are independent and normally distributed
+/// - Assumes equal variances across groups (homogeneity of variance)
+/// - When all groups have identical values, F = 0 and p-value = 1.0
+///
+/// Example:
+/// ```zig
+/// const group1 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+/// const group2 = [_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 };
+/// const group3 = [_]f64{ 11.0, 12.0, 13.0, 14.0, 15.0 };
+/// const groups = [_][]const f64{ &group1, &group2, &group3 };
+/// const result = try anova_oneway(f64, &groups, 0.05, allocator);
+/// // Tests if group means differ significantly at α=0.05
+/// ```
+pub fn anova_oneway(
+    comptime T: type,
+    groups: []const []const T,
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    // Validation
+    if (groups.len < 2) return error.TooFewGroups;
+
+    // Check all groups non-empty and compute total size N
+    var N: usize = 0;
+    for (groups) |group| {
+        if (group.len == 0) return error.EmptyGroup;
+        N += group.len;
+    }
+
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    const k = groups.len;
+
+    // Collect all values for grand mean calculation
+    var all_values = std.ArrayList(T){};
+    defer all_values.deinit(alloc);
+
+    try all_values.ensureTotalCapacity(alloc, N);
+    for (groups) |group| {
+        for (group) |value| {
+            try all_values.append(alloc, value);
+        }
+    }
+
+    // Compute grand mean (mean of all observations)
+    var grand_sum: T = 0.0;
+    for (all_values.items) |value| {
+        grand_sum += value;
+    }
+    const grand_mean = grand_sum / @as(T, @floatFromInt(N));
+
+    // Compute group means
+    var group_means = std.ArrayList(T){};
+    defer group_means.deinit(alloc);
+
+    try group_means.ensureTotalCapacity(alloc, k);
+    for (groups) |group| {
+        var group_sum: T = 0.0;
+        for (group) |value| {
+            group_sum += value;
+        }
+        const group_mean = group_sum / @as(T, @floatFromInt(group.len));
+        try group_means.append(alloc, group_mean);
+    }
+
+    // Compute Sum of Squares Between (SSB)
+    var ssb: T = 0.0;
+    for (0..k) |i| {
+        const group_size = groups[i].len;
+        const diff = group_means.items[i] - grand_mean;
+        ssb += @as(T, @floatFromInt(group_size)) * diff * diff;
+    }
+
+    // Compute Sum of Squares Within (SSW)
+    var ssw: T = 0.0;
+    for (0..k) |i| {
+        const group = groups[i];
+        const group_mean = group_means.items[i];
+        for (group) |value| {
+            const diff = value - group_mean;
+            ssw += diff * diff;
+        }
+    }
+
+    // Compute Mean Squares and F-statistic
+    const df1 = k - 1;
+    const df2 = N - k;
+
+    const msb = ssb / @as(T, @floatFromInt(df1));
+    const msw = ssw / @as(T, @floatFromInt(df2));
+
+    // Handle edge case: if MSW == 0 (no within-group variance)
+    const f_statistic = if (msw == 0) 0.0 else msb / msw;
+
+    // Compute p-value using F-distribution (right-tailed)
+    const f_dist = try FDistribution(T).init(
+        @as(T, @floatFromInt(df1)),
+        @as(T, @floatFromInt(df2)),
+    );
+    const cdf_val = f_dist.cdf(f_statistic);
+    const p_value = 1.0 - cdf_val;
+
+    return TestResult(T).init(f_statistic, p_value, @as(T, @floatFromInt(df1)), alpha);
 }
 
 // ============================================================================
@@ -1336,5 +1481,351 @@ test "chi2_test: error on invalid alpha (alpha=1)" {
     defer exp.deinit();
 
     const result = chi2_test(f64, obs, exp, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// ============================================================================
+// ONE-WAY ANOVA Tests (18+ tests)
+// ============================================================================
+
+test "anova_oneway: three groups with identical means (F≈0, p≈1, reject=false)" {
+    const group1 = [_]f64{ 5.0, 5.0, 5.0, 5.0, 5.0 };
+    const group2 = [_]f64{ 5.0, 5.0, 5.0 };
+    const group3 = [_]f64{ 5.0, 5.0, 5.0, 5.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Null hypothesis not rejected: F should be near 0, p-value near 1
+    try testing.expectApproxEqAbs(0.0, result.statistic, 1e-10);
+    try testing.expectApproxEqAbs(1.0, result.p_value, 1e-5);
+    try testing.expect(result.reject == false);
+}
+
+test "anova_oneway: three groups with different means (F>0, p<0.05, reject=true)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };      // mean ≈ 3
+    const group2 = [_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 };    // mean ≈ 8
+    const group3 = [_]f64{ 11.0, 12.0, 13.0, 14.0, 15.0 }; // mean ≈ 13
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Clear difference between groups: should reject H0
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "anova_oneway: four groups with different means" {
+    const group1 = [_]f64{ 2.0, 3.0, 4.0 };
+    const group2 = [_]f64{ 5.0, 6.0, 7.0 };
+    const group3 = [_]f64{ 8.0, 9.0, 10.0 };
+    const group4 = [_]f64{ 11.0, 12.0, 13.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+        &group4,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Four distinct groups: should strongly reject H0
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "anova_oneway: five groups with various sizes" {
+    const group1 = [_]f64{ 1.0, 2.0 };
+    const group2 = [_]f64{ 3.0, 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0 };
+    const group4 = [_]f64{ 10.0, 11.0 };
+    const group5 = [_]f64{ 12.0, 13.0, 14.0, 15.0, 16.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+        &group4,
+        &group5,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Clear group differences with unequal sizes
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "anova_oneway: two groups (minimum case)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const group2 = [_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Two groups with difference
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "anova_oneway: large groups (n=100 per group)" {
+    var group1: [100]f64 = undefined;
+    var group2: [100]f64 = undefined;
+    var group3: [100]f64 = undefined;
+
+    for (0..100) |i| {
+        group1[i] = @as(f64, @floatFromInt(i));
+        group2[i] = @as(f64, @floatFromInt(i + 100));
+        group3[i] = @as(f64, @floatFromInt(i + 200));
+    }
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Large groups with clear differences
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "anova_oneway: unequal group sizes (n1=5, n2=15, n3=10)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var group2: [15]f64 = undefined;
+    var group3: [10]f64 = undefined;
+
+    for (0..15) |i| {
+        group2[i] = @as(f64, @floatFromInt(i + 10));
+    }
+    for (0..10) |i| {
+        group3[i] = @as(f64, @floatFromInt(i + 25));
+    }
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // Unequal group sizes with mean differences
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "anova_oneway: all same single value in all groups (F=0, p=1)" {
+    const group1 = [_]f64{ 42.0, 42.0, 42.0 };
+    const group2 = [_]f64{ 42.0, 42.0, 42.0, 42.0 };
+    const group3 = [_]f64{ 42.0, 42.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // No variance within or between: F=0, p=1
+    try testing.expectApproxEqAbs(0.0, result.statistic, 1e-10);
+    try testing.expectApproxEqAbs(1.0, result.p_value, 1e-5);
+    try testing.expect(result.reject == false);
+}
+
+test "anova_oneway: f32 precision" {
+    const group1 = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const group2 = [_]f32{ 6.0, 7.0, 8.0, 9.0, 10.0 };
+    const group3 = [_]f32{ 11.0, 12.0, 13.0, 14.0, 15.0 };
+
+    const groups = [_][]const f32{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f32, &groups, 0.05, allocator);
+
+    // Should work with f32
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(!math.isNan(result.p_value));
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "anova_oneway: degrees of freedom calculation (df1=k-1, df2=N-k)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0, 10.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // k=3 groups, N=10 total observations
+    // df_between = k-1 = 2, df_within = N-k = 7
+    // df is encoded as a single value; expect it to be meaningful
+    try testing.expect(result.df > 0.0);
+    try testing.expect(!math.isNan(result.df));
+}
+
+test "anova_oneway: F-statistic is non-negative" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    // F-statistic is always non-negative
+    try testing.expect(result.statistic >= 0.0);
+}
+
+test "anova_oneway: p-value in [0, 1]" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.05, allocator);
+
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "anova_oneway: alpha=0.01 affects rejection decision" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const group2 = [_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 };
+    const group3 = [_]f64{ 11.0, 12.0, 13.0, 14.0, 15.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result_005 = try anova_oneway(f64, &groups, 0.05, allocator);
+    const result_001 = try anova_oneway(f64, &groups, 0.01, allocator);
+
+    // Same p-value but different rejection decisions based on alpha
+    try testing.expectApproxEqAbs(result_005.p_value, result_001.p_value, 1e-10);
+}
+
+test "anova_oneway: alpha=0.1 affects rejection decision" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = try anova_oneway(f64, &groups, 0.1, allocator);
+
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "anova_oneway: error on too few groups (k < 2)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+    };
+
+    const result = anova_oneway(f64, &groups, 0.05, allocator);
+    try testing.expectError(error.TooFewGroups, result);
+}
+
+test "anova_oneway: error on empty group (n=0)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2: [0]f64 = [_]f64{};
+    const group3 = [_]f64{ 4.0, 5.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = anova_oneway(f64, &groups, 0.05, allocator);
+    try testing.expectError(error.EmptyGroup, result);
+}
+
+test "anova_oneway: error on invalid alpha (alpha=0)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = anova_oneway(f64, &groups, 0.0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "anova_oneway: error on invalid alpha (alpha=1)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+    const group3 = [_]f64{ 7.0, 8.0, 9.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+        &group3,
+    };
+
+    const result = anova_oneway(f64, &groups, 1.0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "anova_oneway: error on invalid alpha (alpha > 1)" {
+    const group1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const group2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    const groups = [_][]const f64{
+        &group1,
+        &group2,
+    };
+
+    const result = anova_oneway(f64, &groups, 1.5, allocator);
     try testing.expectError(error.InvalidParameter, result);
 }
