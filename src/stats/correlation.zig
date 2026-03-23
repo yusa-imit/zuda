@@ -1948,7 +1948,7 @@ test "polyfit: quadratic polynomial (degree 2) with known parabola" {
 
 test "polyfit: cubic polynomial (degree 3) with known cubic" {
     const x_data = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
-    const y_data = [_]f64{ -5.0, 3.0, 5.0, 21.0 }; // y = 2x³ + 3
+    const y_data = [_]f64{ 1.0, 3.0, 5.0, 19.0 }; // y = 2x³ + 3
 
     const coeffs = try polyfit(&x_data, &y_data, 3, test_allocator);
     defer test_allocator.free(coeffs);
