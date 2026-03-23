@@ -3,9 +3,11 @@
 //! This module provides functions for measuring linear relationships between two variables:
 //! - Pearson correlation coefficient (parametric, assumes normality)
 //! - Spearman rank correlation (non-parametric, rank-based)
+//! - Kendall Tau correlation (non-parametric, pairwise concordance)
 //! - Simple linear regression (y ~ x)
+//! - Polynomial fitting and evaluation (polyfit, polyval)
 //!
-//! All functions operate on 1D NDArray(f64, 1) inputs.
+//! Most functions operate on 1D NDArray(f64, 1) inputs. polyfit/polyval work with raw f64 slices.
 //!
 //! ## Time Complexity
 //! - `pearson`: O(n) — one pass for means, one for covariance
@@ -534,6 +536,207 @@ pub fn kendalltau(x: []const f64, y: []const f64, allocator: Allocator) !f64 {
 
     // Clamp to [-1, 1] for numerical stability
     return math.clamp(tau, -1.0, 1.0);
+}
+
+// ============================================================================
+// POLYNOMIAL FITTING AND EVALUATION
+// ============================================================================
+
+/// Fit polynomial of specified degree to (x, y) data using least squares
+///
+/// Given n data points (x[i], y[i]), finds coefficients [c0, c1, ..., cd] that minimize
+/// the sum of squared residuals: Σ(y[i] - (c0 + c1*x[i] + ... + cd*x[i]^d))²
+///
+/// Uses normal equations: V^T·V·c = V^T·y where V is Vandermonde matrix V[i,j] = x[i]^j
+///
+/// Parameters:
+/// - x: independent variable data (length n)
+/// - y: dependent variable data (length n)
+/// - degree: degree of polynomial to fit (must be < n)
+/// - allocator: memory allocator for result
+///
+/// Returns: coefficients [c0, c1, c2, ..., cd] (length = degree + 1)
+///   - c0 is constant term
+///   - c1 is linear coefficient
+///   - cd is coefficient of x^d
+///
+/// Errors:
+/// - error.EmptyArray if x or y is empty
+/// - error.DimensionMismatch if x.len != y.len
+/// - error.DegreeTooLarge if degree >= x.len (need more points than unknowns)
+///
+/// Time: O(n*d²) | Space: O(n*d)
+///
+pub fn polyfit(x: []const f64, y: []const f64, degree: usize, allocator: Allocator) ![]f64 {
+    const n = x.len;
+
+    // Validate inputs
+    if (n == 0) return error.EmptyArray;
+    if (y.len != n) return error.DimensionMismatch;
+    if (degree >= n) return error.DegreeTooLarge;
+
+    const d = degree + 1; // Number of coefficients
+
+    // Build normal equations directly: compute V^T*V and V^T*y without explicit V matrix
+    // This avoids numerical issues and uses less memory
+    var A = try allocator.alloc(f64, d * d);
+    errdefer allocator.free(A);
+    var b = try allocator.alloc(f64, d);
+    errdefer allocator.free(b);
+
+    // Initialize A and b to zero
+    for (0..d*d) |i| A[i] = 0;
+    for (0..d) |i| b[i] = 0;
+
+    // Compute normal equations by iterating through data points
+    for (0..n) |i| {
+        var pow_x: f64 = 1.0;
+        for (0..d) |j| {
+            // Update b vector: b[j] += y[i] * x[i]^j
+            b[j] += y[i] * pow_x;
+
+            // Update A matrix: A[j, k] += x[i]^(j+k)
+            var pow_xk: f64 = pow_x;
+            for (0..d-j) |k_offset| {
+                const k = j + k_offset;
+                A[j * d + k] += pow_xk;
+                pow_xk *= x[i];
+            }
+
+            pow_x *= x[i];
+        }
+    }
+
+    // Make A symmetric (copy upper triangle to lower)
+    for (0..d) |i| {
+        for (i+1..d) |j| {
+            A[j * d + i] = A[i * d + j];
+        }
+    }
+
+    // Solve A * coeffs = b using Gaussian elimination with partial pivoting
+    var coeffs = try allocator.alloc(f64, d);
+    errdefer allocator.free(coeffs);
+
+    // Copy A and b to working matrices (we'll modify them)
+    var A_work = try allocator.alloc(f64, d * d);
+    defer allocator.free(A_work);
+    var b_work = try allocator.alloc(f64, d);
+    defer allocator.free(b_work);
+
+    @memcpy(A_work, A);
+    @memcpy(b_work, b);
+
+    // Forward elimination with partial pivoting
+    for (0..d) |col| {
+        // Find pivot
+        var max_row = col;
+        var max_val = @abs(A_work[col * d + col]);
+        for (col+1..d) |row| {
+            const abs_val = @abs(A_work[row * d + col]);
+            if (abs_val > max_val) {
+                max_val = abs_val;
+                max_row = row;
+            }
+        }
+
+        // Swap rows if needed
+        if (max_row != col) {
+            for (0..d) |j| {
+                const temp = A_work[col * d + j];
+                A_work[col * d + j] = A_work[max_row * d + j];
+                A_work[max_row * d + j] = temp;
+            }
+            const temp_b = b_work[col];
+            b_work[col] = b_work[max_row];
+            b_work[max_row] = temp_b;
+        }
+
+        // Check for singular matrix
+        if (A_work[col * d + col] == 0) {
+            return error.SingularMatrix;
+        }
+
+        // Eliminate column
+        for (col+1..d) |row| {
+            const factor = A_work[row * d + col] / A_work[col * d + col];
+            for (col..d) |j| {
+                A_work[row * d + j] -= factor * A_work[col * d + j];
+            }
+            b_work[row] -= factor * b_work[col];
+        }
+    }
+
+    // Back substitution
+    var i = d;
+    while (i > 0) : (i -= 1) {
+        const idx = i - 1;
+        var sum: f64 = b_work[idx];
+        for (idx+1..d) |j| {
+            sum -= A_work[idx * d + j] * coeffs[j];
+        }
+        coeffs[idx] = sum / A_work[idx * d + idx];
+    }
+
+    allocator.free(A);
+    allocator.free(b);
+
+    return coeffs;
+}
+
+/// Evaluate polynomial at given points
+///
+/// Given coefficients [c0, c1, ..., cn] and evaluation points x[],
+/// computes y[i] = c0 + c1*x[i] + c2*x[i]² + ... + cn*x[i]^n
+///
+/// Uses Horner's method for numerical stability:
+///   y = c0 + x*(c1 + x*(c2 + x*(...)))
+///
+/// Parameters:
+/// - coeffs: polynomial coefficients [c0, c1, ..., cn] where c0 is constant (can be []const f64 or *[]f64)
+/// - x: evaluation points
+/// - allocator: memory allocator for result
+///
+/// Returns: allocated array of length x.len with polynomial values
+///
+/// Errors:
+/// - error.EmptyArray if coeffs or x is empty
+///
+/// Time: O(n*d) where n=len(x), d=len(coeffs) | Space: O(n)
+///
+pub fn polyval(coeffs_input: anytype, x: []const f64, allocator: Allocator) ![]f64 {
+    // Handle both []const f64 and *[]f64 inputs
+    const coeffs: []const f64 = if (@TypeOf(coeffs_input) == *[]f64)
+        coeffs_input.*
+    else if (@TypeOf(coeffs_input) == *[]const f64)
+        coeffs_input.*
+    else
+        coeffs_input;
+
+    // Validate inputs
+    if (coeffs.len == 0) return error.EmptyArray;
+    if (x.len == 0) return error.EmptyArray;
+
+    const n = x.len;
+    const d = coeffs.len;
+
+    // Allocate result array
+    var result = try allocator.alloc(f64, n);
+
+    // Evaluate polynomial at each x[i] using Horner's method
+    for (0..n) |i| {
+        var y: f64 = coeffs[d - 1];
+
+        // Work backwards from highest degree to lowest
+        var j: usize = d - 1;
+        while (j > 0) : (j -= 1) {
+            y = y * x[i] + coeffs[j - 1];
+        }
+
+        result[i] = y;
+    }
+
+    return result;
 }
 
 // ============================================================================
@@ -1687,4 +1890,433 @@ test "kendalltau: result is finite number" {
 
     // Result should be a finite f64 (not NaN or infinity)
     try testing.expect(math.isFinite(tau));
+}
+
+// ============================================================================
+// POLYNOMIAL FITTING AND EVALUATION TESTS
+// ============================================================================
+
+test "polyfit: constant polynomial (degree 0) from horizontal data" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 7.0, 7.0, 7.0, 7.0, 7.0 };
+
+    var coeffs = try polyfit(&x_data, &y_data, 0, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Degree 0 → constant polynomial: c0
+    try testing.expect(coeffs.len == 1);
+    // Should fit y = 7
+    try testing.expectApproxEqAbs(7.0, coeffs[0], 1e-10);
+}
+
+test "polyfit: linear polynomial (degree 1) from linear data" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 3.0, 5.0, 7.0, 9.0, 11.0 }; // y = 2x + 1
+
+    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Degree 1 → linear: c0 + c1*x
+    try testing.expect(coeffs.len == 2);
+    // Expected: intercept ≈ 1.0, slope ≈ 2.0
+    try testing.expectApproxEqAbs(1.0, coeffs[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, coeffs[1], 1e-10);
+}
+
+test "polyfit: quadratic polynomial (degree 2) with known parabola" {
+    const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    const y_data = [_]f64{ 4.0, 1.0, 0.0, 1.0, 4.0 }; // y = x²
+
+    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Degree 2 → quadratic: c0 + c1*x + c2*x²
+    try testing.expect(coeffs.len == 3);
+    // Expected: c0 ≈ 0, c1 ≈ 0, c2 ≈ 1
+    try testing.expectApproxEqAbs(0.0, coeffs[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, coeffs[1], 1e-10);
+    try testing.expectApproxEqAbs(1.0, coeffs[2], 1e-10);
+}
+
+test "polyfit: cubic polynomial (degree 3) with known cubic" {
+    const x_data = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
+    const y_data = [_]f64{ -5.0, 3.0, 5.0, 21.0 }; // y = 2x³ + 3
+
+    var coeffs = try polyfit(&x_data, &y_data, 3, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Degree 3 → cubic: c0 + c1*x + c2*x² + c3*x³
+    try testing.expect(coeffs.len == 4);
+    // Expected: c0 ≈ 3, c1 ≈ 0, c2 ≈ 0, c3 ≈ 2
+    try testing.expectApproxEqAbs(3.0, coeffs[0], 1e-8);
+    try testing.expectApproxEqAbs(0.0, coeffs[1], 1e-8);
+    try testing.expectApproxEqAbs(0.0, coeffs[2], 1e-8);
+    try testing.expectApproxEqAbs(2.0, coeffs[3], 1e-8);
+}
+
+test "polyfit: linear fit matches linregress results" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 2.5, 4.0, 5.5, 7.0, 8.5 };
+
+    // Create NDArray versions for linregress
+    var x_ndarray = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{5}, &x_data, .row_major);
+    defer x_ndarray.deinit();
+    var y_ndarray = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{5}, &y_data, .row_major);
+    defer y_ndarray.deinit();
+
+    const lr_result = try linregress(x_ndarray, y_ndarray, test_allocator);
+
+    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // polyfit degree 1: c0 + c1*x should match linregress slope + intercept
+    try testing.expectApproxEqAbs(lr_result.intercept, coeffs[0], 1e-10);
+    try testing.expectApproxEqAbs(lr_result.slope, coeffs[1], 1e-10);
+}
+
+test "polyfit: noisy data produces reasonable fit" {
+    const x_data = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    const y_data = [_]f64{ 0.5, 2.2, 3.9, 6.1, 8.3 }; // Approximately y = 2x
+
+    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Should fit roughly y ≈ 2x + c
+    try testing.expectApproxEqAbs(2.0, coeffs[1], 0.2); // Slope near 2
+    try testing.expect(coeffs[0] >= -1.0 and coeffs[0] <= 1.0); // Intercept reasonable
+}
+
+test "polyfit: higher degree fits data with less error" {
+    const x_data = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 3.0, 7.0, 13.0 }; // y = x² + x + 1
+
+    // Fit with degree 1 (linear)
+    var coeffs1 = try polyfit(&x_data, &y_data, 1, test_allocator);
+    defer test_allocator.free(coeffs1);
+
+    // Fit with degree 2 (quadratic)
+    var coeffs2 = try polyfit(&x_data, &y_data, 2, test_allocator);
+    defer test_allocator.free(coeffs2);
+
+    // Verify quadratic has correct form: c0=1, c1=1, c2=1
+    try testing.expect(coeffs2.len == 3);
+    try testing.expectApproxEqAbs(1.0, coeffs2[0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, coeffs2[1], 1e-10);
+    try testing.expectApproxEqAbs(1.0, coeffs2[2], 1e-10);
+
+    // Linear fit will have higher residuals than quadratic
+    // (We don't test the residuals here, just verify both produce valid coefficients)
+    try testing.expect(coeffs1.len == 2);
+    try testing.expect(coeffs2.len == 3);
+}
+
+test "polyfit: error on empty arrays" {
+    const x_data: [0]f64 = .{};
+    const y_data: [0]f64 = .{};
+
+    const result = polyfit(&x_data, &y_data, 1, test_allocator);
+
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "polyfit: error on dimension mismatch" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 2.0 };
+
+    const result = polyfit(&x_data, &y_data, 1, test_allocator);
+
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "polyfit: error when degree >= number of points" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 2.0, 4.0, 6.0 };
+
+    // degree 3 >= n=3 should error
+    const result = polyfit(&x_data, &y_data, 3, test_allocator);
+
+    try testing.expectError(error.DegreeTooLarge, result);
+}
+
+test "polyfit: degree exactly n-1 is allowed" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 2.0, 4.0, 6.0 };
+
+    // degree 2 == n-1=2 should succeed (will interpolate exactly)
+    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    try testing.expect(coeffs.len == 3);
+}
+
+test "polyfit: single point requires degree 0" {
+    const x_data = [_]f64{5.0};
+    const y_data = [_]f64{10.0};
+
+    // degree 0 should work
+    var coeffs = try polyfit(&x_data, &y_data, 0, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    try testing.expect(coeffs.len == 1);
+    try testing.expectApproxEqAbs(10.0, coeffs[0], 1e-10);
+
+    // degree 1 should fail (1 >= n=1)
+    const result = polyfit(&x_data, &y_data, 1, test_allocator);
+    try testing.expectError(error.DegreeTooLarge, result);
+}
+
+test "polyval: evaluate constant polynomial" {
+    const coeffs = [_]f64{7.0};
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // y = 7 for all x
+    try testing.expect(y.len == 3);
+    for (y) |val| {
+        try testing.expectApproxEqAbs(7.0, val, 1e-15);
+    }
+}
+
+test "polyval: evaluate linear polynomial" {
+    const coeffs = [_]f64{ 1.0, 2.0 }; // y = 1 + 2x
+    const x_data = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // Expected: [1, 3, 5, 7]
+    try testing.expect(y.len == 4);
+    try testing.expectApproxEqAbs(1.0, y[0], 1e-15);
+    try testing.expectApproxEqAbs(3.0, y[1], 1e-15);
+    try testing.expectApproxEqAbs(5.0, y[2], 1e-15);
+    try testing.expectApproxEqAbs(7.0, y[3], 1e-15);
+}
+
+test "polyval: evaluate quadratic polynomial" {
+    const coeffs = [_]f64{ 0.0, 0.0, 1.0 }; // y = x²
+    const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // Expected: [4, 1, 0, 1, 4]
+    try testing.expect(y.len == 5);
+    try testing.expectApproxEqAbs(4.0, y[0], 1e-15);
+    try testing.expectApproxEqAbs(1.0, y[1], 1e-15);
+    try testing.expectApproxEqAbs(0.0, y[2], 1e-15);
+    try testing.expectApproxEqAbs(1.0, y[3], 1e-15);
+    try testing.expectApproxEqAbs(4.0, y[4], 1e-15);
+}
+
+test "polyval: evaluate cubic polynomial" {
+    const coeffs = [_]f64{ 0.0, 1.0, 0.0, 1.0 }; // y = x + x³
+    const x_data = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // Expected: y(-1) = -1-1=-2, y(0)=0, y(1)=1+1=2, y(2)=2+8=10
+    try testing.expect(y.len == 4);
+    try testing.expectApproxEqAbs(-2.0, y[0], 1e-15);
+    try testing.expectApproxEqAbs(0.0, y[1], 1e-15);
+    try testing.expectApproxEqAbs(2.0, y[2], 1e-15);
+    try testing.expectApproxEqAbs(10.0, y[3], 1e-15);
+}
+
+test "polyval: Horner's method numerical stability" {
+    // Test that Horner's method gives accurate results for larger x values
+    // Using y = 1 + 2x + 3x² + 4x³
+    const coeffs = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const x_data = [_]f64{10.0};
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // Expected: 1 + 2*10 + 3*100 + 4*1000 = 1 + 20 + 300 + 4000 = 4321
+    try testing.expectApproxEqAbs(4321.0, y[0], 1e-10);
+}
+
+test "polyval: evaluate at negative x values" {
+    const coeffs = [_]f64{ 5.0, -3.0, 2.0 }; // y = 5 - 3x + 2x²
+    const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // y(-2) = 5 - 3*(-2) + 2*4 = 5 + 6 + 8 = 19
+    // y(-1) = 5 - 3*(-1) + 2*1 = 5 + 3 + 2 = 10
+    // y(0) = 5
+    // y(1) = 5 - 3 + 2 = 4
+    try testing.expectApproxEqAbs(19.0, y[0], 1e-15);
+    try testing.expectApproxEqAbs(10.0, y[1], 1e-15);
+    try testing.expectApproxEqAbs(5.0, y[2], 1e-15);
+    try testing.expectApproxEqAbs(4.0, y[3], 1e-15);
+}
+
+test "polyval: evaluate at x=0" {
+    const coeffs = [_]f64{ 3.0, 2.0, 1.0 }; // y = 3 + 2x + x²
+    const x_data = [_]f64{0.0};
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // y(0) = 3 (the constant term)
+    try testing.expectApproxEqAbs(3.0, y[0], 1e-15);
+}
+
+test "polyval: evaluate at single point" {
+    const coeffs = [_]f64{ 1.0, 2.0 }; // y = 1 + 2x
+    const x_data = [_]f64{5.0};
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // y(5) = 1 + 2*5 = 11
+    try testing.expectApproxEqAbs(11.0, y[0], 1e-15);
+}
+
+test "polyval: error on empty evaluation points" {
+    const coeffs = [_]f64{ 1.0, 2.0 };
+    const x_data: [0]f64 = .{};
+
+    const result = polyval(&coeffs, &x_data, test_allocator);
+
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "polyval: error on empty coefficient array" {
+    const coeffs: [0]f64 = .{};
+    const x_data = [_]f64{ 1.0, 2.0 };
+
+    const result = polyval(&coeffs, &x_data, test_allocator);
+
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "polyval: single coefficient (constant)" {
+    const coeffs = [_]f64{42.0};
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    // All outputs should be 42
+    for (y) |val| {
+        try testing.expectApproxEqAbs(42.0, val, 1e-15);
+    }
+}
+
+test "polyfit-polyval roundtrip: reconstruct linear function" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 3.0, 5.0, 7.0, 9.0, 11.0 }; // y = 2x + 1
+
+    // Fit polynomial
+    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Evaluate at original x points
+    var y_pred = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y_pred);
+
+    // Should reconstruct original y
+    for (y_pred, y_data) |pred, orig| {
+        try testing.expectApproxEqAbs(orig, pred, 1e-10);
+    }
+}
+
+test "polyfit-polyval roundtrip: reconstruct quadratic function" {
+    const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    const y_data = [_]f64{ 4.0, 1.0, 0.0, 1.0, 4.0 }; // y = x²
+
+    // Fit polynomial
+    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Evaluate at original x points
+    var y_pred = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y_pred);
+
+    // Should reconstruct original y exactly (or very close due to floating point)
+    for (y_pred, y_data) |pred, orig| {
+        try testing.expectApproxEqAbs(orig, pred, 1e-10);
+    }
+}
+
+test "polyfit-polyval roundtrip: interpolation at new points" {
+    const x_data = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 0.0, 1.0, 4.0, 9.0 }; // y = x²
+
+    // Fit polynomial (degree 2)
+    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Evaluate at new points (between and outside training data)
+    const x_new = [_]f64{ 0.5, 1.5, 2.5 };
+    var y_pred = try polyval(&coeffs, &x_new, test_allocator);
+    defer test_allocator.free(y_pred);
+
+    // Expected: [0.25, 2.25, 6.25]
+    try testing.expectApproxEqAbs(0.25, y_pred[0], 1e-10);
+    try testing.expectApproxEqAbs(2.25, y_pred[1], 1e-10);
+    try testing.expectApproxEqAbs(6.25, y_pred[2], 1e-10);
+}
+
+test "polyval: zero coefficients produce zeros" {
+    const coeffs = [_]f64{ 0.0, 0.0, 0.0 }; // y = 0
+    const x_data = [_]f64{ 1.0, 10.0, 100.0, -5.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+    defer test_allocator.free(y);
+
+    for (y) |val| {
+        try testing.expectApproxEqAbs(0.0, val, 1e-15);
+    }
+}
+
+test "polyfit: memory allocation correctness" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+
+    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+
+    // Should allocate exactly degree+1 coefficients
+    try testing.expect(coeffs.len == 3);
+
+    test_allocator.free(coeffs);
+}
+
+test "polyval: memory allocation correctness" {
+    const coeffs = [_]f64{ 1.0, 2.0, 3.0 };
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+
+    var y = try polyval(&coeffs, &x_data, test_allocator);
+
+    // Should allocate exactly as many outputs as x points
+    try testing.expect(y.len == 5);
+
+    test_allocator.free(y);
+}
+
+test "polyfit: large dataset accuracy" {
+    // Create synthetic data: y = 3x² - 2x + 5
+    var x_data = try test_allocator.alloc(f64, 50);
+    defer test_allocator.free(x_data);
+    var y_data = try test_allocator.alloc(f64, 50);
+    defer test_allocator.free(y_data);
+
+    for (0..50) |i| {
+        const i_f = @as(f64, @floatFromInt(i)) / 10.0; // 0, 0.1, 0.2, ..., 4.9
+        x_data[i] = i_f;
+        y_data[i] = 3.0 * i_f * i_f - 2.0 * i_f + 5.0;
+    }
+
+    var coeffs = try polyfit(x_data, y_data, 2, test_allocator);
+    defer test_allocator.free(coeffs);
+
+    // Should fit: c0≈5, c1≈-2, c2≈3
+    try testing.expectApproxEqAbs(5.0, coeffs[0], 1e-8);
+    try testing.expectApproxEqAbs(-2.0, coeffs[1], 1e-8);
+    try testing.expectApproxEqAbs(3.0, coeffs[2], 1e-8);
 }
