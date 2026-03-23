@@ -115,3 +115,5 @@
 {"timestamp":"2026-03-23T23:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement ks_test_1samp and ks_test_2samp with bug fix","project":"zuda"}
 {"timestamp":"2026-03-23T23:20:00Z","action":"subagent","agent_type":"test-writer","task":"Write mannwhitney_u comprehensive tests (21 tests for non-parametric comparison)","project":"zuda"}
 {"timestamp":"2026-03-23T23:25:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement mannwhitney_u with test fixes (symmetry, empty array)","project":"zuda"}
+{"timestamp":"2026-03-24T01:45:00Z","action":"subagent","agent_type":"test-writer","task":"Write correlation regression tests","project":"zuda"}
+{"timestamp":"2026-03-24T02:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement correlation regression functions","project":"zuda"}

@@ -2,20 +2,65 @@
 
 ## Current Status
 - **Version**: 1.21.0 (current), v1.22.0 IN PROGRESS
-- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing
+- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing & Correlation
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (verified 2026-03-24 Hour 0)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
-- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Regression
-- **Next Priority**: Correlation and regression functions (pearson, spearman, linregress, polyfit, logistic)
-- **Test Count**: 1307/1309 tests (1307 passing + 2 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + ndarray + containers + algorithms + internal
+- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Correlation/Regression
+- **Next Priority**: Advanced regression (polynomial fit, logistic regression) or other v1.22.0 features
+- **Test Count**: 1360/1362 tests (1360 passing + 2 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + 53 correlation/regression + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
   - All 12 distributions implemented: 8 continuous + 4 discrete
   - Hypothesis tests: 7 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway, ks_test, mannwhitney_u)
+  - Correlation/Regression: 3 functions (pearson, spearman, linregress) — 53 tests ✅
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Hour 0)
+## Recent Progress (Session 2026-03-24 - Hour 1)
+**FEATURE MODE:**
+
+### Correlation & Regression Implementation (commit d91952f) ✅
+- ✅ **Module Created**: `src/stats/correlation.zig` (1,270 lines: 3 functions + 53 tests + helpers)
+- ✅ **Functions**: pearson, spearman, linregress — correlation and simple linear regression
+- ✅ **TDD Workflow**: test-writer (53 tests) → zig-developer (implementation) → all tests passing
+- ✅ **pearson(x, y, allocator) !f64**: Pearson correlation coefficient r ∈ [-1, 1]
+  - Formula: r = cov(x,y) / (σ_x * σ_y)
+  - Two-pass algorithm: means → covariance/standard deviations
+  - Handles zero variance case: error.ZeroStdDev
+  - Clamps result to [-1, 1] for numerical stability
+  - Time: O(n), Space: O(1)
+  - Tests: 17 (perfect correlation, symmetry, bounds, edge cases, large datasets)
+- ✅ **spearman(x, y, allocator) !f64**: Spearman rank correlation ρ ∈ [-1, 1]
+  - Ranks data with tie-averaging via rankData helper
+  - Non-parametric alternative to Pearson
+  - Delegates to pearson on rank-transformed arrays
+  - Time: O(n log n), Space: O(n)
+  - Tests: 14 (rank correlation, ties, monotonic relationships, outlier robustness)
+- ✅ **linregress(x, y, allocator) !RegressionResult**: Simple linear regression
+  - Returns struct: {slope, intercept, r_squared, p_value, std_err}
+  - OLS estimates: slope = cov(x,y)/var(x), intercept = ȳ - slope·x̄
+  - R² = 1 - RSS/TSS, clamped to [0, 1]
+  - Statistical significance: t-stat, p-value via StudentT(n-2) distribution
+  - Requires n ≥ 3 for valid degrees of freedom
+  - Time: O(n), Space: O(1)
+  - Tests: 18 (perfect fit, noisy data, error conditions, p-value significance)
+- ✅ **Helper**: rankData(data, allocator) — efficient ranking with tie averaging, O(n log n)
+- ✅ **Error Handling**: EmptyArray, DimensionMismatch, ZeroStdDev, ConstantX, InsufficientSamples
+- ✅ **Tests**: 53/53 passing (100%)
+- ✅ **Export**: Added `stats.correlation` to public API (`src/root.zig`)
+- ✅ **Status**: All 1360 tests passing (1307 → 1360, +53 tests)
+
+**v1.22.0 Progress**:
+- [x] Hypothesis Testing (7 tests) ✅
+- [x] Correlation (pearson, spearman) ✅
+- [x] Simple Linear Regression (linregress) ✅
+- [ ] Advanced Regression (polynomial fit, logistic regression)
+
+**Next Session Priority**: Polynomial/logistic regression or other v1.22.0 features
+
+---
+
+## Previous Progress (Session 2026-03-24 - Hour 0)
 **STABILIZATION MODE:**
 - ✅ Verified CI Status: GREEN — latest run on main succeeded
 - ✅ Verified GitHub Issues: NONE — 0 open issues
