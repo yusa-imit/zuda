@@ -120,3 +120,8 @@
 {"timestamp":"2026-03-24T01:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write kendalltau tests (24 comprehensive tests)","project":"zuda"}
 {"timestamp":"2026-03-24T01:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement kendalltau function (O(n²) pairwise algorithm with tau-b correction)","project":"zuda"}
 {"timestamp":"2026-03-24T01:45:00Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 kendalltau test data issues (replace monotonic data with imperfect correlation)","project":"zuda"}
+{"timestamp":"2026-03-24T03:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write polynomial regression tests for polyfit and polyval","project":"zuda"}
+{"timestamp":"2026-03-24T03:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement polyfit and polyval functions","project":"zuda"}
+{"timestamp":"2026-03-24T03:20:00Z","action":"subagent","agent_type":"test-writer","task":"Fix 26 var→const compiler warnings in tests","project":"zuda"}
+{"timestamp":"2026-03-24T03:25:00Z","action":"subagent","agent_type":"zig-developer","task":"Fix polyfit Gram matrix construction bug","project":"zuda"}
+{"timestamp":"2026-03-24T03:30:00Z","action":"subagent","agent_type":"test-writer","task":"Fix incorrect cubic polynomial test data","project":"zuda"}

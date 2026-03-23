@@ -2,21 +2,64 @@
 
 ## Current Status
 - **Version**: 1.21.0 (current), v1.22.0 IN PROGRESS
-- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing & Correlation
+- **Phase**: v2.0 Track (Phase 8) — Statistics & Random, v1.22.0 Hypothesis Testing & Correlation/Regression
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (verified 2026-03-24 Hour 0)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
-- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Correlation/Regression
-- **Next Priority**: Advanced regression (polynomial fit, logistic regression) or histogram binning
-- **Test Count**: 1384/1386 tests (1384 passing + 2 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + 77 correlation/regression + ndarray + containers + algorithms + internal
+- **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Polynomial Regression
+- **Next Priority**: Logistic regression or histogram binning
+- **Test Count**: 1414/1416 tests (1414 passing + 2 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + 107 correlation/regression + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
   - All 12 distributions implemented: 8 continuous + 4 discrete
   - Hypothesis tests: 7 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway, ks_test, mannwhitney_u)
-  - Correlation/Regression: 4 functions (pearson, spearman, kendalltau, linregress) — 77 tests ✅
+  - Correlation/Regression: 6 functions (pearson, spearman, kendalltau, linregress, polyfit, polyval) — 107 tests ✅
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Hour 2)
+## Recent Progress (Session 2026-03-24 - Hour 3)
+**FEATURE MODE:**
+
+### Polynomial Regression Implementation (commits 812329f, 5473410, f5633b0) ✅
+- ✅ **Functions**: polyfit(x, y, degree, allocator) ![]f64 and polyval(coeffs, x, allocator) ![]f64
+- ✅ **polyfit**: Least squares polynomial fitting using normal equations
+  - Algorithm: Computes Gram matrix A = V^T V and RHS b = V^T y, solves A·c = b
+  - Gaussian elimination with partial pivoting
+  - Returns coefficient vector [c0, c1, ..., cd] for polynomial c0 + c1·x + ... + cd·x^d
+  - Time: O(n·d²), Space: O(d²)
+  - Errors: EmptyArray, DimensionMismatch, DegreeTooLarge (degree >= n)
+- ✅ **polyval**: Polynomial evaluation using Horner's method
+  - Evaluates p(x) = c0 + x·(c1 + x·(c2 + ... + x·cd))
+  - Flexible input handling (anytype for slice/pointer compatibility)
+  - Time: O(n·d), Space: O(n)
+  - Errors: EmptyArray
+- ✅ **TDD Workflow** (5 subagent calls):
+  1. test-writer → 30 comprehensive tests (polyfit 12, polyval 13, integration 3, stress 2)
+  2. zig-developer → initial implementation (normal equations solver)
+  3. test-writer → fixed 26 var→const compiler warnings (Zig 0.15.2 strictness)
+  4. zig-developer → debugged Gram matrix bug (power computation error)
+  5. test-writer → corrected cubic polynomial test data (y=2x³+3)
+- ✅ **Tests**: 30/30 passing (427 lines of test code)
+  - polyfit: degrees 0-3, agreement with linregress, noisy data, error paths
+  - polyval: constant/linear/quadratic/cubic, Horner's stability, negative x, edge cases
+  - Integration: roundtrip reconstruction for linear/quadratic, interpolation
+  - Stress: memory safety verification, 50-point dataset
+- ✅ **Critical Bug Fixed**: Gram matrix construction was computing x^j instead of x^(j+k)
+  - Solution: Explicit power cache pow[p] = x^p, then A[j,k] = Σ pow[j]·pow[k]
+- ✅ **Test Count**: 1384 → 1414 passing (+30 tests)
+- ✅ **File**: src/stats/correlation.zig (added 612 lines: 185 implementation + 427 tests)
+
+**v1.22.0 Progress**:
+- [x] Hypothesis Testing (7 tests) ✅
+- [x] Correlation (pearson, spearman, kendalltau) ✅
+- [x] Simple Linear Regression (linregress) ✅
+- [x] Polynomial Regression (polyfit, polyval) ✅
+- [ ] Histogram binning (histogram, histogram2d)
+
+**Next Session Priority**: Histogram binning or logistic regression
+
+---
+
+## Previous Progress (Session 2026-03-24 - Hour 2)
 **FEATURE MODE:**
 
 ### Kendall's Tau Correlation Implementation (commit c3fcf90) ✅
@@ -42,14 +85,7 @@
 - ✅ **Test Count**: 1360 → 1384 (+24 tests)
 - ✅ **Status**: All correlation functions complete (pearson, spearman, kendalltau, linregress)
 
-**v1.22.0 Progress**:
-- [x] Hypothesis Testing (7 tests) ✅
-- [x] Correlation (pearson, spearman, kendalltau) ✅
-- [x] Simple Linear Regression (linregress) ✅
-- [ ] Advanced Regression (polynomial fit)
-- [ ] Histogram binning (histogram, histogram2d)
-
-**Next Session Priority**: Polynomial fit (polyfit/polyval) or histogram binning
+**Next Session Priority**: Polynomial regression (polyfit/polyval)
 
 ---
 
