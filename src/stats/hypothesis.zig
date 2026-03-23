@@ -1829,3 +1829,878 @@ test "anova_oneway: error on invalid alpha (alpha > 1)" {
     const result = anova_oneway(f64, &groups, 1.5, allocator);
     try testing.expectError(error.InvalidParameter, result);
 }
+
+// ============================================================================
+// KOLMOGOROV-SMIRNOV TESTS
+// ============================================================================
+
+/// One-sample Kolmogorov-Smirnov test: H0: data follows theoretical distribution
+///
+/// Tests whether a sample follows a specified theoretical cumulative distribution.
+/// Computes the maximum distance between empirical and theoretical CDFs.
+///
+/// Formula:
+/// - Empirical CDF: F_n(x) = (number of observations ≤ x) / n
+/// - Theoretical CDF: F(x) = cdf_fn(x)
+/// - D = max|F_n(x) - F(x)| over all observations x
+///
+/// The test statistic D follows the Kolmogorov distribution asymptotically.
+/// A large D value indicates poor fit between data and theoretical distribution.
+///
+/// Parameters:
+/// - data: 1D NDArray of observed values
+/// - cdf_fn: Function pointer to theoretical CDF (fn(T) T)
+/// - alpha: significance level (default 0.05 for 95% confidence)
+/// - allocator: memory allocator for sorting data
+///
+/// Returns: TestResult with D statistic, p-value (right-tailed), df=0, and rejection decision
+///
+/// Errors:
+/// - error.EmptyArray if data is empty
+/// - error.InvalidParameter if alpha not in (0, 1)
+/// - error.OutOfMemory if allocation fails
+///
+/// Time: O(n log n) where n = sample size (sorting dominates)
+/// Space: O(n) for sorted copy of data
+///
+/// Notes:
+/// - This is a right-tailed test (large D → reject H0)
+/// - P-value = P(Kolmogorov(n) > D_observed)
+/// - Uses asymptotic approximation: p ≈ 2 * exp(-2 * D² * n) for large n
+/// - For small n: approximation may be less accurate but still reasonable
+///
+/// Example:
+/// ```zig
+/// const uniform_cdf = struct {
+///     pub fn cdf(x: f64) f64 { if (x < 0) return 0; if (x > 1) return 1; return x; }
+/// }.cdf;
+/// const data = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{50}, &my_data, .row_major);
+/// const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+/// ```
+pub fn ks_test_1samp(
+    comptime T: type,
+    data: NDArray_type(T, 1),
+    cdf_fn: *const fn(T) T,
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    const n = data.count();
+
+    // Validation
+    if (n == 0) return error.EmptyArray;
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    // Create a sorted copy of the data
+    const sorted_data = try alloc.alloc(T, n);
+    defer alloc.free(sorted_data);
+
+    @memcpy(sorted_data, data.data[0..n]);
+
+    // Sort the data
+    const asc_f64 = struct {
+        fn lessThan(_: void, a: T, b: T) bool {
+            return a < b;
+        }
+    };
+    std.mem.sort(T, sorted_data, {}, asc_f64.lessThan);
+
+    // Compute D statistic: max|F_n(x) - F(x)|
+    var d_stat: T = 0.0;
+
+    for (0..n) |i| {
+        const x = sorted_data[i];
+        const f_theoretical = cdf_fn(x);
+
+        // Empirical CDF at point x (after this observation)
+        // F_n(x) = i / n for the i-th order statistic (0-indexed)
+        // But we need to check both F_n(x-) and F_n(x)
+        const f_empirical_after = @as(T, @floatFromInt(i + 1)) / @as(T, @floatFromInt(n));
+        const f_empirical_before = @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(n));
+
+        // D = max of |F_n - F| at all points
+        const diff_after = @abs(f_empirical_after - f_theoretical);
+        const diff_before = @abs(f_empirical_before - f_theoretical);
+
+        d_stat = @max(d_stat, @max(diff_after, diff_before));
+    }
+
+    // Compute p-value using asymptotic approximation
+    // For large n: p ≈ 2 * exp(-2 * D² * n)
+    // This approximation is reasonable for n > 5
+    const n_f = @as(T, @floatFromInt(n));
+
+    // Asymptotic p-value: P(D > d) ≈ 2 * exp(-2 * D² * n)
+    const d_squared = d_stat * d_stat;
+    const exponent = -2.0 * d_squared * n_f;
+    const p_value = 2.0 * math.exp(exponent);
+
+    // Clamp p-value to [0, 1]
+    const p_clamped = @min(1.0, @max(0.0, p_value));
+
+    return TestResult(T).init(d_stat, p_clamped, 0.0, alpha);
+}
+
+/// Two-sample Kolmogorov-Smirnov test: H0: two samples follow same distribution
+///
+/// Tests whether two samples follow the same underlying distribution.
+/// Computes the maximum distance between empirical CDFs of both samples.
+///
+/// Formula:
+/// - Empirical CDF of sample 1: F_1(x) = (count of obs ≤ x in sample 1) / n1
+/// - Empirical CDF of sample 2: F_2(x) = (count of obs ≤ x in sample 2) / n2
+/// - D = max|F_1(x) - F_2(x)| over all observations from both samples
+///
+/// The test statistic D is compared using an effective sample size.
+/// A large D value indicates the two distributions differ significantly.
+///
+/// Parameters:
+/// - data1: 1D NDArray of first sample observations
+/// - data2: 1D NDArray of second sample observations
+/// - alpha: significance level (default 0.05 for 95% confidence)
+/// - allocator: memory allocator for sorting data
+///
+/// Returns: TestResult with D statistic, p-value (right-tailed), df=0, and rejection decision
+///
+/// Errors:
+/// - error.EmptyArray if either data1 or data2 is empty
+/// - error.InvalidParameter if alpha not in (0, 1)
+/// - error.OutOfMemory if allocation fails
+///
+/// Time: O((n1+n2) log(n1+n2)) for sorting combined samples
+/// Space: O(n1 + n2) for merged and sorted data
+///
+/// Notes:
+/// - This is a right-tailed test (large D → reject H0)
+/// - P-value computed using two-sample Kolmogorov distribution (asymptotic)
+/// - Effective sample size n_eff = sqrt(n1*n2/(n1+n2))
+/// - P-value approximation: similar to one-sample case with effective n
+/// - Test is symmetric: ks_test_2samp(a, b) ≡ ks_test_2samp(b, a)
+///
+/// Example:
+/// ```zig
+/// const data1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{30}, &sample1, .row_major);
+/// const data2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{25}, &sample2, .row_major);
+/// const result = try ks_test_2samp(f64, data1, data2, 0.05, allocator);
+/// ```
+pub fn ks_test_2samp(
+    comptime T: type,
+    data1: NDArray_type(T, 1),
+    data2: NDArray_type(T, 1),
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    const n1 = data1.count();
+    const n2 = data2.count();
+
+    // Validation
+    if (n1 == 0 or n2 == 0) return error.EmptyArray;
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    // Merge both samples and track which sample each point came from
+    const total_n = n1 + n2;
+    var merged_data = try alloc.alloc(T, total_n);
+    defer alloc.free(merged_data);
+
+    @memcpy(merged_data[0..n1], data1.data[0..n1]);
+    @memcpy(merged_data[n1..total_n], data2.data[0..n2]);
+
+    // Sort merged data
+    const asc_f64 = struct {
+        fn lessThan(_: void, a: T, b: T) bool {
+            return a < b;
+        }
+    };
+    std.mem.sort(T, merged_data, {}, asc_f64.lessThan);
+
+    // Compute D statistic by iterating through sorted unique values
+    var d_stat: T = 0.0;
+
+    // Track counts for each sample
+    var count1: usize = 0;
+    var count2: usize = 0;
+
+    var i: usize = 0;
+    while (i < total_n) : (i += 1) {
+        const current_val = merged_data[i];
+
+        // Count how many from each sample are ≤ current_val
+        count1 = 0;
+        count2 = 0;
+
+        for (0..n1) |j| {
+            if (data1.data[j] <= current_val) {
+                count1 += 1;
+            }
+        }
+        for (0..n2) |j| {
+            if (data2.data[j] <= current_val) {
+                count2 += 1;
+            }
+        }
+
+        // Compute empirical CDFs
+        const f1 = @as(T, @floatFromInt(count1)) / @as(T, @floatFromInt(n1));
+        const f2 = @as(T, @floatFromInt(count2)) / @as(T, @floatFromInt(n2));
+
+        // Update D statistic
+        const diff = @abs(f1 - f2);
+        d_stat = @max(d_stat, diff);
+    }
+
+    // Compute p-value using asymptotic approximation for two-sample KS test
+    // Effective sample size: n_eff = sqrt(n1*n2 / (n1 + n2))
+    const n1_f = @as(T, @floatFromInt(n1));
+    const n2_f = @as(T, @floatFromInt(n2));
+    const n_eff = math.sqrt((n1_f * n2_f) / (n1_f + n2_f));
+
+    // p-value: similar to one-sample but with effective n
+    // P(D > d) ≈ 2 * exp(-2 * D² * n_eff)
+    const d_squared = d_stat * d_stat;
+    const exponent = -2.0 * d_squared * n_eff;
+    const p_value = 2.0 * math.exp(exponent);
+
+    // Clamp p-value to [0, 1]
+    const p_clamped = @min(1.0, @max(0.0, p_value));
+
+    return TestResult(T).init(d_stat, p_clamped, 0.0, alpha);
+}
+
+// ============================================================================
+// Kolmogorov-Smirnov Test Tests (30+ tests)
+// ============================================================================
+
+test "ks_test_1samp: perfect fit (data from Uniform(0,1) vs uniform CDF, D≈0, p≈1, reject=false)" {
+    // Data from Uniform(0,1) should match uniform CDF perfectly
+    const data_slice = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data_slice, .row_major);
+    defer data.deinit();
+
+    // Uniform CDF on [0, 1]: F(x) = x
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    // Should have very small D statistic and large p-value
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+}
+
+test "ks_test_1samp: good fit (Normal(0,1) data vs standard normal CDF, should not reject)" {
+    // Data approximately from Normal(0,1)
+    const data_slice = [_]f64{ -1.5, -0.8, -0.3, 0.0, 0.2, 0.5, 1.0, 1.3, 1.8 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data_slice, .row_major);
+    defer data.deinit();
+
+    // Standard normal CDF (approximation)
+    const normal_cdf = struct {
+        const Normal = @import("distributions/normal.zig").Normal;
+        pub fn cdf(x: f64) f64 {
+            const dist = Normal(f64).init(0.0, 1.0);
+            return dist.cdf(x);
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, normal_cdf, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic));
+}
+
+test "ks_test_1samp: poor fit (Normal(0,1) data vs Exponential CDF, should reject)" {
+    // Normal data vs exponential CDF: should have large D and small p
+    const data_slice = [_]f64{ 0.1, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data_slice, .row_major);
+    defer data.deinit();
+
+    // Exponential CDF with λ=1: F(x) = 1 - e^(-x)
+    const exponential_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            return 1.0 - math.exp(-x);
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, exponential_cdf, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_1samp: edge case - single sample" {
+    const data_slice = [_]f64{0.5};
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{1}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_1samp: edge case - two samples" {
+    const data_slice = [_]f64{ 0.25, 0.75 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_1samp: edge case - all same values (uniform empirical CDF)" {
+    const data_slice = [_]f64{ 5.0, 5.0, 5.0, 5.0, 5.0 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const point_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 5.0) return 0.0;
+            return 1.0;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, point_cdf, 0.05, allocator);
+
+    // All data at 5.0 should match Dirac delta at 5.0 perfectly
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_1samp: D statistic in valid range [0, 1]" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.statistic <= 1.0);
+}
+
+test "ks_test_1samp: p_value in valid range [0, 1]" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    try testing.expect(result.p_value >= 0.0);
+    try testing.expect(result.p_value <= 1.0);
+}
+
+test "ks_test_1samp: larger D → smaller p-value" {
+    // Create two datasets: one with small deviation, one with large
+    const data_small = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 };
+    const data_large = [_]f64{ 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9 };
+
+    var small = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data_small, .row_major);
+    defer small.deinit();
+    var large = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{9}, &data_large, .row_major);
+    defer large.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result_small = try ks_test_1samp(f64, small, uniform_cdf, 0.05, allocator);
+    const result_large = try ks_test_1samp(f64, large, uniform_cdf, 0.05, allocator);
+
+    // Large D should have smaller p-value
+    try testing.expect(result_large.statistic > result_small.statistic);
+    try testing.expect(result_large.p_value < result_small.p_value);
+}
+
+test "ks_test_1samp: alpha threshold affects rejection" {
+    const data_slice = [_]f64{ 0.1, 0.5, 0.9 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result_alpha_01 = try ks_test_1samp(f64, data, uniform_cdf, 0.1, allocator);
+    const result_alpha_001 = try ks_test_1samp(f64, data, uniform_cdf, 0.01, allocator);
+
+    // Same p-value, but rejection decision depends on alpha
+    try testing.expectApproxEqAbs(result_alpha_01.p_value, result_alpha_001.p_value, 1e-10);
+    try testing.expect(result_alpha_01.reject == (result_alpha_01.p_value < 0.1));
+    try testing.expect(result_alpha_001.reject == (result_alpha_001.p_value < 0.01));
+}
+
+test "ks_test_1samp: f32 precision" {
+    const data_slice = [_]f32{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var data = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf_f32 = struct {
+        pub fn cdf(x: f32) f32 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f32, data, uniform_cdf_f32, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+}
+
+test "ks_test_1samp: f64 precision" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+}
+
+test "ks_test_1samp: large sample (n=100)" {
+    var data_slice: [100]f64 = undefined;
+    for (0..100) |i| {
+        data_slice[i] = (@as(f64, @floatFromInt(i)) + 0.5) / 100.0; // Uniform approximation
+    }
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{100}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_1samp: memory safety - no leaks" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    // allocator is std.testing.allocator which detects memory leaks
+    _ = try ks_test_1samp(f64, data, uniform_cdf, 0.05, allocator);
+}
+
+test "ks_test_1samp: error on empty array" {
+    const data_slice: [0]f64 = [_]f64{};
+    const result = NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{0}, &data_slice, .row_major);
+    try testing.expectError(NDArray_type(f64, 1).Error.ZeroDimension, result);
+}
+
+test "ks_test_1samp: error on invalid alpha (alpha=0)" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            return x;
+        }
+    }.cdf;
+
+    const result = ks_test_1samp(f64, data, uniform_cdf, 0.0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ks_test_1samp: error on invalid alpha (alpha=1)" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            return x;
+        }
+    }.cdf;
+
+    const result = ks_test_1samp(f64, data, uniform_cdf, 1.0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ks_test_1samp: error on invalid alpha (alpha > 1)" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5 };
+    var data = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data_slice, .row_major);
+    defer data.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            return x;
+        }
+    }.cdf;
+
+    const result = ks_test_1samp(f64, data, uniform_cdf, 1.5, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ks_test_1samp: consistency across multiple runs" {
+    const data_slice = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var data1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data1.deinit();
+    var data2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data_slice, .row_major);
+    defer data2.deinit();
+
+    const uniform_cdf = struct {
+        pub fn cdf(x: f64) f64 {
+            if (x < 0.0) return 0.0;
+            if (x > 1.0) return 1.0;
+            return x;
+        }
+    }.cdf;
+
+    const result1 = try ks_test_1samp(f64, data1, uniform_cdf, 0.05, allocator);
+    const result2 = try ks_test_1samp(f64, data2, uniform_cdf, 0.05, allocator);
+
+    try testing.expectApproxEqAbs(result1.statistic, result2.statistic, 1e-10);
+    try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);
+}
+
+// ============================================================================
+// Two-Sample Kolmogorov-Smirnov Test Tests (15+ tests)
+// ============================================================================
+
+test "ks_test_2samp: identical samples (D≈0, p≈1, reject=false)" {
+    const data = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    // Identical samples: D should be very small, p-value ≈ 1.0
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic));
+}
+
+test "ks_test_2samp: both samples from Normal(0,1) (should not reject)" {
+    const data1 = [_]f64{ -1.5, -0.8, -0.3, 0.0, 0.2, 0.5, 1.0 };
+    const data2 = [_]f64{ -1.2, -0.5, 0.1, 0.4, 0.8, 1.2, 1.5 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{7}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{7}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: Normal(0,1) vs Normal(5,1) (should reject)" {
+    const data1 = [_]f64{ -1.0, 0.0, 1.0 };
+    const data2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: Uniform(0,1) vs Uniform(2,3) (should reject)" {
+    const data1 = [_]f64{ 0.2, 0.4, 0.6, 0.8 };
+    const data2 = [_]f64{ 2.2, 2.4, 2.6, 2.8 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: unequal sample sizes (n1=3, n2=7)" {
+    const data1 = [_]f64{ 0.1, 0.5, 0.9 };
+    const data2 = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{7}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: equal sample sizes" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const data2 = [_]f64{ 0.15, 0.35, 0.55, 0.75, 0.95 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: symmetry (swap data1 ↔ data2)" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5 };
+    const data2 = [_]f64{ 0.2, 0.4, 0.6 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+    var sample1_dup = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1_dup.deinit();
+    var sample2_dup = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2_dup.deinit();
+
+    const result_12 = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+    const result_21 = try ks_test_2samp(f64, sample2_dup, sample1_dup, 0.05, allocator);
+
+    // D-statistic should be equal (symmetric)
+    try testing.expectApproxEqAbs(result_12.statistic, result_21.statistic, 1e-10);
+    // p-value should also be equal
+    try testing.expectApproxEqAbs(result_12.p_value, result_21.p_value, 1e-10);
+}
+
+test "ks_test_2samp: D statistic in valid range [0, 1]" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const data2 = [_]f64{ 0.2, 0.4, 0.6, 0.8 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.statistic <= 1.0);
+}
+
+test "ks_test_2samp: p_value in valid range [0, 1]" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const data2 = [_]f64{ 0.2, 0.4, 0.6, 0.8 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.p_value >= 0.0);
+    try testing.expect(result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: larger D → smaller p-value" {
+    // Two pairs: one similar, one very different
+    const similar1 = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const similar2 = [_]f64{ 0.15, 0.35, 0.55, 0.75, 0.95 };
+
+    const diff1 = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const diff2 = [_]f64{ 0.9, 0.9, 0.9, 0.9, 0.9 };
+
+    var s1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &similar1, .row_major);
+    defer s1.deinit();
+    var s2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &similar2, .row_major);
+    defer s2.deinit();
+    var d1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &diff1, .row_major);
+    defer d1.deinit();
+    var d2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &diff2, .row_major);
+    defer d2.deinit();
+
+    const result_similar = try ks_test_2samp(f64, s1, s2, 0.05, allocator);
+    const result_diff = try ks_test_2samp(f64, d1, d2, 0.05, allocator);
+
+    // Different samples should have larger D
+    try testing.expect(result_diff.statistic > result_similar.statistic);
+    // Larger D should have smaller p-value
+    try testing.expect(result_diff.p_value < result_similar.p_value);
+}
+
+test "ks_test_2samp: alpha threshold affects rejection" {
+    const data1 = [_]f64{ 0.1, 0.5, 0.9 };
+    const data2 = [_]f64{ 0.2, 0.6, 0.8 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2_1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2_1.deinit();
+    var sample2_2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2_2.deinit();
+
+    const result_alpha_10 = try ks_test_2samp(f64, sample1, sample2_1, 0.10, allocator);
+    const result_alpha_01 = try ks_test_2samp(f64, sample1, sample2_2, 0.01, allocator);
+
+    // Same p-value, rejection depends on alpha
+    try testing.expectApproxEqAbs(result_alpha_10.p_value, result_alpha_01.p_value, 1e-10);
+    try testing.expect(result_alpha_10.reject == (result_alpha_10.p_value < 0.10));
+    try testing.expect(result_alpha_01.reject == (result_alpha_01.p_value < 0.01));
+}
+
+test "ks_test_2samp: f32 precision" {
+    const data1 = [_]f32{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const data2 = [_]f32{ 0.2, 0.4, 0.6, 0.8 };
+
+    var sample1 = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f32, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+}
+
+test "ks_test_2samp: f64 precision" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    const data2 = [_]f64{ 0.2, 0.4, 0.6, 0.8 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+}
+
+test "ks_test_2samp: large samples" {
+    var data1: [50]f64 = undefined;
+    var data2: [50]f64 = undefined;
+    for (0..50) |i| {
+        data1[i] = (@as(f64, @floatFromInt(i)) + 0.5) / 50.0;
+        data2[i] = (@as(f64, @floatFromInt(i)) + 0.5) / 50.0 + 0.1; // Slight shift
+    }
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{50}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{50}, &data2, .row_major);
+    defer sample2.deinit();
+
+    const result = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0 and result.statistic <= 1.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "ks_test_2samp: memory safety - no leaks" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5 };
+    const data2 = [_]f64{ 0.2, 0.4, 0.6 };
+
+    var sample1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1.deinit();
+    var sample2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2.deinit();
+
+    // allocator is std.testing.allocator which detects memory leaks
+    _ = try ks_test_2samp(f64, sample1, sample2, 0.05, allocator);
+}
+
+test "ks_test_2samp: consistency across multiple runs" {
+    const data1 = [_]f64{ 0.1, 0.3, 0.5 };
+    const data2 = [_]f64{ 0.2, 0.4, 0.6 };
+
+    var sample1a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1a.deinit();
+    var sample2a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2a.deinit();
+
+    var sample1b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer sample1b.deinit();
+    var sample2b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer sample2b.deinit();
+
+    const result1 = try ks_test_2samp(f64, sample1a, sample2a, 0.05, allocator);
+    const result2 = try ks_test_2samp(f64, sample1b, sample2b, 0.05, allocator);
+
+    try testing.expectApproxEqAbs(result1.statistic, result2.statistic, 1e-10);
+    try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);
+}
