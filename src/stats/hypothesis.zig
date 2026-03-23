@@ -1,12 +1,14 @@
 //! Hypothesis Testing — Statistical tests for comparing means and proportions
 //!
 //! This module provides classical hypothesis testing procedures for comparing
-//! population means, including Student's t-tests (one-sample, independent samples, paired).
+//! population means, including Student's t-tests (one-sample, independent samples, paired),
+//! and chi-squared tests for categorical data.
 //!
 //! ## Supported Tests
 //! - `ttest_1samp` — One-sample t-test (H0: sample mean = μ)
 //! - `ttest_ind` — Independent samples t-test (H0: μ₁ = μ₂)
 //! - `ttest_rel` — Paired samples t-test (H0: μ_diff = 0)
+//! - `chi2_test` — Chi-squared goodness-of-fit test (H0: observed ~ expected)
 //!
 //! ## TestResult Type
 //! Generic result container holding:
@@ -19,11 +21,14 @@
 //! - ttest_1samp: O(n) — one pass for mean, one for variance
 //! - ttest_ind: O(n₁ + n₂) — linear in sample sizes
 //! - ttest_rel: O(n) — linear in number of pairs
+//! - chi2_test: O(k) — linear in number of categories
 //!
 //! ## Use Cases
 //! - Comparing sample mean to population mean
 //! - Comparing means of two independent groups
 //! - Comparing paired observations (before/after, matched controls)
+//! - Testing categorical data distributions (chi-squared)
+//! - Goodness-of-fit tests for discrete distributions
 //! - Hypothesis testing with small to moderate sample sizes
 //! - Confidence intervals for mean differences
 
@@ -35,6 +40,7 @@ const testing = std.testing;
 const descriptive = @import("descriptive.zig");
 const NDArray_type = @import("../ndarray/ndarray.zig").NDArray;
 const StudentT_Distribution = @import("distributions/student_t.zig").StudentT;
+const ChiSquared_Distribution = @import("distributions/chi_squared.zig").ChiSquared;
 
 // ============================================================================
 // TEST RESULT TYPE
@@ -347,6 +353,97 @@ pub fn ttest_rel(
     };
 
     return TestResult(T).init(t_stat, p_value, df, alpha);
+}
+
+// ============================================================================
+// CHI-SQUARED GOODNESS-OF-FIT TEST
+// ============================================================================
+
+/// Chi-squared goodness-of-fit test: H0: observed frequencies match expected frequencies
+///
+/// Tests whether observed categorical data distribution differs significantly from
+/// the expected (theoretical) distribution.
+///
+/// Formula: χ² = Σᵢ ((Oᵢ - Eᵢ)² / Eᵢ)
+/// where Oᵢ = observed frequency in category i, Eᵢ = expected frequency in category i
+/// df = k - 1 (k = number of categories)
+///
+/// The test statistic follows a chi-squared distribution with k-1 degrees of freedom.
+/// A large χ² value indicates poor fit between observed and expected distributions.
+///
+/// Parameters:
+/// - observed: 1D NDArray of observed frequencies (must be non-negative)
+/// - expected: 1D NDArray of expected frequencies (must be positive, sum > 0)
+/// - alpha: significance level (default 0.05 for 95% confidence)
+///
+/// Returns: TestResult with χ² statistic, p-value (right-tailed), and rejection decision
+///
+/// Errors:
+/// - error.EmptyArray if observed or expected is empty
+/// - error.UnequalLengths if observed and expected have different lengths
+/// - error.InvalidParameter if alpha not in (0, 1), or if any expected frequency ≤ 0
+/// - error.InvalidParameter if observed contains negative values
+///
+/// Time: O(k) where k = number of categories
+/// Space: O(1)
+///
+/// Notes:
+/// - Expected frequencies should typically be ≥ 5 for valid chi-squared approximation
+/// - This is a right-tailed test (large χ² → reject H0)
+/// - P-value = P(χ²(k-1) > χ²_observed)
+///
+/// Example:
+/// ```zig
+/// // Test if a die is fair (expected uniform distribution)
+/// const observed = [_]f64{10, 12, 8, 15, 9, 16}; // 70 rolls
+/// const expected = [_]f64{70/6, 70/6, 70/6, 70/6, 70/6, 70/6}; // uniform
+/// const result = try chi2_test(f64, observed_arr, expected_arr, 0.05);
+/// // Tests if die is fair at α=0.05
+/// ```
+pub fn chi2_test(
+    comptime T: type,
+    observed: NDArray_type(T, 1),
+    expected: NDArray_type(T, 1),
+    alpha: T,
+) !TestResult(T) {
+    const n_obs = observed.count();
+    const n_exp = expected.count();
+
+    if (n_obs == 0 or n_exp == 0) return error.EmptyArray;
+    if (n_obs != n_exp) return error.UnequalLengths;
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    // Validate input: expected frequencies must be positive, observed must be non-negative
+    const n = n_obs;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const obs_val = observed.data[i];
+        const exp_val = expected.data[i];
+
+        if (obs_val < 0.0) return error.InvalidParameter; // Negative observed frequency
+        if (exp_val <= 0.0) return error.InvalidParameter; // Non-positive expected frequency
+    }
+
+    // Compute chi-squared statistic: χ² = Σ ((O - E)² / E)
+    var chi2_stat: T = 0.0;
+    i = 0;
+    while (i < n) : (i += 1) {
+        const obs_val = observed.data[i];
+        const exp_val = expected.data[i];
+        const diff = obs_val - exp_val;
+        chi2_stat += (diff * diff) / exp_val;
+    }
+
+    // Degrees of freedom: k - 1
+    const df = @as(T, @floatFromInt(n - 1));
+
+    // Right-tailed p-value: P(χ²(df) > χ²_stat)
+    // p-value = 1 - CDF(χ²_stat)
+    const dist = try ChiSquared_Distribution(T).init(df);
+    const cdf_val = dist.cdf(chi2_stat);
+    const p_value = 1.0 - cdf_val;
+
+    return TestResult(T).init(chi2_stat, p_value, df, alpha);
 }
 
 // ============================================================================
@@ -972,4 +1069,272 @@ test "ttest_rel: symmetry - swapping before/after negates t-statistic" {
 
     try testing.expectApproxEqAbs(result1.statistic, -result2.statistic, 1e-10);
     try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);
+}
+
+// ============================================================================
+// Chi-Squared Test Tests (20+ tests)
+// ============================================================================
+
+test "chi2_test: perfect fit (obs == exp, χ²≈0, p≈1, reject=false)" {
+    // Perfect fit: observed matches expected exactly
+    const obs_data = [_]f64{ 10.0, 20.0, 30.0, 40.0 };
+    const exp_data = [_]f64{ 10.0, 20.0, 30.0, 40.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+
+    // Perfect fit: χ² = 0, p-value ≈ 1.0, reject = false
+    try testing.expectApproxEqAbs(0.0, result.statistic, 1e-10);
+    try testing.expect(result.p_value > 0.99);
+    try testing.expect(result.reject == false);
+    try testing.expectApproxEqAbs(3.0, result.df, 1e-10); // df = k - 1 = 4 - 1 = 3
+}
+
+test "chi2_test: fair die (uniform distribution, should not reject H0)" {
+    // Fair die: 60 rolls, uniform distribution expected
+    const obs_data = [_]f64{ 10.0, 12.0, 8.0, 11.0, 9.0, 10.0 }; // total = 60
+    const exp_data = [_]f64{ 10.0, 10.0, 10.0, 10.0, 10.0, 10.0 }; // uniform
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{6}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{6}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+
+    // Small deviations from uniform: should not reject H0
+    try testing.expect(result.p_value > 0.05); // p > α
+    try testing.expect(result.reject == false);
+    try testing.expectApproxEqAbs(5.0, result.df, 1e-10); // df = 6 - 1 = 5
+}
+
+test "chi2_test: biased die (large deviation, should reject H0)" {
+    // Biased die: observed frequencies strongly deviate from uniform
+    const obs_data = [_]f64{ 5.0, 5.0, 5.0, 5.0, 5.0, 75.0 }; // total = 100, heavily biased to 6
+    const exp_data = [_]f64{ 16.67, 16.67, 16.67, 16.67, 16.67, 16.67 }; // uniform (100/6 ≈ 16.67)
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{6}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{6}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+
+    // Large χ² value: should reject H0
+    try testing.expect(result.statistic > 10.0); // Large chi-squared
+    try testing.expect(result.p_value < 0.05); // p < α
+    try testing.expect(result.reject == true);
+}
+
+test "chi2_test: two categories (binary outcome)" {
+    // Coin flip: observed heads/tails vs expected fair coin
+    const obs_data = [_]f64{ 60.0, 40.0 }; // 60 heads, 40 tails out of 100
+    const exp_data = [_]f64{ 50.0, 50.0 }; // fair coin expectation
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+
+    // df = 2 - 1 = 1
+    try testing.expectApproxEqAbs(1.0, result.df, 1e-10);
+
+    // χ² = (60-50)²/50 + (40-50)²/50 = 100/50 + 100/50 = 4.0
+    try testing.expectApproxEqAbs(4.0, result.statistic, 1e-10);
+
+    // For χ²(1), critical value at α=0.05 is 3.841, so χ²=4.0 > 3.841 → reject H0
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "chi2_test: many categories (k=10)" {
+    // 10 categories, uniform distribution
+    const obs_data = [_]f64{ 12.0, 11.0, 9.0, 13.0, 10.0, 8.0, 14.0, 9.0, 11.0, 13.0 }; // total = 110
+    const exp_data = [_]f64{ 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0 }; // uniform
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{10}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{10}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+
+    // df = 10 - 1 = 9
+    try testing.expectApproxEqAbs(9.0, result.df, 1e-10);
+
+    // Small deviations: should not reject H0
+    try testing.expect(result.p_value > 0.05);
+    try testing.expect(result.reject == false);
+}
+
+test "chi2_test: zero observed frequencies (valid case)" {
+    // Some categories can have zero observations
+    const obs_data = [_]f64{ 0.0, 10.0, 20.0, 30.0 }; // total = 60
+    const exp_data = [_]f64{ 15.0, 15.0, 15.0, 15.0 }; // uniform
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+
+    // Should compute without error (zero observed is valid)
+    try testing.expect(result.statistic > 0.0);
+    try testing.expectApproxEqAbs(3.0, result.df, 1e-10);
+}
+
+test "chi2_test: f32 precision" {
+    const obs_data = [_]f32{ 10.0, 20.0, 30.0 };
+    const exp_data = [_]f32{ 20.0, 20.0, 20.0 };
+    var obs = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f32, obs, exp, 0.05);
+
+    // χ² = (10-20)²/20 + (20-20)²/20 + (30-20)²/20 = 100/20 + 0 + 100/20 = 10.0
+    try testing.expectApproxEqAbs(@as(f32, 10.0), result.statistic, 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), result.df, 1e-5);
+}
+
+test "chi2_test: alpha=0.01 affects rejection" {
+    const obs_data = [_]f64{ 60.0, 40.0 }; // χ² = 4.0 (borderline)
+    const exp_data = [_]f64{ 50.0, 50.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.01); // stricter alpha
+
+    // χ² = 4.0, critical value at α=0.01 is 6.635, so don't reject
+    try testing.expect(result.p_value > 0.01);
+    try testing.expect(result.reject == false);
+}
+
+test "chi2_test: alpha=0.1 affects rejection" {
+    const obs_data = [_]f64{ 55.0, 45.0 }; // χ² = 1.0 (small)
+    const exp_data = [_]f64{ 50.0, 50.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.1); // lenient alpha
+
+    // χ² = 1.0, critical value at α=0.1 is 2.706, so don't reject
+    try testing.expect(result.reject == false);
+}
+
+test "chi2_test: p_value in [0, 1]" {
+    const obs_data = [_]f64{ 10.0, 20.0, 30.0 };
+    const exp_data = [_]f64{ 15.0, 25.0, 20.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "chi2_test: statistic is non-negative" {
+    const obs_data = [_]f64{ 5.0, 15.0, 25.0, 35.0 };
+    const exp_data = [_]f64{ 20.0, 20.0, 20.0, 20.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = try chi2_test(f64, obs, exp, 0.05);
+    try testing.expect(result.statistic >= 0.0); // χ² is always non-negative
+}
+
+test "chi2_test: error on empty observed array" {
+    const obs_data: [0]f64 = [_]f64{};
+    const result = NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{0}, &obs_data, .row_major);
+    try testing.expectError(NDArray_type(f64, 1).Error.ZeroDimension, result);
+}
+
+test "chi2_test: error on empty expected array" {
+    const obs_data = [_]f64{ 10.0, 20.0 };
+    const exp_data: [0]f64 = [_]f64{};
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &obs_data, .row_major);
+    defer obs.deinit();
+    const result = NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{0}, &exp_data, .row_major);
+    try testing.expectError(NDArray_type(f64, 1).Error.ZeroDimension, result);
+}
+
+test "chi2_test: error on mismatched lengths" {
+    const obs_data = [_]f64{ 10.0, 20.0, 30.0 };
+    const exp_data = [_]f64{ 15.0, 25.0 }; // Different length
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = chi2_test(f64, obs, exp, 0.05);
+    try testing.expectError(error.UnequalLengths, result);
+}
+
+test "chi2_test: error on negative observed frequency" {
+    const obs_data = [_]f64{ 10.0, -5.0, 20.0 }; // Negative observation
+    const exp_data = [_]f64{ 10.0, 10.0, 10.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = chi2_test(f64, obs, exp, 0.05);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "chi2_test: error on zero expected frequency" {
+    const obs_data = [_]f64{ 10.0, 20.0, 30.0 };
+    const exp_data = [_]f64{ 10.0, 0.0, 20.0 }; // Zero expected (invalid)
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = chi2_test(f64, obs, exp, 0.05);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "chi2_test: error on negative expected frequency" {
+    const obs_data = [_]f64{ 10.0, 20.0, 30.0 };
+    const exp_data = [_]f64{ 10.0, -10.0, 20.0 }; // Negative expected (invalid)
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = chi2_test(f64, obs, exp, 0.05);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "chi2_test: error on invalid alpha (alpha=0)" {
+    const obs_data = [_]f64{ 10.0, 20.0 };
+    const exp_data = [_]f64{ 15.0, 15.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = chi2_test(f64, obs, exp, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "chi2_test: error on invalid alpha (alpha=1)" {
+    const obs_data = [_]f64{ 10.0, 20.0 };
+    const exp_data = [_]f64{ 15.0, 15.0 };
+    var obs = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &obs_data, .row_major);
+    defer obs.deinit();
+    var exp = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &exp_data, .row_major);
+    defer exp.deinit();
+
+    const result = chi2_test(f64, obs, exp, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
 }
