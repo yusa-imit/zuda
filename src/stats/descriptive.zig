@@ -1167,3 +1167,828 @@ test "kurtosis: two elements f64" {
     // Excess kurtosis = 1 - 3 = -2
     try testing.expectApproxEqAbs(-2.0, result, 1e-10);
 }
+
+// ============================================================================
+// Histogram Binning Functions
+// ============================================================================
+
+/// Error types for histogram functions
+pub const HistogramError = error{
+    EmptyArray,
+    InvalidParameter,
+    DimensionMismatch,
+};
+
+/// Result struct for histogram function
+/// Contains counts per bin and bin edges
+pub const HistogramResult = struct {
+    counts: []usize,
+    bin_edges: []f64,
+};
+
+/// Result struct for 2D histogram
+/// Contains 2D count matrix and x/y bin edges
+pub const Histogram2DResult = struct {
+    counts: [][]usize,
+    x_edges: []f64,
+    y_edges: []f64,
+};
+
+/// Compute 1D histogram with evenly spaced bins
+///
+/// Divides the range [min(data), max(data)] into `bins` equal-width bins.
+/// Counts how many elements fall into each bin.
+///
+/// Bin assignment:
+/// - bin i contains values x where edges[i] ≤ x < edges[i+1]
+/// - last bin (i = bins-1) contains values where edges[bins-1] ≤ x ≤ edges[bins]
+///
+/// Parameters:
+/// - data: slice of f64 values to bin
+/// - bins: number of bins (must be >= 1)
+/// - allocator: memory allocator for counts and bin_edges
+///
+/// Returns: HistogramResult with counts[] (length=bins) and bin_edges[] (length=bins+1)
+/// Caller owns both slices and must free them.
+///
+/// Errors:
+/// - error.EmptyArray if data is empty
+/// - error.InvalidParameter if bins < 1
+/// - std.mem.Allocator.Error if allocation fails
+///
+/// Time: O(n + bins) where n = data.len
+/// Space: O(n + bins) for result arrays
+///
+/// Note: Follows numpy.histogram convention. All-same-value data
+/// creates bins centered on that value.
+pub fn histogram(data: []const f64, bins: usize, allocator: Allocator) (HistogramError || Allocator.Error)!HistogramResult {
+    if (data.len == 0) return error.EmptyArray;
+    if (bins < 1) return error.InvalidParameter;
+
+    // Find min and max
+    var min_val = data[0];
+    var max_val = data[0];
+    for (data) |val| {
+        if (val < min_val) min_val = val;
+        if (val > max_val) max_val = val;
+    }
+
+    // Compute bin edges
+    const bin_edges = try allocator.alloc(f64, bins + 1);
+    const bin_width = if (min_val == max_val)
+        1.0
+    else
+        (max_val - min_val) / @as(f64, @floatFromInt(bins));
+
+    for (0..bins + 1) |i| {
+        bin_edges[i] = min_val + @as(f64, @floatFromInt(i)) * bin_width;
+    }
+
+    // Initialize counts
+    const counts = try allocator.alloc(usize, bins);
+    for (0..bins) |i| {
+        counts[i] = 0;
+    }
+
+    // Assign each data point to a bin
+    for (data) |val| {
+        // Handle edge case: value exactly at or beyond max
+        if (val >= max_val and min_val != max_val) {
+            counts[bins - 1] += 1;
+        } else {
+            // Compute bin index
+            const bin_idx_f = (val - min_val) / bin_width;
+            const bin_idx = @as(usize, @intFromFloat(bin_idx_f));
+            if (bin_idx < bins) {
+                counts[bin_idx] += 1;
+            }
+        }
+    }
+
+    return HistogramResult{
+        .counts = counts,
+        .bin_edges = bin_edges,
+    };
+}
+
+/// Compute bin edges for histogram (helper function)
+///
+/// Computes only the bin edges without counting.
+/// Useful for custom binning strategies that reuse edges.
+///
+/// Parameters:
+/// - data: slice of f64 values
+/// - bins: number of bins (must be >= 1)
+/// - allocator: memory allocator for edges
+///
+/// Returns: slice of bin edges (length = bins+1)
+/// Caller owns the slice and must free it.
+///
+/// Errors:
+/// - error.EmptyArray if data is empty
+/// - error.InvalidParameter if bins < 1
+/// - std.mem.Allocator.Error if allocation fails
+///
+/// Time: O(n + bins) where n = data.len
+/// Space: O(bins) for result array
+///
+/// Note: Follows numpy.histogram_bin_edges convention
+pub fn histogramBinEdges(data: []const f64, bins: usize, allocator: Allocator) (HistogramError || Allocator.Error)![]f64 {
+    if (data.len == 0) return error.EmptyArray;
+    if (bins < 1) return error.InvalidParameter;
+
+    // Find min and max
+    var min_val = data[0];
+    var max_val = data[0];
+    for (data) |val| {
+        if (val < min_val) min_val = val;
+        if (val > max_val) max_val = val;
+    }
+
+    // Compute bin edges
+    const bin_edges = try allocator.alloc(f64, bins + 1);
+    const bin_width = if (min_val == max_val)
+        1.0
+    else
+        (max_val - min_val) / @as(f64, @floatFromInt(bins));
+
+    for (0..bins + 1) |i| {
+        bin_edges[i] = min_val + @as(f64, @floatFromInt(i)) * bin_width;
+    }
+
+    return bin_edges;
+}
+
+/// Compute 2D histogram for joint distributions
+///
+/// Creates a 2D grid of bins and counts occurrences of (x, y) pairs.
+/// Bin assignment follows same convention as histogram() for each dimension.
+///
+/// Parameters:
+/// - x: slice of x-coordinates (must be same length as y)
+/// - y: slice of y-coordinates (must be same length as x)
+/// - bins_x: number of x-bins (must be >= 1)
+/// - bins_y: number of y-bins (must be >= 1)
+/// - allocator: memory allocator for result arrays
+///
+/// Returns: Histogram2DResult with counts[bins_x][bins_y], x_edges[], y_edges[]
+/// Caller owns all arrays and must free them.
+///
+/// Errors:
+/// - error.EmptyArray if x or y is empty
+/// - error.DimensionMismatch if len(x) != len(y)
+/// - error.InvalidParameter if bins_x < 1 or bins_y < 1
+/// - std.mem.Allocator.Error if allocation fails
+///
+/// Time: O(n + bins_x + bins_y) where n = x.len
+/// Space: O(bins_x * bins_y + bins_x + bins_y)
+///
+/// Note: Returns 2D array where counts[i][j] is count in x-bin i, y-bin j
+pub fn histogram2d(x: []const f64, y: []const f64, bins_x: usize, bins_y: usize, allocator: Allocator) (HistogramError || Allocator.Error)!Histogram2DResult {
+    if (x.len == 0 or y.len == 0) return error.EmptyArray;
+    if (x.len != y.len) return error.DimensionMismatch;
+    if (bins_x < 1 or bins_y < 1) return error.InvalidParameter;
+
+    // Find min/max for x
+    var x_min = x[0];
+    var x_max = x[0];
+    for (x) |val| {
+        if (val < x_min) x_min = val;
+        if (val > x_max) x_max = val;
+    }
+
+    // Find min/max for y
+    var y_min = y[0];
+    var y_max = y[0];
+    for (y) |val| {
+        if (val < y_min) y_min = val;
+        if (val > y_max) y_max = val;
+    }
+
+    // Compute bin widths
+    const x_width = if (x_min == x_max)
+        1.0
+    else
+        (x_max - x_min) / @as(f64, @floatFromInt(bins_x));
+
+    const y_width = if (y_min == y_max)
+        1.0
+    else
+        (y_max - y_min) / @as(f64, @floatFromInt(bins_y));
+
+    // Create bin edges
+    const x_edges = try allocator.alloc(f64, bins_x + 1);
+    const y_edges = try allocator.alloc(f64, bins_y + 1);
+
+    for (0..bins_x + 1) |i| {
+        x_edges[i] = x_min + @as(f64, @floatFromInt(i)) * x_width;
+    }
+    for (0..bins_y + 1) |i| {
+        y_edges[i] = y_min + @as(f64, @floatFromInt(i)) * y_width;
+    }
+
+    // Create 2D count matrix
+    const counts = try allocator.alloc([]usize, bins_x);
+    for (0..bins_x) |i| {
+        counts[i] = try allocator.alloc(usize, bins_y);
+        for (0..bins_y) |j| {
+            counts[i][j] = 0;
+        }
+    }
+
+    // Bin each point
+    for (0..x.len) |i| {
+        const x_val = x[i];
+        const y_val = y[i];
+
+        // Compute x bin
+        var x_idx = bins_x - 1; // Default to last bin
+        if (x_val < x_max or x_min == x_max) {
+            const x_bin_f = (x_val - x_min) / x_width;
+            const temp_idx = @as(usize, @intFromFloat(x_bin_f));
+            if (temp_idx < bins_x) {
+                x_idx = temp_idx;
+            }
+        }
+
+        // Compute y bin
+        var y_idx = bins_y - 1; // Default to last bin
+        if (y_val < y_max or y_min == y_max) {
+            const y_bin_f = (y_val - y_min) / y_width;
+            const temp_idx = @as(usize, @intFromFloat(y_bin_f));
+            if (temp_idx < bins_y) {
+                y_idx = temp_idx;
+            }
+        }
+
+        counts[x_idx][y_idx] += 1;
+    }
+
+    return Histogram2DResult{
+        .counts = counts,
+        .x_edges = x_edges,
+        .y_edges = y_edges,
+    };
+}
+
+// ============================================================================
+// Histogram Tests
+// ============================================================================
+
+test "histogram: basic uniform data" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+
+    const result = try histogram(&data, 5, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    // 5 bins from 0 to 4 with width 1 each
+    // Bin edges: [0, 1, 2, 3, 4, 4]
+    try testing.expectEqual(5, result.counts.len);
+    try testing.expectEqual(6, result.bin_edges.len);
+
+    // Each value should be in its own bin
+    for (result.counts) |count| {
+        try testing.expectEqual(1, count);
+    }
+
+    // Check edges are monotonic
+    for (0..result.bin_edges.len - 1) |i| {
+        try testing.expect(result.bin_edges[i] <= result.bin_edges[i + 1]);
+    }
+}
+
+test "histogram: even binning" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0 };
+
+    const result = try histogram(&data, 2, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    // 2 bins: [1,5.5) and [5.5,10]
+    try testing.expectEqual(2, result.counts.len);
+    try testing.expectEqual(3, result.bin_edges.len);
+
+    // First 5 values in first bin, last 5 in second
+    try testing.expectEqual(5, result.counts[0]);
+    try testing.expectEqual(5, result.counts[1]);
+}
+
+test "histogram: single value" {
+    const allocator = testing.allocator;
+    const data = [_]f64{42.0};
+
+    const result = try histogram(&data, 5, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(5, result.counts.len);
+
+    // Single value should go into first bin (or last bin depending on impl)
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(1, total);
+}
+
+test "histogram: all same values" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 5.0, 5.0, 5.0, 5.0, 5.0 };
+
+    const result = try histogram(&data, 5, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(5, result.counts.len);
+
+    // All values should be in one bin
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(5, total);
+}
+
+test "histogram: negative values" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ -5.0, -4.0, -3.0, -2.0, -1.0 };
+
+    const result = try histogram(&data, 5, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(5, result.counts.len);
+    try testing.expectEqual(6, result.bin_edges.len);
+
+    // Range should span from -5 to -1
+    try testing.expect(result.bin_edges[0] <= -5.0);
+    try testing.expect(result.bin_edges[5] >= -1.0);
+
+    // Each value in its own bin
+    for (result.counts) |count| {
+        try testing.expectEqual(1, count);
+    }
+}
+
+test "histogram: values on boundaries" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+
+    const result = try histogram(&data, 2, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(2, result.counts.len);
+
+    // Sum should equal input length
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(4, total);
+}
+
+test "histogram: bin edges monotonicity" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.5, 1.5, 2.5, 3.5, 4.5 };
+
+    const result = try histogram(&data, 3, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    // Verify monotonic increasing edges
+    for (0..result.bin_edges.len - 1) |i| {
+        try testing.expect(result.bin_edges[i] < result.bin_edges[i + 1]);
+    }
+}
+
+test "histogram: sparse data" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.0, 100.0 };
+
+    const result = try histogram(&data, 10, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(10, result.counts.len);
+
+    // Most bins empty, only first and last have values
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(2, total);
+}
+
+test "histogram: large dataset" {
+    const allocator = testing.allocator;
+    var data_list = try std.ArrayList(f64).initCapacity(allocator, 1000);
+    defer data_list.deinit(allocator);
+
+    // Create 1000 points uniformly distributed 0-999
+    for (0..1000) |i| {
+        data_list.appendAssumeCapacity(@as(f64, @floatFromInt(i)));
+    }
+
+    const result = try histogram(data_list.items, 10, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    // 1000 points in 10 bins = ~100 per bin
+    try testing.expectEqual(10, result.counts.len);
+
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(1000, total);
+}
+
+test "histogram: empty array error" {
+    const allocator = testing.allocator;
+    const data: [0]f64 = [_]f64{};
+
+    const result = histogram(&data, 5, allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "histogram: bins=0 error" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+
+    const result = histogram(&data, 0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "histogram: two values" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.0, 3.0 };
+
+    const result = try histogram(&data, 2, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(2, result.counts.len);
+    try testing.expectEqual(3, result.bin_edges.len);
+
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(2, total);
+}
+
+test "histogram: bin edges correct range" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.0, 10.0 };
+
+    const result = try histogram(&data, 10, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    // First edge should be at or below min
+    try testing.expect(result.bin_edges[0] <= 0.0);
+
+    // Last edge should be at or above max
+    try testing.expect(result.bin_edges[result.bin_edges.len - 1] >= 10.0);
+}
+
+test "histogram: mixed positive negative" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ -10.0, -5.0, 0.0, 5.0, 10.0 };
+
+    const result = try histogram(&data, 5, allocator);
+    defer {
+        allocator.free(result.counts);
+        allocator.free(result.bin_edges);
+    }
+
+    try testing.expectEqual(5, result.counts.len);
+
+    var total: usize = 0;
+    for (result.counts) |count| {
+        total += count;
+    }
+    try testing.expectEqual(5, total);
+}
+
+// ============================================================================
+// histogramBinEdges Tests
+// ============================================================================
+
+test "histogramBinEdges: uniform edges" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.0, 10.0 };
+
+    const edges = try histogramBinEdges(&data, 10, allocator);
+    defer allocator.free(edges);
+
+    // 10 bins from 0 to 10 with width 1
+    try testing.expectEqual(11, edges.len);
+    try testing.expectApproxEqAbs(0.0, edges[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, edges[10], 1e-10);
+}
+
+test "histogramBinEdges: fractional bins" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 0.0, 1.0 };
+
+    const edges = try histogramBinEdges(&data, 4, allocator);
+    defer allocator.free(edges);
+
+    try testing.expectEqual(5, edges.len);
+    // Edges: [0, 0.25, 0.5, 0.75, 1]
+    try testing.expectApproxEqAbs(0.0, edges[0], 1e-10);
+    try testing.expectApproxEqAbs(0.25, edges[1], 1e-10);
+    try testing.expectApproxEqAbs(0.5, edges[2], 1e-10);
+    try testing.expectApproxEqAbs(0.75, edges[3], 1e-10);
+    try testing.expectApproxEqAbs(1.0, edges[4], 1e-10);
+}
+
+test "histogramBinEdges: negative range" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ -10.0, 10.0 };
+
+    const edges = try histogramBinEdges(&data, 5, allocator);
+    defer allocator.free(edges);
+
+    try testing.expectEqual(6, edges.len);
+    try testing.expect(edges[0] <= -10.0);
+    try testing.expect(edges[5] >= 10.0);
+
+    // Verify monotonicity
+    for (0..edges.len - 1) |i| {
+        try testing.expect(edges[i] < edges[i + 1]);
+    }
+}
+
+test "histogramBinEdges: single value" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 5.0, 5.0, 5.0 };
+
+    const edges = try histogramBinEdges(&data, 5, allocator);
+    defer allocator.free(edges);
+
+    try testing.expectEqual(6, edges.len);
+
+    // When all values are same, first edge should be at the value
+    try testing.expectApproxEqAbs(5.0, edges[0], 1e-10);
+
+    // All edges should be monotonically increasing or equal
+    for (0..edges.len - 1) |i| {
+        try testing.expect(edges[i] <= edges[i + 1]);
+    }
+}
+
+test "histogramBinEdges: empty array error" {
+    const allocator = testing.allocator;
+    const data: [0]f64 = [_]f64{};
+
+    const result = histogramBinEdges(&data, 5, allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "histogramBinEdges: bins=0 error" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+
+    const result = histogramBinEdges(&data, 0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// ============================================================================
+// histogram2d Tests
+// ============================================================================
+
+test "histogram2d: basic grid" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+
+    const result = try histogram2d(&x, &y, 2, 2, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    try testing.expectEqual(2, result.counts.len);
+    try testing.expectEqual(2, result.counts[0].len);
+    try testing.expectEqual(3, result.x_edges.len);
+    try testing.expectEqual(3, result.y_edges.len);
+}
+
+test "histogram2d: diagonal line" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+
+    const result = try histogram2d(&x, &y, 2, 2, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    // Points on y=x diagonal should mostly be in diagonal bins
+    var total: usize = 0;
+    for (result.counts) |row| {
+        for (row) |count| {
+            total += count;
+        }
+    }
+    try testing.expectEqual(3, total);
+}
+
+test "histogram2d: single point" {
+    const allocator = testing.allocator;
+    const x = [_]f64{0.0};
+    const y = [_]f64{0.0};
+
+    const result = try histogram2d(&x, &y, 5, 5, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    // Single point should be counted once
+    var total: usize = 0;
+    for (result.counts) |row| {
+        for (row) |count| {
+            total += count;
+        }
+    }
+    try testing.expectEqual(1, total);
+}
+
+test "histogram2d: corners" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 0.0, 10.0, 10.0 };
+    const y = [_]f64{ 0.0, 10.0, 0.0, 10.0 };
+
+    const result = try histogram2d(&x, &y, 2, 2, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    // Points at 4 corners should all be counted
+    var total: usize = 0;
+    for (result.counts) |row| {
+        for (row) |count| {
+            total += count;
+        }
+    }
+    try testing.expectEqual(4, total);
+}
+
+test "histogram2d: rectangular bins" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 5.0, 10.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+
+    const result = try histogram2d(&x, &y, 3, 2, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    try testing.expectEqual(3, result.counts.len);
+    try testing.expectEqual(2, result.counts[0].len);
+
+    var total: usize = 0;
+    for (result.counts) |row| {
+        for (row) |count| {
+            total += count;
+        }
+    }
+    try testing.expectEqual(3, total);
+}
+
+test "histogram2d: dimension mismatch error" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+
+    const result = histogram2d(&x, &y, 2, 2, allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "histogram2d: empty arrays error" {
+    const allocator = testing.allocator;
+    const x: [0]f64 = [_]f64{};
+    const y: [0]f64 = [_]f64{};
+
+    const result = histogram2d(&x, &y, 2, 2, allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "histogram2d: bins_x=0 error" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+
+    const result = histogram2d(&x, &y, 0, 2, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "histogram2d: bins_y=0 error" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+
+    const result = histogram2d(&x, &y, 2, 0, allocator);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "histogram2d: all same values" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ 5.0, 5.0, 5.0 };
+    const y = [_]f64{ 3.0, 3.0, 3.0 };
+
+    const result = try histogram2d(&x, &y, 5, 5, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    // All 3 points in one bin
+    var total: usize = 0;
+    for (result.counts) |row| {
+        for (row) |count| {
+            total += count;
+        }
+    }
+    try testing.expectEqual(3, total);
+}
+
+test "histogram2d: negative coordinates" {
+    const allocator = testing.allocator;
+    const x = [_]f64{ -10.0, 0.0, 10.0 };
+    const y = [_]f64{ -10.0, 0.0, 10.0 };
+
+    const result = try histogram2d(&x, &y, 3, 3, allocator);
+    defer {
+        allocator.free(result.x_edges);
+        allocator.free(result.y_edges);
+        for (result.counts) |row| {
+            allocator.free(row);
+        }
+        allocator.free(result.counts);
+    }
+
+    var total: usize = 0;
+    for (result.counts) |row| {
+        for (row) |count| {
+            total += count;
+        }
+    }
+    try testing.expectEqual(3, total);
+}
