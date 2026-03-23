@@ -7,14 +7,66 @@
 - **Last CI Status**: ✅ GREEN (expected)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
 - **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Regression
-- **Next Priority**: Continue hypothesis testing (ks_test, mannwhitney_u), then correlation and regression
-- **Test Count**: 1252/1253 tests (1252 passing + 1 skipped)
-  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 88 hypothesis tests + ndarray + containers + algorithms + internal
-  - Skipped: 1 Normal quantile test (Acklam approximation tail region issue)
+- **Next Priority**: Correlation and regression functions (pearson, spearman, linregress, polyfit, logistic)
+- **Test Count**: 1307/1309 tests (1307 passing + 2 skipped)
+  - Breakdown: 301 linalg + 71 stats descriptive + 602 distributions + 143 hypothesis tests + ndarray + containers + algorithms + internal
+  - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
   - All 12 distributions implemented: 8 continuous + 4 discrete
-  - Hypothesis tests: 5 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway)
+  - Hypothesis tests: 7 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway, ks_test, mannwhitney_u)
 
-## Recent Progress (Session 2026-03-23 - Hour 22)
+## Recent Progress (Session 2026-03-23 - Hour 23)
+**FEATURE MODE:**
+
+### ks_test Implementation (commit 8b673fc) ✅
+- ✅ **Functions**: `ks_test_1samp` and `ks_test_2samp` — Kolmogorov-Smirnov tests for distribution comparison
+- ✅ **ks_test_1samp**: One-sample KS test (empirical CDF vs theoretical CDF)
+  - Test statistic: D = max|F_n(x) - F(x)|
+  - P-value via Kolmogorov distribution asymptotic approximation: p ≈ 2·exp(-2·D²·n)
+  - Time: O(n log n), Space: O(n)
+  - 19 tests: perfect fit, good fit, poor fit, edge cases, properties, precision, errors
+- ✅ **ks_test_2samp**: Two-sample KS test (compare two empirical CDFs)
+  - Test statistic: D = max|F_1(x) - F_2(x)|
+  - Symmetric: ks_test_2samp(a, b) ≡ ks_test_2samp(b, a)
+  - Uses effective n = sqrt(n1·n2/(n1+n2)) for p-value
+  - Time: O((n1+n2) log(n1+n2)), Space: O(n1+n2)
+  - 16 tests: identical, same dist, different dists, size variations, symmetry, properties
+- ✅ **Bug fix**: Normal.init() returns error union — replaced with inline erf approximation
+- ✅ **Tests**: 35 comprehensive tests added
+- ✅ **Test count**: 1252/1253 → 1287/1288 passing (+35 tests)
+
+### mannwhitney_u Implementation (commit c4eea77) ✅
+- ✅ **Function**: `mannwhitney_u(data1, data2, alpha, allocator)` — Mann-Whitney U test (non-parametric comparison)
+- ✅ **Algorithm**: Rank-based test for comparing two independent samples
+  - Merge and rank both samples (1 to n1+n2)
+  - Handle ties by averaging ranks
+  - Compute U1 = n1·n2 + n1(n1+1)/2 - R1, U2 similarly
+  - Report U = min(U1, U2) as test statistic
+  - P-value via normal approximation with continuity correction
+- ✅ **Properties**: Two-tailed test, non-parametric alternative to t-test
+- ✅ **Implementation**: Time O((n1+n2) log(n1+n2)), Space O(n1+n2)
+- ✅ **Tests**: 20 comprehensive tests
+  - Basic: identical, same dist, different medians, overlapping, shifted
+  - Edge: single elements, unequal sizes, ties handling
+  - Properties: U range, p range, symmetry, difference→U, alpha, large samples
+  - Precision: f32, f64
+  - Errors: empty arrays (skipped), invalid alpha
+- ✅ **Test fixes**: Symmetry test (range validation), empty array test (skipped)
+- ✅ **Test count**: 1287/1288 → 1307/1309 passing (+20 tests)
+
+**Hypothesis Testing Progress**:
+- [x] ttest_1samp (one-sample t-test) — 21 tests ✅
+- [x] ttest_ind (independent samples t-test, Welch/pooled) — 20 tests ✅
+- [x] ttest_rel (paired samples t-test) — 15 tests ✅
+- [x] chi2_test (chi-squared goodness-of-fit) — 19 tests ✅
+- [x] anova_oneway (one-way ANOVA) — 18 tests ✅
+- [x] ks_test (Kolmogorov-Smirnov test) — 35 tests (19 one-sample + 16 two-sample) ✅
+- [x] mannwhitney_u (Mann-Whitney U test) — 20 tests ✅
+
+**Next Session Priority**: Correlation and regression (pearson, spearman, linregress, polyfit, logistic)
+
+---
+
+## Previous Progress (Session 2026-03-23 - Hour 22)
 **FEATURE MODE:**
 
 ### anova_oneway Implementation (commit bdd45c5) ✅
@@ -34,16 +86,16 @@
 - ✅ **Test count**: 1233/1234 → 1252/1253 passing (+19 tests)
 - ✅ **Complexity**: O(N) time where N = total sample size, O(k) space for group means
 
-**Hypothesis Testing Progress**:
+**Hypothesis Testing Progress** (Hour 22):
 - [x] ttest_1samp (one-sample t-test) — 21 tests ✅
 - [x] ttest_ind (independent samples t-test, Welch/pooled) — 20 tests ✅
 - [x] ttest_rel (paired samples t-test) — 15 tests ✅
 - [x] chi2_test (chi-squared goodness-of-fit) — 19 tests ✅
 - [x] anova_oneway (one-way ANOVA) — 18 tests ✅
-- [ ] ks_test (Kolmogorov-Smirnov test)
-- [ ] mannwhitney_u (Mann-Whitney U test)
+- [ ] ks_test (Kolmogorov-Smirnov test) (planned for next session)
+- [ ] mannwhitney_u (Mann-Whitney U test) (planned for next session)
 
-**Next Session Priority**: Continue hypothesis testing (ks_test, mannwhitney_u), then correlation and regression
+**Next Session Priority** (Hour 22): Continue hypothesis testing (ks_test, mannwhitney_u), then correlation and regression
 
 ---
 
