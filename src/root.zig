@@ -378,6 +378,9 @@ pub const stats = struct {
     /// Hypothesis testing — one-sample, independent samples, paired samples t-tests
     pub const hypothesis = @import("stats/hypothesis.zig");
 
+    /// Correlation and linear regression — Pearson, Spearman, OLS
+    pub const correlation = @import("stats/correlation.zig");
+
     /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
@@ -410,6 +413,7 @@ test {
     // Explicitly import stats modules to trigger their tests
     _ = @import("stats/descriptive.zig");
     _ = @import("stats/hypothesis.zig");
+    _ = @import("stats/correlation.zig");
     _ = @import("stats/distributions/uniform.zig");
     _ = @import("stats/distributions/normal.zig");
     _ = @import("stats/distributions/exponential.zig");
