@@ -589,21 +589,27 @@ pub fn polyfit(x: []const f64, y: []const f64, degree: usize, allocator: Allocat
     for (0..d) |i| b[i] = 0;
 
     // Compute normal equations by iterating through data points
+    // Precompute powers of x[i] for efficiency
+    var pow_cache = try allocator.alloc(f64, d);
+    defer allocator.free(pow_cache);
+
     for (0..n) |i| {
-        var pow_x: f64 = 1.0;
+        // Compute pow_cache[p] = x[i]^p for p = 0..d-1
+        pow_cache[0] = 1.0;
+        for (1..d) |p| {
+            pow_cache[p] = pow_cache[p - 1] * x[i];
+        }
+
+        // Update b vector: b[j] += y[i] * x[i]^j
         for (0..d) |j| {
-            // Update b vector: b[j] += y[i] * x[i]^j
-            b[j] += y[i] * pow_x;
+            b[j] += y[i] * pow_cache[j];
+        }
 
-            // Update A matrix: A[j, k] += x[i]^(j+k)
-            var pow_xk: f64 = pow_x;
-            for (0..d-j) |k_offset| {
-                const k = j + k_offset;
-                A[j * d + k] += pow_xk;
-                pow_xk *= x[i];
+        // Update A matrix: A[j, k] += x[i]^(j+k)
+        for (0..d) |j| {
+            for (j..d) |k| {
+                A[j * d + k] += pow_cache[j] * pow_cache[k];
             }
-
-            pow_x *= x[i];
         }
     }
 
@@ -709,6 +715,8 @@ pub fn polyval(coeffs_input: anytype, x: []const f64, allocator: Allocator) ![]f
     const coeffs: []const f64 = if (@TypeOf(coeffs_input) == *[]f64)
         coeffs_input.*
     else if (@TypeOf(coeffs_input) == *[]const f64)
+        coeffs_input.*
+    else if (@TypeOf(coeffs_input) == *const []f64)
         coeffs_input.*
     else
         coeffs_input;
@@ -1900,7 +1908,7 @@ test "polyfit: constant polynomial (degree 0) from horizontal data" {
     const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
     const y_data = [_]f64{ 7.0, 7.0, 7.0, 7.0, 7.0 };
 
-    var coeffs = try polyfit(&x_data, &y_data, 0, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 0, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Degree 0 → constant polynomial: c0
@@ -1913,7 +1921,7 @@ test "polyfit: linear polynomial (degree 1) from linear data" {
     const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
     const y_data = [_]f64{ 3.0, 5.0, 7.0, 9.0, 11.0 }; // y = 2x + 1
 
-    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Degree 1 → linear: c0 + c1*x
@@ -1927,7 +1935,7 @@ test "polyfit: quadratic polynomial (degree 2) with known parabola" {
     const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
     const y_data = [_]f64{ 4.0, 1.0, 0.0, 1.0, 4.0 }; // y = x²
 
-    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Degree 2 → quadratic: c0 + c1*x + c2*x²
@@ -1942,7 +1950,7 @@ test "polyfit: cubic polynomial (degree 3) with known cubic" {
     const x_data = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
     const y_data = [_]f64{ -5.0, 3.0, 5.0, 21.0 }; // y = 2x³ + 3
 
-    var coeffs = try polyfit(&x_data, &y_data, 3, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 3, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Degree 3 → cubic: c0 + c1*x + c2*x² + c3*x³
@@ -1966,7 +1974,7 @@ test "polyfit: linear fit matches linregress results" {
 
     const lr_result = try linregress(x_ndarray, y_ndarray, test_allocator);
 
-    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
     defer test_allocator.free(coeffs);
 
     // polyfit degree 1: c0 + c1*x should match linregress slope + intercept
@@ -1978,7 +1986,7 @@ test "polyfit: noisy data produces reasonable fit" {
     const x_data = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
     const y_data = [_]f64{ 0.5, 2.2, 3.9, 6.1, 8.3 }; // Approximately y = 2x
 
-    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Should fit roughly y ≈ 2x + c
@@ -1991,11 +1999,11 @@ test "polyfit: higher degree fits data with less error" {
     const y_data = [_]f64{ 1.0, 3.0, 7.0, 13.0 }; // y = x² + x + 1
 
     // Fit with degree 1 (linear)
-    var coeffs1 = try polyfit(&x_data, &y_data, 1, test_allocator);
+    const coeffs1 = try polyfit(&x_data, &y_data, 1, test_allocator);
     defer test_allocator.free(coeffs1);
 
     // Fit with degree 2 (quadratic)
-    var coeffs2 = try polyfit(&x_data, &y_data, 2, test_allocator);
+    const coeffs2 = try polyfit(&x_data, &y_data, 2, test_allocator);
     defer test_allocator.free(coeffs2);
 
     // Verify quadratic has correct form: c0=1, c1=1, c2=1
@@ -2043,7 +2051,7 @@ test "polyfit: degree exactly n-1 is allowed" {
     const y_data = [_]f64{ 2.0, 4.0, 6.0 };
 
     // degree 2 == n-1=2 should succeed (will interpolate exactly)
-    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
     defer test_allocator.free(coeffs);
 
     try testing.expect(coeffs.len == 3);
@@ -2054,7 +2062,7 @@ test "polyfit: single point requires degree 0" {
     const y_data = [_]f64{10.0};
 
     // degree 0 should work
-    var coeffs = try polyfit(&x_data, &y_data, 0, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 0, test_allocator);
     defer test_allocator.free(coeffs);
 
     try testing.expect(coeffs.len == 1);
@@ -2069,7 +2077,7 @@ test "polyval: evaluate constant polynomial" {
     const coeffs = [_]f64{7.0};
     const x_data = [_]f64{ 1.0, 2.0, 3.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // y = 7 for all x
@@ -2083,7 +2091,7 @@ test "polyval: evaluate linear polynomial" {
     const coeffs = [_]f64{ 1.0, 2.0 }; // y = 1 + 2x
     const x_data = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // Expected: [1, 3, 5, 7]
@@ -2098,7 +2106,7 @@ test "polyval: evaluate quadratic polynomial" {
     const coeffs = [_]f64{ 0.0, 0.0, 1.0 }; // y = x²
     const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // Expected: [4, 1, 0, 1, 4]
@@ -2114,7 +2122,7 @@ test "polyval: evaluate cubic polynomial" {
     const coeffs = [_]f64{ 0.0, 1.0, 0.0, 1.0 }; // y = x + x³
     const x_data = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // Expected: y(-1) = -1-1=-2, y(0)=0, y(1)=1+1=2, y(2)=2+8=10
@@ -2131,7 +2139,7 @@ test "polyval: Horner's method numerical stability" {
     const coeffs = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
     const x_data = [_]f64{10.0};
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // Expected: 1 + 2*10 + 3*100 + 4*1000 = 1 + 20 + 300 + 4000 = 4321
@@ -2142,7 +2150,7 @@ test "polyval: evaluate at negative x values" {
     const coeffs = [_]f64{ 5.0, -3.0, 2.0 }; // y = 5 - 3x + 2x²
     const x_data = [_]f64{ -2.0, -1.0, 0.0, 1.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // y(-2) = 5 - 3*(-2) + 2*4 = 5 + 6 + 8 = 19
@@ -2159,7 +2167,7 @@ test "polyval: evaluate at x=0" {
     const coeffs = [_]f64{ 3.0, 2.0, 1.0 }; // y = 3 + 2x + x²
     const x_data = [_]f64{0.0};
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // y(0) = 3 (the constant term)
@@ -2170,7 +2178,7 @@ test "polyval: evaluate at single point" {
     const coeffs = [_]f64{ 1.0, 2.0 }; // y = 1 + 2x
     const x_data = [_]f64{5.0};
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // y(5) = 1 + 2*5 = 11
@@ -2199,7 +2207,7 @@ test "polyval: single coefficient (constant)" {
     const coeffs = [_]f64{42.0};
     const x_data = [_]f64{ 1.0, 2.0, 3.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     // All outputs should be 42
@@ -2213,11 +2221,11 @@ test "polyfit-polyval roundtrip: reconstruct linear function" {
     const y_data = [_]f64{ 3.0, 5.0, 7.0, 9.0, 11.0 }; // y = 2x + 1
 
     // Fit polynomial
-    var coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 1, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Evaluate at original x points
-    var y_pred = try polyval(&coeffs, &x_data, test_allocator);
+    const y_pred = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y_pred);
 
     // Should reconstruct original y
@@ -2231,11 +2239,11 @@ test "polyfit-polyval roundtrip: reconstruct quadratic function" {
     const y_data = [_]f64{ 4.0, 1.0, 0.0, 1.0, 4.0 }; // y = x²
 
     // Fit polynomial
-    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Evaluate at original x points
-    var y_pred = try polyval(&coeffs, &x_data, test_allocator);
+    const y_pred = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y_pred);
 
     // Should reconstruct original y exactly (or very close due to floating point)
@@ -2249,12 +2257,12 @@ test "polyfit-polyval roundtrip: interpolation at new points" {
     const y_data = [_]f64{ 0.0, 1.0, 4.0, 9.0 }; // y = x²
 
     // Fit polynomial (degree 2)
-    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Evaluate at new points (between and outside training data)
     const x_new = [_]f64{ 0.5, 1.5, 2.5 };
-    var y_pred = try polyval(&coeffs, &x_new, test_allocator);
+    const y_pred = try polyval(&coeffs, &x_new, test_allocator);
     defer test_allocator.free(y_pred);
 
     // Expected: [0.25, 2.25, 6.25]
@@ -2267,7 +2275,7 @@ test "polyval: zero coefficients produce zeros" {
     const coeffs = [_]f64{ 0.0, 0.0, 0.0 }; // y = 0
     const x_data = [_]f64{ 1.0, 10.0, 100.0, -5.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
     defer test_allocator.free(y);
 
     for (y) |val| {
@@ -2279,7 +2287,7 @@ test "polyfit: memory allocation correctness" {
     const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
     const y_data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
 
-    var coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
+    const coeffs = try polyfit(&x_data, &y_data, 2, test_allocator);
 
     // Should allocate exactly degree+1 coefficients
     try testing.expect(coeffs.len == 3);
@@ -2291,7 +2299,7 @@ test "polyval: memory allocation correctness" {
     const coeffs = [_]f64{ 1.0, 2.0, 3.0 };
     const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
 
-    var y = try polyval(&coeffs, &x_data, test_allocator);
+    const y = try polyval(&coeffs, &x_data, test_allocator);
 
     // Should allocate exactly as many outputs as x points
     try testing.expect(y.len == 5);
@@ -2312,7 +2320,7 @@ test "polyfit: large dataset accuracy" {
         y_data[i] = 3.0 * i_f * i_f - 2.0 * i_f + 5.0;
     }
 
-    var coeffs = try polyfit(x_data, y_data, 2, test_allocator);
+    const coeffs = try polyfit(x_data, y_data, 2, test_allocator);
     defer test_allocator.free(coeffs);
 
     // Should fit: c0≈5, c1≈-2, c2≈3
