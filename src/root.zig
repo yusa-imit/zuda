@@ -422,6 +422,8 @@ pub const numeric = struct {
     pub const integration = @import("numeric/integration.zig");
     /// Numerical differentiation — Finite difference methods for derivatives
     pub const differentiation = @import("numeric/differentiation.zig");
+    /// Numerical interpolation — 1D linear interpolation with constant extrapolation
+    pub const interpolation = @import("numeric/interpolation.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -465,4 +467,5 @@ test {
     // Explicitly import numeric modules to trigger their tests
     _ = @import("numeric/integration.zig");
     _ = @import("numeric/differentiation.zig");
+    _ = @import("numeric/interpolation.zig");
 }
