@@ -1,20 +1,78 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.22.0 (current), v1.23.0 IN PROGRESS
-- **Phase**: v2.0 Track (Phase 9) — Signal Processing, v1.23.0
+- **Version**: 1.22.0 (current)
+- **Phase**: v2.0 Track — Phase 9 COMPLETE ✅
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 16)
-- **Latest Milestone**: v1.22.0 ✅ — Hypothesis Testing & Regression RELEASED
-- **Current Milestone**: v1.23.0 IN PROGRESS — Signal Processing (FFT, Window, Spectral, DCT, 2D FFT)
-- **Next Priority**: Filtering (FIR/IIR filters) or release v1.23.0
-- **Test Count**: 1604/1606 tests (1604 passing + 2 skipped)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 40 FFT + 17 window + 28 spectral + 30 DCT + 37 convolution + 22 2D FFT + ndarray + containers + algorithms + internal
+- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 17)
+- **Latest Milestone**: v1.22.0 ✅ — Signal Processing RELEASED (2026-03-24)
+- **Current Milestone**: Phase 10 (Numerical Methods) — v1.23.0 planning
+- **Next Priority**: Integration, differentiation, interpolation (Phase 10)
+- **Test Count**: 1643 tests passing
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal (40 FFT + 17 window + 28 spectral + 30 DCT + 37 convolution + 22 2D FFT + 39 filter) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
-  - Signal Processing: FFT (5 functions, 40 tests), Window (5 functions, 17 tests), Spectral (2 functions, 28 tests), DCT (2 functions, 30 tests), Convolution (3 functions, 37 tests), 2D FFT (2 functions, 22 tests)
+  - Signal Processing: 7 modules complete (FFT, Window, Spectral, DCT, Convolution, 2D FFT, Filtering)
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Session 16)
+## Recent Progress (Session 2026-03-24 - Session 17)
+**FEATURE MODE:**
+
+### Digital Filter Design & Application (commit abe6f59) ✅
+- ✅ **Module**: src/signal/filter.zig (1021 lines: 331 implementation + 690 tests)
+- ✅ **TDD Workflow**: test-writer (39 tests) → zig-developer (implementation) → all 39 tests passing
+- ✅ **firwin(comptime T, N, cutoff, fs, allocator) ![]T**:
+  - FIR filter design using windowed sinc method
+  - Hamming window for spectral leakage suppression
+  - DC gain normalization (sum of coefficients ≈ 1 for lowpass)
+  - Validates cutoff < fs/2 (Nyquist constraint)
+  - Time: O(N), Space: O(N)
+  - Tests: 8 (design, DC gain, symmetry, type support, errors)
+- ✅ **lfilter(comptime T, b, a, x, allocator) ![]T**:
+  - Apply IIR/FIR filters via difference equation
+  - Direct form II transposed implementation
+  - Supports both FIR (a=[1]) and IIR (general a) filters
+  - Zero initial conditions for causal filtering
+  - Time: O(N·M), Space: O(N)
+  - Tests: 14 (FIR/IIR, orders, edge cases, error handling)
+- ✅ **filtfilt(comptime T, b, a, x, allocator) ![]T**:
+  - Zero-phase filtering via forward-backward pass
+  - Eliminates phase distortion for linear-phase applications
+  - Mirror padding at boundaries (scipy-compatible)
+  - Magnitude response squared: |H(ω)|²
+  - Time: O(N·M), Space: O(N)
+  - Tests: 8 (zero-phase, symmetry, type support, errors)
+- ✅ **butter(comptime T, N, cutoff, fs, allocator) !FilterCoefficients(T)**:
+  - Butterworth IIR lowpass filter design
+  - Maximally flat passband response
+  - Bilinear transformation from analog prototype
+  - Explicit implementations for N=1,2
+  - All poles guaranteed inside unit circle (stable)
+  - Time: O(N²), Space: O(N)
+  - Tests: 8 (design, gain, order scaling, type support, errors)
+- ✅ **FilterCoefficients(T)** struct:
+  - `b: []T` (numerator coefficients)
+  - `a: []T` (denominator coefficients)
+  - `deinit()` for cleanup
+- ✅ **Test Count**: 1604 → 1643 passing (+39 filter tests)
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - Allocator-first design (no hardcoded allocator)
+  - Big-O complexity documented in all public functions
+  - Comprehensive error handling (InvalidArgument)
+  - Memory safety verified with std.testing.allocator
+
+### v1.22.0 Release ✅ (2026-03-24)
+- ✅ **Phase 9 COMPLETE**: Signal Processing module (7 submodules, 213 tests)
+- ✅ **Pre-flight checks**: All tests passing, 6 cross-compile targets verified
+- ✅ **Version bump**: 1.21.0 → 1.22.0
+- ✅ **Tag**: v1.22.0 created and pushed
+- ✅ **GitHub Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.22.0
+- ✅ **Total tests**: 1643 passing
+- ✅ **Modules**: FFT, Window, Spectral, DCT, Convolution, 2D FFT, Filtering
+
+---
+
+## Previous Progress (Session 2026-03-24 - Session 16)
 **FEATURE MODE:**
 
 ### 2D FFT Implementation (commit cc33699) ✅
@@ -113,16 +171,16 @@
 - ✅ **Use Cases**: Frequency domain analysis, noise characterization, spectral leakage reduction, audio/sensor signal analysis
 - ✅ **Test Count**: 1524 → 1552 passing (+28 tests)
 
-**v1.23.0 Progress**:
+**v1.22.0 COMPLETE** ✅ (Released 2026-03-24):
 - [x] FFT (fft, ifft, rfft, irfft, fftfreq) ✅
 - [x] Window Functions (hamming, hann, blackman, bartlett, kaiser) ✅
 - [x] Spectral Analysis (periodogram, welch) ✅
 - [x] DCT (dct, idct) ✅
 - [x] Convolution (convolve, correlate, fftconvolve) ✅
 - [x] 2D FFT (fft2, ifft2) ✅
-- [ ] Filtering (FIR/IIR filters)
+- [x] Filtering (firwin, lfilter, filtfilt, butter) ✅
 
-**Next Session Priority**: Filtering (FIR/IIR filters) or release v1.23.0
+**Next Session Priority**: Phase 10 (Numerical Methods) — integration, differentiation, interpolation
 
 ---
 
