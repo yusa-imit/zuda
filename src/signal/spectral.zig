@@ -114,7 +114,7 @@ pub fn WelchResult(comptime T: type) type {
 /// // result.power: [power values at each frequency]
 /// ```
 pub fn periodogram(comptime T: type, signal: []const T, fs: T, allocator: Allocator) (Allocator.Error || error{ InvalidLength, EmptyArray, InvalidParameter })!PeriodogramResult(T) {
-    // Input validation (can be done without full implementation)
+    // Input validation
     if (signal.len == 0) {
         return error.EmptyArray;
     }
@@ -127,9 +127,44 @@ pub fn periodogram(comptime T: type, signal: []const T, fs: T, allocator: Alloca
         return error.InvalidLength;
     }
 
-    _ = allocator;
-    // TODO: Implement periodogram algorithm
-    @panic("periodogram not yet implemented");
+    // Compute real FFT of the signal
+    const fft_result = try fft_module.rfft(T, signal, allocator);
+    defer allocator.free(fft_result);
+
+    // Allocate output arrays
+    const n_freqs = n / 2 + 1;
+    const frequencies = try allocator.alloc(T, n_freqs);
+    errdefer allocator.free(frequencies);
+    const power = try allocator.alloc(T, n_freqs);
+    errdefer allocator.free(power);
+
+    // Compute frequency array and power spectrum
+    const bin_width = fs / @as(T, @floatFromInt(n));
+    const n_inv = 1.0 / @as(T, @floatFromInt(n));
+    const n_sq_inv = n_inv * n_inv;
+
+    for (0..n_freqs) |i| {
+        // Frequency at bin i
+        frequencies[i] = @as(T, @floatFromInt(i)) * bin_width;
+
+        // Power computation for single-sided spectrum:
+        // FFT output is unnormalized, so we need |X[k]|² / N²
+        // DC (0 Hz) and Nyquist (fs/2) get factor of 1
+        // All other frequencies get factor of 2 (accounting for negative frequencies)
+        const mag_sq = fft_result[i].magnitude_squared();
+        if (i == 0 or i == n / 2) {
+            // DC or Nyquist: |X[k]|² / N²
+            power[i] = mag_sq * n_sq_inv;
+        } else {
+            // Positive frequencies: 2 * |X[k]|² / N² (double to account for negative)
+            power[i] = 2.0 * mag_sq * n_sq_inv;
+        }
+    }
+
+    return PeriodogramResult(T){
+        .frequencies = frequencies,
+        .power = power,
+    };
 }
 
 /// Compute Power Spectral Density via Welch's Method
@@ -193,7 +228,7 @@ pub fn periodogram(comptime T: type, signal: []const T, fs: T, allocator: Alloca
 /// // result provides smoother PSD estimate than periodogram
 /// ```
 pub fn welch(comptime T: type, signal: []const T, fs: T, nperseg: usize, noverlap: usize, allocator: Allocator) (Allocator.Error || error{ InvalidParameter, EmptyArray })!WelchResult(T) {
-    // Input validation (can be done without full implementation)
+    // Input validation
     if (signal.len == 0) {
         return error.EmptyArray;
     }
@@ -204,9 +239,128 @@ pub fn welch(comptime T: type, signal: []const T, fs: T, nperseg: usize, noverla
         return error.InvalidParameter;
     }
 
-    _ = allocator;
-    // TODO: Implement Welch's method algorithm
-    @panic("welch not yet implemented");
+    // Determine effective segment length (must be power of 2 for FFT)
+    // Start with min(nperseg, signal.len)
+    var segment_len = @min(nperseg, signal.len);
+
+    // Round to nearest power of 2 <= signal.len
+    // Find largest power of 2 that fits within signal.len
+    var power_of_2: usize = 1;
+    while (power_of_2 * 2 <= segment_len) {
+        power_of_2 *= 2;
+    }
+    segment_len = power_of_2;
+
+    // Ensure we have at least 2 samples (minimum for FFT)
+    if (segment_len < 2) {
+        segment_len = 2;
+    }
+
+    // Adjust noverlap if it exceeds actual segment length
+    var actual_noverlap = noverlap;
+    if (actual_noverlap >= segment_len) {
+        // Clamp to segment_len - 1
+        actual_noverlap = if (segment_len > 1) segment_len - 1 else 0;
+    }
+
+    // Calculate number of segments
+    const step = segment_len - actual_noverlap;
+    const num_segments = if (signal.len <= segment_len)
+        1
+    else
+        (signal.len - actual_noverlap + step - 1) / step;
+
+    const n_freqs = segment_len / 2 + 1;
+
+    // Allocate output arrays
+    const frequencies = try allocator.alloc(T, n_freqs);
+    errdefer allocator.free(frequencies);
+    const power = try allocator.alloc(T, n_freqs);
+    errdefer allocator.free(power);
+
+    // Zero-initialize power array for accumulation
+    for (power) |*p| {
+        p.* = 0.0;
+    }
+
+    // Get Hann window
+    const window = try window_module.hann(T, segment_len, allocator);
+    defer allocator.free(window);
+
+    // Compute window normalization factor (sum of squared window values)
+    var window_norm: T = 0.0;
+    for (window) |w| {
+        window_norm += w * w;
+    }
+
+    // Process each segment
+    var seg_idx: usize = 0;
+    while (seg_idx < num_segments) : (seg_idx += 1) {
+        const start = seg_idx * step;
+        const end = @min(start + segment_len, signal.len);
+
+        // Allocate segment buffer
+        var segment = try allocator.alloc(T, segment_len);
+        defer allocator.free(segment);
+
+        // Copy segment and zero-pad if necessary
+        const len = end - start;
+        for (0..len) |i| {
+            segment[i] = signal[start + i];
+        }
+        for (len..segment_len) |i| {
+            segment[i] = 0.0;
+        }
+
+        // Apply Hann window
+        for (0..segment_len) |i| {
+            segment[i] *= window[i];
+        }
+
+        // Compute FFT of windowed segment
+        // segment_len is guaranteed to be power of 2, so rfft won't fail
+        const fft_result = fft_module.rfft(T, segment, allocator) catch |e| {
+            return switch (e) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.InvalidLength => unreachable, // segment_len is always power of 2
+            };
+        };
+        defer allocator.free(fft_result);
+
+        // Accumulate power (single-sided spectrum)
+        // FFT is unnormalized (scales with segment_len)
+        // Window normalization: U = sum(w²) / segment_len
+        // Power[k] = |windowed_FFT[k]|² / (segment_len² * U)
+        //          = |windowed_FFT[k]|² / (segment_len * sum(w²))
+        const scale = 1.0 / (@as(T, @floatFromInt(segment_len)) * window_norm);
+        for (0..n_freqs) |i| {
+            const mag_sq = fft_result[i].magnitude_squared();
+            if (i == 0 or i == segment_len / 2) {
+                // DC or Nyquist
+                power[i] += mag_sq * scale;
+            } else {
+                // Positive frequencies (double to account for negative)
+                power[i] += 2.0 * mag_sq * scale;
+            }
+        }
+    }
+
+    // Average power across segments
+    const scale = 1.0 / @as(T, @floatFromInt(num_segments));
+    for (power) |*p| {
+        p.* *= scale;
+    }
+
+    // Compute frequency array
+    const bin_width = fs / @as(T, @floatFromInt(segment_len));
+    for (0..n_freqs) |i| {
+        frequencies[i] = @as(T, @floatFromInt(i)) * bin_width;
+    }
+
+    return WelchResult(T){
+        .frequencies = frequencies,
+        .power = power,
+    };
 }
 
 // ============================================================================

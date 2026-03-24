@@ -440,4 +440,5 @@ test {
     // Explicitly import signal modules to trigger their tests
     _ = @import("signal/fft.zig");
     _ = @import("signal/window.zig");
+    _ = @import("signal/spectral.zig");
 }
