@@ -1230,3 +1230,622 @@ test "cubic_spline negative x domain" {
     try testing.expect(result[1] < 0.0 and result[1] > -1.0);
     try testing.expect(result[2] > 0.0 and result[2] < 1.0);
 }
+
+// ============================================================================
+// LAGRANGE POLYNOMIAL INTERPOLATION
+// ============================================================================
+
+/// Lagrange polynomial interpolation — exact polynomial reconstruction
+///
+/// Interpolates function values at query points using Lagrange basis polynomials.
+/// For n sample points, produces unique polynomial of degree ≤ n-1 that passes through
+/// all n points exactly. Useful for polynomial data where exact recovery is needed.
+///
+/// WARNING: Suffers from Runge phenomenon with many equally-spaced points — can exhibit
+/// large oscillations near boundaries when interpolating smooth non-polynomial functions.
+///
+/// Parameters:
+/// - T: floating-point type (f32 or f64)
+/// - x: slice of x-coordinates (sample points) — must be strictly increasing (no duplicates)
+/// - y: slice of y-coordinates (function values) — must have same length as x
+/// - x_new: slice of x-coordinates where we want interpolated values
+/// - allocator: memory allocator for output array (caller owns returned memory)
+///
+/// Returns: allocated array of interpolated y values at x_new points (caller must free)
+///
+/// Errors:
+/// - error.DimensionMismatch: if x.len != y.len
+/// - error.InsufficientPoints: if x.len < 1
+/// - error.DuplicatePoints: if any x values are equal (causes division by zero in basis)
+/// - error.OutOfMemory: if allocation fails
+///
+/// Formula (Lagrange basis):
+/// ```
+/// P(x) = Σᵢ yᵢ · Lᵢ(x)
+/// where Lᵢ(x) = Πⱼ≠ᵢ (x - xⱼ)/(xᵢ - xⱼ)
+/// ```
+///
+/// Extrapolation:
+/// - Polynomial continuation (unbounded) — NOT constant clamping like interp1d/cubic_spline
+/// - For x_new > x[n-1], polynomial may grow unbounded (degree ≤ n-1)
+/// - For x_new < x[0], polynomial may grow unbounded
+///
+/// Time: O(n²m) where m = x_new.len, n = x.len | Space: O(m)
+pub fn lagrange(comptime T: type, x: []const T, y: []const T, x_new: []const T, allocator: Allocator) ![]T {
+    // Validation
+    if (x.len != y.len) return error.DimensionMismatch;
+    if (x.len == 0) return error.InsufficientPoints;
+
+    // Check for duplicate x values
+    for (0..x.len) |i| {
+        for (i + 1..x.len) |j| {
+            if (x[i] == x[j]) return error.DuplicatePoints;
+        }
+    }
+
+    // Allocate output array
+    const result = try allocator.alloc(T, x_new.len);
+    errdefer allocator.free(result);
+
+    // Handle empty query points
+    if (x_new.len == 0) return result;
+
+    // Evaluate Lagrange polynomial at each query point
+    for (0..x_new.len) |i| {
+        result[i] = evaluateLagrange(T, x, y, x_new[i]);
+    }
+
+    return result;
+}
+
+/// Helper function to evaluate Lagrange polynomial at a single point
+fn evaluateLagrange(comptime T: type, x: []const T, y: []const T, xi: T) T {
+    const n = x.len;
+    var result: T = 0;
+
+    // Compute P(xi) = Σᵢ yᵢ · Lᵢ(xi)
+    for (0..n) |i| {
+        // Compute Lagrange basis polynomial Lᵢ(xi)
+        var L_i: T = 1;
+        for (0..n) |j| {
+            if (i != j) {
+                L_i *= (xi - x[j]) / (x[i] - x[j]);
+            }
+        }
+        result += y[i] * L_i;
+    }
+
+    return result;
+}
+
+// ============================================================================
+// LAGRANGE POLYNOMIAL TESTS
+// ============================================================================
+
+test "lagrange exact reproduction - linear function y=2x+1" {
+    const allocator = testing.allocator;
+
+    // f(x) = 2x + 1, sample at x = 0, 1, 2
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 1.0, 3.0, 5.0 };
+
+    // Query at sample points
+    const x_new = [_]f64{ 0.0, 1.0, 2.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Should return exact y values
+    try testing.expectApproxEqAbs(result[0], 1.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 3.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 5.0, 1e-10);
+}
+
+test "lagrange exact reproduction - linear interpolation between points" {
+    const allocator = testing.allocator;
+
+    // f(x) = 2x + 1
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 1.0, 3.0, 5.0 };
+
+    // Query between sample points
+    const x_new = [_]f64{ 0.5, 1.5, 2.5 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // f(0.5) = 2
+    try testing.expectApproxEqAbs(result[0], 2.0, 1e-10);
+    // f(1.5) = 4
+    try testing.expectApproxEqAbs(result[1], 4.0, 1e-10);
+    // f(2.5) = 6
+    try testing.expectApproxEqAbs(result[2], 6.0, 1e-10);
+}
+
+test "lagrange exact reproduction - quadratic function y=x²" {
+    const allocator = testing.allocator;
+
+    // f(x) = x² sampled at three points: 0, 1, 2
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+
+    // Query at sample points and between
+    const x_new = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Lagrange with 3 points reproduces degree-2 polynomial exactly
+    try testing.expectApproxEqAbs(result[0], 0.0, 1e-10);    // x=0: y=0
+    try testing.expectApproxEqAbs(result[1], 0.25, 1e-10);   // x=0.5: y=0.25
+    try testing.expectApproxEqAbs(result[2], 1.0, 1e-10);    // x=1: y=1
+    try testing.expectApproxEqAbs(result[3], 2.25, 1e-10);   // x=1.5: y=2.25
+    try testing.expectApproxEqAbs(result[4], 4.0, 1e-10);    // x=2: y=4
+}
+
+test "lagrange exact reproduction - cubic function y=x³" {
+    const allocator = testing.allocator;
+
+    // f(x) = x³ sampled at four points: -1, 0, 1, 2
+    const x = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
+    const y = [_]f64{ -1.0, 0.0, 1.0, 8.0 };
+
+    // Query at sample and intermediate points
+    const x_new = [_]f64{ -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Lagrange with 4 points reproduces degree-3 polynomial exactly
+    try testing.expectApproxEqAbs(result[0], -1.0, 1e-10);      // x=-1: y=-1
+    try testing.expectApproxEqAbs(result[1], -0.125, 1e-10);    // x=-0.5: y=-0.125
+    try testing.expectApproxEqAbs(result[2], 0.0, 1e-10);       // x=0: y=0
+    try testing.expectApproxEqAbs(result[3], 0.125, 1e-10);     // x=0.5: y=0.125
+    try testing.expectApproxEqAbs(result[4], 1.0, 1e-10);       // x=1: y=1
+    try testing.expectApproxEqAbs(result[5], 3.375, 1e-10);     // x=1.5: y=3.375
+    try testing.expectApproxEqAbs(result[6], 8.0, 1e-10);       // x=2: y=8
+}
+
+test "lagrange exact reproduction - quartic function y=x⁴-2x²" {
+    const allocator = testing.allocator;
+
+    // f(x) = x⁴ - 2x², sampled at 5 points
+    const x = [_]f64{ -1.0, -0.5, 0.0, 0.5, 1.0 };
+    var y: [5]f64 = undefined;
+    for (0..5) |i| {
+        const xi = x[i];
+        y[i] = xi * xi * xi * xi - 2 * xi * xi;
+    }
+
+    // Query at sample and intermediate points
+    var x_new_buf: [9]f64 = undefined;
+    for (0..9) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        x_new_buf[i] = -1.0 + i_f * 0.25;
+    }
+
+    const result = try lagrange(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // Check at sample points (should be exact)
+    try testing.expectApproxEqAbs(result[0], -1.0, 1e-8);   // x=-1: y=1-2=-1
+    try testing.expectApproxEqAbs(result[4], 0.0, 1e-8);    // x=0: y=0-0=0
+    try testing.expectApproxEqAbs(result[8], -1.0, 1e-8);   // x=1: y=1-2=-1
+
+    // Check at intermediate point
+    const x_025 = 0.25;
+    const y_025 = x_025 * x_025 * x_025 * x_025 - 2 * x_025 * x_025;
+    try testing.expectApproxEqAbs(result[5], y_025, 1e-8);  // x=0.25
+}
+
+test "lagrange constant function y=5" {
+    const allocator = testing.allocator;
+
+    // f(x) = 5 for all x
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 5.0, 5.0, 5.0, 5.0 };
+
+    const x_new = [_]f64{ 0.5, 1.5, 2.5 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Constant function should remain constant everywhere
+    for (result) |val| {
+        try testing.expectApproxEqAbs(val, 5.0, 1e-10);
+    }
+}
+
+test "lagrange zero polynomial y=[0,0,0]" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ -1.0, 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 0.0, 0.0 };
+
+    const x_new = [_]f64{ -2.0, -0.5, 0.5, 2.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Zero polynomial is always zero
+    for (result) |val| {
+        try testing.expectApproxEqAbs(val, 0.0, 1e-10);
+    }
+}
+
+test "lagrange two-point linear interpolation" {
+    const allocator = testing.allocator;
+
+    // Minimal case: two points define a line
+    const x = [_]f64{ 0.0, 10.0 };
+    const y = [_]f64{ 5.0, 15.0 };
+
+    const x_new = [_]f64{ 0.0, 5.0, 10.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Lagrange with 2 points = linear interpolation
+    try testing.expectApproxEqAbs(result[0], 5.0, 1e-10);    // f(0)=5
+    try testing.expectApproxEqAbs(result[1], 10.0, 1e-10);   // f(5)=10
+    try testing.expectApproxEqAbs(result[2], 15.0, 1e-10);   // f(10)=15
+}
+
+test "lagrange passes through all sample points (property)" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 1.0, 2.5, 4.0, 6.5, 8.0 };
+    const y = [_]f64{ 3.0, 7.2, 1.5, 9.1, 2.3 };
+
+    // Query at all sample points
+    const result = try lagrange(f64, &x, &y, &x, allocator);
+    defer allocator.free(result);
+
+    // Must pass through all sample points exactly
+    for (0..x.len) |i| {
+        try testing.expectApproxEqAbs(result[i], y[i], 1e-10);
+    }
+}
+
+test "lagrange polynomial degree constraint" {
+    const allocator = testing.allocator;
+
+    // n=5 points should produce polynomial of degree ≤ 4
+    // The simplest test: use 5 points on a degree-3 polynomial
+    // and verify reconstruction is exact
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    var y: [5]f64 = undefined;
+    // y = x³ + x
+    for (0..5) |i| {
+        const xi = x[i];
+        y[i] = xi * xi * xi + xi;
+    }
+
+    var x_new_buf: [9]f64 = undefined;
+    for (0..9) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        x_new_buf[i] = i_f / 2.0;
+    }
+
+    const result = try lagrange(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // Check intermediate points
+    for (0..9) |i| {
+        const xi = x_new_buf[i];
+        const expected = xi * xi * xi + xi;
+        try testing.expectApproxEqAbs(result[i], expected, 1e-8);
+    }
+}
+
+test "lagrange linearity property: L(a*y₁ + b*y₂) = a*L(y₁) + b*L(y₂)" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const y2 = [_]f64{ 2.0, 3.0, 4.0 };
+
+    const x_new = [_]f64{ 0.5, 1.5 };
+
+    // Compute L(y1) and L(y2)
+    const result1 = try lagrange(f64, &x, &y1, &x_new, allocator);
+    defer allocator.free(result1);
+
+    const result2 = try lagrange(f64, &x, &y2, &x_new, allocator);
+    defer allocator.free(result2);
+
+    // Compute L(2*y1 + 3*y2)
+    var y_combined: [3]f64 = undefined;
+    for (0..3) |i| {
+        y_combined[i] = 2.0 * y1[i] + 3.0 * y2[i];
+    }
+
+    const result_combined = try lagrange(f64, &x, &y_combined, &x_new, allocator);
+    defer allocator.free(result_combined);
+
+    // Verify linearity
+    for (0..x_new.len) |i| {
+        const expected = 2.0 * result1[i] + 3.0 * result2[i];
+        try testing.expectApproxEqAbs(result_combined[i], expected, 1e-9);
+    }
+}
+
+test "lagrange polynomial continuation (extrapolation unbounded)" {
+    const allocator = testing.allocator;
+
+    // Linear function: y = 2x + 1
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 1.0, 3.0, 5.0 };
+
+    // Query well outside the sample domain
+    const x_new = [_]f64{ -10.0, 10.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Extrapolation should continue the polynomial (not clamp like interp1d)
+    // f(-10) = 2*(-10) + 1 = -19
+    try testing.expectApproxEqAbs(result[0], -19.0, 1e-10);
+    // f(10) = 2*10 + 1 = 21
+    try testing.expectApproxEqAbs(result[1], 21.0, 1e-10);
+}
+
+test "lagrange Runge phenomenon with equally-spaced points" {
+    const allocator = testing.allocator;
+
+    // 11 equally-spaced points on f(x) = 1/(1 + 25x²) on [-1, 1]
+    // This is the classic Runge phenomenon example
+    const n = 11;
+    var x_buf: [11]f64 = undefined;
+    var y_buf: [11]f64 = undefined;
+
+    for (0..n) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        const n_f: f64 = @floatFromInt(n - 1);
+        x_buf[i] = -1.0 + 2.0 * i_f / n_f;
+        y_buf[i] = 1.0 / (1.0 + 25.0 * x_buf[i] * x_buf[i]);
+    }
+
+    // Query near boundaries where oscillations occur
+    const x_new = [_]f64{ -0.95, -0.9, 0.9, 0.95 };
+
+    const result = try lagrange(f64, &x_buf, &y_buf, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Verify that results are finite (no NaN/Inf from numerical issues)
+    for (result) |val| {
+        try testing.expect(!math.isNan(val) and math.isFinite(val));
+    }
+    // Note: We do NOT verify accuracy here, as Runge phenomenon means large
+    // oscillations and poor approximation near boundaries is expected behavior
+}
+
+test "lagrange closely-spaced points numerical stability" {
+    const allocator = testing.allocator;
+
+    // Three closely-spaced points
+    const x = [_]f64{ 0.0, 1e-6, 2e-6 };
+    const y = [_]f64{ 0.0, 1e-6, 4e-6 };
+
+    const x_new = [_]f64{ 0.5e-6, 1.5e-6 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Should still compute reasonable values (quadratic y=x²)
+    // Even though numerical stability is challenged with closely-spaced points,
+    // results should be finite and non-zero
+    try testing.expect(!math.isNan(result[0]) and math.isFinite(result[0]));
+    try testing.expect(!math.isNan(result[1]) and math.isFinite(result[1]));
+    try testing.expect(result[0] > 0 and result[1] > 0);
+}
+
+test "lagrange large magnitude values" {
+    const allocator = testing.allocator;
+
+    // Large x and y values
+    const x = [_]f64{ 1e6, 2e6, 3e6 };
+    const y = [_]f64{ 1e12, 2e12, 3e12 };
+
+    const x_new = [_]f64{ 1.5e6, 2.5e6 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Linear: y = x * 1e6
+    try testing.expectApproxEqRel(result[0], 1.5e12, 1e-8);
+    try testing.expectApproxEqRel(result[1], 2.5e12, 1e-8);
+}
+
+test "lagrange mixed scale x coordinates" {
+    const allocator = testing.allocator;
+
+    // Wide range of x scales
+    const x = [_]f64{ 1e-3, 1.0, 1e3 };
+    const y = [_]f64{ 1e-6, 1.0, 1e6 };
+
+    const x_new = [_]f64{ 0.1, 10.0, 100.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // All results should be finite (no overflow/underflow)
+    for (result) |val| {
+        try testing.expect(!math.isNan(val) and math.isFinite(val));
+    }
+}
+
+test "lagrange empty query points" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f64{};
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(result.len, 0);
+}
+
+test "lagrange single sample point" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 5.0 };
+    const y = [_]f64{ 10.0 };
+
+    // Query multiple points
+    const x_new = [_]f64{ 0.0, 5.0, 10.0 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Single point defines constant polynomial y=10
+    try testing.expectApproxEqAbs(result[0], 10.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 10.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 10.0, 1e-10);
+}
+
+test "lagrange many sample points (n=20)" {
+    const allocator = testing.allocator;
+
+    const n = 20;
+    var x_buf: [20]f64 = undefined;
+    var y_buf: [20]f64 = undefined;
+
+    // Generate points on sin(x) over [0, π]
+    for (0..n) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        const n_f: f64 = @floatFromInt(n - 1);
+        x_buf[i] = i_f / n_f * math.pi;
+        y_buf[i] = @sin(x_buf[i]);
+    }
+
+    // Query at 100 intermediate points
+    var x_new_buf: [100]f64 = undefined;
+    for (0..100) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        x_new_buf[i] = i_f / 99.0 * math.pi;
+    }
+
+    const result = try lagrange(f64, &x_buf, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(result.len, 100);
+
+    // Results should be finite (no NaN/Inf)
+    for (result) |val| {
+        try testing.expect(!math.isNan(val) and math.isFinite(val));
+    }
+}
+
+test "lagrange dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0 };  // Wrong length
+    const x_new = [_]f64{ 0.5 };
+
+    const result = lagrange(f64, &x, &y, &x_new, allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "lagrange empty input error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{};
+    const y = [_]f64{};
+    const x_new = [_]f64{ 0.5 };
+
+    const result = lagrange(f64, &x, &y, &x_new, allocator);
+    try testing.expectError(error.InsufficientPoints, result);
+}
+
+test "lagrange duplicate x values error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 1.0, 2.0 };  // Duplicate at x=1.0
+    const y = [_]f64{ 0.0, 1.0, 1.0, 4.0 };
+    const x_new = [_]f64{ 0.5 };
+
+    const result = lagrange(f64, &x, &y, &x_new, allocator);
+    try testing.expectError(error.DuplicatePoints, result);
+}
+
+test "lagrange f32 precision" {
+    const allocator = testing.allocator;
+
+    const x = [_]f32{ 0.0, 1.0, 2.0 };
+    const y = [_]f32{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f32{ 0.5, 1.5 };
+
+    const result = try lagrange(f32, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Quadratic reconstruction should be exact within f32 precision
+    try testing.expectApproxEqAbs(result[0], 0.25, 1e-4);
+    try testing.expectApproxEqAbs(result[1], 2.25, 1e-4);
+}
+
+test "lagrange f64 precision" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f64{ 0.5, 1.5 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Quadratic reconstruction should be exact within f64 precision
+    try testing.expectApproxEqAbs(result[0], 0.25, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 2.25, 1e-10);
+}
+
+test "lagrange memory ownership - caller frees" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f64{ 0.5, 1.5 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+
+    // Caller owns the result and must free it
+    allocator.free(result);
+}
+
+test "lagrange no memory leaks - multiple calls" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0, 16.0 };
+
+    var x_new_buf: [101]f64 = undefined;
+    for (0..101) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 25.0;
+    }
+
+    // Multiple calls should not leak memory
+    for (0..3) |_| {
+        const result = try lagrange(f64, &x, &y, &x_new_buf, allocator);
+        allocator.free(result);
+    }
+}
+
+test "lagrange negative domain" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ -2.0, -1.0, 0.0, 1.0 };
+    const y = [_]f64{ -8.0, -1.0, 0.0, 1.0 };
+
+    const x_new = [_]f64{ -1.5, -0.5, 0.5 };
+
+    const result = try lagrange(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Cubic y=x³: f(-1.5)=-3.375, f(-0.5)=-0.125, f(0.5)=0.125
+    try testing.expectApproxEqAbs(result[0], -3.375, 1e-10);
+    try testing.expectApproxEqAbs(result[1], -0.125, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 0.125, 1e-10);
+}
