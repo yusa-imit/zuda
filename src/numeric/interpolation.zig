@@ -134,6 +134,7 @@ pub const InterpolationError = error{
     DimensionMismatch,
     InsufficientPoints,
     NonMonotonicX,
+    NonMonotonicY,
 };
 
 // ============================================================================
@@ -2560,5 +2561,909 @@ test "pchip no memory leaks - multiple calls" {
     for (0..3) |_| {
         const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
         allocator.free(result);
+    }
+}
+
+/// 2D bilinear interpolation on a regular grid.
+///
+/// Given sample points (x[i], y[j]) with values z[i][j], interpolates
+/// to new points (x_new[p], y_new[q]) using bilinear interpolation.
+///
+/// Extrapolation: constant (clamps to boundary values)
+///
+/// Time: O(P·Q·(log M + log N)) where P=len(x_new), Q=len(y_new), M=len(x), N=len(y)
+/// Space: O(P·Q)
+///
+/// Params:
+///   T: floating-point type (f32, f64)
+///   x: sample x-coordinates (M), strictly increasing
+///   y: sample y-coordinates (N), strictly increasing
+///   z: sample values (M×N grid, row-major: z[i][j] at (x[i], y[j]))
+///   x_new: query x-coordinates (P)
+///   y_new: query y-coordinates (Q)
+///   allocator: memory allocator
+///
+/// Returns: interpolated values (P×Q), caller owns (must free each row, then outer array)
+///
+/// Errors:
+///   DimensionMismatch: z.len != x.len or z[i].len != y.len
+///   NonMonotonicX: x not strictly increasing
+///   NonMonotonicY: y not strictly increasing
+///   InsufficientPoints: x.len < 2 or y.len < 2
+pub fn interp2d(comptime T: type, x: []const T, y: []const T, z: anytype, x_new: []const T, y_new: []const T, allocator: Allocator) ![][]T {
+    // Convert z to a slice of slices for uniform handling
+    const z_len = z.len;
+
+    // Validation: grid dimensions
+    if (z_len != x.len) return error.DimensionMismatch;
+    if (x.len < 2 or y.len < 2) return error.InsufficientPoints;
+
+    // Validate that all z rows have correct length
+    for (0..z_len) |i| {
+        if (z[i].len != y.len) return error.DimensionMismatch;
+    }
+
+    // Validate that x is strictly monotonically increasing
+    for (1..x.len) |i| {
+        if (x[i] <= x[i - 1]) return error.NonMonotonicX;
+    }
+
+    // Validate that y is strictly monotonically increasing
+    for (1..y.len) |i| {
+        if (y[i] <= y[i - 1]) return error.NonMonotonicY;
+    }
+
+    // Allocate outer array (P rows)
+    const result = try allocator.alloc([]T, x_new.len);
+    errdefer allocator.free(result);
+
+    // Handle empty x_new
+    if (x_new.len == 0) return result;
+
+    // Allocate each row and compute interpolations
+    var allocated_count: usize = 0;
+    errdefer {
+        for (0..allocated_count) |i| {
+            allocator.free(result[i]);
+        }
+        allocator.free(result);
+    }
+
+    for (0..x_new.len) |p| {
+        // Allocate this row (Q elements)
+        const row = try allocator.alloc(T, y_new.len);
+        result[p] = row;
+        allocated_count += 1;
+
+        // Handle empty y_new
+        if (y_new.len == 0) continue;
+
+        // Find x index: x[x_idx] <= x_new[p] < x[x_idx+1]
+        const x_idx = binarySearchLeft(T, x, x_new[p]);
+
+        // Clamp to valid range [0, x.len-2]
+        const xi = @min(x_idx, x.len - 2);
+
+        for (0..y_new.len) |q| {
+            // Find y index: y[y_idx] <= y_new[q] < y[y_idx+1]
+            const y_idx = binarySearchLeft(T, y, y_new[q]);
+
+            // Clamp to valid range [0, y.len-2]
+            const yi = @min(y_idx, y.len - 2);
+
+            // Grid corners
+            const x0 = x[xi];
+            const x1 = x[xi + 1];
+            const y0 = y[yi];
+            const y1 = y[yi + 1];
+
+            // Normalized distances in [0, 1]
+            const dx = x1 - x0;
+            const dy = y1 - y0;
+            var tx = (x_new[p] - x0) / dx;
+            var ty = (y_new[q] - y0) / dy;
+
+            // Clamp tx and ty to [0, 1] for extrapolation
+            const zero: T = @as(T, @floatFromInt(0));
+            const one: T = @as(T, @floatFromInt(1));
+            if (tx < zero) tx = zero;
+            if (tx > one) tx = one;
+            if (ty < zero) ty = zero;
+            if (ty > one) ty = one;
+
+            // Grid values at four corners
+            const z00 = z[xi][yi];
+            const z10 = z[xi + 1][yi];
+            const z01 = z[xi][yi + 1];
+            const z11 = z[xi + 1][yi + 1];
+
+            // Bilinear interpolation formula
+            const one_minus_tx = one - tx;
+            const one_minus_ty = one - ty;
+
+            const z_new = one_minus_tx * one_minus_ty * z00 +
+                tx * one_minus_ty * z10 +
+                one_minus_tx * ty * z01 +
+                tx * ty * z11;
+
+            row[q] = z_new;
+        }
+    }
+
+    return result;
+}
+
+/// Binary search to find the index where arr[index] <= value < arr[index+1]
+/// Returns index such that arr[index] <= value < arr[index+1]
+/// If value < arr[0], returns 0
+/// If value >= arr[n-1], returns n-2 (for use in interpolation)
+fn binarySearchLeft(comptime T: type, arr: []const T, value: T) usize {
+    var left: usize = 0;
+    var right: usize = arr.len - 1;
+
+    while (left < right) {
+        const mid = left + (right - left) / 2;
+        if (arr[mid] < value) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+
+    // Now arr[left-1] < value <= arr[left] (or left == 0)
+    // But we need arr[j] <= value, so j = left - 1 if left > 0, else 0
+    if (left == 0) return 0;
+    return left - 1;
+}
+
+// ============================================================================
+// interp2d — 2D Bilinear Interpolation Tests
+// ============================================================================
+//
+// Tests for 2D grid interpolation using bilinear interpolation formula:
+// z_new[i,j] = (1-tx)(1-ty)·z[i,j] + tx(1-ty)·z[i+1,j] +
+//              (1-tx)ty·z[i,j+1] + tx·ty·z[i+1,j+1]
+// where tx, ty ∈ [0,1] are relative positions in grid cell
+//
+
+// Basic Operations (6 tests)
+
+test "interp2d empty x_new returns empty array" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+    const x_new: [0]f64 = undefined;
+    const y_new = [_]f64{ 0.5 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 0);
+}
+
+test "interp2d empty y_new returns empty array" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new: [0]f64 = undefined;
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 1);
+    try testing.expectEqual(result[0].len, 0);
+}
+
+test "interp2d single query point - 2x2 grid" {
+    const allocator = testing.allocator;
+
+    // Grid: [0,0] -> [0, 1]
+    //       [1,0] -> [1, 2]
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 1);
+    try testing.expectEqual(result[0].len, 1);
+    // At (0.5, 0.5) in center of cell: (1-0.5)(1-0.5)*0 + 0.5(1-0.5)*1 +
+    //                                    (1-0.5)*0.5*1 + 0.5*0.5*2 = 0 + 0.25 + 0.25 + 0.5 = 1.0
+    try testing.expectApproxEqAbs(result[0][0], 1.0, 1e-10);
+}
+
+test "interp2d 3x3 grid with 4x4 query points" {
+    const allocator = testing.allocator;
+
+    // 3x3 grid with values increasing from left-bottom to right-top
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+    const z = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 2.0 },
+        [_]f64{ 1.0, 2.0, 3.0 },
+        [_]f64{ 2.0, 3.0, 4.0 },
+    };
+
+    var x_new_buf: [4]f64 = undefined;
+    var y_new_buf: [4]f64 = undefined;
+    for (0..4) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) * 2.0 / 3.0;
+        y_new_buf[i] = @as(f64, @floatFromInt(i)) * 2.0 / 3.0;
+    }
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 4);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 4);
+    }
+}
+
+test "interp2d exact match at grid node" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 10.0, 20.0 },
+        [_]f64{ 30.0, 40.0 },
+        [_]f64{ 50.0, 60.0 },
+    };
+
+    // Query at exact grid nodes
+    const x_new = [_]f64{ 0.0, 1.0, 2.0 };
+    const y_new = [_]f64{ 0.0, 1.0 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Should match exactly at grid points
+    try testing.expectApproxEqAbs(result[0][0], 10.0, 1e-10);
+    try testing.expectApproxEqAbs(result[0][1], 20.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1][0], 30.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1][1], 40.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2][0], 50.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2][1], 60.0, 1e-10);
+}
+
+test "interp2d query on grid edges" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 2.0 },
+        [_]f64{ 2.0, 4.0 },
+    };
+
+    // Query on edges
+    const x_new = [_]f64{ 0.0, 0.5, 1.0 };
+    const y_new = [_]f64{ 0.0, 0.5, 1.0 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 3);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 3);
+    }
+
+    // Check corners match exactly
+    try testing.expectApproxEqAbs(result[0][0], 0.0, 1e-10);  // (0, 0)
+    try testing.expectApproxEqAbs(result[0][2], 2.0, 1e-10);  // (0, 1)
+    try testing.expectApproxEqAbs(result[2][0], 2.0, 1e-10);  // (1, 0)
+    try testing.expectApproxEqAbs(result[2][2], 4.0, 1e-10);  // (1, 1)
+}
+
+// Mathematical Properties (5 tests)
+
+test "interp2d bilinearity - linear function is exact" {
+    const allocator = testing.allocator;
+
+    // Linear function: z = 2x + 3y + 1
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    var z: [3][2]f64 = undefined;
+    for (0..3) |i| {
+        for (0..2) |j| {
+            z[i][j] = 2.0 * x[i] + 3.0 * y[j] + 1.0;
+        }
+    }
+
+    var x_new_buf: [5]f64 = undefined;
+    var y_new_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.4;
+        y_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.2;
+    }
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Linear interpolation should be exact for linear functions
+    for (0..5) |i| {
+        for (0..5) |j| {
+            const expected = 2.0 * x_new_buf[i] + 3.0 * y_new_buf[j] + 1.0;
+            try testing.expectApproxEqAbs(result[i][j], expected, 1e-9);
+        }
+    }
+}
+
+test "interp2d passes through all grid nodes" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ -1.0, 0.0, 1.0 };
+    const y = [_]f64{ -1.0, 0.0, 1.0 };
+    var z: [3][3]f64 = undefined;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            z[i][j] = @as(f64, @floatFromInt(i)) + @as(f64, @floatFromInt(j)) * 10.0;
+        }
+    }
+
+    const result = try interp2d(f64, &x, &y, &z, &x, &y, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // When querying at grid points, should match exactly
+    for (0..3) |i| {
+        for (0..3) |j| {
+            try testing.expectApproxEqAbs(result[i][j], z[i][j], 1e-10);
+        }
+    }
+}
+
+test "interp2d symmetry property" {
+    const allocator = testing.allocator;
+
+    // Symmetric function: z = x² + y²
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+    var z: [3][3]f64 = undefined;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            z[i][j] = x[i] * x[i] + y[j] * y[j];
+        }
+    }
+
+    const query1_x = [_]f64{ 0.5 };
+    const query1_y = [_]f64{ 1.5 };
+    const query2_x = [_]f64{ 1.5 };
+    const query2_y = [_]f64{ 0.5 };
+
+    const result1 = try interp2d(f64, &x, &y, &z, &query1_x, &query1_y, allocator);
+    defer {
+        for (result1) |row| allocator.free(row);
+        allocator.free(result1);
+    }
+
+    const result2 = try interp2d(f64, &x, &y, &z, &query2_x, &query2_y, allocator);
+    defer {
+        for (result2) |row| allocator.free(row);
+        allocator.free(result2);
+    }
+
+    // Due to symmetry of z, results at (0.5, 1.5) and (1.5, 0.5) should be equal
+    try testing.expectApproxEqAbs(result1[0][0], result2[0][0], 1e-10);
+}
+
+test "interp2d monotonicity preservation - constant grid" {
+    const allocator = testing.allocator;
+
+    // Monotonically increasing in both directions
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+    var z: [3][3]f64 = undefined;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            z[i][j] = @as(f64, @floatFromInt(i)) + @as(f64, @floatFromInt(j));
+        }
+    }
+
+    var x_new_buf: [5]f64 = undefined;
+    var y_new_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.5;
+        y_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.5;
+    }
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Should be monotonically increasing
+    for (0..4) |i| {
+        for (0..4) |j| {
+            try testing.expect(result[i][j] <= result[i + 1][j]);
+            try testing.expect(result[i][j] <= result[i][j + 1]);
+        }
+    }
+}
+
+// Interpolation Quality (4 tests)
+
+test "interp2d polynomial z = x² + y² accuracy" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+    var z: [3][3]f64 = undefined;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            z[i][j] = x[i] * x[i] + y[j] * y[j];
+        }
+    }
+
+    var x_new_buf: [9]f64 = undefined;
+    var y_new_buf: [9]f64 = undefined;
+    var idx: usize = 0;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            x_new_buf[idx] = 0.5 + @as(f64, @floatFromInt(i)) * 0.5;
+            y_new_buf[idx] = 0.5 + @as(f64, @floatFromInt(j)) * 0.5;
+            idx += 1;
+        }
+    }
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    idx = 0;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const expected = x_new_buf[idx] * x_new_buf[idx] + y_new_buf[idx] * y_new_buf[idx];
+            // Bilinear approximation of quadratic should have reasonable error
+            try testing.expectApproxEqAbs(result[i][j], expected, 0.15);
+            idx += 1;
+        }
+    }
+}
+
+test "interp2d smooth function sin(x)·cos(y) approximation" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.57, 3.14 };  // 0, π/2, π
+    const y = [_]f64{ 0.0, 1.57, 3.14 };
+    var z: [3][3]f64 = undefined;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            z[i][j] = @sin(x[i]) * @cos(y[j]);
+        }
+    }
+
+    var x_new_buf: [4]f64 = undefined;
+    var y_new_buf: [4]f64 = undefined;
+    x_new_buf = [_]f64{ 0.5, 1.0, 2.0, 2.5 };
+    y_new_buf = [_]f64{ 0.5, 1.0, 2.0, 2.5 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Check reasonable accuracy
+    var max_err: f64 = 0.0;
+    for (0..4) |i| {
+        for (0..4) |j| {
+            const expected = @sin(x_new_buf[i]) * @cos(y_new_buf[j]);
+            const err = @abs(result[i][j] - expected);
+            if (err > max_err) max_err = err;
+        }
+    }
+
+    try testing.expect(max_err < 0.2);  // Tolerance for smooth function approximation
+}
+
+test "interp2d non-uniform grid spacing" {
+    const allocator = testing.allocator;
+
+    // Non-uniform spacing: denser near 0
+    const x = [_]f64{ 0.0, 0.1, 0.5, 1.0 };
+    const y = [_]f64{ 0.0, 0.2, 0.7 };
+    var z: [4][3]f64 = undefined;
+    for (0..4) |i| {
+        for (0..3) |j| {
+            z[i][j] = x[i] * y[j];
+        }
+    }
+
+    var x_new_buf: [3]f64 = undefined;
+    var y_new_buf: [3]f64 = undefined;
+    x_new_buf = [_]f64{ 0.05, 0.3, 0.75 };
+    y_new_buf = [_]f64{ 0.1, 0.45, 0.65 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Check that interpolation works correctly with non-uniform grids
+    try testing.expectEqual(result.len, 3);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 3);
+    }
+
+    // All values should be finite and within reasonable bounds
+    for (result) |row| {
+        for (row) |val| {
+            try testing.expect(math.isFinite(val));
+            try testing.expect(val >= 0.0 and val <= 1.0);
+        }
+    }
+}
+
+// Edge Cases (5 tests)
+
+test "interp2d extrapolation - query below x and y minimum" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 1.0, 2.0 };
+    const y = [_]f64{ 1.0, 2.0 };
+    const z = [_][2]f64{
+        [_]f64{ 10.0, 20.0 },
+        [_]f64{ 30.0, 40.0 },
+    };
+
+    const x_new = [_]f64{ 0.0 };
+    const y_new = [_]f64{ 0.0 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Constant extrapolation should clamp to z[0][0]
+    try testing.expectApproxEqAbs(result[0][0], 10.0, 1e-10);
+}
+
+test "interp2d extrapolation - query above x and y maximum" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+
+    const x_new = [_]f64{ 5.0 };
+    const y_new = [_]f64{ 5.0 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Constant extrapolation should clamp to z[n-1][m-1]
+    try testing.expectApproxEqAbs(result[0][0], 2.0, 1e-10);
+}
+
+test "interp2d minimum grid 2x2" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 3.0, 4.0 },
+    };
+
+    const x_new = [_]f64{ 0.25, 0.75 };
+    const y_new = [_]f64{ 0.25, 0.75 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 2);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 2);
+    }
+}
+
+test "interp2d non-square grid 3x5" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0 };
+    var z: [3][5]f64 = undefined;
+    for (0..3) |i| {
+        for (0..5) |j| {
+            z[i][j] = @as(f64, @floatFromInt(i)) + @as(f64, @floatFromInt(j)) * 0.1;
+        }
+    }
+
+    const x_new = [_]f64{ 0.5, 1.5 };
+    const y_new = [_]f64{ 0.25, 0.75, 1.25, 1.75 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 2);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 4);
+    }
+}
+
+test "interp2d closely-spaced grid points numerical stability" {
+    const allocator = testing.allocator;
+
+    // Very closely spaced points
+    const x = [_]f64{ 0.0, 1e-6, 2e-6 };
+    const y = [_]f64{ 0.0, 1e-6, 2e-6 };
+    var z: [3][3]f64 = undefined;
+    for (0..3) |i| {
+        for (0..3) |j| {
+            z[i][j] = @as(f64, @floatFromInt(i)) * 1e-6 + @as(f64, @floatFromInt(j)) * 1e-6;
+        }
+    }
+
+    const x_new = [_]f64{ 5e-7 };
+    const y_new = [_]f64{ 5e-7 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    // Should not blow up with NaN or Inf
+    for (result) |row| {
+        for (row) |val| {
+            try testing.expect(math.isFinite(val));
+        }
+    }
+}
+
+// Error Handling (4 tests)
+
+test "interp2d dimension mismatch - z.len != x.len" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },  // Only 1 row, but x.len = 2
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "interp2d row length mismatch - z[i].len != y.len" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };  // y.len = 3
+    const z = [_][2]f64{  // But each row has only 2 elements
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "interp2d non-monotonic x error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 2.0, 1.0 };  // Not monotonically increasing
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    try testing.expectError(error.NonMonotonicX, result);
+}
+
+test "interp2d non-monotonic y error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 2.0, 1.0 };  // Not monotonically increasing
+    const z = [_][3]f64{
+        [_]f64{ 0.0, 2.0, 1.0 },
+        [_]f64{ 1.0, 3.0, 2.0 },
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    try testing.expectError(error.NonMonotonicY, result);
+}
+
+test "interp2d insufficient sample points error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0 };  // Only 1 point
+    const y = [_]f64{ 0.0 };
+    const z = [_][1]f64{
+        [_]f64{ 1.0 },
+    };
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+    try testing.expectError(error.InsufficientPoints, result);
+}
+
+// Type Support (2 tests)
+
+test "interp2d f32 precision" {
+    const allocator = testing.allocator;
+
+    const x = [_]f32{ 0.0, 1.0, 2.0 };
+    const y = [_]f32{ 0.0, 1.0 };
+    const z = [_][2]f32{
+        [_]f32{ 0.0, 1.0 },
+        [_]f32{ 2.0, 3.0 },
+        [_]f32{ 4.0, 5.0 },
+    };
+
+    var x_new_buf: [3]f32 = undefined;
+    var y_new_buf: [3]f32 = undefined;
+    x_new_buf = [_]f32{ 0.5, 1.5, 0.25 };
+    y_new_buf = [_]f32{ 0.5, 0.25, 0.75 };
+
+    const result = try interp2d(f32, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 3);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 3);
+        for (row) |val| {
+            try testing.expect(math.isFinite(val));
+        }
+    }
+}
+
+test "interp2d f64 precision" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+    var z: [4][3]f64 = undefined;
+    for (0..4) |i| {
+        for (0..3) |j| {
+            z[i][j] = @as(f64, @floatFromInt(i)) * @as(f64, @floatFromInt(j));
+        }
+    }
+
+    var x_new_buf: [5]f64 = undefined;
+    var y_new_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.6;
+        y_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.4;
+    }
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+    defer {
+        for (result) |row| allocator.free(row);
+        allocator.free(result);
+    }
+
+    try testing.expectEqual(result.len, 5);
+    for (result) |row| {
+        try testing.expectEqual(row.len, 5);
+    }
+}
+
+// Memory Safety (2 tests)
+
+test "interp2d memory ownership - caller frees all rows and outer array" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 1.0 };
+    const z = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+    };
+
+    const x_new = [_]f64{ 0.5 };
+    const y_new = [_]f64{ 0.5 };
+
+    const result = try interp2d(f64, &x, &y, &z, &x_new, &y_new, allocator);
+
+    // Caller owns result and must free each row and the outer array
+    for (result) |row| {
+        allocator.free(row);
+    }
+    allocator.free(result);
+}
+
+test "interp2d no memory leaks - multiple calls" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 0.0, 1.0, 2.0 };
+    var z: [4][3]f64 = undefined;
+    for (0..4) |i| {
+        for (0..3) |j| {
+            z[i][j] = @as(f64, @floatFromInt(i)) + @as(f64, @floatFromInt(j));
+        }
+    }
+
+    var x_new_buf: [10]f64 = undefined;
+    var y_new_buf: [10]f64 = undefined;
+    for (0..10) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.3;
+        y_new_buf[i] = @as(f64, @floatFromInt(i)) * 0.2;
+    }
+
+    // Multiple calls should not leak memory (detected by testing.allocator)
+    for (0..5) |_| {
+        const result = try interp2d(f64, &x, &y, &z, &x_new_buf, &y_new_buf, allocator);
+        defer {
+            for (result) |row| allocator.free(row);
+            allocator.free(result);
+        }
     }
 }
