@@ -7,17 +7,67 @@
 - **Last CI Status**: ✅ GREEN (verified 2026-03-24 Hour 0)
 - **Latest Milestone**: v1.21.0 ✅ — Descriptive Statistics & Distributions RELEASED
 - **Current Milestone**: v1.22.0 IN PROGRESS — Hypothesis Testing & Regression/Histogram
-- **Next Priority**: Logistic regression or advanced regression (ridge, lasso)
-- **Test Count**: 1445/1447 tests (1445 passing + 2 skipped)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 107 correlation/regression + ndarray + containers + algorithms + internal
+- **Next Priority**: Advanced regression methods (ridge, lasso) or release v1.22.0
+- **Test Count**: 1467/1469 tests (1467 passing + 2 skipped)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
   - All 12 distributions implemented: 8 continuous + 4 discrete
   - Hypothesis tests: 7 tests (ttest_1samp, ttest_ind, ttest_rel, chi2_test, anova_oneway, ks_test, mannwhitney_u)
-  - Correlation/Regression: 6 functions (pearson, spearman, kendalltau, linregress, polyfit, polyval) — 107 tests ✅
+  - Correlation/Regression: 7 functions (pearson, spearman, kendalltau, linregress, polyfit, polyval, logisticRegress) — 129 tests ✅
   - Histogram: 3 functions (histogram, histogram2d, histogramBinEdges) — 31 tests ✅
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Hour 4)
+## Recent Progress (Session 2026-03-24 - Hour 7)
+**FEATURE MODE:**
+
+### Logistic Regression Implementation (commit 4de9fcf) ✅
+- ✅ **Function**: logisticRegress(T, X, y, allocator) !LogisticRegressionResult(T) — Binary logistic regression for classification
+- ✅ **Algorithm**: Newton-Raphson optimization with Iterative Reweighted Least Squares (IRLS)
+  - Maximum likelihood estimation via iterative optimization
+  - Hessian: H = X^T · W · X where W = diag(p·(1-p))
+  - Gradient: g = X^T · (p - y)
+  - Update: β_new = β_old - H^-1 · g
+  - Convergence: ||Δβ|| < 1e-6 or max 100 iterations
+  - Time: O(n·d²·iterations), Space: O(n·d)
+- ✅ **LogisticRegressionResult(T)** struct:
+  - coefficients: []T (n_features) — caller owns, must free
+  - intercept: T
+  - log_likelihood: T — final log-likelihood value
+  - n_iter: usize — number of iterations until convergence
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - Newton-Raphson with IRLS for fast convergence
+  - Gaussian elimination with partial pivoting for solving H·Δβ = -g
+  - Proper sigmoid function: σ(z) = 1/(1 + exp(-z))
+  - Validates y contains only 0.0 and 1.0
+  - Dimension validation: X.shape[0] == y.shape[0]
+  - Memory safety: zero leaks verified with std.testing.allocator
+- ✅ **Tests**: 22/22 passing (1674 lines of test code)
+  - Basic: perfect separation, good fit, single/multiple features, decision boundary, balanced classes
+  - Edge: all y=0/1, minimal samples (n=2), single feature two points, imbalanced classes, identical X
+  - Statistical: coefficient signs, result structure, log-likelihood monotonic, convergence < 100 iter
+  - Precision: f32 (tolerance 1e-4)
+  - Scalability: large dataset (50 samples)
+  - Error paths: dimension mismatch, invalid y values (not 0/1), invalid input detection
+  - Memory: leak detection, multiple calls no cross-contamination
+- ✅ **TDD Workflow**: test-writer (22 tests + implementation) → all tests passing
+- ✅ **File**: src/stats/correlation.zig (+805 lines: 191 implementation + 614 tests)
+- ✅ **Use Cases**: Binary classification, logistic models, odds ratio estimation, medical diagnosis, spam detection
+- ✅ **Test Count**: 1445 → 1467 passing (+22 tests)
+
+**v1.22.0 Progress**:
+- [x] Hypothesis Testing (7 tests) ✅
+- [x] Correlation (pearson, spearman, kendalltau) ✅
+- [x] Simple Linear Regression (linregress) ✅
+- [x] Polynomial Regression (polyfit, polyval) ✅
+- [x] Logistic Regression (logisticRegress) ✅
+- [x] Histogram binning (histogram, histogram2d, histogramBinEdges) ✅
+
+**Next Session Priority**: Ridge/Lasso regression or release v1.22.0
+
+---
+
+## Previous Progress (Session 2026-03-24 - Hour 4)
 **FEATURE MODE:**
 
 ### Histogram Binning Implementation (commit 00fac9b) ✅
@@ -50,14 +100,14 @@
 - ✅ **Use Cases**: Data visualization, density estimation, feature engineering, image processing
 - ✅ **Test Count**: 1414 → 1445 passing (+31 tests)
 
-**v1.22.0 Progress**:
+**v1.22.0 Progress** (Previous Session):
 - [x] Hypothesis Testing (7 tests) ✅
 - [x] Correlation (pearson, spearman, kendalltau) ✅
 - [x] Simple Linear Regression (linregress) ✅
 - [x] Polynomial Regression (polyfit, polyval) ✅
 - [x] Histogram binning (histogram, histogram2d, histogramBinEdges) ✅
 
-**Next Session Priority**: Logistic regression or advanced regression methods (ridge, lasso)
+**Session Priority Completed**: Logistic regression ✅
 
 ---
 
