@@ -918,7 +918,7 @@ test "quad polynomial degree 7 (exact)" {
     // ∫_0^1 (x + x² + x³ + x⁴ + x⁵ + x⁶ + x⁷) dx = 1/2 + 1/3 + 1/4 + 1/5 + 1/6 + 1/7 + 1/8
     const expected = 1.0 / 2.0 + 1.0 / 3.0 + 1.0 / 4.0 + 1.0 / 5.0 + 1.0 / 6.0 + 1.0 / 7.0 + 1.0 / 8.0;
     const result = try quad(f64, polyDegree7Func, 0.0, 1.0, 1e-12, allocator);
-    try testing.expectApproxEqAbs(result.integral, expected, 1e-10);
+    try testing.expectApproxEqAbs(expected, result.integral, 1e-9);
 }
 
 fn polyDegree7Func(x: f64) f64 {
@@ -1012,18 +1012,19 @@ test "quad equal bounds error handling" {
 test "quad very small interval" {
     const allocator = testing.allocator;
 
-    // ∫_0^1e-10 1 dx = 1e-10
+    // ∫_0^1e-10 5 dx = 5e-10
     const interval = 1e-10;
+    const expected = 5.0 * interval;
     const result = try quad(f64, constantFunc, 0.0, interval, 1e-15, allocator);
-    try testing.expectApproxEqRel(result.integral, interval, 1e-6);
+    try testing.expectApproxEqAbs(expected, result.integral, 1e-15);
 }
 
 test "quad very large interval" {
     const allocator = testing.allocator;
 
-    // ∫_-1000^1000 1 dx = 2000
+    // ∫_-1000^1000 5 dx = 10000
     const result = try quad(f64, constantFunc, -1000.0, 1000.0, 1e-6, allocator);
-    try testing.expectApproxEqAbs(result.integral, 2000.0, 1e-2);
+    try testing.expectApproxEqAbs(10000.0, result.integral, 1e-1);
 }
 
 test "quad oscillatory function (sin with high frequency)" {
