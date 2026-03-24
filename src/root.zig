@@ -406,6 +406,8 @@ pub const signal = struct {
     pub const window = @import("signal/window.zig");
     /// Spectral analysis — Power spectral density estimation via periodogram and Welch's method
     pub const spectral = @import("signal/spectral.zig");
+    /// Discrete Cosine Transform (DCT) — Type II and Type III for signal compression and analysis
+    pub const dct = @import("signal/dct.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -441,4 +443,5 @@ test {
     _ = @import("signal/fft.zig");
     _ = @import("signal/window.zig");
     _ = @import("signal/spectral.zig");
+    _ = @import("signal/dct.zig");
 }
