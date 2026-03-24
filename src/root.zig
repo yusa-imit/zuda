@@ -408,6 +408,8 @@ pub const signal = struct {
     pub const spectral = @import("signal/spectral.zig");
     /// Discrete Cosine Transform (DCT) — Type II and Type III for signal compression and analysis
     pub const dct = @import("signal/dct.zig");
+    /// Convolution and cross-correlation — Time and frequency domain
+    pub const conv = @import("signal/conv.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -444,4 +446,5 @@ test {
     _ = @import("signal/window.zig");
     _ = @import("signal/spectral.zig");
     _ = @import("signal/dct.zig");
+    _ = @import("signal/conv.zig");
 }
