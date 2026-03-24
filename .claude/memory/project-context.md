@@ -4,17 +4,50 @@
 - **Version**: 1.23.0 (current)
 - **Phase**: v2.0 Track — Phase 10 IN PROGRESS
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 19)
+- **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 22)
 - **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
-- **Current Milestone**: Phase 10 (Numerical Methods) — 3/5 interpolation complete (interp1d, cubic_spline, lagrange)
-- **Next Priority**: Remaining Phase 10 interpolation (pchip, interp2d) or integration (quad, romberg, gauss_legendre)
-- **Test Count**: 1820 tests passing (+27 from Session 21)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 140 numeric (33 integration + 28 differentiation + 79 interpolation) + ndarray + containers + algorithms + internal
-  - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
-  - Numerical Methods: Integration (2/5), Differentiation (2/4), Interpolation (3/5) — lagrange added Session 21
+- **Current Milestone**: Phase 10 (Numerical Methods) — 4/5 interpolation complete (interp1d, cubic_spline, lagrange, pchip)
+- **Next Priority**: Remaining Phase 10: interp2d or integration (quad, romberg, gauss_legendre) or differentiation (jacobian, hessian)
+- **Test Count**: 1846 tests passing (+26 from Session 22)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 166 numeric (33 integration + 28 differentiation + 105 interpolation) + ndarray + containers + algorithms + internal
+  - Skipped: 2 (1 Normal quantile, 1 mannwhitney empty array)
+  - Numerical Methods: Integration (2/5), Differentiation (2/4), Interpolation (4/5) — pchip added Session 22
 - **System Status**: STABLE — all tests passing
 
-## Recent Progress (Session 2026-03-25 - Session 21)
+## Recent Progress (Session 2026-03-25 - Session 22)
+**FEATURE MODE:**
+
+### PCHIP Interpolation (commit 8fd9695) ✅
+- ✅ **Function**: pchip(T, x, y, x_new, allocator) — Piecewise Cubic Hermite Interpolating Polynomial for shape-preserving interpolation
+- ✅ **Algorithm**: Fritsch-Carlson monotonic interpolation
+  - Computes derivatives at knots using weighted harmonic mean: d[i] = 2 / (w1/δ[i-1] + w2/δ[i])
+  - Preserves monotonicity: sets d[i] = 0 where adjacent slopes have opposite signs
+  - Uses cubic Hermite basis functions (h00, h10, h01, h11) for C¹ continuous interpolation
+  - Constant extrapolation outside [x[0], x[n-1]]
+- ✅ **Features**:
+  - Shape-preserving: monotonic input → monotonic output
+  - C¹ continuity: smooth first derivative throughout domain
+  - Non-oscillatory: avoids Runge phenomenon (unlike Lagrange)
+  - Passes through all knots exactly
+  - Binary search for interval location (O(log n))
+- ✅ **Complexity**: Time O(n + m log n), Space O(n + m) where n = sample points, m = query points
+- ✅ **Implementation**: src/numeric/interpolation.zig (lines 1853-2040, 188 lines)
+- ✅ **Tests**: 26 comprehensive tests (lines 2041-2546)
+  - Basic operations (5): empty queries, single/two points, multiple points, exact knot matching
+  - Mathematical properties (6): monotonicity (increasing/decreasing), C¹ continuity, knot passing, quadratic approx, non-oscillatory
+  - Interpolation quality (4): sin wave accuracy, exponential approximation, non-uniform grids, closely-spaced stability
+  - Edge cases (4): extrapolation below/above, flat segments, large magnitude
+  - Error handling (3): dimension mismatch, insufficient points, non-monotonic x
+  - Type support (2): f32 (1e-4), f64 (1e-10)
+  - Memory safety (2): allocator ownership, no leaks
+- ✅ **TDD Workflow**: test-writer (26 tests) → zig-developer (implementation) → test fixes (tolerance adjustments) → all 26 tests passing
+- ✅ **Test Count**: 1820 → 1846 passing (+26 tests)
+- ✅ **Use Cases**: Monotonic data interpolation, sensor data smoothing, financial time series, animation curves
+- ⚠️ **Known Property**: PCHIP trades polynomial accuracy for monotonicity preservation — may have larger errors than cubic_spline on polynomial data, but guarantees shape preservation
+
+---
+
+## Previous Progress (Session 2026-03-25 - Session 21)
 **FEATURE MODE:**
 
 ### Lagrange Polynomial Interpolation (commit 380e482) ✅
