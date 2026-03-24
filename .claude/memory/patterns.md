@@ -419,3 +419,77 @@ pub fn dct(comptime T: type, signal: []const T, allocator: Allocator) Allocator.
 - Memory: allocation/deallocation correctness
 - Important: Remove duplicate defer statements (cause double-free in loops with reassignment)
 
+## Numerical Interpolation Pattern (interp1d) — Session 18
+
+**Algorithm**: 1D linear interpolation with constant extrapolation
+- Input: x (sorted sample points), y (function values), x_new (query points)
+- Output: interpolated y values at x_new
+- Binary search to find containing interval: O(log n) per query
+- Linear interpolation in interval: O(1)
+- Total: O(m log n + m) where m = queries, n = samples
+
+**Implementation structure**:
+```zig
+pub fn interp1d(comptime T: type, x: []const T, y: []const T, x_new: []const T, allocator: Allocator) ![]T {
+    // Validate: x.len == y.len, x.len >= 2, x strictly increasing
+    // Allocate result array
+    // For each query point:
+    //   - Binary search to find interval [x[j], x[j+1]] containing x_new[i]
+    //   - If below min: result[i] = y[0]
+    //   - If above max: result[i] = y[n-1]
+    //   - Else: linear interpolation y0 + (y1-y0) * (x_new[i] - x0) / (x1 - x0)
+    // Return allocated array
+}
+```
+
+**Key validation**:
+1. Dimension check: `x.len == y.len` → error.DimensionMismatch
+2. Minimum length: `x.len >= 2` → error.InsufficientPoints
+3. Monotonicity: `x[i] < x[i+1]` (strict inequality) → error.NonMonotonicX
+   - Note: Equal consecutive values cause division by zero in interpolation
+
+**Binary search pattern**:
+```zig
+var left: usize = 0;
+var right: usize = x.len - 1;
+while (left < right) {
+    const mid = left + (right - left) / 2;
+    if (x[mid] < xi) left = mid + 1;
+    else right = mid;
+}
+// Result: x[left-1] < xi <= x[left], so interval is [left-1, left]
+```
+
+**Test strategy**:
+1. **Exact cases**: Linear functions (interpolation is exact)
+2. **Approximation**: Quadratic/exponential (verify approximation quality)
+3. **Extrapolation**: Below/above domain (verify constant clamping)
+4. **Edge cases**: Empty queries, single interval, constant function
+5. **Non-uniform grids**: Irregular spacing tests
+6. **Type support**: f32 (1e-5), f64 (1e-10) tolerances
+7. **Large datasets**: 1000+ sample points, 500+ queries
+8. **Error paths**: All 3 error types with dedicated tests
+9. **Memory**: Caller ownership, allocation safety
+
+**26 tests total**:
+- 5 core functionality (exact, midpoint, linear, quadratic, 2-point)
+- 3 extrapolation (below, above, mixed)
+- 5 edge cases (empty, unsorted queries, constant, non-uniform, boundaries)
+- 4 error handling (dimension, length, monotonicity, validation)
+- 2 type support (f32, f64)
+- 1 large dataset (1001 sample, 500 query)
+- 1 memory (caller owns result)
+- 4 numeric properties (exp, negative, small spacing, large spacing)
+
+**Anti-patterns avoided**:
+- Don't assume input is sorted (binary search finds correct interval)
+- Don't re-allocate on each query (allocate once, fill in loop)
+- Don't skip boundary validation (prevents crashes and incorrect results)
+- Don't use simple loop search (O(m*n) vs O(m log n) — binary search mandatory)
+
+**Numerical stability**:
+- Small spacing (1e-6): test for underflow in (x_new[i] - x[j]) / dx
+- Large spacing (1e6): test for overflow/precision loss
+- Division dx = x[j+1] - x[j]: never zero due to strict monotonicity validation
+- Linear combination: numerically stable (single multiplication/addition)
+
