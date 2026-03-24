@@ -1,12 +1,12 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.23.0 (preparing release)
+- **Version**: 1.23.0 (current)
 - **Phase**: v2.0 Track — Phase 10 IN PROGRESS
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 18)
-- **Latest Milestone**: v1.23.0 ⏳ — Numerical Methods (Integration, Differentiation, Interpolation) READY
-- **Current Milestone**: Phase 10 (Numerical Methods) — 3/6 functions complete
+- **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
+- **Current Milestone**: Phase 10 (Numerical Methods) — 3/6 functions complete (trapezoid, simpson, diff/gradient, interp1d)
 - **Next Priority**: Remaining Phase 10 functions (quad, romberg, cubic_spline) or release v1.23.0
 - **Test Count**: 1730 tests passing (+87 from v1.22.0)
   - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 87 numeric (33 integration + 28 differentiation + 26 interpolation) + ndarray + containers + algorithms + internal
@@ -16,6 +16,15 @@
 
 ## Recent Progress (Session 2026-03-24 - Session 18)
 **FEATURE MODE:**
+
+### v1.23.0 Release ✅ (2026-03-24)
+- ✅ **Phase 10 PARTIAL COMPLETE**: Numerical Methods foundation (integration, differentiation, interpolation)
+- ✅ **Pre-flight checks**: All 1730 tests passing, CI green
+- ✅ **Version bump**: 1.22.0 → 1.23.0
+- ✅ **Tag**: v1.23.0 created and pushed
+- ✅ **GitHub Release**: https://github.com/yusa-imit/zuda/releases/tag/v1.23.0
+- ✅ **Total tests**: 1730 passing (+87 from v1.22.0)
+- ✅ **Modules**: Integration (trapezoid, simpson), Differentiation (diff, gradient), Interpolation (interp1d)
 
 ### Numerical Methods Foundation (commits 4430183, 49d872b, c495181) ✅
 - ✅ **Modules**: 3 new modules in src/numeric/ (1828 lines total: 235 implementation + 1593 tests)
