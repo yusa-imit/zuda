@@ -398,6 +398,12 @@ pub const stats = struct {
     };
 };
 
+/// Signal processing and frequency domain analysis
+pub const signal = struct {
+    /// Fast Fourier Transform (FFT) — Cooley-Tukey algorithm for time/frequency domain conversion
+    pub const fft = @import("signal/fft.zig");
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
@@ -426,4 +432,7 @@ test {
     _ = @import("stats/distributions/chi_squared.zig");
     _ = @import("stats/distributions/student_t.zig");
     _ = @import("stats/distributions/f_distribution.zig");
+
+    // Explicitly import signal modules to trigger their tests
+    _ = @import("signal/fft.zig");
 }
