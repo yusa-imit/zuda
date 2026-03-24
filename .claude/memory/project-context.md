@@ -4,18 +4,49 @@
 - **Version**: 1.22.0 (current), v1.23.0 IN PROGRESS
 - **Phase**: v2.0 Track (Phase 9) — Signal Processing, v1.23.0
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 11)
+- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 16)
 - **Latest Milestone**: v1.22.0 ✅ — Hypothesis Testing & Regression RELEASED
-- **Current Milestone**: v1.23.0 IN PROGRESS — Signal Processing (FFT, Window, Spectral)
-- **Next Priority**: DCT (dct, idct) or 2D FFT (fft2, ifft2)
-- **Test Count**: 1582/1584 tests (1582 passing + 2 skipped)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 40 FFT + 17 window + 28 spectral + 30 DCT + ndarray + containers + algorithms + internal
+- **Current Milestone**: v1.23.0 IN PROGRESS — Signal Processing (FFT, Window, Spectral, DCT, 2D FFT)
+- **Next Priority**: Filtering (FIR/IIR filters) or release v1.23.0
+- **Test Count**: 1604/1606 tests (1604 passing + 2 skipped)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 40 FFT + 17 window + 28 spectral + 30 DCT + 37 convolution + 22 2D FFT + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
-  - Signal Processing: FFT (5 functions, 40 tests), Window (5 functions, 17 tests), Spectral (2 functions, 28 tests), DCT (2 functions, 30 tests)
+  - Signal Processing: FFT (5 functions, 40 tests), Window (5 functions, 17 tests), Spectral (2 functions, 28 tests), DCT (2 functions, 30 tests), Convolution (3 functions, 37 tests), 2D FFT (2 functions, 22 tests)
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Session 12)
+## Recent Progress (Session 2026-03-24 - Session 16)
 **FEATURE MODE:**
+
+### 2D FFT Implementation (commit cc33699) ✅
+- ✅ **Module**: src/signal/fft2d.zig (1002 lines: 232 implementation + 770 tests)
+- ✅ **TDD Workflow**: test-writer (22 tests) → zig-developer (implementation) → all 22 tests passing
+- ✅ **fft2(comptime T, signal2d: NDArray(T), allocator) !NDArray(Complex(T))**:
+  - 2D Fast Fourier Transform for image and 2D signal processing
+  - Algorithm: Row-then-column decomposition (separable transform)
+    1. Apply 1D FFT to each row
+    2. Apply 1D FFT to each column of row-FFT result
+  - Input: real or complex 2D array (M×N)
+  - Output: complex 2D array (M×N) with full spectrum
+  - Validates M and N are powers of 2 (error.InvalidLength)
+  - Layout preservation (row_major/column_major)
+  - Time: O(MN log(MN)), Space: O(MN)
+  - Supports f32 and f64 via comptime type parameter
+- ✅ **ifft2(comptime T, spectrum2d: NDArray(Complex(T)), allocator) !NDArray(Complex(T))**:
+  - 2D inverse FFT — mathematical inverse of fft2
+  - Same row-then-column structure using ifft() instead of fft()
+  - Round-trip: ifft2(fft2(x)) ≈ x within floating-point precision
+  - Time: O(MN log(MN)), Space: O(MN)
+- ✅ **Test Coverage** (22 tests):
+  - Basic operations (5): 2×2 impulse, round-trip 2×2/4×4/8×8/16×16
+  - Mathematical properties (5): DC component (X[0,0] = sum), all zeros/ones, linearity, energy conservation
+  - Edge cases (6): single row (4×1), single column (1×4), non-square (4×8, 8×4), checkerboard, diagonal
+  - Type support (3): f32, f64, layout preservation (row/column major)
+  - Error handling (2): non-power-of-2 rows/cols validation
+  - Memory safety: proper allocation/deallocation verified
+- ✅ **File**: src/signal/fft2d.zig (1002 lines) + root.zig update
+- ✅ **Test Count**: 1582 → 1604 passing (+22 2D FFT tests)
+
+**Session 12 Previous Progress:**
 
 ### DCT (Discrete Cosine Transform) Implementation (commit d8ab664) ✅
 - ✅ **Module**: src/signal/dct.zig (596 lines: 97 implementation + 499 tests)
@@ -87,9 +118,11 @@
 - [x] Window Functions (hamming, hann, blackman, bartlett, kaiser) ✅
 - [x] Spectral Analysis (periodogram, welch) ✅
 - [x] DCT (dct, idct) ✅
-- [ ] 2D FFT (fft2, ifft2)
+- [x] Convolution (convolve, correlate, fftconvolve) ✅
+- [x] 2D FFT (fft2, ifft2) ✅
+- [ ] Filtering (FIR/IIR filters)
 
-**Next Session Priority**: 2D FFT (fft2, ifft2)
+**Next Session Priority**: Filtering (FIR/IIR filters) or release v1.23.0
 
 ---
 
