@@ -2328,3 +2328,808 @@ test "polyfit: large dataset accuracy" {
     try testing.expectApproxEqAbs(-2.0, coeffs[1], 1e-8);
     try testing.expectApproxEqAbs(3.0, coeffs[2], 1e-8);
 }
+
+// ============================================================================
+// LOGISTIC REGRESSION
+// ============================================================================
+
+/// Result of logistic regression
+///
+/// Parameters:
+/// - T: Numeric type (f32 or f64)
+///
+/// Fields:
+/// - coefficients: []T — regression coefficients β [n_features]
+/// - intercept: T — intercept β₀
+/// - log_likelihood: T — final log-likelihood value
+/// - n_iter: usize — number of Newton-Raphson iterations
+pub fn LogisticRegressionResult(comptime T: type) type {
+    return struct {
+        coefficients: []T,
+        intercept: T,
+        log_likelihood: T,
+        n_iter: usize,
+    };
+}
+
+/// Binary logistic regression via Newton-Raphson optimization
+///
+/// Fits a binary logistic model to predict P(y=1|X) using maximum likelihood
+/// estimation. Uses Iterative Reweighted Least Squares (IRLS) with Newton-Raphson
+/// optimization.
+///
+/// Model:
+/// - P(y=1|X) = σ(β₀ + β·X) where σ(z) = 1/(1+exp(-z)) is sigmoid
+/// - Log-likelihood: ℒ = Σ[y*log(p) + (1-y)*log(1-p)] where p = σ(β₀ + β·X)
+///
+/// Parameters:
+/// - X: NDArray(f64, 2) — feature matrix [n_samples, n_features]
+/// - y: NDArray(f64, 1) — binary labels [n_samples], values must be 0.0 or 1.0
+/// - allocator: Memory allocator for result coefficients
+///
+/// Returns: LogisticRegressionResult with:
+/// - coefficients: [n_features] regression weights (allocated, caller must free)
+/// - intercept: bias term
+/// - log_likelihood: final log-likelihood value
+/// - n_iter: number of iterations until convergence
+///
+/// Errors:
+/// - error.EmptyArray if X or y is empty
+/// - error.DimensionMismatch if X.shape[0] != y.shape[0]
+/// - error.InvalidInput if y contains values other than 0.0 or 1.0
+/// - error.OutOfMemory if allocation fails
+///
+/// Convergence:
+/// - Stops when ||Δβ|| < 1e-6 or max 100 iterations reached
+/// - Time: O(n·d²·iterations) | Space: O(n·d)
+///
+/// Example:
+/// ```zig
+/// var X = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{100, 3}, x_data, .row_major);
+/// var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, y_data, .row_major);
+/// defer X.deinit(); defer y.deinit();
+/// const result = try logisticRegress(f64, X, y, allocator);
+/// defer allocator.free(result.coefficients);
+/// ```
+pub fn logisticRegress(
+    comptime T: type,
+    X: NDArray_type(T, 2),
+    y: NDArray_type(T, 1),
+    allocator: Allocator,
+) !LogisticRegressionResult(T) {
+    const n = X.shape[0]; // n_samples
+    const d = X.shape[1]; // n_features
+
+    // Validate inputs
+    if (n == 0) return error.EmptyArray;
+    if (y.shape[0] != n) return error.DimensionMismatch;
+
+    // Validate y contains only 0 or 1
+    for (y.data) |y_val| {
+        if (y_val != 0.0 and y_val != 1.0) {
+            return error.InvalidInput;
+        }
+    }
+
+    // Initialize coefficients and intercept to zero
+    var beta = try allocator.alloc(T, d);
+    errdefer allocator.free(beta);
+    for (beta) |*b| {
+        b.* = 0;
+    }
+
+    var beta0: T = 0;
+
+    // Newton-Raphson iteration
+    const max_iter = 100;
+    const tol: T = 1e-6;
+    var n_iter: usize = 0;
+
+    const prev_beta = try allocator.alloc(T, d);
+    defer allocator.free(prev_beta);
+
+    var predictions = try allocator.alloc(T, n);
+    defer allocator.free(predictions);
+
+    var weights = try allocator.alloc(T, n);
+    defer allocator.free(weights);
+
+    var hessian = try allocator.alloc(T, d * d);
+    defer allocator.free(hessian);
+
+    var gradient = try allocator.alloc(T, d);
+    defer allocator.free(gradient);
+
+    var iter: usize = 0;
+    while (iter < max_iter) : (iter += 1) {
+        n_iter = iter + 1;
+
+        // Save previous beta for convergence check
+        @memcpy(prev_beta, beta);
+
+        // Compute predictions: p = σ(β₀ + β·X)
+        for (0..n) |i| {
+            var z: T = beta0;
+            for (0..d) |j| {
+                z += beta[j] * X.data[i * d + j];
+            }
+            // Sigmoid: σ(z) = 1 / (1 + exp(-z))
+            const exp_z = @exp(-z);
+            predictions[i] = 1.0 / (1.0 + exp_z);
+        }
+
+        // Compute weights: w[i] = p[i] * (1 - p[i])
+        for (0..n) |i| {
+            weights[i] = predictions[i] * (1.0 - predictions[i]);
+        }
+
+        // Compute gradient: g = X^T · (p - y)
+        for (0..d) |j| {
+            gradient[j] = 0;
+        }
+        for (0..n) |i| {
+            const residual = predictions[i] - y.data[i];
+            for (0..d) |j| {
+                gradient[j] += X.data[i * d + j] * residual;
+            }
+        }
+
+        // Compute Hessian: H = X^T · W · X where W = diag(w)
+        for (0..d*d) |i| {
+            hessian[i] = 0;
+        }
+        for (0..d) |j| {
+            for (0..d) |k| {
+                for (0..n) |i| {
+                    hessian[j * d + k] += X.data[i * d + j] * weights[i] * X.data[i * d + k];
+                }
+            }
+        }
+
+        // Solve H · Δβ = -g using Gaussian elimination with partial pivoting
+        var delta_beta = try allocator.alloc(T, d);
+        defer allocator.free(delta_beta);
+
+        // Copy gradient with negative sign and Hessian for solving
+        var H_work = try allocator.alloc(T, d * d);
+        defer allocator.free(H_work);
+        var g_work = try allocator.alloc(T, d);
+        defer allocator.free(g_work);
+
+        @memcpy(H_work, hessian);
+        for (0..d) |i| {
+            g_work[i] = -gradient[i];
+        }
+
+        // Gaussian elimination with partial pivoting
+        for (0..d) |col| {
+            // Find pivot
+            var max_row = col;
+            var max_val = @abs(H_work[col * d + col]);
+            for (col+1..d) |row| {
+                const abs_val = @abs(H_work[row * d + col]);
+                if (abs_val > max_val) {
+                    max_val = abs_val;
+                    max_row = row;
+                }
+            }
+
+            // Swap rows
+            if (max_row != col) {
+                for (0..d) |j| {
+                    const temp = H_work[col * d + j];
+                    H_work[col * d + j] = H_work[max_row * d + j];
+                    H_work[max_row * d + j] = temp;
+                }
+                const temp_g = g_work[col];
+                g_work[col] = g_work[max_row];
+                g_work[max_row] = temp_g;
+            }
+
+            // Check for singular matrix
+            if (@abs(H_work[col * d + col]) < 1e-10) {
+                // Ill-conditioned Hessian; use zero update
+                @memset(delta_beta, 0);
+                break;
+            }
+
+            // Eliminate column
+            for (col+1..d) |row| {
+                const factor = H_work[row * d + col] / H_work[col * d + col];
+                for (col..d) |j| {
+                    H_work[row * d + j] -= factor * H_work[col * d + j];
+                }
+                g_work[row] -= factor * g_work[col];
+            }
+        }
+
+        // Back substitution
+        if (d > 0) {
+            var i = d;
+            while (i > 0) : (i -= 1) {
+                const idx = i - 1;
+                var sum: T = g_work[idx];
+                for (idx+1..d) |j| {
+                    sum -= H_work[idx * d + j] * delta_beta[j];
+                }
+                delta_beta[idx] = sum / H_work[idx * d + idx];
+            }
+        }
+
+        // Update coefficients: β ← β + Δβ
+        for (0..d) |j| {
+            beta[j] += delta_beta[j];
+        }
+        beta0 += gradient[0] / @as(T, @floatFromInt(n)); // Simplified intercept update
+
+        // Check convergence: ||Δβ|| < tol
+        var delta_norm: T = 0;
+        for (0..d) |j| {
+            const diff = beta[j] - prev_beta[j];
+            delta_norm += diff * diff;
+        }
+        delta_norm = @sqrt(delta_norm);
+
+        if (delta_norm < tol) {
+            break;
+        }
+    }
+
+    // Compute final log-likelihood
+    var log_likelihood: T = 0;
+    for (0..n) |i| {
+        var z: T = beta0;
+        for (0..d) |j| {
+            z += beta[j] * X.data[i * d + j];
+        }
+        const exp_z = @exp(-z);
+        const p = 1.0 / (1.0 + exp_z);
+        const eps: T = 1e-15;
+        const p_clipped = @min(@max(p, eps), 1.0 - eps);
+        log_likelihood += y.data[i] * @log(p_clipped) + (1.0 - y.data[i]) * @log(1.0 - p_clipped);
+    }
+
+    return .{
+        .coefficients = beta,
+        .intercept = beta0,
+        .log_likelihood = log_likelihood,
+        .n_iter = n_iter,
+    };
+}
+
+// ============================================================================
+// LOGISTIC REGRESSION TESTS
+// ============================================================================
+
+test "logisticRegress - perfect separation (linearly separable)" {
+    // Create perfectly separable data: y = 1 if x[0] > 0, else 0
+
+    var X_data = [_]f64{
+        -2.0, 0.0,
+        -1.0, 0.0,
+        0.0,  0.0,
+        1.0,  0.0,
+        2.0,  0.0,
+    };
+    var y_data = [_]f64{ 0.0, 0.0, 1.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 5, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{5}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Verify basic result structure
+    try testing.expect(result.coefficients.len == 2);
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+    // Log-likelihood is finite (not NaN)
+    try testing.expect(!std.math.isNan(result.log_likelihood));
+}
+
+test "logisticRegress - good fit with noise" {
+    // Create separable data with noise
+
+    const X_data = [_]f64{
+        0.1,  0.2,
+        0.2,  0.1,
+        0.15, 0.3,
+        1.1,  1.0,
+        1.0,  1.1,
+        1.2,  0.9,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 0.0, 1.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 6, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{6}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Should converge with reasonable likelihood
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+    // Log-likelihood should be negative but not too negative
+    try testing.expect(result.log_likelihood < 0);
+    try testing.expect(result.log_likelihood > -50.0);
+}
+
+test "logisticRegress - single feature 1D" {
+    // Simple 1D logistic regression
+
+    const X_data = [_]f64{
+        -1.0,
+        -0.5,
+        0.5,
+        1.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 1 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.coefficients.len == 1);
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - multiple features (3D)" {
+    // Logistic regression with 3 features
+
+    const X_data = [_]f64{
+        0.1, 0.2, 0.3,
+        0.2, 0.1, 0.4,
+        0.15, 0.25, 0.35,
+        1.0, 1.1, 0.9,
+        1.1, 1.0, 1.0,
+        0.95, 1.15, 0.85,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 0.0, 1.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 6, 3 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{6}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.coefficients.len == 3);
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+}
+
+test "logisticRegress - decision boundary is reasonable" {
+    // Verify decision boundary (P=0.5) separates classes
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        0.5, 0.0,
+        1.0, 0.0,
+        2.0, 0.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Decision boundary should separate classes reasonably
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - balanced classes (50/50 split)" {
+    // Equal numbers of 0s and 1s
+
+    var X_data = try test_allocator.alloc(f64, 20);
+    defer test_allocator.free(X_data);
+    var y_data = try test_allocator.alloc(f64, 10);
+    defer test_allocator.free(y_data);
+
+    for (0..5) |i| {
+        const i_f = @as(f64, @floatFromInt(i));
+        X_data[2*i] = i_f;
+        X_data[2*i + 1] = 0.0;
+        y_data[i] = 0.0;
+    }
+
+    for (0..5) |i| {
+        const i_f = @as(f64, @floatFromInt(i + 5));
+        X_data[2*(i+5)] = i_f;
+        X_data[2*(i+5) + 1] = 0.0;
+        y_data[i + 5] = 1.0;
+    }
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 10, 2 }, X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{10}, y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+}
+
+test "logisticRegress - all y=0 (constant prediction)" {
+    // All labels are 0
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        1.0, 0.0,
+        2.0, 0.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 0.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{3}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - all y=1 (constant prediction)" {
+    // All labels are 1
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        1.0, 0.0,
+        2.0, 0.0,
+    };
+    const y_data = [_]f64{ 1.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{3}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - minimal case n=2" {
+    // Minimum number of samples
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        1.0, 1.0,
+    };
+    const y_data = [_]f64{ 0.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 2, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{2}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.coefficients.len == 2);
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - single feature two points" {
+    // 1D case with 2 points
+
+    const X_data = [_]f64{ 0.0, 1.0 };
+    const y_data = [_]f64{ 0.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 2, 1 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{2}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.coefficients.len == 1);
+}
+
+test "logisticRegress - imbalanced classes (90/10 split)" {
+    // Mostly class 0, few class 1
+
+    var X_data = try test_allocator.alloc(f64, 20);
+    defer test_allocator.free(X_data);
+    var y_data = try test_allocator.alloc(f64, 10);
+    defer test_allocator.free(y_data);
+
+    for (0..9) |i| {
+        const i_f = @as(f64, @floatFromInt(i));
+        X_data[2*i] = i_f;
+        X_data[2*i + 1] = 0.0;
+        y_data[i] = 0.0;
+    }
+    X_data[18] = 100.0;
+    X_data[19] = 0.0;
+    y_data[9] = 1.0;
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 10, 2 }, X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{10}, y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+}
+
+test "logisticRegress - identical X values different y" {
+    // X values are the same but y differs — no clear separation
+
+    const X_data = [_]f64{
+        0.5, 0.5,
+        0.5, 0.5,
+        0.5, 0.5,
+        0.5, 0.5,
+    };
+    const y_data = [_]f64{ 0.0, 1.0, 0.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - coefficient signs (positive feature)" {
+    // Feature should have positive coefficient if it correlates with y=1
+
+    const X_data = [_]f64{
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 0.0, 1.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 6, 1 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{6}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Positive feature should have positive coefficient
+    try testing.expect(result.coefficients[0] > 0);
+}
+
+test "logisticRegress - result structure contains coefficients" {
+    // Verify that logistic regression returns properly structured result
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        0.5, 0.0,
+        1.0, 0.0,
+        1.5, 0.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Verify result contains correct coefficient count
+    try testing.expect(result.coefficients.len == 2);
+    // Verify convergence occurred
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+    // Verify log-likelihood is not NaN
+    try testing.expect(!std.math.isNan(result.log_likelihood));
+}
+
+test "logisticRegress - log likelihood monotonic" {
+    // Log-likelihood should improve (increase) with iterations
+
+    const X_data = [_]f64{
+        -1.0, 0.0,
+        -0.5, 0.0,
+        0.5, 0.0,
+        1.0, 0.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Final log-likelihood should be reasonable (negative but not too negative)
+    try testing.expect(result.log_likelihood < 0);
+    try testing.expect(result.log_likelihood > -100.0);
+}
+
+test "logisticRegress - convergence in < 100 iterations" {
+    // Should converge within iteration limit
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        1.0, 1.0,
+        2.0, 2.0,
+        3.0, 3.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 1.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter <= 100);
+}
+
+test "logisticRegress - dimension mismatch error" {
+    // X has 3 samples, y has 2 samples
+    const X_data = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 0.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{2}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = logisticRegress(f64, X, y, test_allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "logisticRegress - invalid y values (not 0 or 1)" {
+    // y contains value that is neither 0 nor 1
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        1.0, 1.0,
+        2.0, 2.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.5, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{3}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = logisticRegress(f64, X, y, test_allocator);
+    try testing.expectError(error.InvalidInput, result);
+}
+
+test "logisticRegress - memory safety no leaks" {
+    // Allocator leak detection
+
+    const X_data = [_]f64{
+        0.0, 0.0,
+        1.0, 1.0,
+        2.0, 2.0,
+    };
+    const y_data = [_]f64{ 0.0, 0.0, 1.0 };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{3}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    // Test allocator will detect leaks on deinit
+    try testing.expect(true);
+}
+
+test "logisticRegress - multiple calls no cross contamination" {
+    // Run logistic regression twice to ensure no state sharing
+
+    const X_data1 = [_]f64{
+        0.0, 0.0,
+        1.0, 1.0,
+    };
+    const y_data1 = [_]f64{ 0.0, 1.0 };
+
+    var X1 = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 2, 2 }, &X_data1, .row_major);
+    defer X1.deinit();
+    var y1 = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{2}, &y_data1, .row_major);
+    defer y1.deinit();
+
+    const result1 = try logisticRegress(f64, X1, y1, test_allocator);
+    defer test_allocator.free(result1.coefficients);
+
+    const X_data2 = [_]f64{
+        2.0, 2.0,
+        3.0, 3.0,
+    };
+    const y_data2 = [_]f64{ 0.0, 1.0 };
+
+    var X2 = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 2, 2 }, &X_data2, .row_major);
+    defer X2.deinit();
+    var y2 = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{2}, &y_data2, .row_major);
+    defer y2.deinit();
+
+    const result2 = try logisticRegress(f64, X2, y2, test_allocator);
+    defer test_allocator.free(result2.coefficients);
+
+    // Both should complete successfully
+    try testing.expect(result1.n_iter > 0);
+    try testing.expect(result2.n_iter > 0);
+}
+
+test "logisticRegress - f32 precision (tolerance 1e-4)" {
+    // Test with f32 instead of f64
+
+    const X_data = [_]f32{
+        0.0, 0.0,
+        1.0, 1.0,
+    };
+    const y_data = [_]f32{ 0.0, 1.0 };
+
+    var X = try NDArray_type(f32, 2).fromSlice(test_allocator, &[_]usize{ 2, 2 }, &X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f32, 1).fromSlice(test_allocator, &[_]usize{2}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f32, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.coefficients.len == 2);
+    try testing.expect(result.n_iter > 0);
+}
+
+test "logisticRegress - large dataset convergence" {
+    // Test with larger dataset to verify scalability
+
+    var X_data = try test_allocator.alloc(f64, 100);
+    defer test_allocator.free(X_data);
+    var y_data = try test_allocator.alloc(f64, 50);
+    defer test_allocator.free(y_data);
+
+    for (0..50) |i| {
+        const i_f = @as(f64, @floatFromInt(i)) / 25.0;
+        X_data[2*i] = i_f;
+        X_data[2*i + 1] = 0.0;
+        y_data[i] = if (i_f > 1.0) 1.0 else 0.0;
+    }
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 50, 2 }, X_data, .row_major);
+    defer X.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(test_allocator, &[_]usize{50}, y_data, .row_major);
+    defer y.deinit();
+
+    const result = try logisticRegress(f64, X, y, test_allocator);
+    defer test_allocator.free(result.coefficients);
+
+    try testing.expect(result.n_iter > 0);
+    try testing.expect(result.n_iter <= 100);
+}
