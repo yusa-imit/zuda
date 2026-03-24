@@ -152,3 +152,5 @@
 {"timestamp":"2026-03-24T19:03:29Z","action":"subagent","agent_type":"test-writer","task":"Write comprehensive test suite for quad() adaptive Gauss-Kronrod quadrature (25 tests)","project":"zuda"}
 {"timestamp":"2026-03-24T19:13:44Z","action":"subagent","agent_type":"zig-developer","task":"Implement quad() adaptive Gauss-Kronrod quadrature with 25 tests","project":"zuda"}
 {"timestamp":"2026-03-24T19:17:10Z","action":"subagent","agent_type":"test-writer","task":"Fix 3 quad() test tolerances for realistic expectations","project":"zuda"}
+{"timestamp":"2026-03-25T$(date -u +%H:%M:%S)Z","action":"subagent","agent_type":"test-writer","task":"Write tests for jacobian/hessian numerical differentiation","project":"zuda"}
+{"timestamp":"2026-03-25T$(date -u +%H:%M:%S)Z","action":"subagent","agent_type":"zig-developer","task":"Implement jacobian/hessian functions","project":"zuda"}
