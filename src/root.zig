@@ -416,6 +416,12 @@ pub const signal = struct {
     pub const filter = @import("signal/filter.zig");
 };
 
+/// Numerical methods — Integration, differentiation, interpolation
+pub const numeric = struct {
+    /// Numerical integration — Trapezoidal and Simpson's rules for discrete integration
+    pub const integration = @import("numeric/integration.zig");
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
@@ -453,4 +459,7 @@ test {
     _ = @import("signal/dct.zig");
     _ = @import("signal/conv.zig");
     _ = @import("signal/filter.zig");
+
+    // Explicitly import numeric modules to trigger their tests
+    _ = @import("numeric/integration.zig");
 }
