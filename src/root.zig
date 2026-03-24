@@ -412,6 +412,8 @@ pub const signal = struct {
     pub const dct = @import("signal/dct.zig");
     /// Convolution and cross-correlation — Time and frequency domain
     pub const conv = @import("signal/conv.zig");
+    /// Digital filter design and application (FIR/IIR filters, windowed sinc, Butterworth)
+    pub const filter = @import("signal/filter.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -450,4 +452,5 @@ test {
     _ = @import("signal/spectral.zig");
     _ = @import("signal/dct.zig");
     _ = @import("signal/conv.zig");
+    _ = @import("signal/filter.zig");
 }
