@@ -493,3 +493,42 @@ while (left < right) {
 - Division dx = x[j+1] - x[j]: never zero due to strict monotonicity validation
 - Linear combination: numerically stable (single multiplication/addition)
 
+
+## PCHIP (Piecewise Cubic Hermite Interpolating Polynomial) Pattern
+
+**When to use**: Shape-preserving interpolation for smooth, monotonic data.
+
+**Algorithm signature**:
+```zig
+pub fn pchip(comptime T: type, x: []const T, y: []const T, x_new: []const T, allocator: Allocator) ![]T
+```
+
+**Key implementation points**:
+1. **Slope computation**: Compute differences δ[i] = (y[i+1] - y[i]) / h[i]
+2. **Derivative computation**: Use weighted harmonic mean at interior points
+   - w1 = 2*h[i] + h[i-1]
+   - w2 = h[i] + 2*h[i-1]
+   - d[i] = 2 / (w1/δ[i-1] + w2/δ[i])  [if slopes same sign, else 0]
+3. **Monotonicity preservation**: Set d[i]=0 if δ[i-1] and δ[i] have opposite signs or either is zero
+4. **Cubic Hermite interpolation**: Use basis functions h00, h10, h01, h11
+5. **Constant extrapolation**: Return y[0] for x<x[0], y[n-1] for x>x[n-1]
+
+**Accuracy expectations**:
+- O(h⁴) local error between knots
+- For smooth functions, needs ~5-10 points per domain unit for <1% relative error
+- Exact for linear and constant functions
+- Quadratic: ~3-5% error with 5 points over [0,1]
+
+**Numerical stability**:
+- Check denominator ≠ 0 in harmonic mean formula
+- Check denominator != denominator (NaN detection) 
+- Use careful handling of zero slopes
+- Binary search for interval location O(log n)
+
+**Testing considerations**:
+- Verify monotonicity preservation on monotonic input
+- Check C¹ continuity (smoothness at knots)
+- Test exact values at sample points
+- Test extrapolation behavior
+- Be realistic about accuracy (3-5% error for quadratic with 5 points, not 1%)
+- Ensure test grid actually contains sample points if testing "exact reproduction"
