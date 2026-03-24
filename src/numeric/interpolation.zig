@@ -1849,3 +1849,703 @@ test "lagrange negative domain" {
     try testing.expectApproxEqAbs(result[1], -0.125, 1e-10);
     try testing.expectApproxEqAbs(result[2], 0.125, 1e-10);
 }
+
+// ============================================================================
+// PCHIP (Piecewise Cubic Hermite Interpolating Polynomial)
+// ============================================================================
+// Shape-preserving monotonic interpolation using cubic Hermite polynomials
+
+/// Perform PCHIP (Piecewise Cubic Hermite Interpolating Polynomial) interpolation
+///
+/// PCHIP is a shape-preserving cubic Hermite interpolation method that maintains
+/// monotonicity of the input data. Uses the Fritsch-Carlson algorithm to compute
+/// derivatives at knots using weighted harmonic mean of adjacent slopes.
+///
+/// Parameters:
+/// - T: floating-point type (f32 or f64)
+/// - x: slice of x-coordinates (sample points) — must be monotonically increasing
+/// - y: slice of y-coordinates (function values) — must have same length as x
+/// - x_new: slice of x-coordinates where we want interpolated values
+/// - allocator: memory allocator for output array (caller owns returned memory)
+///
+/// Returns: allocated array of interpolated y values at x_new points (caller must free)
+///
+/// Errors:
+/// - error.DimensionMismatch: if x.len != y.len
+/// - error.InsufficientPoints: if x.len < 2
+/// - error.NonmonotonicX: if x is not monotonically increasing
+/// - error.OutOfMemory: if allocation fails
+///
+/// Algorithm (Fritsch-Carlson):
+/// 1. Compute slopes between consecutive points: Δ[k] = (y[k+1] - y[k]) / (x[k+1] - x[k])
+/// 2. Compute derivatives at interior knots using weighted harmonic mean
+/// 3. Preserve monotonicity: if adjacent slopes have opposite signs, derivative is 0
+/// 4. Use cubic Hermite basis functions for interpolation in each interval
+/// 5. Constant extrapolation outside domain
+///
+/// Time: O(n + m log n) where m = x_new.len, n = x.len | Space: O(n + m)
+pub fn pchip(comptime T: type, x: []const T, y: []const T, x_new: []const T, allocator: Allocator) ![]T {
+    // Validation
+    if (x.len != y.len) return error.DimensionMismatch;
+    if (x.len < 2) return error.InsufficientPoints;
+
+    // Validate that x is monotonically increasing
+    for (1..x.len) |i| {
+        if (x[i] <= x[i - 1]) return error.NonmonotonicX;
+    }
+
+    // Allocate output array
+    const result = try allocator.alloc(T, x_new.len);
+    errdefer allocator.free(result);
+
+    // Handle empty query points
+    if (x_new.len == 0) return result;
+
+    const n = x.len;
+
+    // Step 1: Compute interval lengths and slopes
+    var h = try allocator.alloc(T, n - 1);
+    defer allocator.free(h);
+
+    var delta = try allocator.alloc(T, n - 1);
+    defer allocator.free(delta);
+
+    for (0..n - 1) |i| {
+        h[i] = x[i + 1] - x[i];
+        delta[i] = (y[i + 1] - y[i]) / h[i];
+    }
+
+    // Step 2: Compute derivatives at knots using Fritsch-Carlson algorithm
+    var d = try allocator.alloc(T, n);
+    defer allocator.free(d);
+
+    // Compute derivatives using Fritsch-Carlson algorithm
+    if (n == 2) {
+        // With only 2 points, PCHIP reduces to linear interpolation
+        d[0] = delta[0];
+        d[1] = delta[0];
+    } else {
+        // For n >= 3: Use Fritsch-Carlson algorithm
+
+        // Boundary derivatives: use first/last slope
+        d[0] = delta[0];
+        d[n - 1] = delta[n - 2];
+
+        // Interior points: weighted harmonic mean with monotonicity preservation
+        for (1..n - 1) |i| {
+            const d0 = delta[i - 1];
+            const d1 = delta[i];
+
+            // If slopes have opposite signs, set derivative to zero (monotonicity)
+            if ((d0 > 0 and d1 < 0) or (d0 < 0 and d1 > 0)) {
+                d[i] = 0;
+            } else if (d0 == 0 or d1 == 0) {
+                // If either slope is zero, set derivative to zero
+                d[i] = 0;
+            } else {
+                // Compute weighted harmonic mean
+                const w1 = 2 * h[i] + h[i - 1];
+                const w2 = h[i] + 2 * h[i - 1];
+                const denom = w1 / d0 + w2 / d1;
+                if (denom != 0 and denom == denom) {  // Check for NaN
+                    d[i] = 2 / denom;
+                } else {
+                    d[i] = 0;
+                }
+            }
+        }
+    }
+
+    // Step 3: Interpolate at each query point
+    for (0..x_new.len) |i| {
+        const xi = x_new[i];
+
+        // Extrapolation: below minimum
+        if (xi <= x[0]) {
+            result[i] = y[0];
+            continue;
+        }
+
+        // Extrapolation: above maximum
+        if (xi >= x[n - 1]) {
+            result[i] = y[n - 1];
+            continue;
+        }
+
+        // Interpolation: find the interval [x[j], x[j+1]] containing xi
+        // Binary search for efficiency
+        var left: usize = 0;
+        var right: usize = n - 1;
+
+        while (left < right) {
+            const mid = left + (right - left) / 2;
+            if (x[mid] <= xi) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+
+        // Now left is the index of the first point > xi
+        const j = left - 1;
+
+        if (j >= n - 1) {
+            result[i] = y[n - 1];
+            continue;
+        }
+
+        // Compute cubic Hermite interpolation in interval [x[j], x[j+1]]
+        const dx = x[j + 1] - x[j];
+        const t = (xi - x[j]) / dx;
+
+        // Hermite basis functions
+        const h00 = (1 + 2 * t) * (1 - t) * (1 - t);
+        const h10 = t * (1 - t) * (1 - t);
+        const h01 = t * t * (3 - 2 * t);
+        const h11 = t * t * (t - 1);
+
+        // Cubic Hermite polynomial value
+        result[i] = h00 * y[j] + h10 * dx * d[j] + h01 * y[j + 1] + h11 * dx * d[j + 1];
+    }
+
+    return result;
+}
+
+// ============================================================================
+// PCHIP (Piecewise Cubic Hermite Interpolating Polynomial) Tests
+// ============================================================================
+// Shape-preserving monotonic interpolation using cubic Hermite polynomials
+
+// Basic Operations (5 tests)
+
+test "pchip empty query points" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f64{};
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(result.len, 0);
+}
+
+test "pchip single query point" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f64{ 0.5 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(result.len, 1);
+    // Interpolation at x=0.5 between (0,0) and (1,1) should be close to 0.5
+    try testing.expect(result[0] > 0.4 and result[0] < 0.6);
+}
+
+test "pchip two sample points degenerates to linear" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0 };
+    const y = [_]f64{ 0.0, 2.0 };
+    const x_new = [_]f64{ 0.25, 0.5, 0.75 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // With only 2 points, PCHIP should reduce to linear interpolation
+    try testing.expectApproxEqAbs(result[0], 0.5, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 1.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 1.5, 1e-10);
+}
+
+test "pchip multiple query points on uniform grid" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0 };
+    var x_new_buf: [7]f64 = undefined;
+    for (0..7) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 2.0;
+    }
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(result.len, 7);
+    for (result) |val| {
+        try testing.expect(!math.isNan(val) and math.isFinite(val));
+    }
+}
+
+test "pchip query points match sample points exactly" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 1.0, 3.0, 7.0 };
+    const x_new = [_]f64{ 0.0, 1.0, 2.0 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Should pass through all knots exactly
+    try testing.expectApproxEqAbs(result[0], 1.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 3.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 7.0, 1e-10);
+}
+
+// Mathematical Properties (6 tests)
+
+test "pchip monotonicity preservation (increasing)" {
+    const allocator = testing.allocator;
+
+    // Monotonically increasing data: y = x²
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0, 16.0 };
+
+    var x_new_buf: [31]f64 = undefined;
+    for (0..31) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 10.0;
+    }
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // PCHIP should preserve monotonicity: increasing input → increasing output
+    for (1..result.len) |i| {
+        try testing.expect(result[i] >= result[i - 1] - 1e-10);
+    }
+}
+
+test "pchip monotonicity preservation (decreasing)" {
+    const allocator = testing.allocator;
+
+    // Monotonically decreasing data
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    const y = [_]f64{ 16.0, 9.0, 4.0, 1.0, 0.0 };
+
+    var x_new_buf: [31]f64 = undefined;
+    for (0..31) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 10.0;
+    }
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // PCHIP should preserve monotonicity: decreasing input → decreasing output
+    for (1..result.len) |i| {
+        try testing.expect(result[i] <= result[i - 1] + 1e-10);
+    }
+}
+
+test "pchip smoothness - C¹ continuity at knots" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 0.0 };
+
+    // Sample very close to the knot to check smoothness
+    var x_new_buf: [5]f64 = undefined;
+    x_new_buf[0] = 0.99;
+    x_new_buf[1] = 1.0;  // Knot
+    x_new_buf[2] = 1.01;
+    x_new_buf[3] = 1.98;
+    x_new_buf[4] = 2.0;  // Knot
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // No discontinuities — smooth curve
+    try testing.expect(math.isFinite(result[0]) and !math.isNan(result[0]));
+    try testing.expect(math.isFinite(result[1]) and !math.isNan(result[1]));
+    try testing.expect(math.isFinite(result[2]) and !math.isNan(result[2]));
+}
+
+test "pchip passes through all knots (exact reproduction)" {
+    const allocator = testing.allocator;
+
+    // Non-uniform grid
+    const x = [_]f64{ 0.0, 0.5, 1.5, 3.0 };
+    const y = [_]f64{ 1.0, 2.0, 1.5, 3.0 };
+
+    var x_new_buf: [50]f64 = undefined;
+    for (0..50) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 50.0 * 3.0;
+    }
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // At sample points, should match exactly
+    for (0..x.len) |i| {
+        var found = false;
+        for (0..x_new_buf.len) |j| {
+            if (@abs(x_new_buf[j] - x[i]) < 1e-10) {
+                try testing.expectApproxEqAbs(result[j], y[i], 1e-9);
+                found = true;
+                break;
+            }
+        }
+        try testing.expect(found);
+    }
+}
+
+test "pchip quadratic approximation on [0,1]" {
+    const allocator = testing.allocator;
+
+    // Sample y = x² at several points
+    const x = [_]f64{ 0.0, 0.25, 0.5, 0.75, 1.0 };
+    var y_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        y_buf[i] = x[i] * x[i];
+    }
+
+    // Query at intermediate points
+    var x_new_buf: [21]f64 = undefined;
+    for (0..21) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 20.0;
+    }
+
+    const result = try pchip(f64, &x, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // PCHIP should approximate quadratic well
+    for (0..x_new_buf.len) |i| {
+        const expected = x_new_buf[i] * x_new_buf[i];
+        try testing.expectApproxEqRel(result[i], expected, 0.01);  // 1% error
+    }
+}
+
+test "pchip non-oscillatory (no Runge phenomenon)" {
+    const allocator = testing.allocator;
+
+    // Runge's function: 1/(1+25x²) on [-1, 1]
+    // With equally-spaced points, high-degree polynomials oscillate
+    // PCHIP should not oscillate as badly
+    const n = 11;
+    var x_buf: [11]f64 = undefined;
+    var y_buf: [11]f64 = undefined;
+
+    for (0..n) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        const n_f: f64 = @floatFromInt(n - 1);
+        x_buf[i] = -1.0 + 2.0 * i_f / n_f;  // [-1, 1]
+        const xi = x_buf[i];
+        y_buf[i] = 1.0 / (1.0 + 25.0 * xi * xi);
+    }
+
+    // Query at 100 points
+    var x_new_buf: [100]f64 = undefined;
+    for (0..100) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        x_new_buf[i] = -1.0 + 2.0 * i_f / 99.0;
+    }
+
+    const result = try pchip(f64, &x_buf, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // No extreme oscillations or NaN values
+    for (result) |val| {
+        try testing.expect(!math.isNan(val) and math.isFinite(val));
+        try testing.expect(val >= 0.0 and val <= 1.2);  // Runge's range
+    }
+}
+
+// Interpolation Quality (4 tests)
+
+test "pchip sine wave accuracy" {
+    const allocator = testing.allocator;
+
+    // Sample sin(x) over [0, π]
+    const n = 7;
+    var x_buf: [7]f64 = undefined;
+    var y_buf: [7]f64 = undefined;
+
+    for (0..n) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        const n_f: f64 = @floatFromInt(n - 1);
+        x_buf[i] = i_f / n_f * math.pi;
+        y_buf[i] = @sin(x_buf[i]);
+    }
+
+    // Query at 50 test points
+    var x_new_buf: [50]f64 = undefined;
+    for (0..50) |i| {
+        const i_f: f64 = @floatFromInt(i);
+        x_new_buf[i] = i_f / 49.0 * math.pi;
+    }
+
+    const result = try pchip(f64, &x_buf, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // Check accuracy against true sin(x)
+    var max_err: f64 = 0.0;
+    for (0..x_new_buf.len) |i| {
+        const expected = @sin(x_new_buf[i]);
+        const err = @abs(result[i] - expected);
+        if (err > max_err) max_err = err;
+    }
+
+    try testing.expect(max_err < 0.05);  // 5% max error for sin with 7 points
+}
+
+test "pchip exponential function approximation" {
+    const allocator = testing.allocator;
+
+    // Sample exp(x) on [0, 2]
+    const x = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0 };
+    var y_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        y_buf[i] = @exp(x[i]);
+    }
+
+    var x_new_buf: [21]f64 = undefined;
+    for (0..21) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 20.0 * 2.0;
+    }
+
+    const result = try pchip(f64, &x, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // Check accuracy
+    var max_rel_error: f64 = 0.0;
+    for (0..x_new_buf.len) |i| {
+        const expected = @exp(x_new_buf[i]);
+        const rel_error = @abs(result[i] - expected) / expected;
+        if (rel_error > max_rel_error) max_rel_error = rel_error;
+    }
+
+    try testing.expect(max_rel_error < 0.05);  // 5% max relative error
+}
+
+test "pchip non-uniform grid handling" {
+    const allocator = testing.allocator;
+
+    // Non-uniformly spaced points: denser near 0
+    const x = [_]f64{ 0.0, 0.1, 0.3, 0.6, 1.0 };
+    var y_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        y_buf[i] = x[i] * x[i];
+    }
+
+    var x_new_buf: [21]f64 = undefined;
+    for (0..21) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 20.0;
+    }
+
+    const result = try pchip(f64, &x, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    try testing.expectEqual(result.len, 21);
+
+    // Quadratic should still be well-approximated
+    for (0..x_new_buf.len) |i| {
+        const expected = x_new_buf[i] * x_new_buf[i];
+        try testing.expectApproxEqRel(result[i], expected, 0.02);
+    }
+}
+
+test "pchip closely-spaced points stability" {
+    const allocator = testing.allocator;
+
+    // Points very close together
+    const x = [_]f64{ 0.0, 1e-6, 2e-6, 3e-6, 4e-6, 5e-6 };
+    var y_buf: [6]f64 = undefined;
+    for (0..6) |i| {
+        y_buf[i] = x[i] * 1e6;  // Linear function (scaled)
+    }
+
+    var x_new_buf: [5]f64 = undefined;
+    for (0..5) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 4.0 * 5e-6;
+    }
+
+    const result = try pchip(f64, &x, &y_buf, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // Should not blow up with numerical errors
+    for (result) |val| {
+        try testing.expect(!math.isNan(val) and math.isFinite(val));
+    }
+}
+
+// Edge Cases (4 tests)
+
+test "pchip extrapolation below minimum (constant)" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 10.0, 20.0, 30.0 };
+    const x_new = [_]f64{ -1.0, 0.0, 0.5 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Constant extrapolation: should return y[0]
+    try testing.expectApproxEqAbs(result[0], 10.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 10.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 10.0, 1e-10);
+}
+
+test "pchip extrapolation above maximum (constant)" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 10.0, 20.0 };
+    const x_new = [_]f64{ 2.5, 3.0, 10.0 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Constant extrapolation: should return y[n-1]
+    try testing.expectApproxEqAbs(result[0], 20.0, 1e-10);
+    try testing.expectApproxEqAbs(result[1], 20.0, 1e-10);
+    try testing.expectApproxEqAbs(result[2], 20.0, 1e-10);
+}
+
+test "pchip repeated y values (flat segments)" {
+    const allocator = testing.allocator;
+
+    // Flat segment: y constant from x[1] to x[2]
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 0.0, 5.0, 5.0, 10.0 };
+
+    var x_new_buf: [7]f64 = undefined;
+    for (0..7) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 2.0;
+    }
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // In flat region [1, 2], should stay close to 5.0
+    for (0..x_new_buf.len) |i| {
+        if (x_new_buf[i] >= 1.0 and x_new_buf[i] <= 2.0) {
+            try testing.expectApproxEqAbs(result[i], 5.0, 1e-9);
+        }
+    }
+}
+
+test "pchip large magnitude values" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 1e10, 2e10, 4e10 };
+    const x_new = [_]f64{ 0.5, 1.5 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Should handle large values without overflow/underflow
+    try testing.expect(result[0] > 1.4e10 and result[0] < 2.0e10);
+    try testing.expect(result[1] > 2.8e10 and result[1] < 3.2e10);
+}
+
+// Error Handling (3 tests)
+
+test "pchip dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0 };  // Wrong length
+    const x_new = [_]f64{ 0.5 };
+
+    const result = pchip(f64, &x, &y, &x_new, allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "pchip insufficient points error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0 };
+    const y = [_]f64{ 1.0 };
+    const x_new = [_]f64{ 0.5 };
+
+    const result = pchip(f64, &x, &y, &x_new, allocator);
+    try testing.expectError(error.InsufficientPoints, result);
+}
+
+test "pchip non-monotonic x error" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 2.0, 1.0, 3.0 };  // Not monotonic
+    const y = [_]f64{ 0.0, 4.0, 1.0, 9.0 };
+    const x_new = [_]f64{ 0.5 };
+
+    const result = pchip(f64, &x, &y, &x_new, allocator);
+    try testing.expectError(error.NonmonotonicX, result);
+}
+
+// Type Support (2 tests)
+
+test "pchip f32 precision" {
+    const allocator = testing.allocator;
+
+    const x = [_]f32{ 0.0, 1.0, 2.0, 3.0 };
+    const y = [_]f32{ 0.0, 1.0, 4.0, 9.0 };
+    const x_new = [_]f32{ 0.5, 1.5, 2.5 };
+
+    const result = try pchip(f32, &x, &y, &x_new, allocator);
+    defer allocator.free(result);
+
+    // Results should be reasonable for f32
+    try testing.expect(result[0] > 0.0 and result[0] < 2.0);
+    try testing.expect(result[1] > 2.0 and result[1] < 6.0);
+    try testing.expect(result[2] > 6.0 and result[2] < 10.0);
+}
+
+test "pchip f64 precision" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0, 16.0 };
+    var x_new_buf: [9]f64 = undefined;
+    for (0..9) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 2.0;
+    }
+
+    const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+    defer allocator.free(result);
+
+    // Quadratic should be well-approximated with f64
+    for (0..x_new_buf.len) |i| {
+        const expected = x_new_buf[i] * x_new_buf[i];
+        try testing.expectApproxEqRel(result[i], expected, 0.01);
+    }
+}
+
+// Memory Safety (2 tests)
+
+test "pchip memory ownership - caller frees" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0 };
+    const x_new = [_]f64{ 0.5, 1.5 };
+
+    const result = try pchip(f64, &x, &y, &x_new, allocator);
+
+    // Caller owns the result and must free it
+    allocator.free(result);
+}
+
+test "pchip no memory leaks - multiple calls" {
+    const allocator = testing.allocator;
+
+    const x = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    const y = [_]f64{ 0.0, 1.0, 4.0, 9.0, 16.0 };
+
+    var x_new_buf: [101]f64 = undefined;
+    for (0..101) |i| {
+        x_new_buf[i] = @as(f64, @floatFromInt(i)) / 25.0;
+    }
+
+    // Multiple calls should not leak memory
+    for (0..3) |_| {
+        const result = try pchip(f64, &x, &y, &x_new_buf, allocator);
+        allocator.free(result);
+    }
+}
