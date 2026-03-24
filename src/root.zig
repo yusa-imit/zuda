@@ -404,6 +404,8 @@ pub const signal = struct {
     pub const fft = @import("signal/fft.zig");
     /// Window functions for spectral analysis (Hamming, Hann, Blackman, Bartlett, Kaiser)
     pub const window = @import("signal/window.zig");
+    /// Spectral analysis — Power spectral density estimation via periodogram and Welch's method
+    pub const spectral = @import("signal/spectral.zig");
 };
 
 /// Internal utilities (not part of public API)
