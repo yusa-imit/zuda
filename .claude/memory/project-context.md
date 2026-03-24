@@ -8,14 +8,44 @@
 - **Latest Milestone**: v1.22.0 ✅ — Hypothesis Testing & Regression RELEASED
 - **Current Milestone**: v1.23.0 IN PROGRESS — Signal Processing (FFT, Window, Spectral)
 - **Next Priority**: DCT (dct, idct) or 2D FFT (fft2, ifft2)
-- **Test Count**: 1552/1554 tests (1552 passing + 2 skipped)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 40 FFT + 17 window + 28 spectral + ndarray + containers + algorithms + internal
+- **Test Count**: 1582/1584 tests (1582 passing + 2 skipped)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 40 FFT + 17 window + 28 spectral + 30 DCT + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
-  - Signal Processing: FFT (5 functions, 40 tests), Window (5 functions, 17 tests), Spectral (2 functions, 28 tests)
+  - Signal Processing: FFT (5 functions, 40 tests), Window (5 functions, 17 tests), Spectral (2 functions, 28 tests), DCT (2 functions, 30 tests)
 - **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
 
-## Recent Progress (Session 2026-03-24 - Session 11)
+## Recent Progress (Session 2026-03-24 - Session 12)
 **FEATURE MODE:**
+
+### DCT (Discrete Cosine Transform) Implementation (commit d8ab664) ✅
+- ✅ **Module**: src/signal/dct.zig (596 lines: 97 implementation + 499 tests)
+- ✅ **TDD Workflow**: test-writer (30 tests) → zig-developer (implementation + test fix) → all 30 tests passing
+- ✅ **dct(comptime T, signal, allocator) ![]T**:
+  - DCT Type II (forward transform) for signal compression/frequency analysis
+  - Algorithm: Naive O(N²) computation using cosine basis function
+  - Formula: X[k] = sum_{n=0}^{N-1}( x[n] * cos(π * k * (n + 0.5) / N) )
+  - Orthonormal scaling: sqrt(1/N) for k=0 (DC), sqrt(2/N) for k>0 (AC)
+  - Energy conservation: sum(dct(x)[k]²) ≈ sum(x[n]²)
+  - Returns allocated slice (caller owns, must free)
+  - Time: O(N²), Space: O(N)
+  - Supports f32 and f64 via comptime type parameter
+- ✅ **idct(comptime T, coeffs, allocator) ![]T**:
+  - DCT Type III (inverse transform) — true mathematical inverse of DCT-II
+  - Same scaling structure ensures idct(dct(x)) ≈ x within float precision
+  - Time: O(N²), Space: O(N)
+- ✅ **Test Coverage** (30 tests):
+  - Basic operations (5): empty, single element, constant signals, impulse
+  - Round-trip verification (6): various sizes, f32/f64, non-power-of-2
+  - Mathematical properties (5): energy conservation, DC component, orthogonality, linearity, coefficient decay
+  - Edge cases (7): zero, negative, mixed, large/small magnitudes, alternating signal
+  - Type support (2): f32 and f64
+  - Memory safety (4): allocation/deallocation for dct and idct
+  - IDCT specific (2): empty coefficients, single coefficient
+- ✅ **Bug Fix**: Removed duplicate defer in "dct followed by idct multiple times" test (was causing double-free)
+- ✅ **File**: src/signal/dct.zig (596 lines) + root.zig update (added to signal namespace + explicit import for tests)
+- ✅ **Test Count**: 1552 → 1582 passing (+30 DCT tests)
+
+**Session 11 Previous Progress:**
 
 ### Spectral Analysis Implementation (commit c8b2f1c) ✅
 - ✅ **Module**: src/signal/spectral.zig (163 lines implementation)
@@ -56,10 +86,10 @@
 - [x] FFT (fft, ifft, rfft, irfft, fftfreq) ✅
 - [x] Window Functions (hamming, hann, blackman, bartlett, kaiser) ✅
 - [x] Spectral Analysis (periodogram, welch) ✅
-- [ ] DCT (dct, idct)
+- [x] DCT (dct, idct) ✅
 - [ ] 2D FFT (fft2, ifft2)
 
-**Next Session Priority**: DCT or 2D FFT
+**Next Session Priority**: 2D FFT (fft2, ifft2)
 
 ---
 

@@ -353,3 +353,69 @@ const sample = dist.sample(rng);  // NOT &rng.random()
 - Beta function log: logB(α,β) = logΓ(α) + logΓ(β) - logΓ(α+β), watch for overflow/underflow
 - Edge case Beta(1,1) must be exactly Uniform: pdf(x)=1.0, cdf(x)=x, quantile(p)=p
 
+## Signal Processing Transform Pattern (2026-03-24)
+
+DCT Type II/III implementation in `src/signal/dct.zig`:
+
+```zig
+pub fn dct(comptime T: type, signal: []const T, allocator: Allocator) Allocator.Error![]T {
+    // 1. Allocate output and handle errors
+    const n = signal.len;
+    const coeffs = try allocator.alloc(T, n);
+    errdefer allocator.free(coeffs);
+
+    if (n == 0) return coeffs;
+
+    // 2. Pre-compute constants (n_f, π) for type T
+    const n_f = @as(T, @floatFromInt(n));
+    const pi = std.math.pi;
+
+    // 3. Double loop: O(N²) naive computation
+    for (0..n) |k| {
+        var sum: T = 0.0;
+        const k_f = @as(T, @floatFromInt(k));
+
+        for (0..n) |n_idx| {
+            const n_f_idx = @as(T, @floatFromInt(n_idx));
+            // Core basis function: cos(π * k * (n + 0.5) / N)
+            const angle = pi * k_f * (n_f_idx + 0.5) / n_f;
+            sum += signal[n_idx] * @cos(angle);
+        }
+
+        // 4. Apply orthonormal scaling for energy conservation
+        const scale = if (k == 0)
+            @sqrt(1.0 / n_f)      // DC: sqrt(1/N)
+        else
+            @sqrt(2.0 / n_f);     // AC: sqrt(2/N)
+
+        coeffs[k] = sum * scale;
+    }
+
+    return coeffs;
+}
+```
+
+**Key patterns**:
+- **Floating-point generics**: Use `comptime T: type` to support f32/f64. Cast integers to T for angle computation.
+- **Pre-compute constants**: `n_f`, `π` once, not per iteration
+- **Basis function**: `cos(π * k * (n + 0.5) / N)` is the DCT-II basis (note: (n+0.5), not n)
+- **Orthonormal scaling**: Different for k=0 (DC) vs k>0 (AC) to ensure energy conservation
+- **Inverse (Type III)**: Same pattern with coefficients input; same scaling ensures idct(dct(x)) ≈ x
+- **Memory safety**: `errdefer allocator.free(coeffs)` to handle allocation failures
+- **Empty signal**: Return empty array (valid edge case)
+
+**Mathematical properties verified by tests**:
+- Energy conservation: sum(dct(x)²) ≈ sum(x²) when orthonormal scaling applied
+- DC component: coeffs[0] = sum(signal) * sqrt(1/N)
+- Round-trip: idct(dct(x)) ≈ x within float precision (f64: 1e-9, f32: 1e-5)
+- Linearity: dct(a*x + b*y) = a*dct(x) + b*dct(y)
+
+**Test coverage strategy**:
+- Basic: empty, single element, constant signal (energy at DC)
+- Round-trip: various sizes including non-power-of-2
+- Properties: energy conservation, DC value, orthogonality, linearity
+- Edge cases: zero signal, negative values, large/small magnitudes, alternating (high-frequency)
+- Types: both f32 and f64
+- Memory: allocation/deallocation correctness
+- Important: Remove duplicate defer statements (cause double-free in loops with reassignment)
+
