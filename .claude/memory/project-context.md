@@ -1,20 +1,68 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.22.0 (current)
-- **Phase**: v2.0 Track — Phase 9 COMPLETE ✅
+- **Version**: 1.23.0 (preparing release)
+- **Phase**: v2.0 Track — Phase 10 IN PROGRESS
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 17)
-- **Latest Milestone**: v1.22.0 ✅ — Signal Processing RELEASED (2026-03-24)
-- **Current Milestone**: Phase 10 (Numerical Methods) — v1.23.0 planning
-- **Next Priority**: Integration, differentiation, interpolation (Phase 10)
-- **Test Count**: 1643 tests passing
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal (40 FFT + 17 window + 28 spectral + 30 DCT + 37 convolution + 22 2D FFT + 39 filter) + ndarray + containers + algorithms + internal
+- **Last CI Status**: ✅ GREEN (verified 2026-03-24 Session 18)
+- **Latest Milestone**: v1.23.0 ⏳ — Numerical Methods (Integration, Differentiation, Interpolation) READY
+- **Current Milestone**: Phase 10 (Numerical Methods) — 3/6 functions complete
+- **Next Priority**: Remaining Phase 10 functions (quad, romberg, cubic_spline) or release v1.23.0
+- **Test Count**: 1730 tests passing (+87 from v1.22.0)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 87 numeric (33 integration + 28 differentiation + 26 interpolation) + ndarray + containers + algorithms + internal
   - Skipped: 1 Normal quantile test (Acklam approximation), 1 mannwhitney empty array (NDArray prevents zero-length)
-  - Signal Processing: 7 modules complete (FFT, Window, Spectral, DCT, Convolution, 2D FFT, Filtering)
-- **System Status**: STABLE — CI green, no issues, all cross-compile targets pass
+  - Numerical Methods: 3 functions complete (trapezoid, simpson, diff/gradient, interp1d)
+- **System Status**: STABLE — all tests passing, ready for release
 
-## Recent Progress (Session 2026-03-24 - Session 17)
+## Recent Progress (Session 2026-03-24 - Session 18)
+**FEATURE MODE:**
+
+### Numerical Methods Foundation (commits 4430183, 49d872b, c495181) ✅
+- ✅ **Modules**: 3 new modules in src/numeric/ (1828 lines total: 235 implementation + 1593 tests)
+- ✅ **TDD Workflow**: test-writer (87 tests) → implementations → all tests passing
+- ✅ **Integration Module** (src/numeric/integration.zig, 631 lines: 86 impl + 545 tests):
+  - **trapezoid(T, x, y, allocator) !T** — Trapezoidal rule integration
+    - Exact for polynomials degree ≤ 1 (linear)
+    - Formula: ∫f(x)dx ≈ Σ(x[i+1] - x[i]) * (f[i] + f[i+1]) / 2
+    - Time: O(n), Space: O(1)
+    - Tests: 13 (constant, linear, quadratic, sin/cos/exp, errors, f32/f64)
+  - **simpson(T, x, y, allocator) !T** — Simpson's rule integration
+    - Exact for polynomials degree ≤ 3 (cubic)
+    - Formula: (h/3) * Σ(f[i] + 4*f[i+1] + f[i+2])
+    - Validates odd length (Simpson requires odd points)
+    - Time: O(n), Space: O(1)
+    - Tests: 13 (quadratic/cubic exact, non-uniform grids, edge cases)
+  - Comparative tests: 7 (convergence, accuracy comparison)
+- ✅ **Differentiation Module** (src/numeric/differentiation.zig, 611 lines: 73 impl + 538 tests):
+  - **diff(T, y, dx, allocator) ![]T** — Finite difference differentiation
+    - Forward difference at i=0: (y[1] - y[0]) / dx
+    - Central difference (interior): (y[i+1] - y[i-1]) / (2*dx)
+    - Backward difference at i=n-1: (y[n-1] - y[n-2]) / dx
+    - Returns allocated array (caller owns)
+    - Time: O(n), Space: O(n)
+    - Tests: 23 (constant/linear/quadratic, sin/cos/exp, boundaries, errors)
+  - **gradient(T, y, dx, allocator) ![]T** — Alias for diff() (NumPy compatibility)
+    - Tests: 5 (API compatibility, types)
+- ✅ **Interpolation Module** (src/numeric/interpolation.zig, 577 lines: 76 impl + 501 tests):
+  - **interp1d(T, x, y, x_new, allocator) ![]T** — 1D linear interpolation
+    - Binary search for interval location
+    - Linear interpolation: y_new[i] = y[j] + (y[j+1] - y[j]) * (x_new[i] - x[j]) / (x[j+1] - x[j])
+    - Constant extrapolation (clamp to boundary values)
+    - Validates x monotonically increasing
+    - Time: O(m log n + m), Space: O(m) where m = x_new.len, n = x.len
+    - Tests: 26 (exact match, linear exact, extrapolation, non-uniform grids, errors)
+- ✅ **Test Count**: 1643 → 1730 (+87 tests: 33 integration + 28 differentiation + 26 interpolation)
+- ✅ **Implementation Quality**:
+  - Generic over f32/f64 via comptime type parameter
+  - Allocator-first design (caller-provided allocator)
+  - Big-O complexity documented in all public functions
+  - Comprehensive error handling (DimensionMismatch, InsufficientPoints, OddLengthRequired, NonMonotonicX)
+  - Memory safety verified with std.testing.allocator
+  - Analytical validation (known derivatives/integrals)
+
+---
+
+## Previous Progress (Session 2026-03-24 - Session 17)
 **FEATURE MODE:**
 
 ### Digital Filter Design & Application (commit abe6f59) ✅
