@@ -402,6 +402,8 @@ pub const stats = struct {
 pub const signal = struct {
     /// Fast Fourier Transform (FFT) — Cooley-Tukey algorithm for time/frequency domain conversion
     pub const fft = @import("signal/fft.zig");
+    /// Window functions for spectral analysis (Hamming, Hann, Blackman, Bartlett, Kaiser)
+    pub const window = @import("signal/window.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -435,4 +437,5 @@ test {
 
     // Explicitly import signal modules to trigger their tests
     _ = @import("signal/fft.zig");
+    _ = @import("signal/window.zig");
 }
