@@ -420,6 +420,8 @@ pub const signal = struct {
 pub const numeric = struct {
     /// Numerical integration — Trapezoidal and Simpson's rules for discrete integration
     pub const integration = @import("numeric/integration.zig");
+    /// Numerical differentiation — Finite difference methods for derivatives
+    pub const differentiation = @import("numeric/differentiation.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -462,4 +464,5 @@ test {
 
     // Explicitly import numeric modules to trigger their tests
     _ = @import("numeric/integration.zig");
+    _ = @import("numeric/differentiation.zig");
 }
