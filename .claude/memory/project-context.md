@@ -6,15 +6,48 @@
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 22)
 - **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
-- **Current Milestone**: Phase 10 (Numerical Methods) — ✅ Interpolation COMPLETE (5/5), Integration (3/5: trapezoid, simpson, quad), remaining: romberg, gauss_legendre, jacobian, hessian
-- **Next Priority**: Phase 10 remaining: romberg(), gauss_legendre() (integration) OR jacobian(), hessian() (differentiation)
-- **Test Count**: 1898 tests passing (+25 from Session 24)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 218 numeric (58 integration + 28 differentiation + 132 interpolation) + ndarray + containers + algorithms + internal
+- **Current Milestone**: Phase 10 (Numerical Methods) — ✅ Interpolation COMPLETE (5/5), Integration (3/5: trapezoid, simpson, quad), ✅ Differentiation COMPLETE (4/4: diff, gradient, jacobian, hessian), remaining: romberg, gauss_legendre
+- **Next Priority**: Phase 10 remaining: romberg(), gauss_legendre() (integration) to complete all Phase 10 requirements
+- **Test Count**: 1936 tests passing (+38 from Session 27)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 256 numeric (58 integration + 66 differentiation + 132 interpolation) + ndarray + containers + algorithms + internal
   - Skipped: 2 (1 Normal quantile, 1 mannwhitney empty array)
-  - Numerical Methods: Integration (3/5: trapezoid, simpson, ✅ quad), Differentiation (2/4), ✅ Interpolation (5/5 COMPLETE)
+  - Numerical Methods: Integration (3/5: trapezoid, simpson, ✅ quad), ✅ Differentiation (4/4 COMPLETE), ✅ Interpolation (5/5 COMPLETE)
 - **System Status**: STABLE — all tests passing
 
-## Recent Progress (Session 2026-03-25 - Session 24)
+## Recent Progress (Session 2026-03-25 - Session 27)
+**FEATURE MODE:**
+
+### Jacobian & Hessian Numerical Differentiation (commit d9e4ee4) ✅
+- ✅ **Functions**: jacobian(T, num_funcs, funcs, x, h, allocator), hessian(T, func, x, h, allocator) — Multi-variable calculus derivatives
+- ✅ **Algorithms**:
+  - **Jacobian**: Central difference J[i,j] = ∂fᵢ/∂xⱼ ≈ (fᵢ(x + h·eⱼ) - fᵢ(x - h·eⱼ)) / (2h)
+    - Computes m×n matrix for vector function F: ℝⁿ → ℝᵐ
+    - Time O(m·n), Space O(m·n)
+  - **Hessian**: Central finite differences for second derivatives H[i,j] = ∂²f/∂xᵢ∂xⱼ
+    - Diagonal: 3-point formula H[i,i] = (f(x+h·eᵢ) - 2f(x) + f(x-h·eᵢ)) / h²
+    - Off-diagonal: 4-point cross formula H[i,j] = (f(x+hᵢ+hⱼ) - f(x+hᵢ-hⱼ) - f(x-hᵢ+hⱼ) + f(x-hᵢ-hⱼ)) / (4h²)
+    - Exploits symmetry: computes upper triangle, copies to lower
+    - Time O(n²), Space O(n²)
+- ✅ **Features**:
+  - Generic over f32/f64 via comptime type parameter
+  - Central differences for O(h²) accuracy (vs O(h) for forward/backward)
+  - Function pointer API: accepts `*const fn([]const T) T`
+  - Efficient temp buffer reuse (single allocation per matrix)
+  - Maintains Hessian symmetry property H[i,j] ≈ H[j,i]
+  - Validates inputs: h > 0, non-empty arrays
+- ✅ **Implementation**: src/numeric/differentiation.zig (lines 103-256, 154 lines total: 63 jacobian + 72 hessian + 19 docstrings)
+- ✅ **Tests**: 38 comprehensive tests (lines 697-1138, 442 lines)
+  - **Jacobian** (20 tests): basic (1D→1D, 2D→2D, 3D→2D, constant, linear), mathematical (quadratic, polar-Cartesian, chain rule), accuracy (polynomials, transcendental), edge cases (n=1, m=1, large dims), errors (h ≤ 0), types (f32/f64), memory
+  - **Hessian** (18 tests): basic (1D/2D/3D quadratic, constant, linear), mathematical (symmetry H[i,j]=H[j,i], Rosenbrock function, quadratic forms, Schwarz's theorem), accuracy (polynomials, e^(x²+y²)), edge cases (n=1, large dims, diagonal), errors (h ≤ 0), types (f32/f64), memory
+- ✅ **TDD Workflow**: test-writer (38 tests) → zig-developer (implementation) → all 1936 tests passing
+- ✅ **Test Count**: 1898 → 1936 passing (+38 tests: 20 jacobian + 18 hessian)
+- ✅ **Differentiation Module**: NOW COMPLETE (4/4 functions: diff, gradient, jacobian, hessian)
+- ✅ **Use Cases**: Multi-variable optimization (gradient descent, Newton's method), sensitivity analysis, Jacobian for system dynamics, Hessian for convexity/curvature analysis
+- ✅ **Numerical Properties**: Jacobian exact for linear F (within machine precision), Hessian exact for quadratic f
+
+---
+
+## Previous Progress (Session 2026-03-25 - Session 24)
 **FEATURE MODE:**
 
 ### Adaptive Gauss-Kronrod Quadrature (commit fe4edcb) ✅
