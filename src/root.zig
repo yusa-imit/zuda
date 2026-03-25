@@ -430,6 +430,8 @@ pub const numeric = struct {
     pub const ode = @import("numeric/ode.zig");
     /// Curve fitting — Levenberg-Marquardt algorithm for non-linear least squares
     pub const curve_fitting = @import("numeric/curve_fitting.zig");
+    /// Special mathematical functions — Gamma, Beta, Error function, Bessel functions
+    pub const special = @import("numeric/special.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -477,4 +479,5 @@ test {
     _ = @import("numeric/root_finding.zig");
     _ = @import("numeric/ode.zig");
     _ = @import("numeric/curve_fitting.zig");
+    _ = @import("numeric/special.zig");
 }
