@@ -263,8 +263,13 @@ pub fn penaltyMethod(
 
             // Check convergence with a tolerance that decreases as we increase penalty
             // Early outer iterations: looser tolerance, later: tighter
-            const inner_tol = options.tol / (0.1 + @sqrt(@as(T, @floatFromInt(outer_iter + 1))));
+            const penalty_factor = @sqrt(penalty_param / options.penalty_init);
+            const inner_tol = options.tol / (1 + penalty_factor);
             if (gd_iter >= min_steps and grad_norm < inner_tol) {
+                break;
+            }
+            // Also break if gradient norm is very small and we've done enough steps
+            if (gd_iter >= options.max_inner_iter / 2 and grad_norm < inner_tol * 10) {
                 break;
             }
 
