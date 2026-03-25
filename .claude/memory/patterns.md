@@ -1,5 +1,79 @@
 # zuda Code Patterns
 
+## Quasi-Newton Optimization Pattern (BFGS)
+Implement approximate Hessian (inverse) iteratively to accelerate convergence:
+
+```zig
+pub fn bfgs(comptime T: type, f, grad_f, x0, options, allocator) !OptimizationResult(T) {
+    // 1. Initialize H = I (identity matrix)
+    const H = try allocator.alloc(T, n * n);
+    for (0..n) |i| {
+        for (0..n) |j| {
+            H[i * n + j] = if (i == j) @as(T, 1) else @as(T, 0);
+        }
+    }
+
+    // 2. Each iteration:
+    //    a. p = -H * grad  (search direction)
+    //    b. Line search for α
+    //    c. x_new = x + α * p
+    //    d. s = x_new - x,  y = grad_new - grad_old
+    //    e. Update: H = V^T * H * V + ρ*s*s^T  where V = I - ρ*s*y^T
+    //       (only if y^T*s > epsilon for curvature)
+
+    // Matrix-vector multiply: p = -H * grad
+    for (0..n) |i| {
+        var sum: T = 0;
+        for (0..n) |j| sum += H[i * n + j] * grad[j];
+        p[i] = -sum;
+    }
+
+    // BFGS Hessian update formula
+    var y_dot_s: T = 0;
+    for (0..n) |i| y_dot_s += y[i] * s[i];
+
+    if (y_dot_s > 1e-10) {  // Curvature condition check
+        const rho = 1.0 / y_dot_s;
+
+        // V = I - ρ*s*y^T
+        var V = try allocator.alloc(T, n * n);
+        defer allocator.free(V);
+        for (0..n) |i| {
+            for (0..n) |j| {
+                const delta = if (i == j) @as(T, 1) else @as(T, 0);
+                V[i * n + j] = delta - rho * s[i] * y[j];
+            }
+        }
+
+        // Temp = H * V
+        var Temp = try allocator.alloc(T, n * n);
+        defer allocator.free(Temp);
+        for (0..n) |i| {
+            for (0..n) |j| {
+                var sum: T = 0;
+                for (0..n) |k| sum += H[i * n + k] * V[k * n + j];
+                Temp[i * n + j] = sum;
+            }
+        }
+
+        // H = V^T * Temp + ρ*s*s^T
+        for (0..n) |i| {
+            for (0..n) |j| {
+                var sum: T = 0;
+                for (0..n) |k| sum += V[k * n + i] * Temp[k * n + j];
+                H[i * n + j] = sum + rho * s[i] * s[j];
+            }
+        }
+    }
+}
+```
+
+**Key insights**:
+- Hessian stays symmetric positive definite if Wolfe line search is used
+- Skip update if y_k^T * s_k is too small (numerical stability)
+- O(n²) memory required for the inverse Hessian approximation
+- Superlinear convergence on strongly convex functions
+
 ## Container Lifecycle Pattern
 ```zig
 pub fn init(allocator: std.mem.Allocator) !Self {
@@ -532,3 +606,100 @@ pub fn pchip(comptime T: type, x: []const T, y: []const T, x_new: []const T, all
 - Test extrapolation behavior
 - Be realistic about accuracy (3-5% error for quadratic with 5 points, not 1%)
 - Ensure test grid actually contains sample points if testing "exact reproduction"
+
+## Quasi-Newton (BFGS) Optimization Test Pattern — Session 41
+
+**Algorithm structure**: BFGS maintains inverse Hessian approximation H that improves each iteration
+
+```zig
+pub fn bfgs(comptime T: type, f: ObjectiveFn(T), grad_f: GradientFn(T),
+            x0: []const T, options: BfgsOptions(T),
+            allocator: Allocator) !OptimizationResult(T)
+```
+
+**Options structure**:
+```zig
+pub fn BfgsOptions(comptime T: type) type {
+    return struct {
+        max_iter: usize = 1000,       // Iteration limit
+        tol: T = 1e-6,                // Gradient norm tolerance
+        line_search: LineSearchType = .wolfe,  // armijo|wolfe|backtracking
+        ls_c1: T = 1e-4,              // Armijo constant
+        ls_c2: T = 0.9,               // Curvature constant (Wolfe only)
+        ls_max_iter: usize = 20,      // Line search iterations
+    };
+}
+```
+
+**Core iteration**:
+1. Search direction: `p_k = -H_k * ∇f(x_k)` (H is inverse Hessian)
+2. Line search: find α_k satisfying descent condition
+3. Position update: `x_{k+1} = x_k + α_k * p_k`
+4. Gradient update: compute ∇f(x_{k+1})
+5. Compute: `s_k = α_k * p_k`, `y_k = ∇f(x_{k+1}) - ∇f(x_k)`
+6. Verify: `y_k^T * s_k > 0` (curvature condition)
+7. BFGS update:
+   ```
+   ρ_k = 1 / (y_k^T * s_k)
+   H_{k+1} = (I - ρ_k * s_k * y_k^T) * H_k * (I - ρ_k * y_k * s_k^T) + ρ_k * s_k * s_k^T
+   ```
+
+**Test coverage** (34 tests across 8 categories):
+
+1. **Basic Convergence (6 tests)**: Simple quadratic, 2D sphere, Rosenbrock, 5D, early termination, Beale
+   - Each tests convergence to known minimum
+   - Verify converged flag, final function value, gradient norm
+
+2. **Line Search Variants (6 tests)**: Armijo, Wolfe, backtracking, comparisons, parameter effects, validation
+   - Verify each line search method achieves descent
+   - Compare convergence rates (Wolfe typically fastest)
+   - Test parameter validation (c1 ∈ (0,1), c1 < c2 < 1)
+
+3. **BFGS Properties (6 tests)**: First iteration behavior, Hessian improvement, superlinear convergence, curvature, positive definiteness, descent direction
+   - First iteration should behave like gradient descent (H_0 = I)
+   - Hessian approximation improves over iterations
+   - Search direction p_k·∇f(x_k) < 0 maintained
+   - y_k^T·s_k > 0 curvature condition validated
+   - Superlinear convergence for strongly convex functions
+
+4. **Convergence Properties (5 tests)**: Gradient/function monotonicity, convergence flag, max iterations, tolerance effects
+   - Gradient norm ≤ previous iteration (monotonic)
+   - Function value decreases (descent property)
+   - Converged → ||∇f|| < tol
+   - n_iter ≤ max_iter always
+   - Tighter tolerance → more iterations
+
+5. **Standard Test Functions (4 tests)**: Sphere, Booth, Himmelblau, minima verification
+   - Sphere: convex, minimum at origin with f=0
+   - Booth: minimum at (1,3) with f=0
+   - Himmelblau: 4 minima, test starting near one
+   - Verify final value within tolerance of known optimum
+
+6. **Error Handling (3 tests)**: Empty x0, invalid parameters, negative tolerance
+   - Empty x0 → error.InvalidArgument
+   - Invalid line search (c1 ≥ c2, etc.) → error.InvalidArgument
+   - tol ≤ 0 → error.InvalidArgument
+
+7. **Type Support (2 tests)**: f32 (looser tolerance 1e-4), f64 (tight tolerance 1e-10)
+   - Both types compile and converge
+   - Type-appropriate tolerances
+
+8. **Memory Safety (2 tests)**: No leaks (std.testing.allocator), independent calls
+   - Multiple calls produce same result (no state sharing)
+   - Allocator detects any leaks automatically
+
+**Key testing principles**:
+- Use meaningful test functions (sphere, Rosenbrock, Booth, Himmelblau, Beale)
+- Test both success and error paths
+- Verify invariants: descent direction, curvature condition, positive definiteness
+- Compare convergence rates between line search methods
+- Use realistic tolerances (1e-6 for f64, 1e-4 for f32)
+- All tests should FAIL until implementation complete (TDD Red phase)
+- Use placeholder `try testing.expect(false)` to ensure failure
+
+**Anti-patterns to avoid**:
+- Don't test Hessian approximation without H allocation in implementation
+- Don't skip curvature condition validation (y^T·s ≤ 0 breaks algorithm)
+- Don't assume faster convergence than gradient descent (BFGS is quasi-Newton, not Newton)
+- Don't mix line search parameter validation with convergence tests
+- Don't expect exact minima (numerical error acceptable)
