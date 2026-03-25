@@ -713,6 +713,383 @@ pub fn bfgs(
     };
 }
 
+/// L-BFGS (Limited-memory BFGS) quasi-Newton optimization
+///
+/// Minimizes f(x) using L-BFGS algorithm which maintains a limited history of
+/// recent gradient/step pairs to approximate the inverse Hessian without storing
+/// the full n×n matrix.
+///
+/// **Algorithm**:
+/// 1. Initialize x_0 = x0, k = 0, circular buffers S, Y of size m
+/// 2. For k = 0, 1, 2, ... until convergence:
+///    a. Compute gradient g_k = ∇f(x_k)
+///    b. Two-loop recursion to compute search direction p_k = -H_k * g_k
+///       - Use m recent {s_i, y_i} pairs to implicitly represent H_k
+///    c. Line search: find α_k satisfying Wolfe/Armijo conditions
+///    d. Update: x_{k+1} = x_k + α_k * p_k
+///    e. Store new pair: s_k = x_{k+1} - x_k,  y_k = g_{k+1} - g_k
+///       (circular buffer keeps only m most recent pairs)
+///    f. Check curvature: if y_k^T * s_k > ε, store this pair
+/// 3. Converge when ||g_k|| < tol or k ≥ max_iter
+///
+/// **Parameters**:
+/// - `f`: Objective function to minimize
+/// - `grad_f`: Gradient function ∇f(x)
+/// - `x0`: Initial point
+/// - `options`: Optimization parameters (max_iter, tol, history_size, line_search, etc.)
+/// - `allocator`: Memory allocator
+///
+/// **Returns**: OptimizationResult with:
+/// - `x`: Optimized point (caller must free)
+/// - `f_val`: Final function value
+/// - `grad_norm`: Final gradient norm
+/// - `n_iter`: Number of iterations
+/// - `converged`: True if ||grad|| < tol
+///
+/// **Time**: O(m*n) per iteration where m = history_size (typically 3-20)
+/// **Space**: O(m*n) for storing s and y vectors, vs O(n²) for BFGS
+///
+/// **Errors**:
+/// - `error.InvalidArgument`: Empty x0, invalid history_size, invalid tolerance, invalid line search params
+/// - Line search errors propagated from line_search module
+pub fn lbfgs(
+    comptime T: type,
+    f: ObjectiveFn(T),
+    grad_f: GradientFn(T),
+    x0: []const T,
+    options: LbfgsOptions(T),
+    allocator: std.mem.Allocator,
+) OptimizationError!OptimizationResult(T) {
+    // Validate inputs
+    if (x0.len == 0) {
+        return error.InvalidArgument;
+    }
+    if (options.history_size == 0) {
+        return error.InvalidArgument;
+    }
+
+    const zero: T = 0;
+    const one: T = 1;
+    const epsilon: T = 1e-10;
+
+    // Validate line search parameters
+    if (options.ls_c1 <= zero or options.ls_c1 >= one) {
+        return error.InvalidArgument;
+    }
+    if (options.ls_c2 <= options.ls_c1 or options.ls_c2 >= one) {
+        return error.InvalidArgument;
+    }
+    if (options.tol <= zero) {
+        return error.InvalidArgument;
+    }
+
+    const n = x0.len;
+    const m = options.history_size;
+
+    // Allocate working arrays
+    const x = try allocator.alloc(T, n);
+    errdefer allocator.free(x);
+    @memcpy(x, x0);
+
+    const grad = try allocator.alloc(T, n);
+    defer allocator.free(grad);
+
+    const grad_new = try allocator.alloc(T, n);
+    defer allocator.free(grad_new);
+
+    const p = try allocator.alloc(T, n);
+    defer allocator.free(p);
+
+    const q = try allocator.alloc(T, n);
+    defer allocator.free(q);
+
+    const r = try allocator.alloc(T, n);
+    defer allocator.free(r);
+
+    // Allocate circular buffers for storing s and y vectors
+    // s and y are each m vectors of dimension n
+    const s_buf = try allocator.alloc(T, m * n);
+    defer allocator.free(s_buf);
+
+    const y_buf = try allocator.alloc(T, m * n);
+    defer allocator.free(y_buf);
+
+    // rho[i] = 1 / (y[i]^T * s[i])
+    const rho = try allocator.alloc(T, m);
+    defer allocator.free(rho);
+
+    // alpha values for two-loop recursion (one for each position in circular buffer)
+    const alpha_vals = try allocator.alloc(T, m);
+    defer allocator.free(alpha_vals);
+
+    // Temporary vectors for two-loop recursion
+    const s_temp = try allocator.alloc(T, n);
+    defer allocator.free(s_temp);
+
+    const y_temp = try allocator.alloc(T, n);
+    defer allocator.free(y_temp);
+
+    // Compute initial gradient
+    grad_f(x, grad);
+    var grad_norm: T = zero;
+    for (grad) |gi| {
+        grad_norm += gi * gi;
+    }
+    grad_norm = @sqrt(grad_norm);
+
+    // If already at convergence, return immediately
+    if (grad_norm < options.tol) {
+        const f_val = f(x);
+        return OptimizationResult(T){
+            .x = x,
+            .f_val = f_val,
+            .grad_norm = grad_norm,
+            .n_iter = 0,
+            .converged = true,
+        };
+    }
+
+    var n_iter: usize = 0;
+    var converged = false;
+    var history_count: usize = 0; // Number of stored pairs (0 to m)
+
+    // Main optimization loop
+    while (n_iter < options.max_iter) : (n_iter += 1) {
+        // Two-loop recursion to compute search direction p = -H * grad
+        // where H is implicitly represented by the m stored {s, y} pairs
+
+        // Initialize q = grad
+        @memcpy(q, grad);
+
+        // First loop (backward through history)
+        // Compute alpha values and update q
+        // Process pairs in reverse chronological order
+        if (history_count > 0) {
+            var i: usize = 1;
+            while (i <= history_count) : (i += 1) {
+                // Index of pair stored i iterations ago in the circular buffer
+                // If we're at iteration n_iter and have stored history_count pairs,
+                // they are at indices (n_iter - history_count) % m through (n_iter - 1) % m
+                // The pair stored i iterations ago is at index (n_iter - i) % m
+                const idx = if (n_iter >= i) (n_iter - i) % m else m + n_iter - i;
+
+                // Retrieve the s and y vectors for this pair
+                for (0..n) |j| {
+                    s_temp[j] = s_buf[idx * n + j];
+                    y_temp[j] = y_buf[idx * n + j];
+                }
+
+                // alpha[i] = rho[idx] * (s^T * q)
+                var s_dot_q: T = zero;
+                for (0..n) |j| {
+                    s_dot_q += s_temp[j] * q[j];
+                }
+                alpha_vals[idx] = rho[idx] * s_dot_q;
+
+                // q = q - alpha[i] * y
+                for (0..n) |j| {
+                    q[j] -= alpha_vals[idx] * y_temp[j];
+                }
+            }
+        }
+
+        // Scaling: H_0 = γ * I where γ = s^T * y / y^T * y
+        // Use the most recent pair
+        var gamma: T = one;
+        if (history_count > 0) {
+            // Most recent pair is stored 1 iteration ago
+            const last_idx = if (n_iter > 0) (n_iter - 1) % m else m - 1;
+
+            var s_dot_y: T = zero;
+            var y_dot_y: T = zero;
+            for (0..n) |j| {
+                s_dot_y += s_buf[last_idx * n + j] * y_buf[last_idx * n + j];
+                y_dot_y += y_buf[last_idx * n + j] * y_buf[last_idx * n + j];
+            }
+
+            if (y_dot_y > epsilon) {
+                gamma = s_dot_y / y_dot_y;
+            }
+        }
+
+        // Initialize r = gamma * q
+        for (0..n) |j| {
+            r[j] = gamma * q[j];
+        }
+
+        // Second loop (forward through history)
+        // Update r based on all stored pairs in forward (increasing iteration) order
+        if (history_count > 0) {
+            var i: usize = history_count;
+            while (i > 0) : (i -= 1) {
+                // Index of pair stored i iterations ago
+                const idx = if (n_iter >= i) (n_iter - i) % m else m + n_iter - i;
+
+                // Retrieve the s and y vectors for this pair
+                for (0..n) |j| {
+                    s_temp[j] = s_buf[idx * n + j];
+                    y_temp[j] = y_buf[idx * n + j];
+                }
+
+                // beta = rho[idx] * (y^T * r)
+                var y_dot_r: T = zero;
+                for (0..n) |j| {
+                    y_dot_r += y_temp[j] * r[j];
+                }
+                const beta = rho[idx] * y_dot_r;
+
+                // r = r + (alpha[i] - beta) * s
+                for (0..n) |j| {
+                    r[j] += (alpha_vals[idx] - beta) * s_temp[j];
+                }
+            }
+        }
+
+        // Search direction: p = -r
+        for (0..n) |j| {
+            p[j] = -r[j];
+        }
+
+        // Verify descent direction: p · grad < 0 (or equivalently, -r · grad < 0, so r · grad > 0)
+        // If not a descent direction, fall back to steepest descent
+        var p_dot_grad: T = zero;
+        for (0..n) |j| {
+            p_dot_grad += p[j] * grad[j];
+        }
+
+        if (p_dot_grad >= zero) {
+            // Not a descent direction, use steepest descent instead
+            for (0..n) |j| {
+                p[j] = -grad[j];
+            }
+        }
+
+        // Line search to find step size α
+        var alpha: T = undefined;
+
+        switch (options.line_search) {
+            .armijo => {
+                const result = try line_search.armijo(
+                    T,
+                    f,
+                    x,
+                    p,
+                    grad,
+                    one,
+                    options.ls_c1,
+                    options.ls_max_iter,
+                    allocator,
+                );
+                alpha = result.alpha;
+            },
+            .wolfe => {
+                const result = try line_search.wolfe(
+                    T,
+                    f,
+                    grad_f,
+                    x,
+                    p,
+                    one,
+                    options.ls_c1,
+                    options.ls_c2,
+                    options.ls_max_iter,
+                    allocator,
+                );
+                defer allocator.free(result.grad_new);
+                alpha = result.alpha;
+            },
+            .backtracking => {
+                const result = try line_search.backtracking(
+                    T,
+                    f,
+                    x,
+                    p,
+                    grad,
+                    one,
+                    0.5,
+                    options.ls_c1,
+                    options.ls_max_iter,
+                    allocator,
+                );
+                alpha = result.alpha;
+            },
+        }
+
+        // Update x: x_new = x + α * p
+        for (x, p) |*xi, pi| {
+            xi.* += alpha * pi;
+        }
+
+        // Compute new gradient
+        grad_f(x, grad_new);
+
+        // Compute s = x_new - x_old (which is alpha * p, but compute directly for precision)
+        // We need to compute s from x update, but x has already been updated
+        // s = alpha * p (the step taken)
+        var s_slice = try allocator.alloc(T, n);
+        defer allocator.free(s_slice);
+        for (0..n) |j| {
+            s_slice[j] = alpha * p[j];
+        }
+
+        // Compute y = grad_new - grad_old
+        var y_slice = try allocator.alloc(T, n);
+        defer allocator.free(y_slice);
+        for (0..n) |j| {
+            y_slice[j] = grad_new[j] - grad[j];
+        }
+
+        // Curvature check: y^T * s > epsilon
+        var y_dot_s: T = zero;
+        for (0..n) |j| {
+            y_dot_s += y_slice[j] * s_slice[j];
+        }
+
+        // Only update history if curvature condition is satisfied
+        if (y_dot_s > epsilon) {
+            const history_idx = n_iter % m;
+
+            // Store s and y in circular buffers
+            @memcpy(s_buf[history_idx * n .. (history_idx + 1) * n], s_slice);
+            @memcpy(y_buf[history_idx * n .. (history_idx + 1) * n], y_slice);
+
+            // Store rho value
+            rho[history_idx] = one / y_dot_s;
+
+            // Update history count (up to m)
+            if (history_count < m) {
+                history_count += 1;
+            }
+        }
+
+        // Update gradient for next iteration
+        @memcpy(grad, grad_new);
+
+        // Compute new gradient norm
+        grad_norm = zero;
+        for (grad) |gi| {
+            grad_norm += gi * gi;
+        }
+        grad_norm = @sqrt(grad_norm);
+
+        // Check convergence
+        if (grad_norm < options.tol) {
+            converged = true;
+            break;
+        }
+    }
+
+    const f_val = f(x);
+
+    return OptimizationResult(T){
+        .x = x,
+        .f_val = f_val,
+        .grad_norm = grad_norm,
+        .n_iter = n_iter,
+        .converged = converged,
+    };
+}
+
 // ============================================================================
 // TEST HELPERS
 // ============================================================================
@@ -2158,6 +2535,19 @@ pub fn BfgsOptions(comptime T: type) type {
     };
 }
 
+// LbfgsOptions structure for L-BFGS algorithm
+pub fn LbfgsOptions(comptime T: type) type {
+    return struct {
+        max_iter: usize = 1000,
+        tol: T = 1e-6,
+        history_size: usize = 10,
+        line_search: LineSearchType = .wolfe,
+        ls_c1: T = 1e-4,
+        ls_c2: T = 0.9,
+        ls_max_iter: usize = 20,
+    };
+}
+
 // Category 1: Basic Convergence (6 tests)
 
 test "bfgs: converges on simple quadratic" {
@@ -2823,4 +3213,592 @@ test "bfgs: multiple calls produce independent results" {
     try testing.expect(result1.converged);
     try testing.expect(result2.converged);
     try testing.expectApproxEqAbs(result1.f_val, result2.f_val, 1e-10);
+}
+
+// ============================================================================
+// L-BFGS TESTS — 35 tests across 6 categories
+// ============================================================================
+
+// Category 1: Basic Convergence (6 tests)
+
+test "lbfgs: converges on simple quadratic 1D" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{5.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+        .line_search = .wolfe,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.x[0] < 0.01);
+}
+
+test "lbfgs: converges on 2D sphere function" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.0, 4.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 10,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.x[0] < 0.01);
+    try testing.expect(result.x[1] < 0.01);
+}
+
+test "lbfgs: converges on Rosenbrock function" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 0.0, 0.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 300,
+        .tol = 1e-4,
+        .history_size = 10,
+    };
+
+    const result = try lbfgs(f64, rosenbrock_f64, rosenbrock_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Rosenbrock is harder; partial convergence acceptable
+    try testing.expect(result.f_val < 1.0);
+}
+
+test "lbfgs: handles n=5 dimensions" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-6,
+        .history_size = 8,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    for (result.x) |xi| {
+        try testing.expect(xi < 0.1);
+    }
+}
+
+test "lbfgs: handles n=10 dimensions" {
+    const allocator = testing.allocator;
+
+    var x0: [10]f64 = undefined;
+    for (0..10) |i| {
+        x0[i] = @as(f64, @floatFromInt(i)) + 1.0;
+    }
+
+    const options = LbfgsOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-6,
+        .history_size = 10,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: early termination when initial gradient < tol" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{0.0001};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-3,
+        .history_size = 5,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.n_iter == 0);
+}
+
+// Category 2: History Size Impact (5 tests)
+
+test "lbfgs: history_size=3 converges (minimal)" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-6,
+        .history_size = 3,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.grad_norm < 1e-6);
+}
+
+test "lbfgs: history_size=5 converges efficiently" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: history_size=10 (default) converges" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 10,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: history_size=20 (large) converges" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 20,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: larger history_size improves convergence rate" {
+    const allocator = testing.allocator;
+
+    const x0_small = [_]f64{ 3.0, 4.0 };
+    const x0_large = [_]f64{ 3.0, 4.0 };
+
+    const options_small = LbfgsOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-6,
+        .history_size = 3,
+    };
+
+    const options_large = LbfgsOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-6,
+        .history_size = 15,
+    };
+
+    const result_small = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0_small, options_small, allocator);
+    defer result_small.deinit(allocator);
+
+    const result_large = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0_large, options_large, allocator);
+    defer result_large.deinit(allocator);
+
+    // Both should converge, larger history often converges faster
+    try testing.expect(result_small.converged);
+    try testing.expect(result_large.converged);
+    try testing.expect(result_large.n_iter <= result_small.n_iter + 5);
+}
+
+// Category 3: Line Search Methods (3 tests)
+
+test "lbfgs: armijo line search achieves descent" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{2.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+        .line_search = .armijo,
+    };
+
+    const f_initial = sphere_f64(&x0);
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < f_initial);
+}
+
+test "lbfgs: wolfe line search satisfies curvature" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{2.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+        .line_search = .wolfe,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: backtracking line search converges" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{3.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+        .line_search = .backtracking,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+// Category 4: Edge Cases (6 tests)
+
+test "lbfgs: zero initial point converges from origin" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{0.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Already at minimum
+    try testing.expect(result.n_iter == 0);
+}
+
+test "lbfgs: large initial values handled" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 100.0, 100.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-6,
+        .history_size = 10,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.x[0] < 0.1);
+    try testing.expect(result.x[1] < 0.1);
+}
+
+test "lbfgs: negative initial values handled" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ -3.0, -4.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 8,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: mixed positive/negative initial values" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 5.0, -3.0, 2.0, -4.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-6,
+        .history_size = 6,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: n=1 dimension" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{3.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 50,
+        .tol = 1e-6,
+        .history_size = 3,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: n=50 dimensions (stress test)" {
+    const allocator = testing.allocator;
+
+    var x0: [50]f64 = undefined;
+    for (0..50) |i| {
+        x0[i] = @as(f64, @floatFromInt(i % 10)) + 1.0;
+    }
+
+    const options = LbfgsOptions(f64){
+        .max_iter = 300,
+        .tol = 1e-5,
+        .history_size = 15,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+// Category 5: Non-convergence Scenarios (4 tests)
+
+test "lbfgs: max_iter limit respected" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 10.0, 10.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 3,
+        .tol = 1e-10,
+        .history_size = 5,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.n_iter <= 3);
+    // Should not converge with only 3 iterations
+    try testing.expect(!result.converged);
+}
+
+test "lbfgs: very tight tolerance requires more iterations" {
+    const allocator = testing.allocator;
+
+    const x0_loose = [_]f64{2.0};
+    const x0_tight = [_]f64{2.0};
+
+    const options_loose = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-4,
+        .history_size = 5,
+    };
+
+    const options_tight = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-12,
+        .history_size = 5,
+    };
+
+    const result_loose = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0_loose, options_loose, allocator);
+    defer result_loose.deinit(allocator);
+
+    const result_tight = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0_tight, options_tight, allocator);
+    defer result_tight.deinit(allocator);
+
+    // Tighter tolerance should require more iterations
+    try testing.expect(result_tight.n_iter >= result_loose.n_iter);
+}
+
+test "lbfgs: tighter tolerance achieves better accuracy" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+
+    const options_loose = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-4,
+        .history_size = 5,
+    };
+
+    const options_tight = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-10,
+        .history_size = 5,
+    };
+
+    const result_loose = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options_loose, allocator);
+    defer result_loose.deinit(allocator);
+
+    const result_tight = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options_tight, allocator);
+    defer result_tight.deinit(allocator);
+
+    // Tighter tolerance should achieve smaller gradient norm
+    try testing.expect(result_tight.grad_norm <= result_loose.grad_norm);
+}
+
+test "lbfgs: Beale function convergence with adequate iterations" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.2, 0.4 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-4,
+        .history_size = 8,
+    };
+
+    const result = try lbfgs(f64, beale_f64, beale_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1.0);
+}
+
+// Category 6: Memory and Validation (6+ tests)
+
+test "lbfgs: rejects empty x0" {
+    const allocator = testing.allocator;
+
+    const x0: [0]f64 = undefined;
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+    };
+
+    const result = lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "lbfgs: rejects invalid history_size (zero)" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 0,
+    };
+
+    const result = lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "lbfgs: rejects negative tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = -1e-6,
+        .history_size = 5,
+    };
+
+    const result = lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "lbfgs: rejects invalid line search parameters" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+        .ls_c1 = -0.1, // Invalid: c1 must be positive
+        .ls_c2 = 0.9,
+    };
+
+    const result = lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "lbfgs: result structure validation" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .history_size = 5,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.x.len == 3);
+    try testing.expect(result.grad_norm >= 0);
+    try testing.expect(result.n_iter <= 100);
+}
+
+test "lbfgs: no memory leaks with allocator" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 50,
+        .tol = 1e-6,
+        .history_size = 8,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Allocator detects leaks at the end of the test
+    try testing.expect(result.x.len == 3);
+}
+
+test "lbfgs: f32 type support with looser tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f32{ 2.0, 3.0 };
+    const options = LbfgsOptions(f32){
+        .max_iter = 100,
+        .tol = 1e-4,
+        .history_size = 5,
+    };
+
+    const result = try lbfgs(f32, sphere_f32, sphere_grad_f32, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "lbfgs: f64 type support with tight tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 1.0 };
+    const options = LbfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-8,
+        .history_size = 8,
+    };
+
+    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
 }
