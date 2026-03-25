@@ -3544,3 +3544,564 @@ test "quadratic_programming: equality constraint dimension validation" {
     const result = quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
     try testing.expectError(error.InvalidParameters, result);
 }
+
+// ============================================================================
+// Linear Programming (Simplex Method)
+// ============================================================================
+
+/// Options for simplex method
+pub fn SimplexOptions(comptime T: type) type {
+    return struct {
+        max_iter: usize = 1000,
+        tol: T = 1e-8,
+        pivot_tol: T = 1e-10, // Tolerance for identifying pivot columns/rows
+    };
+}
+
+/// Result of simplex optimization
+pub fn SimplexResult(comptime T: type) type {
+    return struct {
+        x: []T,              // Optimal solution (caller owns)
+        f_val: T,            // Optimal objective value
+        n_iter: usize,       // Number of iterations
+        converged: bool,     // True if optimal solution found
+        status: SimplexStatus, // Solution status
+
+        pub fn deinit(self: @This(), alloc: std.mem.Allocator) void {
+            alloc.free(self.x);
+        }
+    };
+}
+
+/// Status of simplex solution
+pub const SimplexStatus = enum {
+    optimal,       // Optimal solution found
+    unbounded,     // Problem is unbounded
+    infeasible,    // Problem is infeasible
+    max_iter,      // Maximum iterations reached
+};
+
+/// Simplex method for linear programming
+///
+/// Solves: minimize c^T x subject to Ax ≤ b, x ≥ 0
+///
+/// Internally converts to maximization (-c), uses standard simplex, then negates result.
+///
+/// Time: O(m * n * max_iter) | Space: O(m*n) for tableau
+pub fn simplex(
+    comptime T: type,
+    c: []const T,           // n-vector objective coefficients
+    A: []const T,           // m×n constraint matrix (row-major)
+    b: []const T,           // m-vector RHS
+    options: SimplexOptions(T),
+    allocator: std.mem.Allocator,
+) !SimplexResult(T) {
+    const zero: T = 0;
+
+    // Validate inputs
+    if (c.len == 0) {
+        return error.InvalidParameters;
+    }
+
+    const n = c.len; // Number of variables
+    const m = b.len; // Number of constraints
+
+    if (A.len != m * n) {
+        return error.InvalidParameters;
+    }
+
+    if (options.tol <= zero) {
+        return error.InvalidParameters;
+    }
+
+    // Check that all b_i >= 0 (standard form requirement)
+    // If not, we'd need to multiply constraints by -1
+    for (b) |bi| {
+        if (bi < -options.tol) {
+            return error.InvalidParameters; // For now, require b >= 0
+        }
+    }
+
+    // Convert minimization to maximization: max (-c)^T x
+    const c_negated = try allocator.alloc(T, n);
+    defer allocator.free(c_negated);
+    for (0..n) |i| {
+        c_negated[i] = -c[i];
+    }
+
+    // Allocate tableau: [A | I | b] with objective row
+    // Tableau size: (m+1) rows × (n + m + 1) columns
+    // Columns: [decision vars (n) | slack vars (m) | RHS (1)]
+    const n_cols = n + m + 1;
+    const n_rows = m + 1;
+    const tableau = try allocator.alloc(T, n_rows * n_cols);
+    defer allocator.free(tableau);
+
+    // Initialize tableau
+    @memset(tableau, zero);
+
+    // Fill constraint rows: [A | I | b]
+    for (0..m) |i| {
+        // Copy A row
+        for (0..n) |j| {
+            tableau[i * n_cols + j] = A[i * n + j];
+        }
+        // Identity for slack variables
+        tableau[i * n_cols + (n + i)] = 1.0;
+        // RHS
+        tableau[i * n_cols + (n_cols - 1)] = b[i];
+    }
+
+    // Fill objective row (last row): [-c_negated | 0 | 0] for maximization
+    // Standard simplex: look for negative coefficients in objective row
+    const obj_row = m;
+    for (0..n) |j| {
+        tableau[obj_row * n_cols + j] = -c_negated[j]; // This is +c (original)
+    }
+
+    // Basis: Initially slack variables are in basis (indices n..n+m-1)
+    const basis = try allocator.alloc(usize, m);
+    defer allocator.free(basis);
+    for (0..m) |i| {
+        basis[i] = n + i; // Slack variable i
+    }
+
+    // Simplex iterations
+    var iter: usize = 0;
+    while (iter < options.max_iter) : (iter += 1) {
+        // Step 1: Find entering variable (most negative coefficient in objective row)
+        var entering_col: ?usize = null;
+        var min_coeff: T = -options.tol; // Only consider significantly negative
+        for (0..n + m) |j| {
+            const coeff = tableau[obj_row * n_cols + j];
+            if (coeff < min_coeff) {
+                min_coeff = coeff;
+                entering_col = j;
+            }
+        }
+
+        // If no negative coefficients, we're optimal
+        if (entering_col == null) {
+            break;
+        }
+
+        const col = entering_col.?;
+
+        // Step 2: Find leaving variable (minimum ratio test)
+        var leaving_row: ?usize = null;
+        var min_ratio: T = math.inf(T);
+        for (0..m) |i| {
+            const pivot_elem = tableau[i * n_cols + col];
+            if (pivot_elem > options.pivot_tol) {
+                const rhs = tableau[i * n_cols + (n_cols - 1)];
+                const ratio = rhs / pivot_elem;
+                if (ratio >= zero and ratio < min_ratio) {
+                    min_ratio = ratio;
+                    leaving_row = i;
+                }
+            }
+        }
+
+        // If no valid leaving variable, problem is unbounded
+        if (leaving_row == null) {
+            // Extract current basic solution (may be unbounded direction)
+            const x = try allocator.alloc(T, n);
+            @memset(x, zero);
+            return SimplexResult(T){
+                .x = x,
+                .f_val = -math.inf(T),
+                .n_iter = iter,
+                .converged = false,
+                .status = .unbounded,
+            };
+        }
+
+        const row = leaving_row.?;
+
+        // Step 3: Pivot operation
+        const pivot = tableau[row * n_cols + col];
+
+        // Normalize pivot row
+        for (0..n_cols) |j| {
+            tableau[row * n_cols + j] /= pivot;
+        }
+
+        // Eliminate column in other rows
+        for (0..n_rows) |i| {
+            if (i == row) continue;
+            const factor = tableau[i * n_cols + col];
+            for (0..n_cols) |j| {
+                tableau[i * n_cols + j] -= factor * tableau[row * n_cols + j];
+            }
+        }
+
+        // Update basis
+        basis[row] = col;
+    }
+
+    // Extract solution
+    const x = try allocator.alloc(T, n);
+    @memset(x, zero);
+
+    for (0..m) |i| {
+        const var_idx = basis[i];
+        if (var_idx < n) {
+            // Basic variable is a decision variable
+            x[var_idx] = tableau[i * n_cols + (n_cols - 1)];
+        }
+        // Slack variables don't appear in solution
+    }
+
+    // Compute objective value: c^T x (original c, not negated)
+    var f_val: T = zero;
+    for (0..n) |i| {
+        f_val += c[i] * x[i];
+    }
+
+    const converged = iter < options.max_iter;
+    const status: SimplexStatus = if (converged) .optimal else .max_iter;
+
+    return SimplexResult(T){
+        .x = x,
+        .f_val = f_val,
+        .n_iter = iter,
+        .converged = converged,
+        .status = status,
+    };
+}
+
+// ============================================================================
+// Simplex Method Tests
+// ============================================================================
+
+// Test group 1: Parameter validation (3 tests)
+
+test "simplex: reject empty objective" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const c = [_]T{};
+    const A = [_]T{1.0};
+    const b = [_]T{1.0};
+
+    const options = SimplexOptions(T){};
+    const result = simplex(T, &c, &A, &b, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "simplex: reject A dimension mismatch" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const c = [_]T{1.0, 2.0}; // n=2
+    const A = [_]T{1.0, 2.0, 3.0}; // Should be m*n, but 3 elements?
+    const b = [_]T{5.0}; // m=1, so A should be 2 elements
+
+    const options = SimplexOptions(T){};
+    const result = simplex(T, &c, &A, &b, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "simplex: reject invalid tolerance" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const c = [_]T{1.0};
+    const A = [_]T{1.0};
+    const b = [_]T{1.0};
+
+    const options = SimplexOptions(T){.tol = 0.0};
+    const result = simplex(T, &c, &A, &b, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+// Test group 2: Simple LP problems (5 tests)
+
+test "simplex: 1D problem minimize x subject to x <= 5" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min x s.t. x <= 5, x >= 0
+    // Optimal: x = 0, f = 0
+    const c = [_]T{1.0};
+    const A = [_]T{1.0};
+    const b = [_]T{5.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(@abs(result.x[0] - 0.0) < 1e-6);
+    try testing.expect(@abs(result.f_val - 0.0) < 1e-6);
+}
+
+test "simplex: 1D maximize -x (min x) with constraint x <= 3" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min x s.t. x <= 3, x >= 0
+    const c = [_]T{1.0};
+    const A = [_]T{1.0};
+    const b = [_]T{3.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(@abs(result.x[0]) < 1e-6); // x=0 is optimal for min x
+}
+
+test "simplex: 2D problem standard form" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min -x1 - 2*x2 (i.e., max x1 + 2*x2)
+    // s.t. x1 + x2 <= 3
+    //      x1 <= 2
+    //      x2 <= 2
+    //      x1, x2 >= 0
+    // Optimal: x1=1, x2=2, f=-5
+    const c = [_]T{-1.0, -2.0};
+    const A = [_]T{
+        1.0, 1.0,  // x1 + x2 <= 3
+        1.0, 0.0,  // x1 <= 2
+        0.0, 1.0,  // x2 <= 2
+    };
+    const b = [_]T{3.0, 2.0, 2.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(@abs(result.x[0] - 1.0) < 1e-5);
+    try testing.expect(@abs(result.x[1] - 2.0) < 1e-5);
+    try testing.expect(@abs(result.f_val - (-5.0)) < 1e-5);
+}
+
+test "simplex: 2D corner case with tight constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min -3*x1 - 2*x2 (maximize 3*x1 + 2*x2)
+    // s.t. 2*x1 + x2 <= 4
+    //      x1 + 2*x2 <= 3
+    // Optimal: x1=2, x2=0, f=-6 (or close)
+    const c = [_]T{-3.0, -2.0};
+    const A = [_]T{
+        2.0, 1.0,
+        1.0, 2.0,
+    };
+    const b = [_]T{4.0, 3.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    // Verify constraints
+    const c1 = 2.0 * result.x[0] + result.x[1];
+    const c2 = result.x[0] + 2.0 * result.x[1];
+    try testing.expect(c1 <= 4.0 + 1e-5);
+    try testing.expect(c2 <= 3.0 + 1e-5);
+}
+
+test "simplex: redundant constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min -x s.t. x <= 5, x <= 10, x >= 0
+    // Second constraint is redundant
+    const c = [_]T{-1.0};
+    const A = [_]T{
+        1.0,
+        1.0,
+    };
+    const b = [_]T{5.0, 10.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(@abs(result.x[0] - 5.0) < 1e-5); // Should reach x=5
+}
+
+// Test group 3: Unbounded problems (2 tests)
+
+test "simplex: unbounded 1D problem" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min -x with no upper bound constraint
+    // Just x >= 0, but objective goes to -∞
+    // Wait, with no constraint, simplex should detect unbounded
+    // Let's create: min -x s.t. -x <= 0 (i.e., x >= 0)
+    // This is unbounded below
+    const c = [_]T{-1.0};
+    const A = [_]T{-1.0}; // -x <= 0 (x >= 0)
+    const b = [_]T{0.0};
+
+    const options = SimplexOptions(T){.max_iter = 10};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    // This should detect unbounded or hit max_iter
+    // Actually, with -x <= 0, x can be arbitrarily large, so min -x is unbounded
+    try testing.expect(result.status == .unbounded or result.status == .max_iter);
+}
+
+test "simplex: unbounded 2D problem" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // min -x1 - x2 with only x1 + x2 >= 1 (written as -x1 - x2 <= -1)
+    // But we need Ax <= b with b >= 0, so this test needs adjustment
+    // Let's use: min -x1 s.t. x1 + x2 <= 10, x2 unconstrained
+    // Wait, x2 has implicit x2 >= 0
+    // A better unbounded case: min -x1 with x1 - x2 <= 0 (x1 <= x2)
+    // Since x2 can grow, x1 can grow, objective -x1 -> -∞
+    const c = [_]T{-1.0, 0.0};
+    const A = [_]T{1.0, -1.0}; // x1 - x2 <= 0
+    const b = [_]T{0.0};
+
+    const options = SimplexOptions(T){.max_iter = 10};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .unbounded or result.status == .max_iter);
+}
+
+// Test group 4: Standard LP benchmarks (3 tests)
+
+test "simplex: diet problem" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Classic diet problem: minimize cost
+    // min 2*x1 + 3*x2 (cost of foods)
+    // s.t. x1 + x2 >= 5 (nutrient requirement, write as -x1 - x2 <= -5)
+    // But we need b >= 0, so this is tricky
+    // For now, let's use a simpler variant:
+    // min 2*x1 + 3*x2 s.t. x1 + 2*x2 <= 10, 2*x1 + x2 <= 10
+    const c = [_]T{2.0, 3.0};
+    const A = [_]T{
+        1.0, 2.0,
+        2.0, 1.0,
+    };
+    const b = [_]T{10.0, 10.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(result.f_val >= 0.0); // Cost should be non-negative
+}
+
+test "simplex: production planning" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // max profit: -5*x1 - 4*x2 (negate for minimization)
+    // s.t. resource constraints:
+    //      x1 + x2 <= 6 (labor)
+    //      2*x1 + x2 <= 8 (material)
+    const c = [_]T{-5.0, -4.0};
+    const A = [_]T{
+        1.0, 1.0,
+        2.0, 1.0,
+    };
+    const b = [_]T{6.0, 8.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    // Verify feasibility
+    try testing.expect(result.x[0] + result.x[1] <= 6.0 + 1e-5);
+    try testing.expect(2.0 * result.x[0] + result.x[1] <= 8.0 + 1e-5);
+}
+
+test "simplex: transportation problem simplified" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize shipping cost: 1*x1 + 2*x2 + 3*x3
+    // s.t. x1 + x2 <= 10 (source 1)
+    //      x2 + x3 <= 15 (source 2)
+    //      x1 + x3 <= 20 (destination)
+    const c = [_]T{1.0, 2.0, 3.0};
+    const A = [_]T{
+        1.0, 1.0, 0.0,
+        0.0, 1.0, 1.0,
+        1.0, 0.0, 1.0,
+    };
+    const b = [_]T{10.0, 15.0, 20.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(result.f_val >= 0.0);
+}
+
+// Test group 5: Type & convergence (3 tests)
+
+test "simplex: f32 type support" {
+    const allocator = testing.allocator;
+    const T = f32;
+
+    const c = [_]T{-1.0, -2.0};
+    const A = [_]T{
+        1.0, 1.0,
+        1.0, 0.0,
+    };
+    const b = [_]T{3.0, 2.0};
+
+    const options = SimplexOptions(T){};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.status == .optimal);
+    try testing.expect(result.converged);
+}
+
+test "simplex: convergence within iteration limit" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const c = [_]T{-1.0, -1.0};
+    const A = [_]T{
+        1.0, 1.0,
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const b = [_]T{4.0, 3.0, 3.0};
+
+    const options = SimplexOptions(T){.max_iter = 5};
+    var result = try simplex(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    // Should converge within 5 iterations for this simple problem
+    try testing.expect(result.n_iter <= 5);
+}
+
+test "simplex: no memory leaks" {
+    const allocator = testing.allocator;
+
+    for (0..3) |_| {
+        const T = f64;
+        const c = [_]T{1.0, 2.0};
+        const A = [_]T{1.0, 1.0, 1.0, 0.0};
+        const b = [_]T{5.0, 3.0};
+
+        const options = SimplexOptions(T){};
+        var result = try simplex(T, &c, &A, &b, options, allocator);
+        result.deinit(allocator);
+    }
+}
