@@ -434,6 +434,12 @@ pub const numeric = struct {
     pub const special = @import("numeric/special.zig");
 };
 
+/// Optimization algorithms — Gradient-based optimization, line search, solvers
+pub const optimize = struct {
+    /// Line search algorithms — Armijo, Wolfe, Backtracking for step size selection
+    pub const line_search = @import("optimize/line_search.zig");
+};
+
 /// Internal utilities (not part of public API)
 pub const internal = struct {
     pub const testing = @import("internal/testing.zig");
@@ -480,4 +486,7 @@ test {
     _ = @import("numeric/ode.zig");
     _ = @import("numeric/curve_fitting.zig");
     _ = @import("numeric/special.zig");
+
+    // Explicitly import optimize modules to trigger their tests
+    _ = @import("optimize/line_search.zig");
 }
