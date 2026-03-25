@@ -442,6 +442,8 @@ pub const optimize = struct {
     pub const unconstrained = @import("optimize/unconstrained.zig");
     /// Constrained optimization — Penalty method for inequality and equality constraints
     pub const constrained = @import("optimize/constrained.zig");
+    /// Nonlinear least squares — Levenberg-Marquardt, Gauss-Newton for curve fitting and parameter estimation
+    pub const least_squares = @import("optimize/least_squares.zig");
 };
 
 /// Internal utilities (not part of public API)
