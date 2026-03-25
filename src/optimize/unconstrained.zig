@@ -3931,12 +3931,10 @@ pub fn nelder_mead(
         }
     }
 
-    // Use adaptive perturbation: min(0.05, 5% of max |x0[i]|), but at least 1e-10
-    const perturb_base: T = 0.05;
-    const perturb_scale = if (typical_scale > 0) (typical_scale * 0.05) else 1.0;
-    const perturb = if (perturb_scale < perturb_base) perturb_base else perturb_scale;
+    // Use adaptive perturbation: always 5% of typical scale, minimum 1e-10
+    const perturb_scale = if (typical_scale > 0) (typical_scale * 0.05) else 0.05;
     const min_perturb: T = 1e-10;
-    const final_perturb = if (perturb < min_perturb) min_perturb else perturb;
+    const final_perturb = if (perturb_scale < min_perturb) min_perturb else perturb_scale;
 
     for (1..simplex_size) |i| {
         const idx_start = i * dim;
