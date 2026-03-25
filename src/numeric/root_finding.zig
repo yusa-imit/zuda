@@ -923,12 +923,16 @@ test "newton multiple calls do not cross-contaminate" {
 test "all methods use O(1) space with no allocations" {
     // All methods use only local variables — O(1) stack space
     // Call multiple times with different functions to verify no state leaks
-    _ = try bisect(f64, square_minus_two, 1.0, 2.0, 1e-10, 100);
-    _ = try newton(f64, square_minus_two, square_minus_two_deriv, 1.5, 1e-10, 100);
-    _ = try brent(f64, square_minus_two, 1.0, 2.0, 1e-10, 100);
-    _ = try secant(f64, square_minus_two, 1.0, 2.0, 1e-10, 100);
-    _ = try fixed_point(f64, convergent_fixed_point, 0.5, 1e-10, 100);
+    const r1 = try bisect(f64, square_minus_two, 1.0, 2.0, 1e-10, 100);
+    const r2 = try newton(f64, square_minus_two, square_minus_two_deriv, 1.5, 1e-10, 100);
+    const r3 = try brent(f64, square_minus_two, 1.0, 2.0, 1e-10, 100);
+    const r4 = try secant(f64, square_minus_two, 1.0, 2.0, 1e-10, 100);
+    const r5 = try fixed_point(f64, convergent_fixed_point, 0.5, 1e-10, 100);
 
-    // If we reach here without errors, all calls succeeded with no heap issues
-    try testing.expect(true);
+    // Verify all methods found the correct root
+    try testing.expectApproxEqAbs(r1, @sqrt(2.0), 1e-9);
+    try testing.expectApproxEqAbs(r2, @sqrt(2.0), 1e-9);
+    try testing.expectApproxEqAbs(r3, @sqrt(2.0), 1e-9);
+    try testing.expectApproxEqAbs(r4, @sqrt(2.0), 1e-9);
+    try testing.expectApproxEqAbs(r5, 1.0, 1e-9); // g(x) = sqrt(x) has fixed point at x=1 (x=sqrt(x) → x²=x → x=0 or 1, converges to 1 from x0=0.5)
 }

@@ -915,6 +915,7 @@ test "pearson: both arrays constant raises ZeroStdDev" {
 test "pearson: empty array handled gracefully" {
     // Skip: NDArray doesn't allow zero-size arrays in fromSlice
     // Empty array test would fail at NDArray creation, not at pearson
+    return error.SkipZigTest;
 }
 
 test "pearson: mismatched dimensions raises DimensionMismatch" {
@@ -1191,6 +1192,7 @@ test "spearman: two points (rho=±1)" {
 test "spearman: empty array handled gracefully" {
     // Skip: NDArray doesn't allow zero-size arrays in fromSlice
     // Empty array test would fail at NDArray creation, not at spearman
+    return error.SkipZigTest;
 }
 
 test "spearman: mismatched dimensions raises DimensionMismatch" {
@@ -3046,8 +3048,9 @@ test "logisticRegress - memory safety no leaks" {
     const result = try logisticRegress(f64, X, y, test_allocator);
     defer test_allocator.free(result.coefficients);
 
-    // Test allocator will detect leaks on deinit
-    try testing.expect(true);
+    // Verify coefficients were allocated (test allocator detects leaks)
+    // Note: this input has multicollinearity so coefficients may be non-finite
+    try testing.expect(result.coefficients.len > 0);
 }
 
 test "logisticRegress - multiple calls no cross contamination" {

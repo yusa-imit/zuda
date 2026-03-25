@@ -327,11 +327,12 @@ test "glob - memory leak check" {
     const allocator = std.testing.allocator;
     _ = allocator; // unused but demonstrates allocator-free operation
 
+    // Verify results are correct across multiple calls (no state corruption)
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        _ = match("*test*", "mytestfile");
-        _ = match("h[a-z]llo", "hello");
-        _ = matchCaseInsensitive("*.TXT", "file.txt");
+        try std.testing.expect(match("*test*", "mytestfile"));
+        try std.testing.expect(match("h[a-z]llo", "hello"));
+        try std.testing.expect(matchCaseInsensitive("*.TXT", "file.txt"));
     }
 }
 
