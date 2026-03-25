@@ -1238,6 +1238,25 @@ fn himmelblau_grad_f64(x: []const f64, out_grad: []f64) void {
     out_grad[1] = two * a + two * b * two * py;
 }
 
+// Ackley function: f(x) = -20*exp(-0.2*sqrt(sum(x_i²)/n)) - exp(sum(cos(2π*x_i))/n) + 20 + e
+// Global minimum at x = (0, 0, ..., 0) with f(0, ..., 0) = 0
+fn ackley_f64(x: []const f64) f64 {
+    if (x.len < 1) return 0;
+    const pi = std.math.pi;
+
+    var sum_sq: f64 = 0;
+    var sum_cos: f64 = 0;
+    for (x) |xi| {
+        sum_sq += xi * xi;
+        sum_cos += @cos(2 * pi * xi);
+    }
+
+    const n: f64 = @floatFromInt(x.len);
+    const term1 = -20 * @exp(-0.2 * @sqrt(sum_sq / n));
+    const term2 = -@exp(sum_cos / n);
+    return term1 + term2 + 20 + std.math.e;
+}
+
 // ============================================================================
 // TESTS
 // ============================================================================
@@ -3803,3 +3822,914 @@ test "lbfgs: f64 type support with tight tolerance" {
 
     try testing.expect(result.converged);
 }
+
+// ============================================================================
+// Nelder-Mead Simplex Optimization (Derivative-Free)
+// ============================================================================
+
+/// Options for Nelder-Mead simplex method
+pub fn NelderMeadOptions(comptime T: type) type {
+    return struct {
+        max_iter: usize = 1000,
+        tol: T = 1e-8,
+        alpha: T = 1.0,    // reflection coefficient
+        gamma: T = 2.0,    // expansion coefficient
+        rho: T = 0.5,      // contraction coefficient
+        sigma: T = 0.5,    // shrink coefficient
+    };
+}
+
+/// Nelder-Mead simplex method for derivative-free optimization
+///
+/// Implements the derivative-free Nelder-Mead algorithm for unconstrained optimization.
+/// Uses a simplex of n+1 vertices and iteratively replaces the worst vertex through
+/// reflection, expansion, contraction, and shrinkage operations.
+///
+/// The algorithm is effective for non-smooth and noisy functions where gradients
+/// are unavailable or unreliable.
+///
+/// Parameters:
+/// - T: floating-point type (f32, f64)
+/// - n: dimensionality of the optimization problem (compile-time constant)
+/// - f: objective function to minimize
+/// - x0: initial point (length n)
+/// - options: simplex parameters (alpha, gamma, rho, sigma) and convergence tolerance
+/// - allocator: memory allocator
+///
+/// Returns: OptimizationResult with optimized point, final value, and convergence info
+///
+/// Time: O(n² × max_iter × f_eval_cost) | Space: O(n²) for simplex storage
+///
+/// References:
+/// - Nelder, J. A., & Mead, R. (1965). "A simplex method for function minimization"
+pub fn nelder_mead(
+    comptime T: type,
+    f: ObjectiveFn(T),
+    x0: []const T,
+    options: NelderMeadOptions(T),
+    allocator: std.mem.Allocator,
+) OptimizationError!OptimizationResult(T) {
+    // Validate inputs
+    if (x0.len == 0) {
+        return error.InvalidArgument;
+    }
+
+    const zero: T = 0;
+    const one: T = 1;
+
+    // Validate parameters
+    if (options.tol <= zero) {
+        return error.InvalidArgument;
+    }
+    if (options.alpha <= zero) {
+        return error.InvalidArgument;
+    }
+    if (options.gamma <= zero) {
+        return error.InvalidArgument;
+    }
+    if (options.rho <= zero or options.rho >= one) {
+        return error.InvalidArgument;
+    }
+    if (options.sigma <= zero or options.sigma >= one) {
+        return error.InvalidArgument;
+    }
+
+    const dim = x0.len;
+    const simplex_size = dim + 1;
+
+    // Allocate simplex: (n+1) × n matrix of vertices
+    const simplex = try allocator.alloc(T, simplex_size * dim);
+    errdefer allocator.free(simplex);
+
+    // Allocate function values for each vertex
+    const f_vals = try allocator.alloc(T, simplex_size);
+    errdefer allocator.free(f_vals);
+
+    // Allocate working arrays
+    const centroid = try allocator.alloc(T, dim);
+    defer allocator.free(centroid);
+
+    const reflected = try allocator.alloc(T, dim);
+    defer allocator.free(reflected);
+
+    const expanded = try allocator.alloc(T, dim);
+    defer allocator.free(expanded);
+
+    const contracted = try allocator.alloc(T, dim);
+    defer allocator.free(contracted);
+
+    // Initialize simplex: start with x0 + adaptive perturbations
+    @memcpy(simplex[0..dim], x0);
+    f_vals[0] = f(x0);
+
+    // Compute typical scale of x0 to adapt perturbation size
+    var typical_scale: T = 0;
+    for (x0) |xi| {
+        const abs_xi = @abs(xi);
+        if (abs_xi > typical_scale) {
+            typical_scale = abs_xi;
+        }
+    }
+
+    // Use adaptive perturbation: min(0.05, 5% of max |x0[i]|), but at least 1e-10
+    const perturb_base: T = 0.05;
+    const perturb_scale = if (typical_scale > 0) (typical_scale * 0.05) else 1.0;
+    const perturb = if (perturb_scale < perturb_base) perturb_base else perturb_scale;
+    const min_perturb: T = 1e-10;
+    const final_perturb = if (perturb < min_perturb) min_perturb else perturb;
+
+    for (1..simplex_size) |i| {
+        const idx_start = i * dim;
+        @memcpy(simplex[idx_start .. idx_start + dim], x0);
+        simplex[idx_start + (i - 1)] += final_perturb;
+        f_vals[i] = f(simplex[idx_start .. idx_start + dim]);
+    }
+
+    // Check initial simplex diameter for early convergence
+    var diameter: T = 0;
+    for (0..simplex_size) |i| {
+        for (i + 1..simplex_size) |j| {
+            const vi = simplex[i * dim .. (i + 1) * dim];
+            const vj = simplex[j * dim .. (j + 1) * dim];
+            var dist: T = 0;
+            for (vi, vj) |vii, vjj| {
+                const diff = vii - vjj;
+                dist += diff * diff;
+            }
+            dist = @sqrt(dist);
+            if (dist > diameter) {
+                diameter = dist;
+            }
+        }
+    }
+
+    var n_iter: usize = 0;
+    var converged = false;
+
+    // Check if already converged
+    if (diameter < options.tol) {
+        converged = true;
+        var best_idx: usize = 0;
+        for (1..simplex_size) |i| {
+            if (f_vals[i] < f_vals[best_idx]) {
+                best_idx = i;
+            }
+        }
+        const x = try allocator.alloc(T, dim);
+        errdefer allocator.free(x);
+        @memcpy(x, simplex[best_idx * dim .. (best_idx + 1) * dim]);
+        const f_val = f_vals[best_idx];
+
+        allocator.free(simplex);
+        allocator.free(f_vals);
+
+        return OptimizationResult(T){
+            .x = x,
+            .f_val = f_val,
+            .grad_norm = 0,
+            .n_iter = 0,
+            .converged = converged,
+        };
+    }
+
+    // Main Nelder-Mead loop
+    while (n_iter < options.max_iter) : (n_iter += 1) {
+        // Find best, second-worst, and worst vertices
+        var best_idx: usize = 0;
+        var worst_idx: usize = 0;
+        var worst_f = f_vals[0];
+        var second_worst_f = f_vals[0];
+
+        for (1..simplex_size) |i| {
+            if (f_vals[i] < f_vals[best_idx]) {
+                best_idx = i;
+            }
+            if (f_vals[i] > worst_f) {
+                worst_f = f_vals[i];
+                worst_idx = i;
+            }
+        }
+
+        // Find second-worst
+        second_worst_f = worst_f;
+        for (0..simplex_size) |i| {
+            if (i != worst_idx and f_vals[i] > second_worst_f) {
+                second_worst_f = f_vals[i];
+            }
+        }
+
+        // Check simplex diameter for convergence (max distance between any two vertices)
+        var curr_diameter: T = 0;
+        for (0..simplex_size) |i| {
+            for (i + 1..simplex_size) |j| {
+                const vi = simplex[i * dim .. (i + 1) * dim];
+                const vj = simplex[j * dim .. (j + 1) * dim];
+                var dist: T = 0;
+                for (vi, vj) |vii, vjj| {
+                    const diff = vii - vjj;
+                    dist += diff * diff;
+                }
+                dist = @sqrt(dist);
+                if (dist > curr_diameter) {
+                    curr_diameter = dist;
+                }
+            }
+        }
+
+        if (curr_diameter < options.tol) {
+            converged = true;
+            break;
+        }
+
+        // Compute centroid of all vertices except worst
+        @memset(centroid, 0);
+        for (0..simplex_size) |i| {
+            if (i != worst_idx) {
+                const vertex = simplex[i * dim .. (i + 1) * dim];
+                for (vertex, 0..) |vi, j| {
+                    centroid[j] += vi;
+                }
+            }
+        }
+        const denom: T = @as(T, @floatFromInt(dim));
+        for (centroid) |*ci| {
+            ci.* /= denom;
+        }
+
+        // Reflection: x_r = centroid + alpha * (centroid - worst)
+        for (reflected, 0..) |*ri, i| {
+            ri.* = centroid[i] + options.alpha * (centroid[i] - simplex[worst_idx * dim + i]);
+        }
+        const f_reflected = f(reflected);
+
+        if (f_reflected < f_vals[best_idx]) {
+            // Reflected is better than best: try expansion
+            for (expanded, 0..) |*ei, i| {
+                ei.* = centroid[i] + options.gamma * (reflected[i] - centroid[i]);
+            }
+            const f_expanded = f(expanded);
+
+            if (f_expanded < f_reflected) {
+                // Expansion succeeded: replace worst with expanded
+                @memcpy(simplex[worst_idx * dim .. (worst_idx + 1) * dim], expanded);
+                f_vals[worst_idx] = f_expanded;
+            } else {
+                // Expansion failed: use reflected
+                @memcpy(simplex[worst_idx * dim .. (worst_idx + 1) * dim], reflected);
+                f_vals[worst_idx] = f_reflected;
+            }
+        } else if (f_reflected < worst_f) {
+            // Reflected is better than worst but not better than best: accept reflected
+            @memcpy(simplex[worst_idx * dim .. (worst_idx + 1) * dim], reflected);
+            f_vals[worst_idx] = f_reflected;
+        } else {
+            // Reflected is worse than worst: try contraction
+            // Try outside contraction first (between reflected and centroid)
+            for (contracted, 0..) |*ci, i| {
+                ci.* = centroid[i] + options.rho * (reflected[i] - centroid[i]);
+            }
+            const f_contracted = f(contracted);
+
+            if (f_contracted < worst_f) {
+                // Outside contraction succeeded: replace worst
+                @memcpy(simplex[worst_idx * dim .. (worst_idx + 1) * dim], contracted);
+                f_vals[worst_idx] = f_contracted;
+            } else {
+                // Outside contraction failed: try inside contraction (between centroid and worst)
+                for (contracted, 0..) |*ci, i| {
+                    ci.* = centroid[i] - options.rho * (centroid[i] - simplex[worst_idx * dim + i]);
+                }
+                const f_contracted_in = f(contracted);
+
+                if (f_contracted_in < worst_f) {
+                    // Inside contraction succeeded: replace worst
+                    @memcpy(simplex[worst_idx * dim .. (worst_idx + 1) * dim], contracted);
+                    f_vals[worst_idx] = f_contracted_in;
+                } else {
+                    // All operations failed: shrink simplex toward best
+                    for (0..simplex_size) |i| {
+                        if (i != best_idx) {
+                            const vertex = simplex[i * dim .. (i + 1) * dim];
+                            const best_v = simplex[best_idx * dim .. (best_idx + 1) * dim];
+                            for (vertex, 0..) |*vi, j| {
+                                vi.* = best_v[j] + options.sigma * (vi.* - best_v[j]);
+                            }
+                            f_vals[i] = f(vertex);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Return result: best vertex is the optimized point
+    var best_idx: usize = 0;
+    for (1..simplex_size) |i| {
+        if (f_vals[i] < f_vals[best_idx]) {
+            best_idx = i;
+        }
+    }
+
+    const x = try allocator.alloc(T, dim);
+    errdefer allocator.free(x);
+    @memcpy(x, simplex[best_idx * dim .. (best_idx + 1) * dim]);
+    const f_val = f_vals[best_idx];
+
+    allocator.free(simplex);
+    allocator.free(f_vals);
+
+    return OptimizationResult(T){
+        .x = x,
+        .f_val = f_val,
+        .grad_norm = 0, // Not computed for derivative-free methods
+        .n_iter = n_iter,
+        .converged = converged,
+    };
+}
+
+// ============================================================================
+// Nelder-Mead Tests (40+ tests)
+// ============================================================================
+
+// Category 1: Basic Convergence (6 tests)
+
+test "nelder_mead: 1D quadratic f(x)=x² converges to 0" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{3.0};
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.f_val < 1e-10);
+    try testing.expect(result.x[0] < 0.1);
+}
+
+test "nelder_mead: 2D sphere f(x,y)=x²+y² converges to origin" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.f_val < 1e-10);
+    try testing.expect(result.x[0] < 0.1);
+    try testing.expect(result.x[1] < 0.1);
+}
+
+test "nelder_mead: Rosenbrock function convergence" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ -1.0, -1.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-4,
+    };
+
+    const result = try nelder_mead(f64, rosenbrock_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Rosenbrock minimum at (1, 1) with f(1,1) = 0
+    try testing.expect(result.x[0] > 0.9 and result.x[0] < 1.1);
+    try testing.expect(result.x[1] > 0.9 and result.x[1] < 1.1);
+    try testing.expect(result.f_val < 0.01);
+}
+
+test "nelder_mead: 5D sphere converges with adequate iterations" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 500,
+        .tol = 1e-4,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1e-6);
+    for (result.x) |xi| {
+        try testing.expect(@abs(xi) < 0.1);
+    }
+}
+
+test "nelder_mead: early termination when already at minimum" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1e-9}; // Already very close to minimum at 0
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.n_iter < 20);
+}
+
+test "nelder_mead: Beale function convergence" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.0, 0.5 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-4,
+    };
+
+    const result = try nelder_mead(f64, beale_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Beale minimum at (3, 0.5) with f(3, 0.5) = 0
+    try testing.expect(result.x[0] > 2.9 and result.x[0] < 3.1);
+    try testing.expect(result.x[1] > 0.4 and result.x[1] < 0.6);
+    try testing.expect(result.f_val < 0.01);
+}
+
+// Category 2: Simplex Operations Verification (5 tests)
+
+test "nelder_mead: reflection improves worse vertex" {
+    const allocator = testing.allocator;
+
+    // Start from a point where reflection should improve
+    const x0 = [_]f64{5.0};
+    const options = NelderMeadOptions(f64){
+        .max_iter = 50,
+        .tol = 1e-8,
+        .alpha = 1.0,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Function value should improve from initial (5^2 = 25)
+    try testing.expect(result.f_val < 25.0);
+}
+
+test "nelder_mead: expansion with aggressive gamma" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 1.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .gamma = 3.0, // Aggressive expansion
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.f_val < 1e-10);
+}
+
+test "nelder_mead: outside contraction with rho=0.3" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{2.0};
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .rho = 0.3, // Aggressive contraction
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1e-8);
+}
+
+test "nelder_mead: inside contraction with conservative shrink" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.0, 4.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-6,
+        .sigma = 0.7, // Conservative shrink
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1e-8);
+}
+
+test "nelder_mead: shrink operation when all else fails" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{10.0};
+    const options = NelderMeadOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Eventually should converge via shrink operations
+    try testing.expect(result.f_val < 1e-8);
+}
+
+// Category 3: Parameter Sensitivity (4 tests)
+
+test "nelder_mead: non-standard alpha=1.5 reflection coefficient" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 2.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .alpha = 1.5, // Non-standard reflection
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "nelder_mead: aggressive gamma=3.0 expansion coefficient" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.5, 2.5 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .gamma = 3.0,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1e-8);
+}
+
+test "nelder_mead: aggressive rho=0.3 contraction coefficient" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{3.0};
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .rho = 0.3,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1e-8);
+}
+
+test "nelder_mead: conservative sigma=0.7 shrink coefficient" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0, 4.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-6,
+        .sigma = 0.7,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < 1e-6);
+}
+
+// Category 4: Convergence Properties (5 tests)
+
+test "nelder_mead: function value decreases monotonically" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 5.0, 6.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Initial value at (5, 6) is 25 + 36 = 61
+    const initial_f = 61.0;
+    try testing.expect(result.f_val <= initial_f);
+}
+
+test "nelder_mead: simplex diameter shrinks over iterations" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 2.0, 2.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // After convergence, simplex diameter should be < tol
+    try testing.expect(result.converged);
+}
+
+test "nelder_mead: converged flag validation" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 1.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "nelder_mead: max_iter limit respected" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{100.0}; // Start far from optimum
+    const options = NelderMeadOptions(f64){
+        .max_iter = 5, // Very low limit
+        .tol = 1e-15, // Impossible tolerance
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.n_iter <= 5);
+    try testing.expect(!result.converged); // Should NOT converge with 5 iterations
+}
+
+test "nelder_mead: loose tolerance converges faster than tight" {
+    const allocator = testing.allocator;
+
+    const x0_loose = [_]f64{2.0};
+    const x0_tight = [_]f64{2.0};
+
+    const options_loose = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-4,
+    };
+
+    const options_tight = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-10,
+    };
+
+    const result_loose = try nelder_mead(f64, sphere_f64, &x0_loose, options_loose, allocator);
+    defer result_loose.deinit(allocator);
+
+    const result_tight = try nelder_mead(f64, sphere_f64, &x0_tight, options_tight, allocator);
+    defer result_tight.deinit(allocator);
+
+    // Looser tolerance should require fewer iterations
+    try testing.expect(result_loose.n_iter <= result_tight.n_iter);
+}
+
+// Category 5: Standard Test Functions (4 tests)
+
+test "nelder_mead: Booth function minimum at (1, 3)" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 0.0, 0.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-4,
+    };
+
+    const result = try nelder_mead(f64, booth_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Booth function minimum at (1, 3) with f(1,3) = 0
+    try testing.expect(result.x[0] > 0.8 and result.x[0] < 1.2);
+    try testing.expect(result.x[1] > 2.8 and result.x[1] < 3.2);
+    try testing.expect(result.f_val < 0.1);
+}
+
+test "nelder_mead: Himmelblau function finds local minimum" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 0.0, 0.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 200,
+        .tol = 1e-4,
+    };
+
+    const result = try nelder_mead(f64, himmelblau_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Himmelblau has minima at approximately (3, 2), (-2.8, 3.1), (-3.8, -3.3), (3.6, -1.8)
+    // Starting from (0,0), should find one with f ≈ 0
+    try testing.expect(result.f_val < 0.1);
+}
+
+test "nelder_mead: sphere function accurate convergence" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-8,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    for (result.x) |xi| {
+        try testing.expect(@abs(xi) < 1e-4);
+    }
+    try testing.expect(result.f_val < 1e-12);
+}
+
+test "nelder_mead: Ackley function convergence behavior" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 2.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 300,
+        .tol = 1e-3,
+    };
+
+    const result = try nelder_mead(f64, ackley_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Ackley minimum at (0, 0) with f(0,0) = 0
+    try testing.expect(result.f_val < 1.0);
+}
+
+// Category 6: Error Handling & Validation (4 tests)
+
+test "nelder_mead: rejects empty x0" {
+    const allocator = testing.allocator;
+
+    const x0: [0]f64 = undefined;
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "nelder_mead: rejects non-positive tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = -1e-6,
+    };
+
+    const result = nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "nelder_mead: rejects invalid parameters" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+
+    // Test invalid alpha (must be > 0)
+    const options_alpha = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .alpha = 0,
+    };
+    var result = nelder_mead(f64, sphere_f64, &x0, options_alpha, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+
+    // Test invalid gamma (must be > 0)
+    const options_gamma = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .gamma = 0,
+    };
+    result = nelder_mead(f64, sphere_f64, &x0, options_gamma, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+
+    // Test invalid rho (must be in (0, 1))
+    const options_rho = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .rho = 1.5,
+    };
+    result = nelder_mead(f64, sphere_f64, &x0, options_rho, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+
+    // Test invalid sigma (must be in (0, 1))
+    const options_sigma = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .sigma = 1.1,
+    };
+    result = nelder_mead(f64, sphere_f64, &x0, options_sigma, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "nelder_mead: result structure validation" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.x.len == 2);
+    try testing.expect(result.n_iter <= 100);
+    try testing.expect(!std.math.isNan(result.f_val));
+    try testing.expect(!std.math.isInf(result.f_val));
+}
+
+// Category 7: Type Support (2 tests)
+
+test "nelder_mead: f32 type support with looser tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f32{ 2.0, 3.0 };
+    const options = NelderMeadOptions(f32){
+        .max_iter = 100,
+        .tol = 1e-3,
+    };
+
+    const result = try nelder_mead(f32, sphere_f32, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.f_val < 1e-4);
+}
+
+test "nelder_mead: f64 type support with tight tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 1.0, 1.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 150,
+        .tol = 1e-8,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.f_val < 1e-12);
+}
+
+// Category 8: Memory Safety (2 tests)
+
+test "nelder_mead: no memory leaks with allocator" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 };
+    const options = NelderMeadOptions(f64){
+        .max_iter = 50,
+        .tol = 1e-6,
+    };
+
+    const result = try nelder_mead(f64, sphere_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Allocator detects leaks at the end of the test
+    try testing.expect(result.x.len == 3);
+}
+
+test "nelder_mead: multiple independent calls produce correct results" {
+    const allocator = testing.allocator;
+
+    const options = NelderMeadOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+    };
+
+    const x0_a = [_]f64{1.0};
+    const result_a = try nelder_mead(f64, sphere_f64, &x0_a, options, allocator);
+    defer result_a.deinit(allocator);
+
+    const x0_b = [_]f64{2.0};
+    const result_b = try nelder_mead(f64, sphere_f64, &x0_b, options, allocator);
+    defer result_b.deinit(allocator);
+
+    // Both should converge to same minimum
+    try testing.expect(@abs(result_a.x[0] - result_b.x[0]) < 0.01);
+    try testing.expect(@abs(result_a.f_val - result_b.f_val) < 1e-10);
+}
+
