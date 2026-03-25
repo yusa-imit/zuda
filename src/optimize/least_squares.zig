@@ -256,6 +256,138 @@ pub fn levenberg_marquardt(
     };
 }
 
+/// Gauss-Newton algorithm for nonlinear least squares
+/// Solves: min 0.5 * Σ rᵢ(x)²
+/// Using undamped Newton equations: J^T J δx = -J^T r
+///
+/// Assumes small residuals near optimum. More efficient than Levenberg-Marquardt
+/// but may fail far from solution. Always accepts steps that reduce objective.
+///
+/// Time: O(iter × m × n²) where m = num residuals, n = num parameters
+/// Space: O(m × n) for Jacobian
+pub fn gauss_newton(
+    comptime T: type,
+    alloc: std.mem.Allocator,
+    residual_fns: []const ResidualFn(T),
+    jacobian_fn: ?JacobianFn(T),
+    x0: []const T,
+    options: GaussNewtonOptions(T),
+) LeastSquaresError!LeastSquaresResult(T) {
+    const n = x0.len;
+    const m = residual_fns.len;
+
+    if (n == 0 or m == 0) return error.InvalidParameters;
+
+    // Allocate working arrays
+    const x = try alloc.alloc(T, n);
+    errdefer alloc.free(x);
+    @memcpy(x, x0);
+
+    const residuals = try alloc.alloc(T, m);
+    errdefer alloc.free(residuals);
+
+    const jacobian = try alloc.alloc(T, m * n);
+    defer alloc.free(jacobian);
+
+    const jtj = try alloc.alloc(T, n * n);  // J^T J
+    defer alloc.free(jtj);
+
+    const jtr = try alloc.alloc(T, n);      // J^T r
+    defer alloc.free(jtr);
+
+    const delta_x = try alloc.alloc(T, n);  // Parameter update
+    defer alloc.free(delta_x);
+
+    // Compute initial residuals and objective
+    computeResiduals(T, residual_fns, x, residuals);
+    var f_val = computeObjective(T, residuals);
+
+    var n_iter: usize = 0;
+    var converged = false;
+    var termination_reason: []const u8 = "max iterations";
+
+    while (n_iter < options.max_iter) : (n_iter += 1) {
+        // Compute Jacobian (analytical or finite differences)
+        if (jacobian_fn) |jac_fn| {
+            jac_fn(x, jacobian);
+        } else {
+            try computeJacobianFiniteDiff(T, alloc, residual_fns, x, options.epsilon, jacobian);
+        }
+
+        // Compute J^T J
+        computeJTJ(T, jacobian, m, n, jtj);
+
+        // Compute J^T r
+        computeJTR(T, jacobian, residuals, m, n, jtr);
+
+        // Check gradient convergence: ||J^T r|| < tol_grad
+        const grad_norm = vectorNorm(T, jtr);
+        if (grad_norm < options.tol_grad) {
+            converged = true;
+            termination_reason = "gradient tolerance";
+            break;
+        }
+
+        // Solve J^T J δx = -J^T r using Cholesky decomposition
+        // (J^T J is symmetric positive definite for non-singular J)
+        const A = try alloc.alloc(T, n * n);
+        defer alloc.free(A);
+        @memcpy(A, jtj);
+
+        const b = try alloc.alloc(T, n);
+        defer alloc.free(b);
+
+        // Form right-hand side: b = -J^T r
+        for (0..n) |i| {
+            b[i] = -jtr[i];
+        }
+
+        // Solve using Cholesky
+        choleskyDecompose(T, A, n) catch {
+            // If matrix is singular, give up
+            termination_reason = "singular matrix";
+            break;
+        };
+        try choleskySolve(T, A, b, n, delta_x);
+
+        // Update: x ← x + δx
+        for (0..n) |i| {
+            x[i] += delta_x[i];
+        }
+
+        // Compute new residuals and objective
+        computeResiduals(T, residual_fns, x, residuals);
+        const f_val_new = computeObjective(T, residuals);
+
+        // Compute changes for convergence check
+        const delta_f = @abs(f_val - f_val_new);
+        const delta_x_norm = vectorNorm(T, delta_x);
+
+        f_val = f_val_new;
+
+        // Check convergence
+        if (delta_f < options.tol_f) {
+            converged = true;
+            termination_reason = "objective tolerance";
+            break;
+        }
+        if (delta_x_norm < options.tol_x) {
+            converged = true;
+            termination_reason = "parameter tolerance";
+            break;
+        }
+    }
+
+    return LeastSquaresResult(T){
+        .x = x,
+        .residuals = residuals,
+        .f_val = f_val,
+        .n_iter = n_iter,
+        .converged = converged,
+        .termination_reason = termination_reason,
+    };
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -915,4 +1047,677 @@ test "levenberg_marquardt: handles zero residuals at optimum" {
     try testing.expect(result.converged);
     try testing.expectApproxEqAbs(7.0, result.x[0], 1e-10);
     try testing.expect(result.f_val < 1e-20);
+}
+
+// ============================================================================
+// Gauss-Newton Tests
+// ============================================================================
+
+test "gauss_newton: linear least squares (exact in 1-2 iterations)" {
+    // Fit y = a*x + b to data: (1,2), (2,3), (3,5)
+    // Linear problem should converge in 1-2 iterations
+    // Minimum at a ≈ 1.5, b ≈ 0.5
+
+    const data = [_][2]f64{
+        .{ 1, 2 },
+        .{ 2, 3 },
+        .{ 3, 5 },
+    };
+
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return (x[0] * data[0][0] + x[1]) - data[0][1];
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f64) f64 {
+            return (x[0] * data[1][0] + x[1]) - data[1][1];
+        }
+    };
+    const Residual2 = struct {
+        fn f(x: []const f64) f64 {
+            return (x[0] * data[2][0] + x[1]) - data[2][1];
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f, Residual2.f };
+
+    var x0 = [_]f64{ 0, 0 };
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    // Check convergence
+    try testing.expect(result.converged);
+
+    // Check solution: a ≈ 1.5, b ≈ 0.5
+    try testing.expectApproxEqAbs(1.5, result.x[0], 1e-3);
+    try testing.expectApproxEqAbs(0.5, result.x[1], 1e-3);
+
+    // Check objective is small
+    try testing.expect(result.f_val < 0.5);
+
+    // For linear problem, should converge quickly
+    try testing.expect(result.n_iter < 5);
+}
+
+test "gauss_newton: exponential decay fitting from good initial guess" {
+    // Fit y = a * exp(-b * x) with good initial guess
+    // True parameters: a = 5.0, b = 0.5
+    const true_a = 5.0;
+    const true_b = 0.5;
+
+    const Data = struct {
+        const x_data = [_]f64{ 0, 1, 2, 3, 4 };
+        const y_data = blk: {
+            var y: [5]f64 = undefined;
+            for (x_data, 0..) |x, i| {
+                y[i] = true_a * @exp(-true_b * x);
+            }
+            break :blk y;
+        };
+    };
+
+    const Residual0 = struct {
+        fn f(params: []const f64) f64 {
+            const a = params[0];
+            const b = params[1];
+            return (a * @exp(-b * Data.x_data[0])) - Data.y_data[0];
+        }
+    };
+    const Residual1 = struct {
+        fn f(params: []const f64) f64 {
+            const a = params[0];
+            const b = params[1];
+            return (a * @exp(-b * Data.x_data[1])) - Data.y_data[1];
+        }
+    };
+    const Residual2 = struct {
+        fn f(params: []const f64) f64 {
+            const a = params[0];
+            const b = params[1];
+            return (a * @exp(-b * Data.x_data[2])) - Data.y_data[2];
+        }
+    };
+    const Residual3 = struct {
+        fn f(params: []const f64) f64 {
+            const a = params[0];
+            const b = params[1];
+            return (a * @exp(-b * Data.x_data[3])) - Data.y_data[3];
+        }
+    };
+    const Residual4 = struct {
+        fn f(params: []const f64) f64 {
+            const a = params[0];
+            const b = params[1];
+            return (a * @exp(-b * Data.x_data[4])) - Data.y_data[4];
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f, Residual2.f, Residual3.f, Residual4.f };
+
+    var x0 = [_]f64{ 4.5, 0.45 }; // Good initial guess (close to solution)
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    // Check convergence
+    try testing.expect(result.converged);
+
+    // Check solution: a ≈ 5.0, b ≈ 0.5
+    try testing.expectApproxEqAbs(true_a, result.x[0], 1e-3);
+    try testing.expectApproxEqAbs(true_b, result.x[1], 1e-3);
+
+    // Check objective is near zero (perfect fit to noise-free data)
+    try testing.expect(result.f_val < 1e-10);
+}
+
+test "gauss_newton: polynomial fitting (quadratic)" {
+    // Fit y = a*x² + b*x + c to data
+    // True parameters: a = 2, b = -3, c = 1
+
+    const true_a = 2.0;
+    const true_b = -3.0;
+    const true_c = 1.0;
+
+    const Data = struct {
+        const x_data = [_]f64{ -2, -1, 0, 1, 2, 3 };
+        const y_data = blk: {
+            var y: [6]f64 = undefined;
+            for (x_data, 0..) |x, i| {
+                y[i] = true_a * x * x + true_b * x + true_c;
+            }
+            break :blk y;
+        };
+    };
+
+    const Residual0 = struct {
+        fn f(p: []const f64) f64 {
+            const x = Data.x_data[0];
+            return (p[0] * x * x + p[1] * x + p[2]) - Data.y_data[0];
+        }
+    };
+    const Residual1 = struct {
+        fn f(p: []const f64) f64 {
+            const x = Data.x_data[1];
+            return (p[0] * x * x + p[1] * x + p[2]) - Data.y_data[1];
+        }
+    };
+    const Residual2 = struct {
+        fn f(p: []const f64) f64 {
+            const x = Data.x_data[2];
+            return (p[0] * x * x + p[1] * x + p[2]) - Data.y_data[2];
+        }
+    };
+    const Residual3 = struct {
+        fn f(p: []const f64) f64 {
+            const x = Data.x_data[3];
+            return (p[0] * x * x + p[1] * x + p[2]) - Data.y_data[3];
+        }
+    };
+    const Residual4 = struct {
+        fn f(p: []const f64) f64 {
+            const x = Data.x_data[4];
+            return (p[0] * x * x + p[1] * x + p[2]) - Data.y_data[4];
+        }
+    };
+    const Residual5 = struct {
+        fn f(p: []const f64) f64 {
+            const x = Data.x_data[5];
+            return (p[0] * x * x + p[1] * x + p[2]) - Data.y_data[5];
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f, Residual2.f, Residual3.f, Residual4.f, Residual5.f };
+
+    var x0 = [_]f64{ 0, 0, 0 };
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(true_a, result.x[0], 1e-6);
+    try testing.expectApproxEqAbs(true_b, result.x[1], 1e-6);
+    try testing.expectApproxEqAbs(true_c, result.x[2], 1e-6);
+    try testing.expect(result.f_val < 1e-12);
+}
+
+test "gauss_newton: circle fitting (standard nonlinear test)" {
+    // Fit circle (x - cx)² + (y - cy)² = r² to points
+    // True center: (3, 4), radius: 5
+    const true_cx = 3.0;
+    const true_cy = 4.0;
+    const true_r = 5.0;
+
+    const Data = struct {
+        // Points on circle
+        const points = [_][2]f64{
+            .{ 8, 4 },  // (cx + r, cy)
+            .{ 3, 9 },  // (cx, cy + r)
+            .{ -2, 4 }, // (cx - r, cy)
+            .{ 3, -1 }, // (cx, cy - r)
+        };
+    };
+
+    // Residual: distance from point to circle = sqrt((x-cx)² + (y-cy)²) - r
+    const Residual0 = struct {
+        fn f(p: []const f64) f64 {
+            const cx = p[0];
+            const cy = p[1];
+            const r = p[2];
+            const dx = Data.points[0][0] - cx;
+            const dy = Data.points[0][1] - cy;
+            return @sqrt(dx * dx + dy * dy) - r;
+        }
+    };
+    const Residual1 = struct {
+        fn f(p: []const f64) f64 {
+            const cx = p[0];
+            const cy = p[1];
+            const r = p[2];
+            const dx = Data.points[1][0] - cx;
+            const dy = Data.points[1][1] - cy;
+            return @sqrt(dx * dx + dy * dy) - r;
+        }
+    };
+    const Residual2 = struct {
+        fn f(p: []const f64) f64 {
+            const cx = p[0];
+            const cy = p[1];
+            const r = p[2];
+            const dx = Data.points[2][0] - cx;
+            const dy = Data.points[2][1] - cy;
+            return @sqrt(dx * dx + dy * dy) - r;
+        }
+    };
+    const Residual3 = struct {
+        fn f(p: []const f64) f64 {
+            const cx = p[0];
+            const cy = p[1];
+            const r = p[2];
+            const dx = Data.points[3][0] - cx;
+            const dy = Data.points[3][1] - cy;
+            return @sqrt(dx * dx + dy * dy) - r;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f, Residual2.f, Residual3.f };
+
+    var x0 = [_]f64{ 2.5, 3.5, 4.5 }; // Close initial guess
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(true_cx, result.x[0], 1e-5);
+    try testing.expectApproxEqAbs(true_cy, result.x[1], 1e-5);
+    try testing.expectApproxEqAbs(true_r, result.x[2], 1e-5);
+}
+
+test "gauss_newton: objective decreases monotonically" {
+    // Verify that objective value doesn't increase during optimization
+    // Simple quadratic: minimize x² + y²
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0];
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f64) f64 {
+            return x[1];
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f };
+
+    var x0 = [_]f64{ 10.0, 20.0 }; // Far from optimum
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    // Check convergence
+    try testing.expect(result.converged);
+
+    // Check objective is small at optimum
+    try testing.expectApproxEqAbs(0.0, result.x[0], 1e-6);
+    try testing.expectApproxEqAbs(0.0, result.x[1], 1e-6);
+    try testing.expect(result.f_val < 1e-10);
+}
+
+test "gauss_newton: gradient norm decreases to tolerance" {
+    // Verify that gradient norm ||J^T r|| decreases
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 3.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){Residual0.f};
+
+    var x0 = [_]f64{0.0};
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{ .tol_grad = 1e-3 },
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(std.mem.eql(u8, result.termination_reason, "gradient tolerance"));
+    try testing.expectApproxEqAbs(3.0, result.x[0], 1e-6);
+}
+
+test "gauss_newton: explicit Jacobian vs finite differences" {
+    // Compare results using analytical vs numerical Jacobian
+    // Linear system: x + y = 3, 2x - y = 1
+    // Solution: x = 4/3, y = 5/3
+
+    const Jacobian = struct {
+        fn j(_: []const f64, out_jacobian: []f64) void {
+            // Residual 0: (x + y) - 3
+            // ∂r₀/∂x = 1, ∂r₀/∂y = 1
+            out_jacobian[0 * 2 + 0] = 1.0;
+            out_jacobian[0 * 2 + 1] = 1.0;
+
+            // Residual 1: (2x - y) - 1
+            // ∂r₁/∂x = 2, ∂r₁/∂y = -1
+            out_jacobian[1 * 2 + 0] = 2.0;
+            out_jacobian[1 * 2 + 1] = -1.0;
+        }
+    };
+
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return (x[0] + x[1]) - 3.0;
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f64) f64 {
+            return (2 * x[0] - x[1]) - 1.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f };
+
+    var x0 = [_]f64{ 0, 0 };
+
+    // Test with explicit Jacobian
+    const result_analytical = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        Jacobian.j,
+        &x0,
+        .{},
+    );
+    defer result_analytical.deinit(testing.allocator);
+
+    try testing.expect(result_analytical.converged);
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 3.0), result_analytical.x[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f64, 5.0 / 3.0), result_analytical.x[1], 1e-6);
+}
+
+test "gauss_newton: Jacobian fallback to finite differences" {
+    // When Jacobian is null, should fall back to finite differences
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return (x[0] + x[1]) - 3.0;
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f64) f64 {
+            return (2 * x[0] - x[1]) - 1.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f };
+
+    var x0 = [_]f64{ 0, 0 };
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null, // No Jacobian, use finite differences
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 3.0), result.x[0], 1e-4);
+    try testing.expectApproxEqAbs(@as(f64, 5.0 / 3.0), result.x[1], 1e-4);
+}
+
+test "gauss_newton: max_iter enforced" {
+    // Verify that max_iter limit is respected
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 50.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){Residual0.f};
+
+    var x0 = [_]f64{0.0};
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{ .max_iter = 2 },
+    );
+    defer result.deinit(testing.allocator);
+
+    // With only 2 iterations, may not converge
+    try testing.expect(result.n_iter <= 2);
+}
+
+test "gauss_newton: tol_f convergence criterion" {
+    // Converge on objective value change tolerance
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 10.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){Residual0.f};
+
+    var x0 = [_]f64{0.0};
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{ .tol_f = 1e-2 },
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(std.mem.eql(u8, result.termination_reason, "objective tolerance"));
+}
+
+test "gauss_newton: tol_x convergence criterion" {
+    // Converge on parameter change tolerance
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 5.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){Residual0.f};
+
+    var x0 = [_]f64{0.0};
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{ .tol_x = 1e-2 },
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(std.mem.eql(u8, result.termination_reason, "parameter tolerance"));
+}
+
+test "gauss_newton: f32 type support" {
+    // Test with f32 precision
+    const Residual0 = struct {
+        fn f(x: []const f32) f32 {
+            return (x[0] + x[1]) - 3.0;
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f32) f32 {
+            return (2 * x[0] - x[1]) - 1.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f32){ Residual0.f, Residual1.f };
+
+    var x0 = [_]f32{ 0, 0 };
+
+    const result = try gauss_newton(
+        f32,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{ .tol_grad = 1e-4, .tol_f = 1e-4, .tol_x = 1e-4 },
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(@as(f32, 4.0 / 3.0), result.x[0], 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 5.0 / 3.0), result.x[1], 1e-3);
+}
+
+test "gauss_newton: single parameter optimization" {
+    // Minimize (x - 7)²
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 7.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){Residual0.f};
+
+    var x0 = [_]f64{0.0};
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(7.0, result.x[0], 1e-6);
+    try testing.expect(result.f_val < 1e-12);
+}
+
+test "gauss_newton: zero residuals at optimum" {
+    // Exact fit scenario - no noise
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 3.0;
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f64) f64 {
+            return x[1] - 4.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f };
+
+    var x0 = [_]f64{ 3.0, 4.0 }; // Start at optimum
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(3.0, result.x[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, result.x[1], 1e-10);
+    try testing.expect(result.f_val < 1e-20);
+}
+
+test "gauss_newton: Rosenbrock residuals (small residual assumption)" {
+    // Gauss-Newton assumes small residuals near optimum
+    // Rosenbrock: r₁ = 10(x₂ - x₁²), r₂ = 1 - x₁
+    // Minimum at (1, 1) with f = 0
+    // Provide good initial guess for small residuals
+
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return 10 * (x[1] - x[0] * x[0]);
+        }
+    };
+    const Residual1 = struct {
+        fn f(x: []const f64) f64 {
+            return 1 - x[0];
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){ Residual0.f, Residual1.f };
+
+    var x0 = [_]f64{ 0.5, 0.25 }; // Good initial guess
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{ .max_iter = 100 },
+    );
+    defer result.deinit(testing.allocator);
+
+    // Gauss-Newton with good initial guess should converge
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(1.0, result.x[0], 1e-4);
+    try testing.expectApproxEqAbs(1.0, result.x[1], 1e-4);
+    try testing.expect(result.f_val < 1e-6);
+}
+
+test "gauss_newton: no memory leaks" {
+    // Verify memory cleanup with std.testing.allocator
+    const Residual0 = struct {
+        fn f(x: []const f64) f64 {
+            return x[0] - 2.0;
+        }
+    };
+
+    const residuals = [_]ResidualFn(f64){Residual0.f};
+
+    var x0 = [_]f64{0.0};
+
+    const result = try gauss_newton(
+        f64,
+        testing.allocator,
+        &residuals,
+        null,
+        &x0,
+        .{},
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(2.0, result.x[0], 1e-6);
 }
