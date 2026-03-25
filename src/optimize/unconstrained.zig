@@ -3590,18 +3590,19 @@ test "lbfgs: n=50 dimensions (stress test)" {
 test "lbfgs: max_iter limit respected" {
     const allocator = testing.allocator;
 
-    const x0 = [_]f64{ 10.0, 10.0 };
+    // Use Rosenbrock (harder function) to ensure non-convergence in 3 iterations
+    const x0 = [_]f64{ -1.0, -1.0 };
     const options = LbfgsOptions(f64){
         .max_iter = 3,
         .tol = 1e-10,
         .history_size = 5,
     };
 
-    const result = try lbfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    const result = try lbfgs(f64, rosenbrock_f64, rosenbrock_grad_f64, &x0, options, allocator);
     defer result.deinit(allocator);
 
     try testing.expect(result.n_iter <= 3);
-    // Should not converge with only 3 iterations
+    // Should not converge with only 3 iterations on Rosenbrock
     try testing.expect(!result.converged);
 }
 
