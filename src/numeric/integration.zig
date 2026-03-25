@@ -1188,3 +1188,1105 @@ test "quad memory safety (no leaks)" {
     // Average should be close to 2.0
     try testing.expectApproxEqAbs(integral / 10.0, 2.0, 1e-7);
 }
+
+// ============================================================================
+// ROMBERG INTEGRATION (RICHARDSON EXTRAPOLATION) TESTS
+// ============================================================================
+
+/// Result type for Romberg integration
+pub fn RombergResult(comptime T: type) type {
+    return struct {
+        integral: T,
+        error_estimate: T,
+        iterations: usize,
+    };
+}
+
+/// Romberg integration using Richardson extrapolation
+///
+/// Integrates a function f over interval [a, b] using Romberg integration.
+/// This method uses the trapezoidal rule at increasing grid densities and
+/// applies Richardson extrapolation to improve accuracy.
+///
+/// Algorithm:
+/// - R[k,0] = trapezoidal estimate with 2^k intervals
+/// - R[k,m] = (4^m * R[k,m-1] - R[k-1,m-1]) / (4^m - 1) — Richardson extrapolation
+/// - Diagonal element R[k,k] has O(h^(2k+2)) accuracy
+/// - Stops when |R[k,k] - R[k-1,k-1]| < tol or max_iter reached
+///
+/// Parameters:
+/// - T: floating-point type (f32 or f64)
+/// - func: function pointer fn(T) T to integrate
+/// - a: lower bound of integration
+/// - b: upper bound of integration
+/// - max_iter: maximum number of Romberg iterations (typically 10-20)
+/// - tol: absolute error tolerance
+/// - allocator: memory allocator for R table
+///
+/// Returns: struct { integral: T, error_estimate: T, iterations: usize }
+///
+/// Time: O(max_iter^2) | Space: O(max_iter^2)
+pub fn romberg(comptime T: type, func: *const fn (T) T, a: T, b: T, max_iter: usize, tol: T, allocator: Allocator) !RombergResult(T) {
+    if (a >= b) return error.InvalidInterval;
+    if (max_iter == 0) return error.InvalidIteration;
+
+    // Allocate 2D triangular table R[k][m]
+    var R = try allocator.alloc([]T, max_iter);
+    defer allocator.free(R);
+
+    for (0..max_iter) |i| {
+        R[i] = try allocator.alloc(T, i + 1);
+    }
+    defer for (0..max_iter) |i| {
+        allocator.free(R[i]);
+    };
+
+    const h = b - a;
+
+    // R[0,0] = trapezoidal estimate with 1 interval
+    R[0][0] = (func(a) + func(b)) / 2.0 * h;
+
+    var final_iter: usize = 0;
+
+    for (1..max_iter) |k| {
+        var sum: T = 0.0;
+
+        // Compute h_k for iteration k (intervals have size h / 2^k)
+        // In iteration k, we have 2^k intervals
+        // We need to sum values at the new midpoints introduced in this iteration
+        const power_two: T = @as(T, @floatFromInt(@as(u64, 1) << @intCast(k)));
+        const h_k = h / power_two;
+
+        // Sum function values at new midpoints (the points added in this iteration)
+        // These are at positions: a + (2i-1)*h_k for i = 1, 2, ..., 2^(k-1)
+        const num_new_points = @as(u64, 1) << @intCast(k - 1);
+        for (1..num_new_points + 1) |i| {
+            const i_f: T = @floatFromInt(i);
+            const x = a + (2.0 * i_f - 1.0) * h_k;
+            sum += func(x);
+        }
+
+        // R[k,0] = (R[k-1,0] + h_old * sum) where h_old = h / 2^(k-1)
+        const h_prev = h / (@as(T, @floatFromInt(@as(u64, 1) << @intCast(k - 1))));
+        R[k][0] = R[k - 1][0] / 2.0 + h_prev / 2.0 * sum;
+
+        // Richardson extrapolation to build columns
+        for (1..k + 1) |m| {
+            const four_to_m = @as(T, @floatFromInt(@as(u64, 1) << @intCast(2 * m)));  // 4^m = 2^(2m)
+            R[k][m] = (four_to_m * R[k][m - 1] - R[k - 1][m - 1]) / (four_to_m - 1.0);
+        }
+
+        // Check convergence: compare diagonal elements R[k,k] and R[k-1,k-1]
+        if (k > 0) {
+            const error_diff = @abs(R[k][k] - R[k - 1][k - 1]);
+            if (error_diff < tol) {
+                final_iter = k;
+                break;
+            }
+        }
+
+        final_iter = k;
+    }
+
+    const result_integral = R[final_iter][final_iter];
+    var error_estimate: T = 0.0;
+
+    if (final_iter > 0) {
+        error_estimate = @abs(result_integral - R[final_iter - 1][final_iter - 1]);
+    }
+
+    return RombergResult(T){
+        .integral = result_integral,
+        .error_estimate = error_estimate,
+        .iterations = final_iter + 1,
+    };
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE QUADRATURE
+// ============================================================================
+
+/// Get precomputed nodes for Gauss-Legendre quadrature (in f64)
+fn getGaussLegendreNodes(n: usize) ![]const f64 {
+    return switch (n) {
+        2 => &[_]f64{ -0.57735026918962576451, 0.57735026918962576451 },
+        3 => &[_]f64{ -0.77459666924148517649, 0.0, 0.77459666924148517649 },
+        4 => &[_]f64{ -0.86113631159405257523, -0.33998104358485626480, 0.33998104358485626480, 0.86113631159405257523 },
+        5 => &[_]f64{ -0.90617984593866398606, -0.53846931010568309104, 0.0, 0.53846931010568309104, 0.90617984593866398606 },
+        8 => &[_]f64{
+            -0.9602898564975363,
+            -0.7966664774136267,
+            -0.5255324099163290,
+            -0.1834346424956498,
+            0.1834346424956498,
+            0.5255324099163290,
+            0.7966664774136267,
+            0.9602898564975363,
+        },
+        16 => &[_]f64{
+            -0.9894927619644001,
+            -0.9445750230732326,
+            -0.8656312023878921,
+            -0.7554044083550030,
+            -0.6178762444026438,
+            -0.4580167776572934,
+            -0.2816035507792589,
+            -0.0950125098376374,
+            0.0950125098376374,
+            0.2816035507792589,
+            0.4580167776572934,
+            0.6178762444026438,
+            0.7554044083550030,
+            0.8656312023878921,
+            0.9445750230732326,
+            0.9894927619644001,
+        },
+        32 => &[_]f64{
+            -0.9973928541111469,
+            -0.9856115115452683,
+            -0.9647622555875064,
+            -0.9349060759377396,
+            -0.8963211557660521,
+            -0.8493676137301986,
+            -0.7944837959679424,
+            -0.7321821187402896,
+            -0.6630442669302152,
+            -0.5877157360050256,
+            -0.5068582382292458,
+            -0.4210829136148377,
+            -0.3318686022821276,
+            -0.2402519622474248,
+            -0.1467611795818815,
+            -0.0514718701428189,
+            0.0514718701428189,
+            0.1467611795818815,
+            0.2402519622474248,
+            0.3318686022821276,
+            0.4210829136148377,
+            0.5068582382292458,
+            0.5877157360050256,
+            0.6630442669302152,
+            0.7321821187402896,
+            0.7944837959679424,
+            0.8493676137301986,
+            0.8963211557660521,
+            0.9349060759377396,
+            0.9647622555875064,
+            0.9856115115452683,
+            0.9973928541111469,
+        },
+        else => error.UnsupportedOrder,
+    };
+}
+
+/// Get precomputed weights for Gauss-Legendre quadrature (in f64)
+fn getGaussLegendreWeights(n: usize) ![]const f64 {
+    return switch (n) {
+        2 => &[_]f64{ 1.0, 1.0 },
+        3 => &[_]f64{ 0.55555555555555555556, 0.88888888888888888889, 0.55555555555555555556 },
+        4 => &[_]f64{ 0.34785484513745385737, 0.65214515486254614263, 0.65214515486254614263, 0.34785484513745385737 },
+        5 => &[_]f64{ 0.23692688505618908751, 0.47862867049936610145, 0.56888888888888888889, 0.47862867049936610145, 0.23692688505618908751 },
+        8 => &[_]f64{
+            0.1012285362903763,
+            0.2223810344533744,
+            0.3137066458778873,
+            0.3626837833783620,
+            0.3626837833783620,
+            0.3137066458778873,
+            0.2223810344533744,
+            0.1012285362903763,
+        },
+        16 => &[_]f64{
+            0.0271524594117541,
+            0.0622535239386478,
+            0.0951585116824927,
+            0.1246289712555339,
+            0.1495959888165767,
+            0.1691565193950025,
+            0.1826034150449236,
+            0.1894506104550685,
+            0.1894506104550685,
+            0.1826034150449236,
+            0.1691565193950025,
+            0.1495959888165767,
+            0.1246289712555339,
+            0.0951585116824927,
+            0.0622535239386478,
+            0.0271524594117541,
+        },
+        32 => &[_]f64{
+            0.0052549581323859,
+            0.0122077799277201,
+            0.0190503330027236,
+            0.0257784543281512,
+            0.0323299652103770,
+            0.0386429827793850,
+            0.0446843179035212,
+            0.0503379555270048,
+            0.0555729624666004,
+            0.0603624064267902,
+            0.0646632806290542,
+            0.0684547984610405,
+            0.0717137257522530,
+            0.0743919571941957,
+            0.0764545714280440,
+            0.0778631459899198,
+            0.0778631459899198,
+            0.0764545714280440,
+            0.0743919571941957,
+            0.0717137257522530,
+            0.0684547984610405,
+            0.0646632806290542,
+            0.0603624064267902,
+            0.0555729624666004,
+            0.0503379555270048,
+            0.0446843179035212,
+            0.0386429827793850,
+            0.0323299652103770,
+            0.0257784543281512,
+            0.0190503330027236,
+            0.0122077799277201,
+            0.0052549581323859,
+        },
+        else => error.UnsupportedOrder,
+    };
+}
+
+/// Gauss-Legendre quadrature for numerical integration
+///
+/// Computes ∫f(x)dx from a to b using n-point Gauss-Legendre quadrature.
+/// This method is exact for polynomials of degree ≤ 2n-1 and highly
+/// efficient for smooth functions.
+///
+/// Parameters:
+/// - T: floating-point type (f32 or f64)
+/// - func: function to integrate
+/// - a: lower bound
+/// - b: upper bound
+/// - n: number of quadrature points (must be in {2,3,4,5,8,16,32})
+/// - allocator: memory allocator (not used, included for API consistency)
+///
+/// Returns: approximate value of the integral
+///
+/// Errors:
+/// - error.UnsupportedOrder: if n is not in {2,3,4,5,8,16,32}
+///
+/// Time: O(n) | Space: O(1)
+pub fn gauss_legendre(comptime T: type, func: *const fn (T) T, a: T, b: T, n: usize, allocator: Allocator) !T {
+    _ = allocator; // not used, but included for API consistency
+
+    // Get nodes and weights for order n (both in f64)
+    const nodes_f64 = try getGaussLegendreNodes(n);
+    const weights_f64 = try getGaussLegendreWeights(n);
+
+    // Handle zero-width interval
+    if (a == b) {
+        return 0.0;
+    }
+
+    // Handle reversed bounds
+    const is_reversed = a > b;
+    const lower = if (is_reversed) b else a;
+    const upper = if (is_reversed) a else b;
+
+    // Transform interval [a,b] to [-1,1]
+    // t = (b-a)/2 * x + (a+b)/2  where x ∈ [-1,1] and t ∈ [a,b]
+    const mid = (lower + upper) / 2.0;
+    const half_width = (upper - lower) / 2.0;
+
+    // Apply quadrature formula
+    // ∫[a,b] f(t)dt = (b-a)/2 * Σ w_i * f((b-a)/2 * x_i + (a+b)/2)
+    var result: T = 0.0;
+    for (0..n) |i| {
+        const node_val: T = @floatCast(nodes_f64[i]);
+        const weight_val: T = @floatCast(weights_f64[i]);
+        const t = mid + half_width * node_val;
+        result += weight_val * func(t);
+    }
+    result *= half_width;
+
+    // If bounds were reversed, negate the result
+    if (is_reversed) {
+        result = -result;
+    }
+
+    return result;
+}
+
+// Helper functions for romberg tests
+
+fn rombergConstantFunc(x: f64) f64 {
+    _ = x;
+    return 7.0;
+}
+
+fn rombergLinearFunc(x: f64) f64 {
+    return x;
+}
+
+fn rombergQuadraticFunc(x: f64) f64 {
+    return x * x;
+}
+
+fn rombergCubicFunc(x: f64) f64 {
+    return x * x * x;
+}
+
+fn rombergSinFunc(x: f64) f64 {
+    return @sin(x);
+}
+
+fn rombergCosFunc(x: f64) f64 {
+    return @cos(x);
+}
+
+fn rombergExpFunc(x: f64) f64 {
+    return @exp(x);
+}
+
+fn rombergLogFunc(x: f64) f64 {
+    return @log(x);
+}
+
+fn rombergReciprocalFunc(x: f64) f64 {
+    return 1.0 / x;
+}
+
+fn rombergNegativeFunc(x: f64) f64 {
+    return x - 0.5;
+}
+
+fn rombergPolynomialDegree5Func(x: f64) f64 {
+    // x + x² + x³ + x⁴ + x⁵
+    return x + x * x + x * x * x + x * x * x * x + x * x * x * x * x;
+}
+
+fn rombergConstantFunc32(x: f32) f32 {
+    _ = x;
+    return 3.0;
+}
+
+fn rombergSinFunc32(x: f32) f32 {
+    return @sin(x);
+}
+
+// ============================================================================
+// ROMBERG TESTS
+// ============================================================================
+
+test "romberg constant function integral (exact)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 7 dx = 7
+    const result = try romberg(f64, rombergConstantFunc, 0.0, 1.0, 10, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 7.0, 1e-9);
+    try testing.expect(result.iterations > 0);
+    try testing.expect(result.iterations <= 10);
+}
+
+test "romberg linear function integral (exact)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^2 x dx = [x²/2]_0^2 = 2
+    const result = try romberg(f64, rombergLinearFunc, 0.0, 2.0, 10, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 2.0, 1e-9);
+}
+
+test "romberg quadratic function integral" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 x² dx = [x³/3]_0^1 = 1/3
+    const result = try romberg(f64, rombergQuadraticFunc, 0.0, 1.0, 10, 1e-10, allocator);
+    const expected = 1.0 / 3.0;
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-9);
+}
+
+test "romberg cubic function integral (high accuracy)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^2 x³ dx = [x⁴/4]_0^2 = 4
+    const result = try romberg(f64, rombergCubicFunc, 0.0, 2.0, 10, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 4.0, 1e-9);
+}
+
+test "romberg zero function integral" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 0 dx = 0
+    const result = try romberg(f64, struct {
+        pub fn zeroFunc(x: f64) f64 {
+            _ = x;
+            return 0.0;
+        }
+    }.zeroFunc, 0.0, 1.0, 10, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 0.0, 1e-10);
+}
+
+test "romberg reversed bounds error handling" {
+    const allocator = testing.allocator;
+
+    // b < a should return error
+    const result = romberg(f64, rombergConstantFunc, 2.0, 1.0, 10, 1e-10, allocator);
+    try testing.expectError(error.InvalidInterval, result);
+}
+
+test "romberg equal bounds error handling" {
+    const allocator = testing.allocator;
+
+    // a == b should return error
+    const result = romberg(f64, rombergConstantFunc, 1.0, 1.0, 10, 1e-10, allocator);
+    try testing.expectError(error.InvalidInterval, result);
+}
+
+test "romberg zero max_iter error handling" {
+    const allocator = testing.allocator;
+
+    // max_iter = 0 should return error
+    const result = romberg(f64, rombergConstantFunc, 0.0, 1.0, 0, 1e-10, allocator);
+    try testing.expectError(error.InvalidIteration, result);
+}
+
+test "romberg sin function integral (known value)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^π sin(x) dx = 2
+    const result = try romberg(f64, rombergSinFunc, 0.0, math.pi, 15, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 2.0, 1e-9);
+}
+
+test "romberg cos function integral (known value)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^π/2 cos(x) dx = 1
+    const result = try romberg(f64, rombergCosFunc, 0.0, math.pi / 2.0, 15, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 1.0, 1e-9);
+}
+
+test "romberg exponential function integral (known value)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 e^x dx = e - 1 ≈ 1.71828...
+    const result = try romberg(f64, rombergExpFunc, 0.0, 1.0, 15, 1e-10, allocator);
+    const expected = math.e - 1.0;
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-9);
+}
+
+test "romberg log function integral (known value)" {
+    const allocator = testing.allocator;
+
+    // ∫_1^e ln(x) dx = [x*ln(x) - x]_1^e = (e - e) - (0 - 1) = 1
+    const result = try romberg(f64, rombergLogFunc, 1.0, math.e, 15, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 1.0, 1e-8);
+}
+
+test "romberg reciprocal function integral" {
+    const allocator = testing.allocator;
+
+    // ∫_1^e 1/x dx = [ln(x)]_1^e = 1
+    const result = try romberg(f64, rombergReciprocalFunc, 1.0, math.e, 15, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 1.0, 1e-8);
+}
+
+test "romberg polynomial degree 5 integral" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 (x + x² + x³ + x⁴ + x⁵) dx = 1/2 + 1/3 + 1/4 + 1/5 + 1/6
+    const expected = 1.0 / 2.0 + 1.0 / 3.0 + 1.0 / 4.0 + 1.0 / 5.0 + 1.0 / 6.0;
+    const result = try romberg(f64, rombergPolynomialDegree5Func, 0.0, 1.0, 15, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-9);
+}
+
+test "romberg negative integrand" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 (x - 0.5) dx = [x²/2 - 0.5*x]_0^1 = 0.5 - 0.5 = 0
+    const result = try romberg(f64, rombergNegativeFunc, 0.0, 1.0, 10, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 0.0, 1e-9);
+}
+
+test "romberg very small interval" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1e-8 5 dx = 5e-8
+    const interval = 1e-8;
+    const expected = 5.0 * interval;
+    const result = try romberg(f64, struct {
+        pub fn f(x: f64) f64 {
+            _ = x;
+            return 5.0;
+        }
+    }.f, 0.0, interval, 10, 1e-15, allocator);
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-14);
+}
+
+test "romberg large interval" {
+    const allocator = testing.allocator;
+
+    // ∫_-50^50 4 dx = 400
+    const result = try romberg(f64, struct {
+        pub fn f(x: f64) f64 {
+            _ = x;
+            return 4.0;
+        }
+    }.f, -50.0, 50.0, 12, 1e-6, allocator);
+    try testing.expectApproxEqAbs(result.integral, 400.0, 1.0);
+}
+
+test "romberg richardson extrapolation improves accuracy" {
+    const allocator = testing.allocator;
+
+    // Romberg should achieve high accuracy through Richardson extrapolation
+    // compared to basic trapezoidal rule
+    const result = try romberg(f64, rombergSinFunc, 0.0, math.pi, 15, 1e-12, allocator);
+
+    // R[k,k] should be very accurate for smooth functions like sin(x)
+    try testing.expectApproxEqAbs(result.integral, 2.0, 1e-10);
+}
+
+test "romberg convergence with more iterations" {
+    const allocator = testing.allocator;
+
+    // Higher iterations should give better accuracy
+    const loose = try romberg(f64, rombergSinFunc, 0.0, math.pi, 5, 1e-6, allocator);
+    const tight = try romberg(f64, rombergSinFunc, 0.0, math.pi, 15, 1e-12, allocator);
+
+    // Both should converge to 2.0, but tight should be closer
+    try testing.expectApproxEqAbs(loose.integral, 2.0, 1e-5);
+    try testing.expectApproxEqAbs(tight.integral, 2.0, 1e-10);
+}
+
+test "romberg error estimate is reasonable" {
+    const allocator = testing.allocator;
+
+    // Error estimate should be non-negative and roughly reflect actual error
+    const result = try romberg(f64, rombergSinFunc, 0.0, math.pi, 10, 1e-10, allocator);
+    try testing.expect(result.error_estimate >= 0.0);
+    // Actual error should be within a few times the error estimate
+    const actual_error = @abs(result.integral - 2.0);
+    try testing.expect(actual_error <= 1e-8);
+}
+
+test "romberg iterations count reasonable" {
+    const allocator = testing.allocator;
+
+    // Iterations should be positive and not exceed max_iter
+    const result = try romberg(f64, rombergSinFunc, 0.0, math.pi, 10, 1e-10, allocator);
+    try testing.expect(result.iterations > 0);
+    try testing.expect(result.iterations <= 10);
+}
+
+test "romberg early stop when converged" {
+    const allocator = testing.allocator;
+
+    // Tight tolerance on smooth function should converge early
+    const tight = try romberg(f64, rombergSinFunc, 0.0, math.pi, 20, 1e-10, allocator);
+
+    // Should converge well before max_iter
+    try testing.expect(tight.iterations < 20);
+}
+
+test "romberg tolerance threshold triggers early stop" {
+    const allocator = testing.allocator;
+
+    // Very loose tolerance should stop immediately
+    const loose = try romberg(f64, rombergSinFunc, 0.0, math.pi, 20, 0.5, allocator);
+
+    // Should use very few iterations
+    try testing.expect(loose.iterations < 5);
+    // But should still be somewhat accurate
+    try testing.expectApproxEqAbs(loose.integral, 2.0, 0.4);
+}
+
+test "romberg negative bounds (swap respected)" {
+    const allocator = testing.allocator;
+
+    // ∫_{-1}^{1} x² dx = 2/3
+    const result = try romberg(f64, rombergQuadraticFunc, -1.0, 1.0, 10, 1e-10, allocator);
+    const expected = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-9);
+}
+
+test "romberg f32 support with loose tolerance" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 3 dx = 3 (f32)
+    const result = try romberg(f32, rombergConstantFunc32, 0.0, 1.0, 10, 1e-4, allocator);
+    try testing.expectApproxEqAbs(result.integral, 3.0, 1e-3);
+}
+
+test "romberg f32 sin integration" {
+    const allocator = testing.allocator;
+
+    // ∫_0^π sin(x) dx = 2 (f32)
+    const result = try romberg(f32, rombergSinFunc32, 0.0, math.pi, 15, 1e-5, allocator);
+    try testing.expectApproxEqAbs(result.integral, 2.0, 1e-4);
+}
+
+test "romberg memory safety (no leaks)" {
+    const allocator = testing.allocator;
+
+    // Multiple calls should not leak
+    var total: f64 = 0.0;
+    for (0..5) |_| {
+        const result = try romberg(f64, rombergSinFunc, 0.0, math.pi, 10, 1e-10, allocator);
+        total += result.integral;
+    }
+
+    // Average should be close to 2.0
+    try testing.expectApproxEqAbs(total / 5.0, 2.0, 1e-9);
+}
+
+test "romberg quadratic polynomial (exact within iterations)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^2 x² dx = 8/3
+    const result = try romberg(f64, rombergQuadraticFunc, 0.0, 2.0, 10, 1e-10, allocator);
+    const expected = 8.0 / 3.0;
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-9);
+}
+
+test "romberg cubic polynomial (exact within iterations)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 x³ dx = 1/4
+    const result = try romberg(f64, rombergCubicFunc, 0.0, 1.0, 10, 1e-10, allocator);
+    const expected = 0.25;
+    try testing.expectApproxEqAbs(result.integral, expected, 1e-9);
+}
+
+test "romberg oscillatory function (low frequency)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^2π sin(x) dx = 0 (complete period)
+    const result = try romberg(f64, rombergSinFunc, 0.0, 2.0 * math.pi, 15, 1e-10, allocator);
+    try testing.expectApproxEqAbs(result.integral, 0.0, 1e-8);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE INTEGRATION TESTS
+// ============================================================================
+
+// Helper functions for gauss_legendre tests
+
+fn gaussConstantFunc(x: f64) f64 {
+    _ = x;
+    return 5.0;
+}
+
+fn gaussLinearFunc(x: f64) f64 {
+    return x;
+}
+
+fn gaussQuadraticFunc(x: f64) f64 {
+    return x * x;
+}
+
+fn gaussCubicFunc(x: f64) f64 {
+    return x * x * x;
+}
+
+fn gaussQuarticFunc(x: f64) f64 {
+    return x * x * x * x;
+}
+
+fn gaussQuinticFunc(x: f64) f64 {
+    return x * x * x * x * x;
+}
+
+fn gaussPolynomialDegree3Func(x: f64) f64 {
+    // x³ + 2x² + x + 1
+    return x * x * x + 2.0 * x * x + x + 1.0;
+}
+
+fn gaussPolynomialDegree5Func(x: f64) f64 {
+    // x⁵ + x⁴ + x³ + x² + x + 1
+    return x * x * x * x * x + x * x * x * x + x * x * x + x * x + x + 1.0;
+}
+
+fn gaussPolynomialDegree7Func(x: f64) f64 {
+    // x⁷ + x⁶ + x⁵ + x⁴ + x³ + x² + x + 1
+    const x2 = x * x;
+    const x3 = x2 * x;
+    const x4 = x3 * x;
+    const x5 = x4 * x;
+    const x6 = x5 * x;
+    const x7 = x6 * x;
+    return x7 + x6 + x5 + x4 + x3 + x2 + x + 1.0;
+}
+
+fn gaussPolynomialDegree9Func(x: f64) f64 {
+    // x⁹ + x⁸ + x⁷ + ... + x + 1
+    const x2 = x * x;
+    const x3 = x2 * x;
+    const x4 = x3 * x;
+    const x5 = x4 * x;
+    const x6 = x5 * x;
+    const x7 = x6 * x;
+    const x8 = x7 * x;
+    const x9 = x8 * x;
+    return x9 + x8 + x7 + x6 + x5 + x4 + x3 + x2 + x + 1.0;
+}
+
+fn gaussSinFunc(x: f64) f64 {
+    return @sin(x);
+}
+
+fn gaussCosFunc(x: f64) f64 {
+    return @cos(x);
+}
+
+fn gaussExpFunc(x: f64) f64 {
+    return @exp(x);
+}
+
+fn gaussLogFunc(x: f64) f64 {
+    return @log(x);
+}
+
+fn gaussReciprocalFunc(x: f64) f64 {
+    return 1.0 / x;
+}
+
+fn gaussSqrtFunc(x: f64) f64 {
+    return @sqrt(x);
+}
+
+fn gaussNegativeFunc(x: f64) f64 {
+    return -x * x;
+}
+
+fn gaussConstantFunc32(x: f32) f32 {
+    _ = x;
+    return 3.0;
+}
+
+fn gaussSinFunc32(x: f32) f32 {
+    return @sin(x);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE BASIC OPERATIONS TESTS
+// ============================================================================
+
+test "gauss_legendre constant function (exact)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 5 dx = 5
+    const result = try gauss_legendre(f64, gaussConstantFunc, 0.0, 1.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, 5.0, 1e-12);
+}
+
+test "gauss_legendre linear function (exact)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^2 x dx = [x²/2]_0^2 = 2
+    const result = try gauss_legendre(f64, gaussLinearFunc, 0.0, 2.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, 2.0, 1e-12);
+}
+
+test "gauss_legendre quadratic function (exact for n≥2)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 x² dx = 1/3
+    const result = try gauss_legendre(f64, gaussQuadraticFunc, 0.0, 1.0, 2, allocator);
+    const expected = 1.0 / 3.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre cubic function (exact for n≥2)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^2 x³ dx = [x⁴/4]_0^2 = 4
+    const result = try gauss_legendre(f64, gaussCubicFunc, 0.0, 2.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, 4.0, 1e-12);
+}
+
+test "gauss_legendre zero function" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 0 dx = 0
+    const result = try gauss_legendre(f64, struct {
+        pub fn zeroFunc(x: f64) f64 {
+            _ = x;
+            return 0.0;
+        }
+    }.zeroFunc, 0.0, 1.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, 0.0, 1e-12);
+}
+
+test "gauss_legendre negative bounds (reversed interval)" {
+    const allocator = testing.allocator;
+
+    // ∫_2^0 x dx = -∫_0^2 x dx = -2
+    const result = try gauss_legendre(f64, gaussLinearFunc, 2.0, 0.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, -2.0, 1e-12);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE POLYNOMIAL EXACTNESS TESTS
+// ============================================================================
+
+test "gauss_legendre n=2 exact for degree 3 (x³ + 2x² + x + 1)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 (x³ + 2x² + x + 1) dx = 1/4 + 2/3 + 1/2 + 1 = 19/12
+    const result = try gauss_legendre(f64, gaussPolynomialDegree3Func, 0.0, 1.0, 2, allocator);
+    const expected = 0.25 + 2.0 / 3.0 + 0.5 + 1.0; // = 19/12
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre n=3 exact for degree 5 (x⁵ + x⁴ + x³ + x² + x + 1)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 (x⁵ + x⁴ + x³ + x² + x + 1) dx = 1/6 + 1/5 + 1/4 + 1/3 + 1/2 + 1
+    const result = try gauss_legendre(f64, gaussPolynomialDegree5Func, 0.0, 1.0, 3, allocator);
+    const expected = 1.0 / 6.0 + 1.0 / 5.0 + 1.0 / 4.0 + 1.0 / 3.0 + 1.0 / 2.0 + 1.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre n=4 exact for degree 7" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 (x⁷ + x⁶ + ... + x + 1) dx = 1/8 + 1/7 + 1/6 + 1/5 + 1/4 + 1/3 + 1/2 + 1
+    const result = try gauss_legendre(f64, gaussPolynomialDegree7Func, 0.0, 1.0, 4, allocator);
+    const expected = 1.0 / 8.0 + 1.0 / 7.0 + 1.0 / 6.0 + 1.0 / 5.0 + 1.0 / 4.0 + 1.0 / 3.0 + 1.0 / 2.0 + 1.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre n=5 exact for degree 9" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 (x⁹ + x⁸ + ... + x + 1) dx = sum of 1/k for k=1..10
+    const result = try gauss_legendre(f64, gaussPolynomialDegree9Func, 0.0, 1.0, 5, allocator);
+    const expected = 1.0 / 10.0 + 1.0 / 9.0 + 1.0 / 8.0 + 1.0 / 7.0 + 1.0 / 6.0 + 1.0 / 5.0 + 1.0 / 4.0 + 1.0 / 3.0 + 1.0 / 2.0 + 1.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre n=8 exact for degree 15" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 x¹⁵ dx = 1/16
+    const result = try gauss_legendre(f64, struct {
+        pub fn f(x: f64) f64 {
+            var res = x;
+            for (1..15) |_| {
+                res *= x;
+            }
+            return res;
+        }
+    }.f, 0.0, 1.0, 8, allocator);
+    const expected = 1.0 / 16.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre polynomial exactness check (increasing n)" {
+    const allocator = testing.allocator;
+
+    // Both n=3 and n=5 should exactly integrate quintic (degree 5)
+    const result_n3 = try gauss_legendre(f64, gaussPolynomialDegree5Func, 0.0, 1.0, 3, allocator);
+    const result_n5 = try gauss_legendre(f64, gaussPolynomialDegree5Func, 0.0, 1.0, 5, allocator);
+
+    const expected = 1.0 / 6.0 + 1.0 / 5.0 + 1.0 / 4.0 + 1.0 / 3.0 + 1.0 / 2.0 + 1.0;
+
+    // Both should be exact
+    try testing.expectApproxEqAbs(result_n3, expected, 1e-12);
+    try testing.expectApproxEqAbs(result_n5, expected, 1e-12);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE MATHEMATICAL PROPERTIES TESTS
+// ============================================================================
+
+test "gauss_legendre sin(x) from 0 to π (n=5, known integral = 2)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^π sin(x) dx = 2
+    const result = try gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, 5, allocator);
+    try testing.expectApproxEqAbs(result, 2.0, 1e-12);
+}
+
+test "gauss_legendre cos(x) from 0 to π/2 (n=5, known integral = 1)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^π/2 cos(x) dx = 1
+    const result = try gauss_legendre(f64, gaussCosFunc, 0.0, math.pi / 2.0, 5, allocator);
+    try testing.expectApproxEqAbs(result, 1.0, 1e-12);
+}
+
+test "gauss_legendre e^x from 0 to 1 (n=8, known integral = e - 1)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 e^x dx = e - 1
+    const result = try gauss_legendre(f64, gaussExpFunc, 0.0, 1.0, 8, allocator);
+    const expected = math.e - 1.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre 1/x from 1 to 2 (n=8, known integral = ln(2))" {
+    const allocator = testing.allocator;
+
+    // ∫_1^2 1/x dx = ln(2)
+    const result = try gauss_legendre(f64, gaussReciprocalFunc, 1.0, 2.0, 8, allocator);
+    const expected = @log(2.0);
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre sqrt(x) from 0 to 1 (n=8, known integral = 2/3)" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 √x dx = 2/3
+    const result = try gauss_legendre(f64, gaussSqrtFunc, 0.0, 1.0, 8, allocator);
+    const expected = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre negative integrand" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 -x² dx = -1/3
+    const result = try gauss_legendre(f64, gaussNegativeFunc, 0.0, 1.0, 2, allocator);
+    const expected = -1.0 / 3.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE ORDER COMPARISON TESTS
+// ============================================================================
+
+test "gauss_legendre higher order improves accuracy (n=2 vs n=8 on sin)" {
+    const allocator = testing.allocator;
+
+    const result_n2 = try gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, 2, allocator);
+    const result_n8 = try gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, 8, allocator);
+
+    const exact = 2.0;
+    const error_n2 = @abs(result_n2 - exact);
+    const error_n8 = @abs(result_n8 - exact);
+
+    // Both should be close, but n=8 should be closer
+    try testing.expect(error_n2 > 1e-10);
+    try testing.expect(error_n8 < 1e-12);
+    try testing.expect(error_n8 < error_n2);
+}
+
+test "gauss_legendre low-order sufficient for low-degree polynomials" {
+    const allocator = testing.allocator;
+
+    // n=2 should be exact for quadratic
+    const result = try gauss_legendre(f64, gaussQuadraticFunc, 0.0, 1.0, 2, allocator);
+    const expected = 1.0 / 3.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-12);
+}
+
+test "gauss_legendre all supported orders work (n=2,3,4,5,8,16,32)" {
+    const allocator = testing.allocator;
+
+    const orders = [_]usize{ 2, 3, 4, 5, 8, 16, 32 };
+
+    for (orders) |n| {
+        const result = try gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, n, allocator);
+        // All should converge to 2.0 for sin(x) from 0 to π
+        try testing.expectApproxEqAbs(result, 2.0, 1e-10);
+    }
+}
+
+test "gauss_legendre unsupported order error (n=7)" {
+    const allocator = testing.allocator;
+
+    const result = gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, 7, allocator);
+    try testing.expectError(error.UnsupportedOrder, result);
+}
+
+test "gauss_legendre unsupported order error (n=100)" {
+    const allocator = testing.allocator;
+
+    const result = gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, 100, allocator);
+    try testing.expectError(error.UnsupportedOrder, result);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE EDGE CASES TESTS
+// ============================================================================
+
+test "gauss_legendre very small interval" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1e-8 5 dx = 5e-8
+    const interval = 1e-8;
+    const expected = 5.0 * interval;
+    const result = try gauss_legendre(f64, struct {
+        pub fn f(x: f64) f64 {
+            _ = x;
+            return 5.0;
+        }
+    }.f, 0.0, interval, 2, allocator);
+    try testing.expectApproxEqAbs(result, expected, 1e-14);
+}
+
+test "gauss_legendre large interval" {
+    const allocator = testing.allocator;
+
+    // ∫_{-100}^{100} 2 dx = 400
+    const result = try gauss_legendre(f64, struct {
+        pub fn f(x: f64) f64 {
+            _ = x;
+            return 2.0;
+        }
+    }.f, -100.0, 100.0, 5, allocator);
+    try testing.expectApproxEqAbs(result, 400.0, 1e-10);
+}
+
+test "gauss_legendre zero-width interval (a == b)" {
+    const allocator = testing.allocator;
+
+    // ∫_1^1 5 dx = 0
+    const result = try gauss_legendre(f64, gaussConstantFunc, 1.0, 1.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, 0.0, 1e-12);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE TYPE SUPPORT TESTS
+// ============================================================================
+
+test "gauss_legendre f32 support with tolerance 1e-4" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 3 dx = 3 (f32)
+    const result = try gauss_legendre(f32, gaussConstantFunc32, 0.0, 1.0, 2, allocator);
+    try testing.expectApproxEqAbs(result, 3.0, 1e-4);
+}
+
+test "gauss_legendre f32 sin integration with tolerance 1e-5" {
+    const allocator = testing.allocator;
+
+    // ∫_0^π sin(x) dx = 2 (f32)
+    const result = try gauss_legendre(f32, gaussSinFunc32, 0.0, math.pi, 5, allocator);
+    try testing.expectApproxEqAbs(result, 2.0, 1e-5);
+}
+
+test "gauss_legendre f64 with tolerance 1e-10" {
+    const allocator = testing.allocator;
+
+    // ∫_0^1 e^x dx = e - 1 (f64)
+    const result = try gauss_legendre(f64, gaussExpFunc, 0.0, 1.0, 8, allocator);
+    const expected = math.e - 1.0;
+    try testing.expectApproxEqAbs(result, expected, 1e-10);
+}
+
+// ============================================================================
+// GAUSS-LEGENDRE MEMORY SAFETY TESTS
+// ============================================================================
+
+test "gauss_legendre memory safety (no leaks)" {
+    const allocator = testing.allocator;
+
+    // Multiple calls should not leak
+    var total: f64 = 0.0;
+    for (0..5) |_| {
+        const result = try gauss_legendre(f64, gaussSinFunc, 0.0, math.pi, 8, allocator);
+        total += result;
+    }
+
+    // Average should be close to 2.0
+    try testing.expectApproxEqAbs(total / 5.0, 2.0, 1e-10);
+}
