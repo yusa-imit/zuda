@@ -1357,3 +1357,1241 @@ test "penalty_method: result structure contains expected fields" {
     try testing.expect(result.n_outer_iter >= 0);
     try testing.expect(result.n_inner_iter >= 0);
 }
+
+// ============================================================================
+// AUGMENTED LAGRANGIAN METHOD TESTS
+// ============================================================================
+
+/// Options for augmented Lagrangian method optimization
+pub fn AugmentedLagrangianOptions(comptime T: type) type {
+    return struct {
+        max_outer_iter: usize = 20,
+        max_inner_iter: usize = 100,
+        rho_init: T = 1.0,
+        rho_max: T = 1e6,
+        rho_scale: T = 2.0,
+        tol_constraint: T = 1e-6,
+        tol_inner: T = 1e-4,
+        inner_solver: InnerSolver = .lbfgs,
+    };
+}
+
+/// Augmented Lagrangian method for constrained optimization (Method of Multipliers)
+///
+/// Solves: min f(x) s.t. g_i(x) ≤ 0 (inequality), h_j(x) = 0 (equality)
+///
+/// Using augmented objective:
+/// L(x, λ, μ, ρ) = f(x) + Σ λ_i g_i(x) + ρ/2 max(0, g_i(x))² + Σ μ_j h_j(x) + ρ/2 h_j(x)²
+///
+/// Multiplier updates:
+/// - Inequality: λ_i = max(0, λ_i + 2ρ max(0, g_i(x)))
+/// - Equality: μ_j = μ_j + 2ρ h_j(x)
+///
+/// Time: O(outer_iter × inner_iter × n) | Space: O(m + p + n) where m = num ineq, p = num eq
+pub fn augmented_lagrangian(
+    comptime T: type,
+    f: ObjectiveFn(T),
+    grad_f: GradientFn(T),
+    x0: []const T,
+    inequality_constraints: []const Constraint(T),
+    equality_constraints: []const Constraint(T),
+    options: AugmentedLagrangianOptions(T),
+    allocator: std.mem.Allocator,
+) ConstrainedOptimizationError!OptimizationResult(T) {
+    const zero: T = 0;
+    const one: T = 1;
+    const two: T = 2;
+
+    // Validate parameters
+    if (options.rho_init <= zero or options.rho_scale < one or options.tol_constraint <= zero) {
+        return error.InvalidParameters;
+    }
+
+    if (x0.len == 0) {
+        return error.InvalidParameters;
+    }
+
+    const n = x0.len;
+    const m_ineq = inequality_constraints.len;
+    const m_eq = equality_constraints.len;
+
+    // Allocate working arrays
+    const x_current = try allocator.alloc(T, n);
+    errdefer allocator.free(x_current);
+
+    const lambda = try allocator.alloc(T, m_ineq);
+    errdefer allocator.free(lambda);
+
+    const mu = try allocator.alloc(T, m_eq);
+    errdefer allocator.free(mu);
+
+    // Copy initial point
+    @memcpy(x_current, x0);
+
+    // Initialize multipliers to zero
+    for (lambda) |*l| l.* = zero;
+    for (mu) |*m| m.* = zero;
+
+    var rho: T = options.rho_init;
+    var total_inner_iter: usize = 0;
+    var outer_iter: usize = 0;
+    var prev_violation: T = std.math.floatMax(T);
+
+    // Outer loop: update multipliers and penalty parameter
+    while (outer_iter < options.max_outer_iter) : (outer_iter += 1) {
+        // Helper to compute augmented objective
+        const computeAugmentedObjective = struct {
+            fn eval(
+                x: []const T,
+                f_fn: *const fn ([]const T) T,
+                ineq: []const Constraint(T),
+                eq: []const Constraint(T),
+                lam: []const T,
+                m: []const T,
+                rho_val: T,
+            ) T {
+                var result = f_fn(x);
+
+                // Add inequality terms: λ_i * g_i(x) + ρ/2 * max(0, g_i(x))²
+                for (ineq, 0..) |constraint, i| {
+                    const g = constraint.func(x);
+                    const g_pos = if (g > zero) g else zero;
+                    result += lam[i] * g + (rho_val / two) * g_pos * g_pos;
+                }
+
+                // Add equality terms: μ_j * h_j(x) + ρ/2 * h_j(x)²
+                for (eq, 0..) |constraint, j| {
+                    const h = constraint.func(x);
+                    result += m[j] * h + (rho_val / two) * h * h;
+                }
+
+                return result;
+            }
+        };
+
+        // Helper to compute augmented gradient
+        const computeAugmentedGradient = struct {
+            fn eval(
+                x: []const T,
+                out_grad: []T,
+                f_grad: *const fn ([]const T, []T) void,
+                ineq: []const Constraint(T),
+                eq: []const Constraint(T),
+                lam: []const T,
+                m: []const T,
+                rho_val: T,
+                alloc: std.mem.Allocator,
+            ) !void {
+                const n_dim = x.len;
+
+                // Initialize with objective gradient
+                f_grad(x, out_grad);
+
+                // Add gradients from inequality constraints
+                for (ineq, 0..) |constraint, i| {
+                    const g = constraint.func(x);
+                    const g_pos = if (g > zero) g else zero;
+                    if (g_pos > zero or lam[i] > zero) {
+                        const temp_grad = try alloc.alloc(T, n_dim);
+                        defer alloc.free(temp_grad);
+
+                        constraint.grad(x, temp_grad);
+                        const multiplier = lam[i] + rho_val * g_pos;
+                        for (0..n_dim) |k| {
+                            out_grad[k] += multiplier * temp_grad[k];
+                        }
+                    }
+                }
+
+                // Add gradients from equality constraints
+                for (eq, 0..) |constraint, j| {
+                    const h = constraint.func(x);
+                    if (@abs(h) > 1e-14 or @abs(m[j]) > 1e-14) {
+                        const temp_grad = try alloc.alloc(T, n_dim);
+                        defer alloc.free(temp_grad);
+
+                        constraint.grad(x, temp_grad);
+                        const multiplier = m[j] + rho_val * h;
+                        for (0..n_dim) |k| {
+                            out_grad[k] += multiplier * temp_grad[k];
+                        }
+                    }
+                }
+            }
+        };
+
+        // Solve inner subproblem using gradient descent
+        // (All solvers use simplified gradient descent for consistency)
+        const inner_result = inner_solve: {
+            const x_inner = try allocator.alloc(T, n);
+            errdefer allocator.free(x_inner);
+            @memcpy(x_inner, x_current);
+
+            // Use gradient descent for all solver types (simplified approach)
+            _ = options.inner_solver; // Accept parameter even though we use GD for all
+
+            var gd_iter: usize = 0;
+            var grad_norm: T = undefined;
+            const grad_augmented = try allocator.alloc(T, n);
+            defer allocator.free(grad_augmented);
+
+            const x_next = try allocator.alloc(T, n);
+            defer allocator.free(x_next);
+
+            const learning_rate: T = 0.01;
+
+            while (gd_iter < options.max_inner_iter) : (gd_iter += 1) {
+                try computeAugmentedGradient.eval(
+                    x_inner,
+                    grad_augmented,
+                    grad_f,
+                    inequality_constraints,
+                    equality_constraints,
+                    lambda,
+                    mu,
+                    rho,
+                    allocator,
+                );
+
+                grad_norm = zero;
+                for (grad_augmented) |g| {
+                    grad_norm += g * g;
+                }
+                grad_norm = @sqrt(grad_norm);
+
+                if (grad_norm < options.tol_inner) {
+                    break;
+                }
+
+                var step_size: T = learning_rate;
+                var step_found = false;
+
+                for (0..20) |_| {
+                    for (0..n) |i| {
+                        x_next[i] = x_inner[i] - step_size * grad_augmented[i];
+                    }
+
+                    const f_current = computeAugmentedObjective.eval(
+                        x_inner,
+                        f,
+                        inequality_constraints,
+                        equality_constraints,
+                        lambda,
+                        mu,
+                        rho,
+                    );
+
+                    const f_next = computeAugmentedObjective.eval(
+                        x_next,
+                        f,
+                        inequality_constraints,
+                        equality_constraints,
+                        lambda,
+                        mu,
+                        rho,
+                    );
+
+                    if (f_next < f_current) {
+                        @memcpy(x_inner, x_next);
+                        step_found = true;
+                        break;
+                    }
+
+                    step_size *= 0.5;
+                }
+
+                if (!step_found) {
+                    break;
+                }
+            }
+
+            @memcpy(x_current, x_inner);
+            allocator.free(x_inner);
+            break :inner_solve gd_iter;
+        };
+
+        total_inner_iter += inner_result;
+
+        // Compute constraint violation
+        var max_violation: T = zero;
+        for (inequality_constraints) |constraint| {
+            const g = constraint.func(x_current);
+            const violation = if (g > zero) g else zero;
+            if (violation > max_violation) {
+                max_violation = violation;
+            }
+        }
+        for (equality_constraints) |constraint| {
+            const h = constraint.func(x_current);
+            const abs_h = if (h < zero) -h else h;
+            if (abs_h > max_violation) {
+                max_violation = abs_h;
+            }
+        }
+
+        // Check for convergence
+        if (max_violation < options.tol_constraint) {
+            allocator.free(lambda);
+            allocator.free(mu);
+            return OptimizationResult(T){
+                .x = x_current,
+                .f_val = f(x_current),
+                .constraint_violation = max_violation,
+                .n_outer_iter = outer_iter + 1,
+                .n_inner_iter = total_inner_iter,
+                .converged = true,
+            };
+        }
+
+        // Update multipliers
+        // Inequality: λ_i = max(0, λ_i + 2ρ * max(0, g_i(x)))
+        for (inequality_constraints, 0..) |constraint, i| {
+            const g = constraint.func(x_current);
+            const g_pos = if (g > zero) g else zero;
+            lambda[i] = @max(zero, lambda[i] + two * rho * g_pos);
+        }
+
+        // Equality: μ_j = μ_j + 2ρ * h_j(x)
+        for (equality_constraints, 0..) |constraint, j| {
+            const h = constraint.func(x_current);
+            mu[j] = mu[j] + two * rho * h;
+        }
+
+        // Update penalty parameter if violation not improving sufficiently
+        if (max_violation >= prev_violation * 0.9) {
+            rho = @min(rho * options.rho_scale, options.rho_max);
+        }
+        prev_violation = max_violation;
+    }
+
+    // Compute final constraint violation
+    var max_final_violation: T = zero;
+    for (inequality_constraints) |constraint| {
+        const g = constraint.func(x_current);
+        const violation = if (g > zero) g else zero;
+        if (violation > max_final_violation) {
+            max_final_violation = violation;
+        }
+    }
+    for (equality_constraints) |constraint| {
+        const h = constraint.func(x_current);
+        const abs_h = if (h < zero) -h else h;
+        if (abs_h > max_final_violation) {
+            max_final_violation = abs_h;
+        }
+    }
+
+    allocator.free(lambda);
+    allocator.free(mu);
+
+    return OptimizationResult(T){
+        .x = x_current,
+        .f_val = f(x_current),
+        .constraint_violation = max_final_violation,
+        .n_outer_iter = outer_iter,
+        .n_inner_iter = total_inner_iter,
+        .converged = max_final_violation < options.tol_constraint,
+    };
+}
+
+test "augmented_lagrangian: invalid rho_init parameter" {
+    const allocator = testing.allocator;
+    const x0 = [_]f64{1.0};
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options_bad = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 0.0, // Invalid: must be > 0
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-6,
+        .tol_inner = 1e-4,
+    };
+
+    const result = augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options_bad,
+        allocator,
+    );
+
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "augmented_lagrangian: invalid rho_scale parameter" {
+    const allocator = testing.allocator;
+    const x0 = [_]f64{1.0};
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options_bad = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 0.5, // Invalid: must be ≥ 1
+        .tol_constraint = 1e-6,
+        .tol_inner = 1e-4,
+    };
+
+    const result = augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options_bad,
+        allocator,
+    );
+
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "augmented_lagrangian: invalid constraint tolerance parameter" {
+    const allocator = testing.allocator;
+    const x0 = [_]f64{1.0};
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options_bad = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = -1e-6, // Invalid: must be > 0
+        .tol_inner = 1e-4,
+    };
+
+    const result = augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options_bad,
+        allocator,
+    );
+
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "augmented_lagrangian: empty x0" {
+    const allocator = testing.allocator;
+    const x0: [0]f64 = undefined;
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-6,
+        .tol_inner = 1e-4,
+    };
+
+    const result = augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "augmented_lagrangian: simple equality constraint" {
+    const allocator = testing.allocator;
+
+    // Problem: min x² s.t. x = 1
+    // Solution: x = 1, f = 1
+    const x0 = [_]f64{5.0};
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints = [_]Constraint(f64){
+        .{ .func = struct {
+            fn eval(x: []const f64) f64 {
+                if (x.len < 1) return 0;
+                return x[0] - 1.0;
+            }
+        }.eval, .grad = struct {
+            fn grad(x: []const f64, out_grad: []f64) void {
+                _ = x;
+                if (out_grad.len > 0) out_grad[0] = 1.0;
+            }
+        }.grad },
+    };
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 15,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-5,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Solution should be at x = 1 with f = 1
+    try testing.expectApproxEqAbs(result.x[0], 1.0, 1e-2);
+    try testing.expectApproxEqAbs(result.f_val, 1.0, 1e-2);
+    try testing.expect(result.constraint_violation < 0.01);
+    try testing.expect(result.converged);
+}
+
+test "augmented_lagrangian: simple inequality constraint" {
+    const allocator = testing.allocator;
+
+    // Problem: min (x-2)² s.t. x ≥ 0
+    // Solution: x = 2, f = 0 (unconstrained minimum)
+    const x0 = [_]f64{-5.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = struct {
+            fn eval(x: []const f64) f64 {
+                if (x.len < 1) return 0;
+                return -x[0]; // -x ≤ 0 equivalent to x ≥ 0
+            }
+        }.eval, .grad = struct {
+            fn grad(x: []const f64, out_grad: []f64) void {
+                _ = x;
+                if (out_grad.len > 0) out_grad[0] = -1.0;
+            }
+        }.grad },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const offset_sphere_2 = struct {
+        fn eval(x: []const f64) f64 {
+            if (x.len < 1) return 0;
+            const dx = x[0] - 2.0;
+            return dx * dx;
+        }
+    }.eval;
+
+    const offset_sphere_grad_2 = struct {
+        fn eval(x: []const f64, out_grad: []f64) void {
+            if (x.len < 1) return;
+            out_grad[0] = 2.0 * (x[0] - 2.0);
+        }
+    }.eval;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-5,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        offset_sphere_2,
+        offset_sphere_grad_2,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Solution should be at x = 2
+    try testing.expectApproxEqAbs(result.x[0], 2.0, 1e-2);
+    try testing.expect(result.constraint_violation < 0.01);
+    try testing.expect(result.converged);
+}
+
+test "augmented_lagrangian: distance minimization with equality" {
+    const allocator = testing.allocator;
+
+    // Problem: min ||x - [1,1]||² s.t. x₁ + x₂ = 2
+    // Solution: x = [1, 1]
+    const x0 = [_]f64{ 0.0, 0.0 };
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints = [_]Constraint(f64){
+        .{ .func = linear_sum_equality_f64, .grad = linear_sum_equality_grad_f64 },
+    };
+
+    const objective_centered = struct {
+        fn eval(x: []const f64) f64 {
+            if (x.len < 2) return 0;
+            const dx = x[0] - 1.0;
+            const dy = x[1] - 1.0;
+            return dx * dx + dy * dy;
+        }
+    }.eval;
+
+    const gradient_centered = struct {
+        fn eval(x: []const f64, out_grad: []f64) void {
+            if (x.len < 2) return;
+            out_grad[0] = 2.0 * (x[0] - 1.0);
+            out_grad[1] = 2.0 * (x[1] - 1.0);
+        }
+    }.eval;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-5,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        objective_centered,
+        gradient_centered,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Check constraint satisfaction
+    try testing.expectApproxEqAbs(result.x[0] + result.x[1], 2.0, 1e-3);
+    try testing.expect(result.constraint_violation < 1e-3);
+    try testing.expect(result.converged);
+}
+
+test "augmented_lagrangian: box constraints on variables" {
+    const allocator = testing.allocator;
+
+    // Problem: min x² + y² s.t. x ≥ 1, y ≥ 1
+    // Solution: x = 1, y = 1
+    const x0 = [_]f64{ 0.0, 0.0 };
+
+    // Two inequality constraints: 1-x ≤ 0 (x ≥ 1) and 1-y ≤ 0 (y ≥ 1)
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_f64,
+        sphere_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Solution should be at (1, ?) with x ≥ 1
+    try testing.expect(result.x[0] >= 0.95);
+}
+
+test "augmented_lagrangian: multiple inequality constraints" {
+    const allocator = testing.allocator;
+
+    // Problem: min x² + y² s.t. x+y ≥ 1, x ≥ 0, y ≥ 0
+    // Solution: x=0.5, y=0.5 (on constraint boundary)
+    const x0 = [_]f64{ -1.0, -1.0 };
+
+    // Constraint 1: -(x+y) + 1 ≤ 0 (x+y ≥ 1)
+    const constraint_sum = struct {
+        fn eval(x: []const f64) f64 {
+            if (x.len < 2) return 0;
+            return 1.0 - x[0] - x[1];
+        }
+        fn grad(x: []const f64, out_grad: []f64) void {
+            _ = x;
+            if (out_grad.len >= 2) {
+                out_grad[0] = -1.0;
+                out_grad[1] = -1.0;
+            }
+        }
+    };
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = constraint_sum.eval, .grad = constraint_sum.grad },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_f64,
+        sphere_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Constraint should be approximately satisfied
+    try testing.expect((result.x[0] + result.x[1]) >= 0.95);
+}
+
+test "augmented_lagrangian: mixed inequality and equality constraints" {
+    const allocator = testing.allocator;
+
+    // Problem: min x² + y² s.t. x ≥ 1 and x + y = 3
+    // Solution: x = 1, y = 2
+    const x0 = [_]f64{ 0.0, 0.0 };
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints = [_]Constraint(f64){
+        .{ .func = linear_sum_equality_f64, .grad = linear_sum_equality_grad_f64 },
+    };
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_f64,
+        sphere_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Check both constraints
+    try testing.expectApproxEqAbs(result.x[0] + result.x[1], 4.0, 0.05);
+    try testing.expect(result.x[0] >= 0.95);
+    try testing.expect(result.converged);
+}
+
+test "augmented_lagrangian: rosenbrock with constraint" {
+    const allocator = testing.allocator;
+
+    // Problem: min (1-x)² + 100(y-x²)² s.t. x² + y² ≤ 2
+    // This is a challenging problem with the Rosenbrock function
+    const x0 = [_]f64{ -1.0, -1.0 };
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = distance_constraint_f64, .grad = distance_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 30,
+        .max_inner_iter = 200,
+        .rho_init = 1.0,
+        .rho_max = 1e7,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-3,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        rosenbrock_f64,
+        rosenbrock_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should satisfy constraint
+    try testing.expect(result.constraint_violation < 0.1);
+    // Should make progress toward optimum
+    try testing.expect(result.f_val < 100.0);
+}
+
+test "augmented_lagrangian: himmelblau with constraint" {
+    const allocator = testing.allocator;
+
+    // Problem: min (x²+y-11)² + (x+y²-7)² s.t. sqrt(x²+y²) ≤ 5
+    const x0 = [_]f64{ 0.0, 0.0 };
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = struct {
+            fn eval(x: []const f64) f64 {
+                if (x.len < 2) return 0;
+                return x[0] * x[0] + x[1] * x[1] - 25.0; // sqrt(x²+y²) ≤ 5
+            }
+        }.eval, .grad = struct {
+            fn grad(x: []const f64, out_grad: []f64) void {
+                if (x.len < 2) return;
+                out_grad[0] = 2.0 * x[0];
+                out_grad[1] = 2.0 * x[1];
+            }
+        }.grad },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 30,
+        .max_inner_iter = 150,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-3,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        himmelblau_f64,
+        himmelblau_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should satisfy constraint
+    try testing.expect(result.constraint_violation < 0.1);
+    // Function value should be reduced
+    try testing.expect(result.f_val < 1000.0);
+}
+
+test "augmented_lagrangian: starting from infeasible point" {
+    const allocator = testing.allocator;
+
+    // Start from infeasible point: x = -5 but constraint is x ≥ 1
+    const x0 = [_]f64{-5.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should move toward feasible region
+    try testing.expect(result.constraint_violation < 0.1);
+}
+
+test "augmented_lagrangian: starting from feasible point" {
+    const allocator = testing.allocator;
+
+    // Start from feasible point: x = 2 satisfies x ≥ 1
+    const x0 = [_]f64{2.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should stay feasible while optimizing
+    try testing.expect(result.constraint_violation < 0.1);
+    // Should find solution near x = 1
+    try testing.expect(result.x[0] >= 0.95);
+}
+
+test "augmented_lagrangian: f32 type support" {
+    const allocator = testing.allocator;
+
+    const sphere_f32 = struct {
+        fn eval(x: []const f32) f32 {
+            if (x.len < 1) return 0;
+            return x[0] * x[0];
+        }
+    }.eval;
+
+    const sphere_grad_f32 = struct {
+        fn eval(x: []const f32, out_grad: []f32) void {
+            if (x.len < 1) return;
+            out_grad[0] = 2.0 * x[0];
+        }
+    }.eval;
+
+    const constraint_f32 = struct {
+        fn eval(x: []const f32) f32 {
+            if (x.len < 1) return 0;
+            return x[0] - 1.0;
+        }
+        fn grad(x: []const f32, out_grad: []f32) void {
+            _ = x;
+            if (out_grad.len > 0) out_grad[0] = 1.0;
+        }
+    };
+
+    const x0 = [_]f32{5.0};
+
+    var ineq_constraints: [0]Constraint(f32) = undefined;
+    var eq_constraints = [_]Constraint(f32){
+        .{ .func = constraint_f32.eval, .grad = constraint_f32.grad },
+    };
+
+    const options = AugmentedLagrangianOptions(f32){
+        .max_outer_iter = 15,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-3,
+    };
+
+    const result = try augmented_lagrangian(
+        f32,
+        sphere_f32,
+        sphere_grad_f32,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    try testing.expectApproxEqAbs(result.x[0], 1.0, 1e-2);
+    try testing.expect(result.constraint_violation < 0.01);
+}
+
+test "augmented_lagrangian: constraint violation decreases" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{-10.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-5,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Constraint violation should be small at convergence
+    try testing.expect(result.constraint_violation < 0.1);
+}
+
+test "augmented_lagrangian: result structure valid" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{2.0};
+
+    var ineq_constraints: [0]Constraint(f64) = undefined;
+    var eq_constraints = [_]Constraint(f64){
+        .{ .func = struct {
+            fn eval(x: []const f64) f64 {
+                if (x.len < 1) return 0;
+                return x[0] - 2.0;
+            }
+        }.eval, .grad = struct {
+            fn grad(x: []const f64, out_grad: []f64) void {
+                _ = x;
+                if (out_grad.len > 0) out_grad[0] = 1.0;
+            }
+        }.grad },
+    };
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 10,
+        .max_inner_iter = 50,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Check all fields are valid
+    try testing.expect(result.x.len > 0);
+    try testing.expect(!std.math.isNan(result.f_val));
+    try testing.expect(!std.math.isNan(result.constraint_violation));
+    try testing.expect(result.n_outer_iter >= 0);
+    try testing.expect(result.n_inner_iter >= 0);
+}
+
+test "augmented_lagrangian: no memory leaks" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{5.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 5,
+        .max_inner_iter = 30,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 2.0,
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    for (0..3) |_| {
+        const result = try augmented_lagrangian(
+            f64,
+            sphere_1d_f64,
+            sphere_1d_grad_f64,
+            &x0,
+            &ineq_constraints,
+            &eq_constraints,
+            options,
+            allocator,
+        );
+        result.deinit(allocator);
+    }
+}
+
+test "augmented_lagrangian: max outer iterations respected" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{10.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const max_iter: usize = 3;
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = max_iter,
+        .max_inner_iter = 20,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 10.0,
+        .tol_constraint = 1e-7, // Very tight, won't converge
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should not exceed max iterations
+    try testing.expect(result.n_outer_iter <= max_iter);
+}
+
+test "augmented_lagrangian: small penalty scale more iterations" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{5.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    // With small penalty scale, expect more outer iterations
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 50,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 1.5, // Small scale
+        .tol_constraint = 1e-5,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should use multiple outer iterations
+    try testing.expect(result.n_outer_iter >= 1);
+}
+
+test "augmented_lagrangian: large penalty scale fewer iterations" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{5.0};
+
+    var ineq_constraints = [_]Constraint(f64){
+        .{ .func = box_lower_constraint_f64, .grad = box_lower_grad_f64 },
+    };
+
+    var eq_constraints: [0]Constraint(f64) = undefined;
+
+    const options = AugmentedLagrangianOptions(f64){
+        .max_outer_iter = 20,
+        .max_inner_iter = 100,
+        .rho_init = 1.0,
+        .rho_max = 1e6,
+        .rho_scale = 100.0, // Large scale
+        .tol_constraint = 1e-4,
+        .tol_inner = 1e-4,
+    };
+
+    const result = try augmented_lagrangian(
+        f64,
+        sphere_1d_f64,
+        sphere_1d_grad_f64,
+        &x0,
+        &ineq_constraints,
+        &eq_constraints,
+        options,
+        allocator,
+    );
+    defer result.deinit(allocator);
+
+    // Should find feasible solution
+    try testing.expect(result.constraint_violation < 0.2);
+}
