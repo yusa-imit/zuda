@@ -4,17 +4,60 @@
 - **Version**: 1.23.0 (current)
 - **Phase**: v2.0 Track — Phase 11 IN PROGRESS (Optimization)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 39)
+- **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 41)
 - **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
-- **Current Milestone**: Phase 11 (Optimization) — Unconstrained Optimizers IN PROGRESS (2/5: gradient_descent ✅, conjugate_gradient ✅)
-- **Next Priority**: Phase 11 (Optimization) — bfgs, lbfgs, nelder_mead
-- **Test Count**: 2270 tests passing (+34 conjugate_gradient from Session 39)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 97 optimize (line_search 35 + gradient_descent 28 + conjugate_gradient 34) + ndarray + containers + algorithms + internal
+- **Current Milestone**: Phase 11 (Optimization) — Unconstrained Optimizers IN PROGRESS (3/5: gradient_descent ✅, conjugate_gradient ✅, bfgs ✅)
+- **Next Priority**: Phase 11 (Optimization) — lbfgs, nelder_mead
+- **Test Count**: 2304 tests passing (+34 bfgs from Session 41)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 131 optimize (line_search 35 + gradient_descent 28 + conjugate_gradient 34 + bfgs 34) + ndarray + containers + algorithms + internal
   - Skipped: 4 (2 Normal quantile, 2 correlation empty array)
-  - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained (2/5), Constrained (0/3), Least Squares (0/2), Auto-diff (0/4), Convex (0/3)
-- **System Status**: STABLE — 2270/2274 tests passing (99.82%)
+  - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained (3/5), Constrained (0/3), Least Squares (0/2), Auto-diff (0/4), Convex (0/3)
+- **System Status**: STABLE — 2304/2308 tests passing (99.83%)
 
-## Recent Progress (Session 2026-03-25 - Session 39)
+## Recent Progress (Session 2026-03-25 - Session 41)
+**FEATURE MODE:**
+
+### BFGS Quasi-Newton Optimization Implementation (commits edf188c, 32f3873) ✅
+- ✅ **Function**: bfgs(T, f, grad_f, x0, options, allocator) — BFGS quasi-Newton for unconstrained optimization
+- ✅ **Algorithm**: Broyden-Fletcher-Goldfarb-Shanno quasi-Newton method
+  - **Inverse Hessian approximation**: H_0 = I, updated via BFGS formula
+  - **BFGS update**: H_{k+1} = (I - ρ*s*y^T) * H_k * (I - ρ*y*s^T) + ρ*s*s^T
+  - **Search direction**: p_k = -H_k * ∇f(x_k) (uses inverse Hessian approximation)
+  - **Line search integration**: Supports Armijo, Wolfe, backtracking methods
+  - **Curvature condition**: y^T * s > 0 enforced for numerical stability
+  - **Convergence**: Superlinear for strongly convex functions, stops when ||∇f(x)|| < tol
+  - Time: O(n² × max_iter × line_search_cost), Space: O(n²)
+- ✅ **Types**:
+  - BfgsOptions(T): max_iter, tol, line_search, ls_c1, ls_c2, ls_max_iter
+  - OptimizationResult(T): x, f_val, grad_norm, n_iter, converged (reused from gradient_descent)
+- ✅ **Features**:
+  - Generic over f32/f64 via comptime type parameter
+  - Flexible line search selection (armijo/wolfe/backtracking)
+  - Parameter validation: non-empty x0, positive tol, valid line search params (c1, c2 ∈ (0,1), c1 < c2)
+  - Memory-safe: proper defer/errdefer cleanup for n² Hessian matrix
+  - Symmetric positive definite Hessian maintenance
+  - Early termination when initial gradient < tol
+  - Proper error handling: InvalidArgument, line search error propagation
+- ✅ **Implementation**: src/optimize/unconstrained.zig (+960 lines: 320 impl + 640 tests)
+- ✅ **Tests**: 34 comprehensive tests (all passing)
+  - **Basic convergence** (6 tests): simple quadratic, 2D sphere, Rosenbrock, n=5 dimensions, early termination, Beale function
+  - **Line search variants** (6 tests): Armijo descent, Wolfe curvature, backtracking convergence, rate comparison, parameter effects, validation
+  - **BFGS properties** (6 tests): first iteration = gradient descent, Hessian improvement, superlinear convergence, curvature condition, symmetric positive definite, descent direction
+  - **Convergence properties** (5 tests): gradient norm decrease, function descent, convergence flag, max_iter handling, tolerance effects
+  - **Standard test functions** (4 tests): sphere origin, Booth (1,3), Himmelblau multi-minima, known minima verification
+  - **Error handling** (3 tests): empty x0, invalid line search parameters, negative tolerance
+  - **Type support** (2 tests): f32 (1e-4 tol), f64 (1e-10 tol)
+  - **Memory safety** (2 tests): no leaks with allocator, independent multiple calls
+- ✅ **TDD Workflow**: test-writer (34 tests) → zig-developer (implementation) → all 34 tests passing
+- ✅ **Test Count**: 2270 → 2304 passing (+34 bfgs tests)
+- ✅ **Unconstrained Module**: NOW 3/5 complete (gradient_descent ✅, conjugate_gradient ✅, bfgs ✅)
+- ✅ **Phase 11 Progress**: Line Search ✅ (3/3), Unconstrained (3/5) — 2/6 categories, 6/20 total functions
+- ✅ **Use Cases**: Machine learning (neural network training), scientific optimization (parameter estimation), engineering design (minimize cost/energy), finance (portfolio optimization)
+- ✅ **Performance**: Superlinear convergence (faster than conjugate gradient for well-conditioned problems), O(n²) memory overhead for Hessian approximation
+
+---
+
+## Previous Progress (Session 2026-03-25 - Session 39)
 **FEATURE MODE:**
 
 ### Conjugate Gradient Implementation (commits ad90d4f, d934850) ✅
