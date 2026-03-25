@@ -426,6 +426,8 @@ pub const numeric = struct {
     pub const interpolation = @import("numeric/interpolation.zig");
     /// Root finding methods — Bisection, Newton, Brent, Secant, Fixed-Point
     pub const root_finding = @import("numeric/root_finding.zig");
+    /// ODE solvers — Euler, RK4, and adaptive RK45 methods
+    pub const ode = @import("numeric/ode.zig");
 };
 
 /// Internal utilities (not part of public API)
