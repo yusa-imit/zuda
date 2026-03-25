@@ -438,6 +438,8 @@ pub const numeric = struct {
 pub const optimize = struct {
     /// Line search algorithms — Armijo, Wolfe, Backtracking for step size selection
     pub const line_search = @import("optimize/line_search.zig");
+    /// Unconstrained optimization — Gradient descent, steepest descent, learning rate scheduling
+    pub const unconstrained = @import("optimize/unconstrained.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -489,4 +491,5 @@ test {
 
     // Explicitly import optimize modules to trigger their tests
     _ = @import("optimize/line_search.zig");
+    _ = @import("optimize/unconstrained.zig");
 }
