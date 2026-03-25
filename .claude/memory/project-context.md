@@ -2,19 +2,58 @@
 
 ## Current Status
 - **Version**: 1.23.0 (current)
-- **Phase**: v2.0 Track — Phase 10 COMPLETE ✅ (All Numerical Methods categories done)
+- **Phase**: v2.0 Track — Phase 11 IN PROGRESS (Optimization)
 - **Zig Version**: 0.15.2
 - **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 36)
 - **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
-- **Current Milestone**: Phase 10 (Numerical Methods) — ✅ COMPLETE (23/23 functions: 5 integration + 4 differentiation + 5 interpolation + 5 root finding + 3 ODE + 1 curve fitting + 6 special functions)
-- **Next Priority**: Phase 11 (Optimization) — gradient descent, conjugate gradient, line search, constrained optimization
-- **Test Count**: 2173 tests passing (+66 special functions from Session 36)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric (114 integration + 66 differentiation + 132 interpolation + 61 root finding + 66 special functions) + ndarray + containers + algorithms + internal
+- **Current Milestone**: Phase 11 (Optimization) — Line Search ✅ COMPLETE (3/3: armijo, wolfe, backtracking)
+- **Next Priority**: Phase 11 (Optimization) — Unconstrained optimizers (gradient_descent, conjugate_gradient, bfgs, lbfgs, nelder_mead)
+- **Test Count**: 2208 tests passing (+35 line search from Session 37)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 35 optimize (line_search) + ndarray + containers + algorithms + internal
   - Skipped: 4 (2 Normal quantile, 2 correlation empty array)
-  - Numerical Methods: ✅ ALL 7 CATEGORIES COMPLETE (Integration 5/5, Differentiation 4/4, Interpolation 5/5, Root Finding 5/5, ODE 3/3, Curve Fitting 1/3, Special Functions 6/6)
-- **System Status**: STABLE — 2173/2177 tests passing (99.82%)
+  - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained (0/5), Constrained (0/3), Least Squares (0/2), Auto-diff (0/4), Convex (0/3)
+- **System Status**: STABLE — 2208/2212 tests passing (99.82%)
 
-## Recent Progress (Session 2026-03-25 - Session 36)
+## Recent Progress (Session 2026-03-25 - Session 37)
+**FEATURE MODE:**
+
+### Line Search Algorithms Implementation (commit 578e4a8) ✅
+- ✅ **Functions**: armijo(T, f, x, p, grad, alpha_init, c1, max_iter, allocator), wolfe(T, f, grad_f, x, p, alpha_init, c1, c2, max_iter, allocator), backtracking(T, f, x, p, grad, alpha_init, rho, c, max_iter, allocator) — Complete Phase 11 Line Search
+- ✅ **Algorithms**:
+  - **armijo**: Backtracking with Armijo sufficient decrease condition
+    - Condition: f(x + α·p) ≤ f(x) + c₁·α·∇f(x)ᵀp
+    - Geometric reduction: alpha *= 0.5 each iteration
+    - Validates descent direction: ∇f(x)·p < 0
+    - Time: O(max_iter × f_eval), Space: O(1)
+  - **wolfe**: Strong Wolfe conditions (Armijo + curvature)
+    - Armijo: f(x + α·p) ≤ f(x) + c₁·α·∇f(x)ᵀp
+    - Curvature: |∇f(x + α·p)·p| ≤ c₂·|∇f(x)·p|
+    - Smart adjustment: expands if descent continues, backtracks otherwise
+    - Time: O(max_iter × (f_eval + grad_eval)), Space: O(n) for gradient
+  - **backtracking**: Geometric reduction with custom ρ parameter
+    - Same Armijo condition, uses provided rho: alpha *= rho
+    - Time: O(max_iter × f_eval), Space: O(1)
+- ✅ **Features**:
+  - Generic over f32/f64 via comptime type parameter
+  - Parameter validation: c1, c2 ∈ (0,1), c1 < c2, rho ∈ (0,1)
+  - Descent direction verification
+  - Result structs with convergence status
+  - Proper error handling: InvalidParameters, NotDescentDirection, MaxIterationsExceeded
+- ✅ **Implementation**: src/optimize/line_search.zig (1027 lines: 355 impl + 672 tests)
+- ✅ **Tests**: 35 comprehensive tests (all passing)
+  - **armijo** (12 tests): quadratic, Rosenbrock, parameter validation, edge cases, type support
+  - **wolfe** (11 tests): both conditions, strong Wolfe variant, parameter validation, memory safety
+  - **backtracking** (8 tests): geometric reduction, parameter validation, edge cases
+  - **cross-method** (4 tests): consistency across algorithms, relative strictness
+- ✅ **TDD Workflow**: test-writer (35 tests) → zig-developer (implementation) → all 35 tests passing
+- ✅ **Test Count**: 2173 → 2208 passing (+35 line_search tests)
+- ✅ **Line Search Module**: NOW COMPLETE (3/3 functions: armijo, wolfe, backtracking)
+- ✅ **Phase 11 Progress**: Line Search ✅ — 1/6 categories complete (3/20 total functions)
+- ✅ **Use Cases**: Step size selection for gradient descent, BFGS, conjugate gradient, Newton's method, all gradient-based optimizers
+
+---
+
+## Previous Progress (Session 2026-03-25 - Session 36)
 **FEATURE MODE:**
 
 ### Special Functions Implementation (commit 8ef645d) ✅
