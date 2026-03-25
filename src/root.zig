@@ -416,7 +416,7 @@ pub const signal = struct {
     pub const filter = @import("signal/filter.zig");
 };
 
-/// Numerical methods — Integration, differentiation, interpolation
+/// Numerical methods — Integration, differentiation, interpolation, root finding
 pub const numeric = struct {
     /// Numerical integration — Trapezoidal and Simpson's rules for discrete integration
     pub const integration = @import("numeric/integration.zig");
@@ -424,6 +424,8 @@ pub const numeric = struct {
     pub const differentiation = @import("numeric/differentiation.zig");
     /// Numerical interpolation — 1D linear interpolation with constant extrapolation
     pub const interpolation = @import("numeric/interpolation.zig");
+    /// Root finding methods — Bisection, Newton, Brent, Secant, Fixed-Point
+    pub const root_finding = @import("numeric/root_finding.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -468,4 +470,5 @@ test {
     _ = @import("numeric/integration.zig");
     _ = @import("numeric/differentiation.zig");
     _ = @import("numeric/interpolation.zig");
+    _ = @import("numeric/root_finding.zig");
 }
