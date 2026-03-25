@@ -4,17 +4,59 @@
 - **Version**: 1.23.0 (current)
 - **Phase**: v2.0 Track — Phase 11 IN PROGRESS (Optimization)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 38)
+- **Last CI Status**: ✅ GREEN (verified 2026-03-25 Session 39)
 - **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
-- **Current Milestone**: Phase 11 (Optimization) — Unconstrained Optimizers IN PROGRESS (1/5: gradient_descent ✅)
-- **Next Priority**: Phase 11 (Optimization) — conjugate_gradient, bfgs, lbfgs, nelder_mead
-- **Test Count**: 2236 tests passing (+28 gradient_descent from Session 38)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 63 optimize (line_search 35 + gradient_descent 28) + ndarray + containers + algorithms + internal
+- **Current Milestone**: Phase 11 (Optimization) — Unconstrained Optimizers IN PROGRESS (2/5: gradient_descent ✅, conjugate_gradient ✅)
+- **Next Priority**: Phase 11 (Optimization) — bfgs, lbfgs, nelder_mead
+- **Test Count**: 2270 tests passing (+34 conjugate_gradient from Session 39)
+  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 97 optimize (line_search 35 + gradient_descent 28 + conjugate_gradient 34) + ndarray + containers + algorithms + internal
   - Skipped: 4 (2 Normal quantile, 2 correlation empty array)
-  - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained (1/5), Constrained (0/3), Least Squares (0/2), Auto-diff (0/4), Convex (0/3)
-- **System Status**: STABLE — 2236/2240 tests passing (99.82%)
+  - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained (2/5), Constrained (0/3), Least Squares (0/2), Auto-diff (0/4), Convex (0/3)
+- **System Status**: STABLE — 2270/2274 tests passing (99.82%)
 
-## Recent Progress (Session 2026-03-25 - Session 38)
+## Recent Progress (Session 2026-03-25 - Session 39)
+**FEATURE MODE:**
+
+### Conjugate Gradient Implementation (commits ad90d4f, d934850) ✅
+- ✅ **Function**: conjugate_gradient(T, f, grad_f, x0, options, allocator) — Fletcher-Reeves conjugate gradient for unconstrained optimization
+- ✅ **Algorithm**: Conjugate Gradient (Fletcher-Reeves variant)
+  - **Direction update**: p_k = -∇f(x_k) + β_k·p_{k-1}
+  - **Fletcher-Reeves beta**: β_k = ||∇f(x_k)||² / ||∇f(x_{k-1})||²
+  - **Line search integration**: Supports Armijo, Wolfe, backtracking methods
+  - **Convergence**: Stops when ||∇f(x)|| < tol or max_iter exceeded
+  - **Theoretical guarantee**: Converges in ≤n iterations for n-dimensional quadratic
+  - Time: O(n × max_iter × line_search_cost), Space: O(n)
+- ✅ **Types**:
+  - LineSearchType: enum {armijo, wolfe, backtracking}
+  - ConjugateGradientOptions(T): max_iter, tol, line_search, ls_c1, ls_c2, ls_max_iter
+  - OptimizationResult(T): x, f_val, grad_norm, n_iter, converged (reused from gradient_descent)
+- ✅ **Features**:
+  - Generic over f32/f64 via comptime type parameter
+  - Flexible line search selection (armijo/wolfe/backtracking)
+  - Parameter validation: non-empty x0, positive tol, valid line search params (c1, c2 ∈ (0,1), c1 < c2)
+  - Memory-safe: proper defer/errdefer cleanup
+  - Early termination when initial gradient < tol
+  - Proper error handling: InvalidArgument, line search error propagation
+- ✅ **Implementation**: src/optimize/unconstrained.zig (+654 lines: 197 impl + 457 tests)
+- ✅ **Tests**: 34 comprehensive tests (all passing)
+  - **Basic convergence** (6 tests): simple quadratic, 2D sphere, general quadratic, n=5 dimensions, early termination, Rosenbrock
+  - **Line search variants** (6 tests): Armijo descent, Wolfe curvature, backtracking convergence, rate comparison, parameter effects, validation
+  - **Conjugate properties** (6 tests): first iteration = steepest descent, Fletcher-Reeves beta, conjugacy on quadratic, n-iteration guarantee
+  - **Convergence properties** (5 tests): gradient norm decrease, function descent, convergence flag, max_iter handling, tolerance effects
+  - **Standard test functions** (4 tests): sphere origin, Booth (1,3), Himmelblau multi-minima, known minima verification
+  - **Error handling** (3 tests): empty x0, invalid line search parameters, negative tolerance
+  - **Type support** (2 tests): f32 (1e-4 tol), f64 (1e-10 tol)
+  - **Memory safety** (2 tests): no leaks with allocator, independent multiple calls
+- ✅ **TDD Workflow**: test-writer (34 tests) → zig-developer (implementation) → test-writer (fix placeholder → real tests) → all 34 tests passing
+- ✅ **Test Count**: 2236 → 2270 passing (+34 conjugate_gradient tests)
+- ✅ **Unconstrained Module**: NOW 2/5 complete (gradient_descent ✅, conjugate_gradient ✅)
+- ✅ **Phase 11 Progress**: Line Search ✅ (3/3), Unconstrained (2/5) — 2/6 categories, 5/20 total functions
+- ✅ **Use Cases**: Faster convergence than gradient descent, large-scale optimization, curvature-aware step sizes, conjugate direction search
+- ✅ **Helper Functions Added**: himmelblau_f64, himmelblau_grad_f64 (multi-minima test function)
+
+---
+
+## Previous Progress (Session 2026-03-25 - Session 38)
 **FEATURE MODE:**
 
 ### Gradient Descent Implementation (commit 877b547) ✅
