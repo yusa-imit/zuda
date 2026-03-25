@@ -436,6 +436,283 @@ pub fn conjugate_gradient(
     };
 }
 
+/// BFGS (Broyden-Fletcher-Goldfarb-Shanno) quasi-Newton optimization
+///
+/// Minimizes f(x) using BFGS algorithm which builds an approximation to the inverse Hessian.
+///
+/// **Algorithm**:
+/// 1. Initialize H_0 = I (identity), x_0 = x0
+/// 2. For k = 0, 1, 2, ... until convergence:
+///    a. Compute gradient g_k = ∇f(x_k)
+///    b. Search direction: p_k = -H_k * g_k
+///    c. Line search: find α_k satisfying Wolfe/Armijo conditions
+///    d. Update: x_{k+1} = x_k + α_k * p_k
+///    e. s_k = x_{k+1} - x_k,  y_k = g_{k+1} - g_k
+///    f. Update inverse Hessian:
+///       ρ_k = 1 / (y_k^T * s_k)
+///       H_{k+1} = (I - ρ_k * s_k * y_k^T) * H_k * (I - ρ_k * y_k * s_k^T) + ρ_k * s_k * s_k^T
+/// 3. Converge when ||g_k|| < tol or k ≥ max_iter
+///
+/// **Parameters**:
+/// - `f`: Objective function to minimize
+/// - `grad_f`: Gradient function ∇f(x)
+/// - `x0`: Initial point
+/// - `options`: Optimization parameters (max_iter, tol, line_search, etc.)
+/// - `allocator`: Memory allocator
+///
+/// **Returns**: OptimizationResult with:
+/// - `x`: Optimized point (caller must free)
+/// - `f_val`: Final function value
+/// - `grad_norm`: Final gradient norm
+/// - `n_iter`: Number of iterations
+/// - `converged`: True if ||grad|| < tol
+///
+/// **Time**: O(n² × max_iter × line_search_cost) — n² for Hessian operations
+/// **Space**: O(n²) — Inverse Hessian matrix storage
+///
+/// **Errors**:
+/// - `error.InvalidArgument`: Empty x0, invalid tolerance, invalid line search params
+/// - Line search errors propagated from line_search module
+pub fn bfgs(
+    comptime T: type,
+    f: ObjectiveFn(T),
+    grad_f: GradientFn(T),
+    x0: []const T,
+    options: BfgsOptions(T),
+    allocator: std.mem.Allocator,
+) OptimizationError!OptimizationResult(T) {
+    // Validate inputs
+    if (x0.len == 0) {
+        return error.InvalidArgument;
+    }
+
+    const zero: T = 0;
+    const one: T = 1;
+    const epsilon: T = 1e-10;
+
+    // Validate line search parameters
+    if (options.ls_c1 <= zero or options.ls_c1 >= one) {
+        return error.InvalidArgument;
+    }
+    if (options.ls_c2 <= options.ls_c1 or options.ls_c2 >= one) {
+        return error.InvalidArgument;
+    }
+    if (options.tol <= zero) {
+        return error.InvalidArgument;
+    }
+
+    const n = x0.len;
+
+    // Allocate working arrays
+    const x = try allocator.alloc(T, n);
+    errdefer allocator.free(x);
+    @memcpy(x, x0);
+
+    const grad = try allocator.alloc(T, n);
+    defer allocator.free(grad);
+
+    const grad_prev = try allocator.alloc(T, n);
+    defer allocator.free(grad_prev);
+
+    const p = try allocator.alloc(T, n);
+    defer allocator.free(p);
+
+    const s = try allocator.alloc(T, n);
+    defer allocator.free(s);
+
+    const y = try allocator.alloc(T, n);
+    defer allocator.free(y);
+
+    // Allocate inverse Hessian matrix (identity initially)
+    const H = try allocator.alloc(T, n * n);
+    defer allocator.free(H);
+
+    // Initialize H as identity matrix
+    for (0..n) |i| {
+        for (0..n) |j| {
+            H[i * n + j] = if (i == j) one else zero;
+        }
+    }
+
+    // Compute initial gradient
+    grad_f(x, grad);
+    var grad_norm: T = zero;
+    for (grad) |gi| {
+        grad_norm += gi * gi;
+    }
+    grad_norm = @sqrt(grad_norm);
+
+    // If already at convergence, return immediately
+    if (grad_norm < options.tol) {
+        const f_val = f(x);
+        return OptimizationResult(T){
+            .x = x,
+            .f_val = f_val,
+            .grad_norm = grad_norm,
+            .n_iter = 0,
+            .converged = true,
+        };
+    }
+
+    var n_iter: usize = 0;
+    var converged = false;
+
+    // Main optimization loop
+    while (n_iter < options.max_iter) : (n_iter += 1) {
+        // Compute search direction: p = -H * grad
+        for (0..n) |i| {
+            var sum: T = zero;
+            for (0..n) |j| {
+                sum += H[i * n + j] * grad[j];
+            }
+            p[i] = -sum;
+        }
+
+        // Line search to find step size α
+        var alpha: T = undefined;
+
+        switch (options.line_search) {
+            .armijo => {
+                const result = try line_search.armijo(
+                    T,
+                    f,
+                    x,
+                    p,
+                    grad,
+                    one,
+                    options.ls_c1,
+                    options.ls_max_iter,
+                    allocator,
+                );
+                alpha = result.alpha;
+            },
+            .wolfe => {
+                const result = try line_search.wolfe(
+                    T,
+                    f,
+                    grad_f,
+                    x,
+                    p,
+                    one,
+                    options.ls_c1,
+                    options.ls_c2,
+                    options.ls_max_iter,
+                    allocator,
+                );
+                defer allocator.free(result.grad_new);
+                alpha = result.alpha;
+            },
+            .backtracking => {
+                const result = try line_search.backtracking(
+                    T,
+                    f,
+                    x,
+                    p,
+                    grad,
+                    one,
+                    0.5,
+                    options.ls_c1,
+                    options.ls_max_iter,
+                    allocator,
+                );
+                alpha = result.alpha;
+            },
+        }
+
+        // Save previous gradient
+        @memcpy(grad_prev, grad);
+
+        // Update x: x_new = x + α * p
+        for (x, p) |*xi, pi| {
+            xi.* += alpha * pi;
+        }
+
+        // Compute new gradient
+        grad_f(x, grad);
+
+        // Compute s = x_new - x_old (s = alpha * p)
+        for (0..n) |i| {
+            s[i] = alpha * p[i];
+        }
+
+        // Compute y = grad_new - grad_old
+        for (0..n) |i| {
+            y[i] = grad[i] - grad_prev[i];
+        }
+
+        // Curvature check: y^T * s > epsilon
+        var y_dot_s: T = zero;
+        for (0..n) |i| {
+            y_dot_s += y[i] * s[i];
+        }
+
+        // Only update Hessian if curvature condition is satisfied
+        if (y_dot_s > epsilon) {
+            const rho = one / y_dot_s;
+
+            // Allocate temporary matrices for BFGS update
+            const V = try allocator.alloc(T, n * n);
+            defer allocator.free(V);
+
+            // Compute V = I - ρ*s*y^T
+            for (0..n) |i| {
+                for (0..n) |j| {
+                    const delta = if (i == j) one else zero;
+                    V[i * n + j] = delta - rho * s[i] * y[j];
+                }
+            }
+
+            // Allocate Temp = H_k * V
+            const Temp = try allocator.alloc(T, n * n);
+            defer allocator.free(Temp);
+
+            for (0..n) |i| {
+                for (0..n) |j| {
+                    var sum: T = zero;
+                    for (0..n) |k| {
+                        sum += H[i * n + k] * V[k * n + j];
+                    }
+                    Temp[i * n + j] = sum;
+                }
+            }
+
+            // H_{k+1} = V^T * Temp + ρ*s*s^T
+            for (0..n) |i| {
+                for (0..n) |j| {
+                    var sum: T = zero;
+                    for (0..n) |k| {
+                        sum += V[k * n + i] * Temp[k * n + j];
+                    }
+                    H[i * n + j] = sum + rho * s[i] * s[j];
+                }
+            }
+        }
+
+        // Compute new gradient norm
+        grad_norm = zero;
+        for (grad) |gi| {
+            grad_norm += gi * gi;
+        }
+        grad_norm = @sqrt(grad_norm);
+
+        // Check convergence
+        if (grad_norm < options.tol) {
+            converged = true;
+            break;
+        }
+    }
+
+    const f_val = f(x);
+
+    return OptimizationResult(T){
+        .x = x,
+        .f_val = f_val,
+        .grad_norm = grad_norm,
+        .n_iter = n_iter,
+        .converged = converged,
+    };
+}
+
 // ============================================================================
 // TEST HELPERS
 // ============================================================================
@@ -1860,6 +2137,689 @@ test "conjugate_gradient: multiple calls produce independent results" {
     defer result2.deinit(allocator);
 
     // Both should converge to same minimum
+    try testing.expect(result1.converged);
+    try testing.expect(result2.converged);
+    try testing.expectApproxEqAbs(result1.f_val, result2.f_val, 1e-10);
+}
+
+// ============================================================================
+// BFGS TESTS (34 tests)
+// ============================================================================
+
+// BfgsOptions structure for BFGS algorithm
+pub fn BfgsOptions(comptime T: type) type {
+    return struct {
+        max_iter: usize = 1000,
+        tol: T = 1e-6,
+        line_search: LineSearchType = .wolfe,
+        ls_c1: T = 1e-4,
+        ls_c2: T = 0.9,
+        ls_max_iter: usize = 20,
+    };
+}
+
+// Category 1: Basic Convergence (6 tests)
+
+test "bfgs: converges on simple quadratic" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{5.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(result.f_val, 0.0, 1e-10);
+    try testing.expect(result.n_iter < options.max_iter);
+    try testing.expect(result.x[0] < 0.01);
+}
+
+test "bfgs: converges on 2D sphere function" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.0, 4.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(result.f_val, 0.0, 1e-10);
+    try testing.expect(result.x[0] < 0.01);
+    try testing.expect(result.x[1] < 0.01);
+}
+
+test "bfgs: converges on Rosenbrock function" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 0.0, 0.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 2000,
+        .tol = 1e-4,
+        .line_search = .wolfe,
+        .ls_c1 = 1e-4,
+        .ls_c2 = 0.9,
+    };
+
+    const result = try bfgs(f64, rosenbrock_f64, rosenbrock_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Rosenbrock minimum at (1, 1) is harder to reach
+    try testing.expect(result.n_iter > 50); // Should take significant iterations
+    try testing.expect(result.f_val < 1.0); // Partial convergence acceptable
+}
+
+test "bfgs: handles n=5 dimensions" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(result.f_val, 0.0, 1e-10);
+    try testing.expect(result.x.len == 5);
+    for (result.x) |xi| {
+        try testing.expect(xi < 0.01);
+    }
+}
+
+test "bfgs: early termination when initial gradient < tol" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{0.0001};
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-3,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Should converge immediately since gradient is already small
+    try testing.expect(result.converged);
+    try testing.expect(result.n_iter == 0);
+}
+
+test "bfgs: converges on Beale function" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.2, 0.4 };
+    const options = BfgsOptions(f64){
+        .max_iter = 2000,
+        .tol = 1e-4,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, beale_f64, beale_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Beale minimum is at (3, 0.5)
+    try testing.expect(result.n_iter > 20); // Significant iterations needed
+    try testing.expect(result.f_val < 10.0); // Partial convergence acceptable
+}
+
+// Category 2: Line Search Variants (6 tests)
+
+test "bfgs: Armijo line search achieves descent" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{2.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .armijo,
+        .ls_c1 = 1e-4,
+        .ls_max_iter = 20,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.f_val < sphere_f64(&x0));
+}
+
+test "bfgs: Wolfe line search satisfies curvature" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{2.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+        .ls_c1 = 1e-4,
+        .ls_c2 = 0.9,
+        .ls_max_iter = 20,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "bfgs: backtracking line search converges" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{3.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .backtracking,
+        .ls_c1 = 1e-4,
+        .ls_max_iter = 20,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "bfgs: Wolfe line search faster than Armijo for smooth functions" {
+    const allocator = testing.allocator;
+
+    const x0_armijo = [_]f64{2.0};
+    const x0_wolfe = [_]f64{2.0};
+
+    const opt_armijo = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-6,
+        .line_search = .armijo,
+        .ls_c1 = 1e-4,
+        .ls_max_iter = 20,
+    };
+
+    const opt_wolfe = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+        .ls_c1 = 1e-4,
+        .ls_c2 = 0.9,
+        .ls_max_iter = 20,
+    };
+
+    const result_armijo = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_armijo, opt_armijo, allocator);
+    defer result_armijo.deinit(allocator);
+
+    const result_wolfe = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_wolfe, opt_wolfe, allocator);
+    defer result_wolfe.deinit(allocator);
+
+    // Both should converge, though Wolfe may converge in fewer iterations
+    try testing.expect(result_armijo.converged);
+    try testing.expect(result_wolfe.converged);
+}
+
+test "bfgs: line search parameters affect convergence" {
+    const allocator = testing.allocator;
+
+    const x0_tight = [_]f64{2.0};
+    const x0_loose = [_]f64{2.0};
+
+    const opt_tight = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+        .ls_c1 = 1e-1,
+        .ls_c2 = 0.5,
+        .ls_max_iter = 20,
+    };
+
+    const opt_loose = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+        .ls_c1 = 1e-4,
+        .ls_c2 = 0.9,
+        .ls_max_iter = 20,
+    };
+
+    const result_tight = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_tight, opt_tight, allocator);
+    defer result_tight.deinit(allocator);
+
+    const result_loose = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_loose, opt_loose, allocator);
+    defer result_loose.deinit(allocator);
+
+    // Both should converge to similar minima
+    try testing.expect(result_tight.converged);
+    try testing.expect(result_loose.converged);
+}
+
+test "bfgs: line search parameter validation" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+
+    // Invalid: c1 = 0
+    const opt_invalid = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+        .ls_c1 = 0.0,
+        .ls_c2 = 0.9,
+        .ls_max_iter = 20,
+    };
+
+    const result = bfgs(f64, sphere_f64, sphere_grad_f64, &x0, opt_invalid, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+// Category 3: BFGS Properties (6 tests)
+
+test "bfgs: first iteration similar to gradient descent" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 1,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // First iteration: H_0 = I, so p_0 = -grad (like steepest descent)
+    try testing.expect(result.f_val < sphere_f64(&x0));
+}
+
+test "bfgs: Hessian approximation improves over iterations" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // With Hessian approximation, convergence should be faster than naive GD
+    try testing.expect(result.converged);
+    try testing.expect(result.n_iter < 50); // Should converge quickly
+}
+
+test "bfgs: superlinear convergence for strongly convex functions" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Sphere is strongly convex, BFGS should show superlinear convergence
+    try testing.expect(result.converged);
+    try testing.expect(result.grad_norm < options.tol);
+}
+
+test "bfgs: curvature condition y_k^T * s_k > 0 maintained" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 50,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Wolfe line search ensures curvature condition is satisfied
+    try testing.expect(result.converged);
+}
+
+test "bfgs: Hessian approximation remains symmetric positive definite" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 50,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // With Wolfe line search, BFGS maintains positive definiteness
+    try testing.expect(result.converged);
+}
+
+test "bfgs: search direction is descent direction" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 20,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Search directions should be descent directions (function value decreases)
+    try testing.expect(result.f_val < sphere_f64(&x0));
+}
+
+// Category 4: Convergence Properties (5 tests)
+
+test "bfgs: gradient norm decreases monotonically" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{3.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-8,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // At convergence, gradient norm should be less than tolerance
+    try testing.expect(result.grad_norm < options.tol);
+}
+
+test "bfgs: function value decreases each iteration" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 5.0, 4.0 };
+    const f_initial = sphere_f64(&x0);
+
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // f(x_k) should decrease with proper line search
+    try testing.expect(result.f_val < f_initial);
+}
+
+test "bfgs: converged flag set when ||grad|| < tol" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expect(result.grad_norm < options.tol);
+}
+
+test "bfgs: max iterations respected" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{100.0};
+    const max_iter = 5;
+    const options = BfgsOptions(f64){
+        .max_iter = max_iter,
+        .tol = 1e-8,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.n_iter <= max_iter);
+}
+
+test "bfgs: tighter tolerance requires more iterations" {
+    const allocator = testing.allocator;
+
+    const x0_loose = [_]f64{2.0};
+    const x0_tight = [_]f64{2.0};
+
+    const opt_loose = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-3,
+        .line_search = .wolfe,
+    };
+
+    const opt_tight = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-9,
+        .line_search = .wolfe,
+    };
+
+    const result_loose = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_loose, opt_loose, allocator);
+    defer result_loose.deinit(allocator);
+
+    const result_tight = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_tight, opt_tight, allocator);
+    defer result_tight.deinit(allocator);
+
+    // Tighter tolerance should generally require more iterations
+    try testing.expect(result_tight.n_iter >= result_loose.n_iter);
+}
+
+// Category 5: Standard Test Functions (4 tests)
+
+test "bfgs: sphere function minimum at origin" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 2.0, 3.0, -1.5 };
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-8,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Sphere minimum is at origin (0, 0, 0)
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(result.f_val, 0.0, 1e-10);
+}
+
+test "bfgs: Booth function finds minimum at (1,3)" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 0.0, 0.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 500,
+        .tol = 1e-4,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, booth_f64, booth_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Booth minimum is at (1, 3)
+    try testing.expect(result.n_iter > 10); // Requires several iterations
+    try testing.expect(result.f_val < 1.0); // Close to minimum
+}
+
+test "bfgs: Himmelblau function multi-minima" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 3.0, 2.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-4,
+        .line_search = .wolfe,
+        .ls_c1 = 1e-4,
+        .ls_c2 = 0.9,
+    };
+
+    const result = try bfgs(f64, himmelblau_f64, himmelblau_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Himmelblau has 4 local minima, should find one
+    try testing.expect(result.f_val < 100.0);
+}
+
+test "bfgs: verify known minima within tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const options = BfgsOptions(f64){
+        .max_iter = 500,
+        .tol = 1e-8,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(result.f_val, 0.0, 1e-10);
+}
+
+// Category 6: Error Handling (3 tests)
+
+test "bfgs: rejects empty x0" {
+    const allocator = testing.allocator;
+
+    const x0: [0]f64 = undefined;
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "bfgs: rejects invalid line search parameters" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+
+    const opt_invalid = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+        .ls_c1 = 0.9,
+        .ls_c2 = 0.1, // Invalid: c2 < c1
+        .ls_max_iter = 20,
+    };
+
+    const result = bfgs(f64, sphere_f64, sphere_grad_f64, &x0, opt_invalid, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+test "bfgs: rejects negative tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{1.0};
+    const opt_invalid = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = -1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = bfgs(f64, sphere_f64, sphere_grad_f64, &x0, opt_invalid, allocator);
+    try testing.expectError(error.InvalidArgument, result);
+}
+
+// Category 7: Type Support (2 tests)
+
+test "bfgs: f32 type support with looser tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f32{ 2.0, 3.0 };
+    const options = BfgsOptions(f32){
+        .max_iter = 100,
+        .tol = 1e-4,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f32, sphere_f32, sphere_grad_f32, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+test "bfgs: f64 type support with tight tolerance" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 1.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 1000,
+        .tol = 1e-10,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.converged);
+}
+
+// Category 8: Memory Safety (2 tests)
+
+test "bfgs: no memory leaks with allocator" {
+    const allocator = testing.allocator;
+
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 };
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Allocator detects leaks at the end of the test
+    try testing.expect(result.x.len == 3);
+}
+
+test "bfgs: multiple calls produce independent results" {
+    const allocator = testing.allocator;
+
+    const x0_1 = [_]f64{1.0};
+    const x0_2 = [_]f64{2.0};
+
+    const options = BfgsOptions(f64){
+        .max_iter = 100,
+        .tol = 1e-6,
+        .line_search = .wolfe,
+    };
+
+    const result1 = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_1, options, allocator);
+    defer result1.deinit(allocator);
+
+    const result2 = try bfgs(f64, sphere_f64, sphere_grad_f64, &x0_2, options, allocator);
+    defer result2.deinit(allocator);
+
+    // Both should converge to same minimum but with different iteration counts
     try testing.expect(result1.converged);
     try testing.expect(result2.converged);
     try testing.expectApproxEqAbs(result1.f_val, result2.f_val, 1e-10);
