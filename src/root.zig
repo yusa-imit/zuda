@@ -428,6 +428,8 @@ pub const numeric = struct {
     pub const root_finding = @import("numeric/root_finding.zig");
     /// ODE solvers — Euler, RK4, and adaptive RK45 methods
     pub const ode = @import("numeric/ode.zig");
+    /// Curve fitting — Levenberg-Marquardt algorithm for non-linear least squares
+    pub const curve_fitting = @import("numeric/curve_fitting.zig");
 };
 
 /// Internal utilities (not part of public API)
@@ -473,4 +475,6 @@ test {
     _ = @import("numeric/differentiation.zig");
     _ = @import("numeric/interpolation.zig");
     _ = @import("numeric/root_finding.zig");
+    _ = @import("numeric/ode.zig");
+    _ = @import("numeric/curve_fitting.zig");
 }
