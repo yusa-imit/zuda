@@ -655,21 +655,29 @@ test "secant does not need derivative" {
 test "secant shows super-linear convergence" {
     // Secant should converge faster than linear but slower than quadratic
     var iter_count: usize = 0;
-    var x0: f64 = 1.0;
-    var x1: f64 = 2.0;
+    var x0: f64 = 3.0;
+    var x1: f64 = 3.5;
 
-    while (iter_count < 100 and @abs(@sin(x1)) > 1e-12) : (iter_count += 1) {
+    while (iter_count < 100) : (iter_count += 1) {
         const f0 = @sin(x0);
         const f1 = @sin(x1);
         const denom = f1 - f0;
         if (@abs(denom) < 1e-15) break;
 
         const x_new = x1 - f1 * (x1 - x0) / denom;
+
+        // Check convergence: both function value and x value
+        if (@abs(f1) < 1e-12 and @abs(x_new - x1) < 1e-12) break;
+
         x0 = x1;
         x1 = x_new;
     }
 
+    // Verify we found a root near π
+    try testing.expectApproxEqAbs(x1, std.math.pi, 1e-10);
+
     // Should converge in roughly 5-10 iterations (super-linear order ~1.618)
+    // Allow up to 15 iterations
     try testing.expect(iter_count <= 15);
 }
 
