@@ -440,6 +440,8 @@ pub const optimize = struct {
     pub const line_search = @import("optimize/line_search.zig");
     /// Unconstrained optimization — Gradient descent, steepest descent, learning rate scheduling
     pub const unconstrained = @import("optimize/unconstrained.zig");
+    /// Constrained optimization — Penalty method for inequality and equality constraints
+    pub const constrained = @import("optimize/constrained.zig");
 };
 
 /// Internal utilities (not part of public API)
