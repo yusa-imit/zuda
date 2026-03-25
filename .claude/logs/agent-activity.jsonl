@@ -154,3 +154,7 @@
 {"timestamp":"2026-03-24T19:17:10Z","action":"subagent","agent_type":"test-writer","task":"Fix 3 quad() test tolerances for realistic expectations","project":"zuda"}
 {"timestamp":"2026-03-25T$(date -u +%H:%M:%S)Z","action":"subagent","agent_type":"test-writer","task":"Write tests for jacobian/hessian numerical differentiation","project":"zuda"}
 {"timestamp":"2026-03-25T$(date -u +%H:%M:%S)Z","action":"subagent","agent_type":"zig-developer","task":"Implement jacobian/hessian functions","project":"zuda"}
+{"timestamp":"2026-03-25T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for romberg() integration","project":"zuda"}
+{"timestamp":"2026-03-25T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement romberg() integration","project":"zuda"}
+{"timestamp":"2026-03-25T00:10:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for gauss_legendre() integration","project":"zuda"}
+{"timestamp":"2026-03-25T00:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement gauss_legendre() integration","project":"zuda"}
