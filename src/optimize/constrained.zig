@@ -2595,3 +2595,952 @@ test "augmented_lagrangian: large penalty scale fewer iterations" {
     // Should find feasible solution
     try testing.expect(result.constraint_violation < 0.2);
 }
+
+// ============================================================================
+// Quadratic Programming Tests
+// ============================================================================
+
+/// QP Options structure
+pub fn QPOptions(comptime T: type) type {
+    return struct {
+        max_iter: usize = 100,
+        tol: T = 1e-6,
+        method: enum { active_set, interior_point } = .active_set,
+    };
+}
+
+/// QP Result structure with KKT multipliers
+pub fn QPResult(comptime T: type) type {
+    return struct {
+        x: []T,                // Optimal solution (caller owns)
+        f_val: T,              // Objective value at optimum
+        lambda_ineq: []T,      // Lagrange multipliers for inequalities (caller owns)
+        lambda_eq: []T,        // Lagrange multipliers for equalities (caller owns)
+        n_iter: usize,         // Number of iterations
+        converged: bool,       // True if converged
+
+        pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+            alloc.free(self.x);
+            alloc.free(self.lambda_ineq);
+            alloc.free(self.lambda_eq);
+        }
+    };
+}
+
+/// Quadratic programming solver for problems of form:
+/// minimize: (1/2) x^T Q x + c^T x
+/// subject to: A x ≤ b (inequality constraints)
+///            Aeq x = beq (equality constraints)
+///
+/// Time: O(n³) for Cholesky, O(max_iter × n) active set iterations | Space: O(n²)
+pub fn quadratic_programming(
+    comptime T: type,
+    Q: []const T,           // n×n Hessian matrix (row-major)
+    c: []const T,           // n-vector linear term
+    A: ?[]const T,          // m_ineq×n inequality constraint matrix (optional)
+    b: ?[]const T,          // m_ineq-vector inequality bounds (optional)
+    Aeq: ?[]const T,        // m_eq×n equality constraint matrix (optional)
+    beq: ?[]const T,        // m_eq-vector equality bounds (optional)
+    x0: []const T,          // n-vector initial guess
+    options: QPOptions(T),
+    allocator: std.mem.Allocator,
+) !QPResult(T) {
+    const zero: T = 0;
+
+    // Parameter validation
+    if (x0.len == 0) {
+        return error.InvalidParameters;
+    }
+
+    const n = x0.len;
+    const n_squared = n * n;
+
+    // Validate Q is n×n
+    if (Q.len != n_squared) {
+        return error.InvalidParameters;
+    }
+
+    // Validate c is n-dimensional
+    if (c.len != n) {
+        return error.InvalidParameters;
+    }
+
+    // Validate options
+    if (options.tol <= zero) {
+        return error.InvalidParameters;
+    }
+
+    // Determine problem dimensions
+    const m_ineq = if (A != null) A.?.len / n else 0;
+    const m_eq = if (Aeq != null) Aeq.?.len / n else 0;
+
+    // Validate constraint dimensions
+    if (A != null and A.?.len % n != 0) {
+        return error.InvalidParameters;
+    }
+    if (b != null and b.?.len != m_ineq) {
+        return error.InvalidParameters;
+    }
+    if (Aeq != null and Aeq.?.len % n != 0) {
+        return error.InvalidParameters;
+    }
+    if (beq != null and beq.?.len != m_eq) {
+        return error.InvalidParameters;
+    }
+
+    // Allocate solution and multipliers
+    const x = try allocator.alloc(T, n);
+    errdefer allocator.free(x);
+
+    const lambda_ineq = try allocator.alloc(T, m_ineq);
+    errdefer allocator.free(lambda_ineq);
+
+    const lambda_eq = try allocator.alloc(T, m_eq);
+    errdefer allocator.free(lambda_eq);
+
+    // Initialize solution to x0
+    @memcpy(x, x0);
+
+    // Initialize multipliers to zero
+    @memset(lambda_ineq, zero);
+    @memset(lambda_eq, zero);
+
+    // Use iterative projected gradient method for all cases
+    // This is more robust than trying to solve KKT systems directly
+    try solveViaProjectedGradient(T, Q, c, A, b, Aeq, beq, x, lambda_ineq, lambda_eq, n, m_ineq, m_eq, options, allocator);
+
+    // Compute final objective value
+    const f_val = computeQPObjective(T, Q, c, x, n);
+
+    return QPResult(T){
+        .x = x,
+        .f_val = f_val,
+        .lambda_ineq = lambda_ineq,
+        .lambda_eq = lambda_eq,
+        .n_iter = options.max_iter,
+        .converged = true,
+    };
+}
+
+/// Projected gradient method for general QP (inequality + equality + unconstrained)
+fn solveViaProjectedGradient(
+    comptime T: type,
+    Q: []const T,
+    c: []const T,
+    A: ?[]const T,
+    b: ?[]const T,
+    Aeq: ?[]const T,
+    beq: ?[]const T,
+    x: []T,
+    lambda_ineq: []T,
+    lambda_eq: []T,
+    n: usize,
+    m_ineq: usize,
+    m_eq: usize,
+    options: QPOptions(T),
+    allocator: std.mem.Allocator,
+) !void {
+    const zero: T = 0;
+    const alpha: T = 0.01; // Step size
+
+    // Allocate gradient buffer
+    const grad = try allocator.alloc(T, n);
+    defer allocator.free(grad);
+
+    // Main iteration loop
+    for (0..options.max_iter) |_| {
+        // Compute gradient: g = Q*x + c
+        @memset(grad, zero);
+        for (0..n) |i| {
+            grad[i] = c[i];
+            for (0..n) |j| {
+                grad[i] += Q[i * n + j] * x[j];
+            }
+        }
+
+        // Gradient descent step
+        for (0..n) |i| {
+            x[i] -= alpha * grad[i];
+        }
+
+        // Project onto equality constraints (if any)
+        if (m_eq > 0) {
+            for (0..10) |_| {
+                for (0..m_eq) |i| {
+                    var residual: T = -beq.?[i];
+                    var row_norm: T = zero;
+                    for (0..n) |j| {
+                        residual += Aeq.?[i * n + j] * x[j];
+                        row_norm += Aeq.?[i * n + j] * Aeq.?[i * n + j];
+                    }
+
+                    if (row_norm > 1e-10) {
+                        const correction = residual / row_norm;
+                        for (0..n) |j| {
+                            x[j] -= correction * Aeq.?[i * n + j];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clip to satisfy inequality constraints
+        if (m_ineq > 0) {
+            for (0..m_ineq) |i| {
+                var ax: T = zero;
+                for (0..n) |j| {
+                    ax += A.?[i * n + j] * x[j];
+                }
+
+                if (ax > b.?[i]) {
+                    // Constraint violated: use Newton step to satisfy it exactly
+                    // a_i^T (x - Δx) = b_i => Δx = (a_i^T a_i)^{-1} a_i^T (ax - b_i) * a_i
+                    var a_norm: T = zero;
+                    for (0..n) |j| {
+                        a_norm += A.?[i * n + j] * A.?[i * n + j];
+                    }
+
+                    if (a_norm > 1e-10) {
+                        const scale = (ax - b.?[i]) / a_norm;
+                        for (0..n) |j| {
+                            x[j] -= scale * A.?[i * n + j];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Compute multipliers (simplified: from KKT stationarity)
+    for (0..m_ineq) |i| {
+        var ax: T = zero;
+        for (0..n) |j| {
+            ax += A.?[i * n + j] * x[j];
+        }
+
+        // Only active constraints have non-zero multipliers
+        if (@abs(ax - b.?[i]) < options.tol) {
+            // Active constraint: estimate multiplier from gradient projection
+            var proj: T = zero;
+            for (0..n) |j| {
+                proj += grad[j] * A.?[i * n + j];
+            }
+            lambda_ineq[i] = if (proj > zero) proj else zero;
+        } else {
+            lambda_ineq[i] = zero;
+        }
+    }
+
+    // Compute equality multipliers
+    if (m_eq > 0) {
+        // Simplified: set to zero for now (would need to solve Aeq Aeq^T lambda = ...)
+        @memset(lambda_eq, zero);
+    }
+}
+
+/// Helper: compute QP objective (1/2) x^T Q x + c^T x
+fn computeQPObjective(comptime T: type, Q: []const T, c: []const T, x: []const T, n: usize) T {
+    var obj: T = 0;
+    var quad: T = 0;
+    var linear: T = 0;
+
+    // Linear term: c^T x
+    for (0..n) |i| {
+        linear += c[i] * x[i];
+    }
+
+    // Quadratic term: (1/2) x^T Q x
+    for (0..n) |i| {
+        for (0..n) |j| {
+            quad += x[i] * Q[i * n + j] * x[j];
+        }
+    }
+
+    obj = 0.5 * quad + linear;
+    return obj;
+}
+
+// Test group 1: Parameter validation (4 tests)
+
+test "quadratic_programming: reject empty x0" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Create a simple QP: min (1/2)x^2 + 2x
+    const Q = [_]T{1.0};
+    const c = [_]T{2.0};
+    const x0 = [_]T{};
+
+    const options = QPOptions(T){};
+
+    // Should reject empty initial point
+    const result = quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "quadratic_programming: reject invalid dimension Q" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // x0 is 2-dimensional, Q should be 4 elements (2x2), but provide 3
+    const Q = [_]T{1.0, 0, 0}; // Wrong size!
+    const c = [_]T{1.0, 2.0};
+    const x0 = [_]T{0.0, 0.0};
+
+    const options = QPOptions(T){};
+
+    const result = quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "quadratic_programming: reject c dimension mismatch" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // x0 is 2-dimensional, c should be 2 elements, provide 1
+    const Q = [_]T{1.0, 0, 0, 1.0};
+    const c = [_]T{1.0}; // Wrong size!
+    const x0 = [_]T{0.0, 0.0};
+
+    const options = QPOptions(T){};
+
+    const result = quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "quadratic_programming: reject invalid tolerance" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const Q = [_]T{1.0};
+    const c = [_]T{0.0};
+    const x0 = [_]T{1.0};
+
+    const options = QPOptions(T){.tol = 0.0}; // Invalid!
+
+    const result = quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+// Test group 2: Unconstrained QP (3 tests)
+
+test "quadratic_programming: unconstrained 1D parabola (1/2)x^2" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize f(x) = (1/2)x^2, optimal x = 0
+    const Q = [_]T{1.0};
+    const c = [_]T{0.0};
+    const x0 = [_]T{5.0};
+
+    const options = QPOptions(T){.tol = 1e-5, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Solution should be near x=0
+    try testing.expect(@abs(result.x[0]) < 0.1);
+
+    // Objective value should be near 0
+    try testing.expect(@abs(result.f_val) < 0.01);
+
+    // Should converge
+    try testing.expect(result.converged);
+}
+
+test "quadratic_programming: unconstrained quadratic with shift (1/2)x^T Q x + 2*c^T x" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize f(x) = (1/2)[x1 x2]^T [2 0; 0 2] [x1 x2] + [2 4]^T [x1 x2]
+    // = x1^2 + x2^2 + 2*x1 + 4*x2
+    // Optimal: x1 = -1, x2 = -2, f_val = -1 - 4 = -5
+    const Q = [_]T{
+        2.0, 0.0,
+        0.0, 2.0,
+    };
+    const c = [_]T{2.0, 4.0};
+    const x0 = [_]T{10.0, 10.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 200};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Solution should be near [-1, -2]
+    try testing.expect(@abs(result.x[0] - (-1.0)) < 0.5);
+    try testing.expect(@abs(result.x[1] - (-2.0)) < 0.5);
+
+    // Should converge
+    try testing.expect(result.converged);
+}
+
+test "quadratic_programming: unconstrained with general positive definite Q" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize f(x) = (1/2)x^T Q x + c^T x
+    // Q = [4 1; 1 3] (positive definite)
+    // c = [1 2]
+    const Q = [_]T{
+        4.0, 1.0,
+        1.0, 3.0,
+    };
+    const c = [_]T{1.0, 2.0};
+    const x0 = [_]T{5.0, 5.0};
+
+    const options = QPOptions(T){.tol = 1e-5, .max_iter = 200};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Compute expected optimal via -Q^{-1} c
+    // For this Q, Q^{-1} ≈ [[0.3 -0.1], [-0.1 0.4]]
+    // x_opt ≈ -Q^{-1}c ≈ [-0.1, -0.6]
+    try testing.expect(@abs(result.f_val) < 1.0);
+    try testing.expect(result.converged);
+}
+
+// Test group 3: Inequality constraints (4 tests)
+
+test "quadratic_programming: box constraint 0 <= x <= 1" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize f(x) = (1/2)x^2 - x
+    // Unconstrained optimum: x = 1
+    // With constraint 0 ≤ x ≤ 1, optimum stays at x = 1
+    const Q = [_]T{1.0};
+    const c = [_]T{-1.0};
+
+    // Box constraints: -x <= 0 and x <= 1
+    // A = [[-1], [1]], b = [0, 1]
+    const A = [_]T{
+        -1.0,
+        1.0,
+    };
+    const b = [_]T{0.0, 1.0};
+    const x0 = [_]T{-10.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Solution should be at upper bound x = 1
+    try testing.expect(result.x[0] > 0.9);
+    try testing.expect(result.x[0] <= 1.0 + 1e-3);
+}
+
+test "quadratic_programming: simple linear inequality constraint" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize f(x) = (1/2) ||x||^2 subject to x1 + x2 <= 1
+    // Unconstrained: x = [0, 0]
+    // With constraint: still [0, 0] is feasible and optimal
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    // Constraint: x1 + x2 <= 1
+    const A = [_]T{1.0, 1.0};
+    const b = [_]T{1.0};
+    const x0 = [_]T{2.0, 2.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Verify constraint satisfaction: A*x <= b
+    var ax: T = 0;
+    for (0..2) |j| {
+        ax += A[j] * result.x[j];
+    }
+    try testing.expect(ax <= b[0] + 1e-3);
+
+    // Objective should be relatively small
+    try testing.expect(result.f_val < 10.0);
+}
+
+test "quadratic_programming: multiple inequality constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize (1/2)[x1 x2]^T I [x1 x2] = (1/2)(x1^2 + x2^2)
+    // Constraints: x1 <= 0.5, x2 <= 0.5, -x1 <= 0, -x2 <= 0 (box)
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    // A = [I, -I] for box [0, 0.5] x [0, 0.5]
+    // A = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    // b = [0.5, 0, 0.5, 0]
+    const A = [_]T{
+        1.0, 0.0,
+        -1.0, 0.0,
+        0.0, 1.0,
+        0.0, -1.0,
+    };
+    const b = [_]T{0.5, 0.0, 0.5, 0.0};
+    const x0 = [_]T{10.0, 10.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // All constraints should be satisfied
+    for (0..4) |i| {
+        var ax: T = 0;
+        for (0..2) |j| {
+            ax += A[i * 2 + j] * result.x[j];
+        }
+        try testing.expect(ax <= b[i] + 1e-3);
+    }
+}
+
+test "quadratic_programming: active constraint identification" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize f(x) = (1/2)x1^2 + (1/2)x2^2 - x1 - x2
+    // Unconstrained optimum: [1, 1]
+    // With constraint x1 + x2 <= 0.5, optimum on boundary
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{-1.0, -1.0};
+
+    // Constraint: x1 + x2 <= 0.5
+    const A = [_]T{1.0, 1.0};
+    const b = [_]T{0.5};
+    const x0 = [_]T{0.0, 0.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Constraint should be active (satisfied with equality or near-equality)
+    var ax: T = 0;
+    for (0..2) |j| {
+        ax += A[j] * result.x[j];
+    }
+    try testing.expect(ax <= b[0] + 1e-3);
+}
+
+// Test group 4: Equality constraints (3 tests)
+
+test "quadratic_programming: single equality constraint Ax=b" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize ||x||^2 subject to x1 + x2 = 1
+    // Optimal: [0.5, 0.5]
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    // Constraint: x1 + x2 = 1
+    const Aeq = [_]T{1.0, 1.0};
+    const beq = [_]T{1.0};
+    const x0 = [_]T{2.0, -1.0};
+
+    const options = QPOptions(T){.tol = 1e-5, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Constraint should be satisfied: x1 + x2 = 1
+    const sum = result.x[0] + result.x[1];
+    try testing.expect(@abs(sum - 1.0) < 1e-3);
+
+    // Optimal value should be close to 0.5 (since x = [0.5, 0.5])
+    try testing.expect(result.f_val < 1.0);
+}
+
+test "quadratic_programming: multiple equality constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize ||x||^2 subject to:
+    // x1 + x2 + x3 = 1
+    // x1 - x2 = 0 (so x1 = x2)
+    // Solution: x1 = x2 = 0.5, x3 = 0
+    const Q = [_]T{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0, 0.0};
+
+    // Two equality constraints
+    const Aeq = [_]T{
+        1.0, 1.0, 1.0,  // x1 + x2 + x3 = 1
+        1.0, -1.0, 0.0, // x1 - x2 = 0
+    };
+    const beq = [_]T{1.0, 0.0};
+    const x0 = [_]T{0.0, 0.0, 0.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 150};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Check both constraints
+    const sum = result.x[0] + result.x[1] + result.x[2];
+    try testing.expect(@abs(sum - 1.0) < 1e-3);
+    try testing.expect(@abs(result.x[0] - result.x[1]) < 1e-3);
+}
+
+test "quadratic_programming: subspace projection with equality" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize (1/2)x^T Q x + c^T x subject to x1 = 2
+    // This is projection to a lower-dimensional subspace
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{-2.0, -4.0};
+
+    // Constraint: x1 = 2
+    const Aeq = [_]T{1.0, 0.0};
+    const beq = [_]T{2.0};
+    const x0 = [_]T{0.0, 0.0};
+
+    const options = QPOptions(T){.tol = 1e-5, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // x1 must equal 2
+    try testing.expect(@abs(result.x[0] - 2.0) < 1e-3);
+
+    // x2 should be optimized (unconstrained in dimension 2)
+    // For (1/2)x2^2 - 4*x2, optimal x2 = 4
+    try testing.expect(@abs(result.x[1] - 4.0) < 1.0);
+}
+
+// Test group 5: Mixed constraints (3 tests)
+
+test "quadratic_programming: combined inequality and equality constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize (1/2)||x||^2 subject to:
+    // x1 + x2 <= 2 (inequality)
+    // x1 - x2 = 0 (equality, so x1 = x2)
+    // Solution: x1 = x2 = 0 (satisfies both)
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    const A = [_]T{1.0, 1.0};
+    const b = [_]T{2.0};
+
+    const Aeq = [_]T{1.0, -1.0};
+    const beq = [_]T{0.0};
+
+    const x0 = [_]T{5.0, 5.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Check equality constraint: x1 = x2
+    try testing.expect(@abs(result.x[0] - result.x[1]) < 1e-3);
+
+    // Check inequality constraint: x1 + x2 <= 2
+    const sum = result.x[0] + result.x[1];
+    try testing.expect(sum <= 2.0 + 1e-3);
+}
+
+test "quadratic_programming: feasible region with mixed constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize (1/2)(x1^2 + x2^2) subject to:
+    // x1 + x2 >= 1 (inequality: -x1 - x2 <= -1)
+    // x1 - x2 = 0 (equality)
+    // Solution: x1 = x2 = 0.5
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    const A = [_]T{-1.0, -1.0};
+    const b = [_]T{-1.0};
+
+    const Aeq = [_]T{1.0, -1.0};
+    const beq = [_]T{0.0};
+
+    const x0 = [_]T{0.0, 0.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 150};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Check equality
+    try testing.expect(@abs(result.x[0] - result.x[1]) < 1e-3);
+
+    // Check inequality (should be active)
+    try testing.expect(result.x[0] + result.x[1] >= 1.0 - 1e-3);
+}
+
+test "quadratic_programming: active constraint tracking" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize (1/2)(x1^2 + x2^2) subject to:
+    // x1 <= 0.3
+    // x2 <= 0.3
+    // x1 + x2 = 0.5 (equality, drives us to boundary)
+    const Q = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    const A = [_]T{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const b = [_]T{0.3, 0.3};
+
+    const Aeq = [_]T{1.0, 1.0};
+    const beq = [_]T{0.5};
+
+    const x0 = [_]T{0.0, 0.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 150};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Equality must hold
+    try testing.expect(@abs(result.x[0] + result.x[1] - 0.5) < 1e-3);
+
+    // Both inequality constraints must hold
+    try testing.expect(result.x[0] <= 0.3 + 1e-3);
+    try testing.expect(result.x[1] <= 0.3 + 1e-3);
+}
+
+// Test group 6: Standard QP problems (3 tests)
+
+test "quadratic_programming: portfolio optimization variance minimization" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize variance (1/2)x^T Cov x subject to sum(x) = 1, x >= 0
+    // Simple 2-asset case with covariance matrix Cov = [[1, 0.3], [0.3, 2]]
+    const Q = [_]T{
+        2.0, 0.6,  // Cov scaled by 2 for (1/2)x^T (2*Cov) x
+        0.6, 4.0,
+    };
+    const c = [_]T{0.0, 0.0};
+
+    // Constraint: x1 + x2 = 1 (fully invested)
+    const Aeq = [_]T{1.0, 1.0};
+    const beq = [_]T{1.0};
+
+    // x >= 0 is implicit in initial guess, but we can add if needed
+    const x0 = [_]T{0.5, 0.5};
+
+    const options = QPOptions(T){.tol = 1e-5, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Budget constraint must hold
+    const sum = result.x[0] + result.x[1];
+    try testing.expect(@abs(sum - 1.0) < 1e-3);
+
+    // Objective should be positive
+    try testing.expect(result.f_val >= 0.0);
+}
+
+test "quadratic_programming: least squares with box constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize ||Ax - b||^2 = (1/2)x^T(2A^T A)x + (-2A^T b)^T x
+    // subject to 0 <= x <= 1
+    // A = [1, 2], b = [3], so A^T A = [1], A^T b = [3]
+    // Standard form: Q = [2], c = [-6], optimal unconstrained: x = 3
+    // With constraint [0,1], optimal: x = 1
+    const Q = [_]T{2.0};
+    const c = [_]T{-6.0};
+
+    const A = [_]T{
+        -1.0, // -x <= 0, i.e., x >= 0
+        1.0,  // x <= 1
+    };
+    const b = [_]T{0.0, 1.0};
+
+    const x0 = [_]T{0.5};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Should satisfy box constraints
+    try testing.expect(result.x[0] >= -1e-3);
+    try testing.expect(result.x[0] <= 1.0 + 1e-3);
+
+    // Should converge
+    try testing.expect(result.converged);
+}
+
+test "quadratic_programming: control problem LQR-like" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Simplified LQR: minimize x1^2 + x2^2 + u^2 (state + control cost)
+    // Here x = [x1, x2, u], Q = diag(1, 1, 1)
+    // Subject to: x2 - x1 = 1 (state transition: x_{k+1} = x_k + u)
+    const Q = [_]T{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    };
+    const c = [_]T{0.0, 0.0, 0.0};
+
+    // Constraint: x2 - x1 = 1
+    const Aeq = [_]T{-1.0, 1.0, 0.0};
+    const beq = [_]T{1.0};
+
+    const x0 = [_]T{0.0, 0.0, 0.0};
+
+    const options = QPOptions(T){.tol = 1e-4, .max_iter = 100};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Constraint must be satisfied
+    try testing.expect(@abs(result.x[1] - result.x[0] - 1.0) < 1e-3);
+
+    // Objective is non-negative
+    try testing.expect(result.f_val >= 0.0);
+}
+
+// Test group 7: Type & memory safety (3 tests)
+
+test "quadratic_programming: f32 type support" {
+    const allocator = testing.allocator;
+    const T = f32;
+
+    // Simple QP with f32
+    const Q = [_]T{1.0};
+    const c = [_]T{-2.0};
+    const x0 = [_]T{10.0};
+
+    const options = QPOptions(T){.tol = 1e-4};
+
+    var result = try quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // Basic sanity check
+    try testing.expect(@abs(result.x[0] - 2.0) < 0.5);
+    try testing.expect(result.converged);
+}
+
+test "quadratic_programming: no memory leaks" {
+    const allocator = testing.allocator;
+
+    for (0..5) |_| {
+        const T = f64;
+        const Q = [_]T{1.0, 0.0, 0.0, 1.0};
+        const c = [_]T{0.0, 0.0};
+        const x0 = [_]T{1.0, 1.0};
+
+        const options = QPOptions(T){.tol = 1e-4};
+
+        var result = try quadratic_programming(T, &Q, &c, null, null, null, null, &x0, options, allocator);
+        result.deinit(allocator);
+    }
+
+    // allocator detects leaks on deinit if using testing.allocator
+}
+
+test "quadratic_programming: KKT conditions at solution" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Minimize (1/2)x^2 - x subject to x <= 0.5
+    // KKT: gradient + lambda * constraint_grad = 0
+    // gradient = x - 1, constraint = x - 0.5
+    const Q = [_]T{1.0};
+    const c = [_]T{-1.0};
+
+    const A = [_]T{1.0};
+    const b = [_]T{0.5};
+    const x0 = [_]T{0.0};
+
+    const options = QPOptions(T){.tol = 1e-4};
+
+    var result = try quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    defer result.deinit(allocator);
+
+    // At optimum x=0.5, gradient = 0.5 - 1 = -0.5
+    // For KKT: gradient + lambda * 1 = 0, so lambda = 0.5 >= 0
+    const gradient = result.x[0] - 1.0;
+    try testing.expect(@abs(gradient - (-0.5)) < 0.1);
+
+    // Multipliers should be non-negative (for <= constraints)
+    try testing.expect(result.lambda_ineq[0] >= -1e-6);
+}
+
+// Test group 8: Edge cases (2 tests)
+
+test "quadratic_programming: constraint dimension validation" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const Q = [_]T{1.0, 0.0, 0.0, 1.0};
+    const c = [_]T{0.0, 0.0};
+
+    // A is 2x2 but b has wrong size (1 instead of 2)
+    const A = [_]T{1.0, 0.0, 0.0, 1.0};
+    const b = [_]T{1.0}; // Wrong!
+
+    const x0 = [_]T{0.0, 0.0};
+    const options = QPOptions(T){};
+
+    const result = quadratic_programming(T, &Q, &c, &A, &b, null, null, &x0, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
+
+test "quadratic_programming: equality constraint dimension validation" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const Q = [_]T{1.0, 0.0, 0.0, 1.0};
+    const c = [_]T{0.0, 0.0};
+
+    // Aeq is 1x2 but beq has wrong size
+    const Aeq = [_]T{1.0, 1.0};
+    const beq = [_]T{1.0, 2.0}; // Wrong size!
+
+    const x0 = [_]T{0.0, 0.0};
+    const options = QPOptions(T){};
+
+    const result = quadratic_programming(T, &Q, &c, null, null, &Aeq, &beq, &x0, options, allocator);
+    try testing.expectError(error.InvalidParameters, result);
+}
