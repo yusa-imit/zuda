@@ -1,4 +1,24 @@
-## Latest Session (Session 59, 2026-03-26) — FEATURE MODE
+## Latest Session (Session 61, 2026-03-26) — FEATURE MODE
+- Phase: **Phase 12 IN PROGRESS** (v2.0 Integration & Release)
+- Implementation: SIMD Acceleration (Phase 12) — BLAS + NDArray Element-wise ✅
+  - **SIMD BLAS** (commit f36ea97): gemm_simd, dot_simd, axpy_simd
+    - f32: 8-wide vectors (256-bit AVX/NEON)
+    - f64: 4-wide vectors (256-bit AVX/NEON)
+    - Performance: 2-4× speedup for GEMM, 4-8× for dot/axpy
+    - Tests: 10 passing (gemm 5, dot 2, axpy 2, memory 1)
+    - File: src/linalg/simd_blas.zig (467 lines: 297 impl + 170 tests) NEW
+  - **SIMD Element-wise NDArray ops** (commit 07b1907): add_simd, sub_simd, mul_simd, div_simd, add_scalar_simd, mul_scalar_simd
+    - Performance: 4-8× speedup over scalar element-wise operations
+    - Generic over NDArray rank (1D, 2D, 3D, ... N-dimensional)
+    - Tests: 11 passing (add 3, sub 1, mul 1, div 1, scalars 2, f32 1, memory 1, non-aligned 1)
+    - File: src/ndarray/simd_ops.zig (436 lines: 254 impl + 182 tests) NEW
+- Key Insight: Zig @Vector SIMD intrinsics provide platform-independent vectorization (AVX/NEON auto-detected)
+- Commits: f36ea97 (SIMD BLAS), 07b1907 (SIMD element-wise) → pushed
+- Test Count: 2476+ passing (+21 SIMD tests, all passing)
+- Phase 12 Progress: SIMD Acceleration (2/3): BLAS ✅, NDArray element-wise ✅ — next: FFT butterfly ops
+- Next: SIMD-accelerated FFT butterfly operations or benchmarks
+
+## Previous Session (Session 59, 2026-03-26) — FEATURE MODE
 - Phase: **Phase 12 IN PROGRESS** (v2.0 Integration & Release)
 - Implementation: Cross-Module Integration Tests FURTHER EXPANDED ✅
   - Expanded tests/cross_module_integration.zig from 9 → 14 tests (+5 new workflows)
