@@ -354,6 +354,8 @@ pub const ndarray = struct {
     /// N-dimensional arrays with flexible memory layouts
     pub const NDArray = @import("ndarray/ndarray.zig").NDArray;
     pub const Layout = @import("ndarray/ndarray.zig").Layout;
+    /// SIMD-accelerated element-wise operations
+    pub const simd_ops = @import("ndarray/simd_ops.zig");
 };
 
 /// Linear algebra operations (v2.0 track)
