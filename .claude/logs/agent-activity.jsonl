@@ -187,3 +187,4 @@
 {"timestamp":"2026-03-26T14:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement gauss_newton to pass all 16 tests","project":"zuda"}
 {"timestamp":"2026-03-26T07:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 25 comprehensive tests for quadratic_programming()","project":"zuda"}
 {"timestamp":"2026-03-26T07:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement quadratic_programming() solver to pass 25 tests","project":"zuda"}
+{"timestamp":"2026-03-27T00:00:00Z","action":"task","agent_type":"none","task":"Create consumer migration issues for zr, silica, zoltraak after v2.0.0 release","project":"zuda"}
