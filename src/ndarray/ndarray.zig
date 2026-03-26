@@ -94,6 +94,10 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Layout order (row-major or column-major)
         layout: Layout,
 
+        /// Ownership flag: true if this array owns its data (should free on deinit)
+        /// false for views/borrowed references that share data with another array
+        owned: bool,
+
         // -- Lifecycle --
 
         /// Initialize an N-dimensional array with given shape and layout
@@ -154,15 +158,58 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = data,
                 .allocator = allocator,
                 .layout = layout,
+                .owned = true,
             };
         }
 
-        /// Free all allocated memory
+        /// Free all allocated memory if this array owns its data
         ///
-        /// Time: O(1) deallocation
+        /// For owned arrays (owned=true), frees the data buffer.
+        /// For views/borrowed arrays (owned=false), does nothing (parent owns the data).
+        ///
+        /// Time: O(1) deallocation (if owned)
         /// Space: O(1)
         pub fn deinit(self: *Self) void {
-            self.allocator.free(self.data);
+            if (self.owned) {
+                self.allocator.free(self.data);
+            }
+        }
+
+        /// Create a borrowed view of this array (zero-copy reference)
+        ///
+        /// Creates a new NDArray that shares the same underlying data buffer.
+        /// The view has owned=false, so calling deinit() on it will not free the data.
+        /// The original array (this instance) retains ownership and is responsible for
+        /// freeing the data.
+        ///
+        /// Modifications made through the view will be visible in the original array
+        /// and vice versa, since they share the same memory.
+        ///
+        /// Example:
+        /// ```zig
+        /// var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+        /// defer arr.deinit(); // Original array owns the data
+        ///
+        /// var view = arr.createView();
+        /// defer view.deinit(); // Safe to call, but won't free data
+        ///
+        /// view.set(&.{0, 0}, 42.0);
+        /// try testing.expectEqual(42.0, arr.get(&.{0, 0})); // Original sees the change
+        /// ```
+        ///
+        /// Returns: New NDArray instance sharing the same data (owned=false)
+        ///
+        /// Time: O(1) - just copies metadata
+        /// Space: O(1) - no data allocation
+        pub fn createView(self: *const Self) Self {
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = self.data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = false,
+            };
         }
 
         /// Calculate stride array based on shape and layout
@@ -227,6 +274,35 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 }
             }
             return false;
+        }
+
+        /// Check if array data is stored contiguously in memory
+        ///
+        /// An array is contiguous if its elements are stored in standard C-order (row-major)
+        /// or Fortran-order (column-major) without gaps. Contiguous arrays can be reshaped
+        /// with zero-copy, while non-contiguous arrays (e.g., after slicing or transposing)
+        /// require copying.
+        ///
+        /// Returns: true if contiguous, false otherwise
+        ///
+        /// Time: O(ndim)
+        /// Space: O(1)
+        fn isContiguous(self: *const Self) bool {
+            // Empty arrays are trivially contiguous
+            if (self.isEmpty()) {
+                return true;
+            }
+
+            // Check if strides match what they would be for a contiguous array
+            const expected_strides = calculateStrides(self.shape, self.layout);
+
+            for (0..ndim) |i| {
+                if (self.strides[i] != expected_strides[i]) {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         /// Validate internal invariants
@@ -520,6 +596,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = owned_data,
                 .allocator = allocator,
                 .layout = layout,
+                .owned = true,
             };
         }
 
@@ -623,26 +700,46 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 return error.CapacityExceeded;
             }
 
-            // FIXME(memory-safety): Always copy to avoid double-free bug
-            // The zero-copy path caused segfaults because both the original and reshaped
-            // NDArray would call deinit() on the same data pointer. Proper fix requires
-            // adding ownership tracking to NDArray (owned vs borrowed data).
-            // For now, we always allocate new memory to ensure memory safety.
+            // Check if we can do zero-copy reshape (array must be contiguous)
+            // Contiguous means data is stored in standard C or Fortran order without gaps
+            const is_contiguous = self.isContiguous();
 
-            // Allocate new buffer
-            const new_data = try self.allocator.alloc(T, new_total);
-            errdefer self.allocator.free(new_data);
+            if (is_contiguous) {
+                // Zero-copy path: create view with new shape but same data
+                // Copy new_shape into fixed array
+                var shape_array: [ndim]usize = undefined;
+                for (0..ndim) |i| {
+                    shape_array[i] = new_shape[i];
+                }
 
-            // Copy all elements from old layout to new contiguous buffer
-            var iter = self.iterator();
-            var idx: usize = 0;
-            while (iter.next()) |val| {
-                new_data[idx] = val;
-                idx += 1;
+                // Calculate strides for new shape using same layout
+                const new_strides = calculateStrides(shape_array, self.layout);
+
+                // Return view (owned=false) sharing the same data
+                return Self{
+                    .shape = shape_array,
+                    .strides = new_strides,
+                    .data = self.data,
+                    .allocator = self.allocator,
+                    .layout = self.layout,
+                    .owned = false, // View: does not own data
+                };
+            } else {
+                // Non-contiguous: must copy to new buffer
+                const new_data = try self.allocator.alloc(T, new_total);
+                errdefer self.allocator.free(new_data);
+
+                // Copy all elements from old layout to new contiguous buffer
+                var iter = self.iterator();
+                var idx: usize = 0;
+                while (iter.next()) |val| {
+                    new_data[idx] = val;
+                    idx += 1;
+                }
+
+                // Create array from owned slice
+                return Self.fromOwnedSlice(self.allocator, new_shape, new_data, self.layout);
             }
-
-            // Create array from owned slice
-            return Self.fromOwnedSlice(self.allocator, new_shape, new_data, self.layout);
         }
 
         /// Transpose the array by reversing all axes (zero-copy view)
@@ -683,6 +780,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = self.data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                .owned = false, // View shares data with original
             };
         }
 
@@ -840,6 +938,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = self.data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = false,
             };
         }
 
@@ -897,7 +996,8 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     .data = new_data,
                     .allocator = self.allocator,
                     .layout = self.layout,
-                };
+                                .owned = true,
+            };
             }
 
             // Non-contiguous: allocate new buffer and copy elements
@@ -918,6 +1018,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = new_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1060,6 +1161,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1092,6 +1194,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1132,6 +1235,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1170,6 +1274,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1208,6 +1313,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1249,6 +1355,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1289,6 +1396,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1327,6 +1435,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1365,6 +1474,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1396,6 +1506,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1427,6 +1538,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1458,6 +1570,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1502,6 +1615,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1533,6 +1647,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1564,6 +1679,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                            .owned = true,
             };
         }
 
@@ -1831,6 +1947,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = data,
                 .allocator = allocator,
                 .layout = layout,
+                            .owned = true,
             };
         }
 
@@ -2012,6 +2129,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = view_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
+                .owned = false, // Slice is a view
             };
         }
 
@@ -4560,7 +4678,7 @@ test "ndarray: reshape [3,4] → [2,6] changes layout composition" {
 
 
 
-test "ndarray: reshape creates new allocation (memory safety)" {
+test "ndarray: reshape uses zero-copy for contiguous arrays (memory safety)" {
     const allocator = testing.allocator;
     var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
@@ -4575,11 +4693,12 @@ test "ndarray: reshape creates new allocation (memory safety)" {
     var reshaped = try arr.reshape(&[_]usize{ 3, 2 });
     defer reshaped.deinit();
 
-    // Due to memory safety fix, reshape always allocates new memory
-    // (prevents double-free when both arrays call deinit)
-    try testing.expect(original_data_ptr != reshaped.data.ptr);
+    // With ownership tracking, contiguous arrays use zero-copy (same pointer)
+    // The reshaped view has owned=false, so both can safely call deinit()
+    try testing.expect(original_data_ptr == reshaped.data.ptr);
+    try testing.expectEqual(false, reshaped.owned); // View, not owned
 
-    // Data should still be copied correctly
+    // Data should be accessible through the view
     try testing.expectEqual(@as(f64, 0.0), reshaped.data[0]);
 }
 
@@ -8038,7 +8157,8 @@ fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T,
         .data = result_data,
         .allocator = allocator,
         .layout = self.layout,
-    };
+                    .owned = true,
+            };
 }
 
 /// Apply a binary comparison operation with broadcasting support
@@ -8133,5 +8253,213 @@ fn applyBinaryCompOp(comptime T: type, comptime ndim: usize, self: *const NDArra
         .data = result_data,
         .allocator = allocator,
         .layout = self.layout,
+        .owned = true, // Allocated new result data
     };
+}
+
+// -- Ownership Tracking Tests (8 tests) --
+// These tests validate the ownership tracking feature that enables zero-copy views
+// and prevents double-free bugs in reshape operations.
+
+test "ownership: owned array deinit frees memory" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+
+    // Store pointer to verify it gets freed
+    const data_ptr = arr.data.ptr;
+    const data_len = arr.data.len;
+
+    arr.deinit();
+
+    // Verify deinit was called on the data (by checking the array had data to free)
+    // Note: We can't directly verify the memory is freed without platform-specific code,
+    // but testing.allocator will catch leaks if deinit() isn't called properly
+    _ = data_ptr;
+    _ = data_len;
+}
+
+test "ownership: createView produces borrowed view" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Set a test value to verify view shares data
+    arr.set(&.{ @as(isize, 0), @as(isize, 0) }, 42.0);
+
+    // Create a view (borrowed reference to same data)
+    var view = arr.createView();
+
+    // Verify view points to same data
+    try testing.expectEqual(arr.data.ptr, view.data.ptr);
+
+    // Verify view sees the same value
+    try testing.expectEqual(42.0, view.get(&.{ @as(isize, 0), @as(isize, 0) }));
+}
+
+test "ownership: double deinit safety - view then owner" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+
+    // Create a view
+    var view = arr.createView();
+
+    // Deinit the view first (should not free shared data since owned=false)
+    view.deinit();
+
+    // Deinit the owner (should free shared data since owned=true)
+    arr.deinit();
+
+    // No double-free crash should occur
+    // testing.allocator will detect any leaks
+}
+
+test "ownership: multiple views share same data" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{ 5 }, .row_major);
+    defer arr.deinit();
+
+    // Create multiple views from the same array
+    var view1 = arr.createView();
+    var view2 = arr.createView();
+
+    // All should point to same data
+    try testing.expectEqual(arr.data.ptr, view1.data.ptr);
+    try testing.expectEqual(arr.data.ptr, view2.data.ptr);
+
+    // Views don't need explicit deinit since they don't own data
+    view1.deinit();
+    view2.deinit();
+}
+
+test "ownership: modifying view updates original array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer arr.deinit();
+
+    var view = arr.createView();
+
+    // Modify through the view
+    view.set(&.{ @as(isize, 1), @as(isize, 1) }, 99.0);
+
+    // Verify original array sees the change
+    try testing.expectEqual(99.0, arr.get(&.{ @as(isize, 1), @as(isize, 1) }));
+
+    view.deinit();
+}
+
+test "ownership: reshape zero-copy on contiguous array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Set some test value
+    arr.set(&.{ @as(isize, 0), @as(isize, 0) }, 123.0);
+
+    // Reshape to compatible shape (still contiguous, same total elements)
+    var reshaped = try arr.reshape(&[_]usize{ 4, 3 });
+    defer reshaped.deinit();
+
+    // For contiguous reshape, once ownership tracking is implemented, should create a view (same data pointer)
+    // Note: Currently reshape always copies for safety, but will be optimized to zero-copy
+
+    // For now, just verify the reshape succeeds and has correct shape
+    try testing.expectEqual(4, reshaped.shape[0]);
+    try testing.expectEqual(3, reshaped.shape[1]);
+}
+
+test "ownership: reshape copies on non-contiguous array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Transpose makes the array non-contiguous (same data, different strides)
+    var transposed = arr.transpose();
+
+    // Reshape the non-contiguous view
+    // This should copy data since strides are non-standard
+    var reshaped = try transposed.reshape(&[_]usize{ 2, 6 });
+    defer reshaped.deinit();
+
+    // Reshape should have succeeded with correct shape
+    try testing.expectEqual(2, reshaped.shape[0]);
+    try testing.expectEqual(6, reshaped.shape[1]);
+}
+
+test "ownership: no memory leaks with array and views" {
+    const allocator = testing.allocator;
+
+    {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, 5 }, .row_major);
+
+        // Create multiple views
+        var view1 = arr.createView();
+        var view2 = arr.createView();
+        var view3 = arr.createView();
+
+        // Modify through views
+        arr.set(&.{ @as(isize, 0), @as(isize, 0) }, 1.0);
+        view1.set(&.{ @as(isize, 1), @as(isize, 1) }, 2.0);
+        view2.set(&.{ @as(isize, 2), @as(isize, 2) }, 3.0);
+        view3.set(&.{ @as(isize, 3), @as(isize, 3) }, 4.0);
+
+        // Verify all modifications are visible in original
+        try testing.expectEqual(1.0, arr.get(&.{ @as(isize, 0), @as(isize, 0) }));
+        try testing.expectEqual(2.0, arr.get(&.{ @as(isize, 1), @as(isize, 1) }));
+        try testing.expectEqual(3.0, arr.get(&.{ @as(isize, 2), @as(isize, 2) }));
+        try testing.expectEqual(4.0, arr.get(&.{ @as(isize, 3), @as(isize, 3) }));
+
+        // Deinit views (should not free data)
+        view1.deinit();
+        view2.deinit();
+        view3.deinit();
+
+        // Deinit owner (should free data once)
+        arr.deinit();
+    }
+    // testing.allocator will report any leaks at scope end
+}
+
+test "ownership: view from reshape is borrowed" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&.{ @as(isize, 0), @as(isize, 0) }, 7.0);
+
+    // Reshape to compatible 2D shape (contiguous array → zero-copy view)
+    var reshaped = try arr.reshape(&[_]usize{ 4, 3 });
+    defer reshaped.deinit();
+
+    // Verify reshaped array has correct data layout and is a view (owned=false)
+    try testing.expectEqual(false, reshaped.owned);
+    try testing.expectEqual(7.0, reshaped.get(&.{ @as(isize, 0), @as(isize, 0) }));
+}
+
+test "ownership: owned flag prevents double-free in iteration" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer arr.deinit();
+
+    // Iterate through original
+    {
+        var iter = arr.iterator();
+        var count: usize = 0;
+        while (iter.next()) |_| {
+            count += 1;
+        }
+        try testing.expectEqual(4, count);
+    }
+
+    // Create a view and iterate through it
+    var view = arr.createView();
+    defer view.deinit();
+
+    {
+        var iter = view.iterator();
+        var count: usize = 0;
+        while (iter.next()) |_| {
+            count += 1;
+        }
+        try testing.expectEqual(4, count);
+    }
 }
