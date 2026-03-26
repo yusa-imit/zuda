@@ -407,10 +407,8 @@ test "cross-module: optimize + stats → distribution parameter fitting workflow
 // linalg + numeric Workflow: PDE Solving with Linear Algebra
 // ============================================================================
 
-// TODO: Re-enable after fixing error type mismatch in solve.zig:104
-// Issue: solve.zig internal error when calling solveSquare
-test "cross-module: linalg solver + numeric → heat equation discretization (DISABLED)" {
-    if (true) return error.SkipZigTest;
+// Re-enabled after fixing error type mismatch in solve.zig:104 (issue #20)
+test "cross-module: linalg solver + numeric → heat equation discretization" {
     const allocator = testing.allocator;
 
     // Solve 1D heat equation: ∂u/∂t = α ∂²u/∂x²

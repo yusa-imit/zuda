@@ -84,6 +84,7 @@ pub fn solve(
     NotPositiveDefinite,
     InvalidDimensions,
     NotImplemented,
+    NonSquareMatrix,
 })!NDArray(T, 1) {
     const m = A.shape[0];
     const n = A.shape[1];
@@ -114,7 +115,13 @@ fn solveSquare(
     A: NDArray(T, 2),
     b: NDArray(T, 1),
     allocator: Allocator,
-) !NDArray(T, 1) {
+) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{
+    DimensionMismatch,
+    SingularMatrix,
+    NotPositiveDefinite,
+    InvalidDimensions,
+    NonSquareMatrix,
+})!NDArray(T, 1) {
     // Try SPD detection and Cholesky
     if (try isSPD(T, A, allocator)) {
         return try solveCholesky(T, A, b, allocator);
@@ -130,7 +137,11 @@ fn solveOverdetermined(
     A: NDArray(T, 2),
     b: NDArray(T, 1),
     allocator: Allocator,
-) !NDArray(T, 1) {
+) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{
+    DimensionMismatch,
+    SingularMatrix,
+    InvalidDimensions,
+})!NDArray(T, 1) {
     const m = A.shape[0];
     const n = A.shape[1];
 
@@ -190,7 +201,12 @@ fn solveCholesky(
     A: NDArray(T, 2),
     b: NDArray(T, 1),
     allocator: Allocator,
-) !NDArray(T, 1) {
+) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{
+    NotPositiveDefinite,
+    InvalidDimensions,
+    NonSquareMatrix,
+    SingularMatrix,
+})!NDArray(T, 1) {
     const n = A.shape[0];
 
     // Compute L from Cholesky
@@ -249,7 +265,11 @@ fn solveLU(
     A: NDArray(T, 2),
     b: NDArray(T, 1),
     allocator: Allocator,
-) !NDArray(T, 1) {
+) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{
+    SingularMatrix,
+    InvalidDimensions,
+    NonSquareMatrix,
+})!NDArray(T, 1) {
     const n = A.shape[0];
 
     // Compute LU factorization
