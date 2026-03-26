@@ -76,9 +76,6 @@ pub fn FilterCoefficients(comptime T: type) type {
     };
 }
 
-// TODO: Placeholder function signatures (to be implemented)
-// These functions currently do not exist and tests should FAIL
-
 /// Design an FIR filter using the windowed sinc method (Hamming window)
 ///
 /// Creates a finite impulse response (FIR) filter with desired cutoff frequency
