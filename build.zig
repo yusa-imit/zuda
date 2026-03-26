@@ -116,6 +116,23 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    // Scientific workflow example demonstrating cross-module integration
+    const scientific_example = b.addExecutable(.{
+        .name = "scientific_workflow",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/scientific_workflow.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_scientific_example = b.addRunArtifact(scientific_example);
+    const example_step = b.step("example", "Run the scientific workflow example");
+    example_step.dependOn(&run_scientific_example.step);
+    run_scientific_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
