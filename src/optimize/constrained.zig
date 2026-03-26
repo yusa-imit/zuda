@@ -4105,3 +4105,535 @@ test "simplex: no memory leaks" {
         result.deinit(allocator);
     }
 }
+
+/// Options for interior-point method for linear programming
+///
+/// Interior point method (barrier method) for:
+/// minimize c^T x subject to Ax = b, x ≥ 0
+///
+/// Uses primal-dual path-following algorithm with central path parameter μ.
+pub fn InteriorPointOptions(comptime T: type) type {
+    return struct {
+        /// Maximum number of iterations
+        max_iter: usize = 100,
+
+        /// Convergence tolerance for duality gap
+        tol: T = 1e-6,
+
+        /// Initial barrier parameter (automatically set if 0)
+        mu_init: T = 0.0,
+
+        /// Barrier parameter reduction factor (0 < sigma < 1)
+        sigma: T = 0.1,
+
+        /// Step size reduction factor for line search
+        alpha: T = 0.995,
+
+        /// Minimum step size
+        min_step: T = 1e-10,
+    };
+}
+
+/// Result from interior-point method
+pub fn InteriorPointResult(comptime T: type) type {
+    return struct {
+        x: []T,
+        objective: T,
+        n_iter: usize,
+        success: bool,
+
+        pub fn deinit(self: @This(), alloc: std.mem.Allocator) void {
+            alloc.free(self.x);
+        }
+    };
+}
+
+/// Solves linear programming problem using interior-point method
+///
+/// Problem: minimize c^T x
+/// Subject to: Ax = b, x ≥ 0
+///
+/// Uses primal-dual path-following algorithm with barrier method.
+///
+/// Time: O(sqrt(n) × n³) where n is number of variables
+/// Space: O(n² + m×n) for KKT system
+///
+/// Parameters:
+///   T: Floating-point type (f32 or f64)
+///   c: Objective coefficients (length n)
+///   A: Constraint matrix (m × n, row-major)
+///   b: Right-hand side (length m)
+///   options: Algorithm options
+///   alloc: Memory allocator
+///
+/// Returns:
+///   Result with optimal solution x and objective value
+///
+/// Errors:
+///   - OutOfMemory: Allocation failed
+///   - InvalidInput: Invalid dimensions or infeasible problem
+pub fn interior_point(
+    comptime T: type,
+    c: []const T,
+    A: []const T,
+    b: []const T,
+    options: InteriorPointOptions(T),
+    alloc: std.mem.Allocator,
+) !InteriorPointResult(T) {
+    if (T != f32 and T != f64) @compileError("interior_point only supports f32 and f64");
+
+    const n = c.len; // number of variables
+    const m = b.len; // number of equality constraints
+
+    if (A.len != m * n) return error.InvalidInput;
+    if (n == 0 or m == 0) return error.InvalidInput;
+    if (m > n) return error.InvalidInput; // underdetermined
+
+    const tol = options.tol;
+    const sigma = options.sigma;
+    const alpha_max = options.alpha;
+
+    // Allocate working arrays
+    var x = try alloc.alloc(T, n);
+    errdefer alloc.free(x);
+    var lambda = try alloc.alloc(T, m); // dual variables for Ax = b
+    errdefer alloc.free(lambda);
+    var s = try alloc.alloc(T, n); // slack variables for x ≥ 0
+
+    errdefer alloc.free(s);
+
+    // Initialize: x = 1, s = 1, lambda = 0
+    for (x) |*xi| xi.* = 1.0;
+    for (s) |*si| si.* = 1.0;
+    for (lambda) |*li| li.* = 0.0;
+
+    // Initial barrier parameter
+    var mu: T = if (options.mu_init > 0) options.mu_init else 1.0;
+
+    // Allocate KKT system arrays
+    const dx = try alloc.alloc(T, n);
+    defer alloc.free(dx);
+    const dlambda = try alloc.alloc(T, m);
+    defer alloc.free(dlambda);
+    const ds = try alloc.alloc(T, n);
+    defer alloc.free(ds);
+
+    // Working arrays for residuals
+    const rb = try alloc.alloc(T, m); // primal residual: Ax - b
+    defer alloc.free(rb);
+    const rc = try alloc.alloc(T, n); // dual residual: A^T lambda + s - c
+    defer alloc.free(rc);
+    const rxs = try alloc.alloc(T, n); // complementarity: x.*s - mu*e
+    defer alloc.free(rxs);
+
+    var iter: usize = 0;
+    var success = false;
+
+    while (iter < options.max_iter) : (iter += 1) {
+        // Compute residuals
+        // rb = Ax - b
+        for (rb, 0..) |*ri, i| {
+            var sum: T = 0;
+            for (0..n) |j| sum += A[i * n + j] * x[j];
+            ri.* = sum - b[i];
+        }
+
+        // rc = A^T lambda + s - c
+        for (rc, 0..) |*rci, j| {
+            var sum: T = 0;
+            for (0..m) |i| sum += A[i * n + j] * lambda[i];
+            rci.* = sum + s[j] - c[j];
+        }
+
+        // rxs = x.*s - mu*e (complementarity)
+        for (rxs, 0..) |*rxsi, j| {
+            rxsi.* = x[j] * s[j] - mu;
+        }
+
+        // Check convergence: duality gap = x^T s / n
+        var duality_gap: T = 0;
+        for (0..n) |j| duality_gap += x[j] * s[j];
+        duality_gap /= @as(T, @floatFromInt(n));
+
+        // Check primal and dual feasibility
+        var primal_norm: T = 0;
+        for (rb) |ri| primal_norm += ri * ri;
+        primal_norm = @sqrt(primal_norm);
+
+        var dual_norm: T = 0;
+        for (rc) |rci| dual_norm += rci * rci;
+        dual_norm = @sqrt(dual_norm);
+
+        if (duality_gap < tol and primal_norm < tol and dual_norm < tol) {
+            success = true;
+            break;
+        }
+
+        // Solve KKT system for Newton direction (simplified predictor step)
+        // We use a diagonal approximation: X = diag(x), S = diag(s)
+        // System: [ 0   A^T  I ] [dx]       [-rc]
+        //         [ A   0    0 ] [dlambda] = [-rb]
+        //         [ S   0    X ] [ds]       [-rxs]
+
+        // Eliminate ds: ds = -S^{-1}(rxs + X*dx)
+        // Substitute into first equation:
+        // A^T dlambda + dx - S^{-1}X dx = -rc + S^{-1} rxs
+        // (I - S^{-1}X) dx + A^T dlambda = -rc + S^{-1} rxs
+        // Let D = X * S^{-1}, then: (I - D^{-1}) dx + A^T dlambda = rhs
+
+        // For simplicity, use diagonal scaling approach
+        // D = x ./ s (element-wise)
+        // Solve: A D^{-1} A^T dlambda = A D^{-1} rhs_x - rb
+        // where rhs_x = -rc + rxs ./ s
+
+        // Compute D^{-1} = s ./ x
+        const D_inv = try alloc.alloc(T, n);
+        defer alloc.free(D_inv);
+        for (D_inv, 0..) |*di, j| {
+            di.* = if (@abs(x[j]) > tol) s[j] / x[j] else 1.0;
+        }
+
+        // Compute rhs_x = -rc + rxs ./ s
+        const rhs_x = try alloc.alloc(T, n);
+        defer alloc.free(rhs_x);
+        for (rhs_x, 0..) |*ri, j| {
+            ri.* = -rc[j] + (if (@abs(s[j]) > tol) rxs[j] / s[j] else 0);
+        }
+
+        // Compute A D^{-1} rhs_x
+        const rhs_lambda = try alloc.alloc(T, m);
+        defer alloc.free(rhs_lambda);
+        for (rhs_lambda, 0..) |*rli, i| {
+            var sum: T = 0;
+            for (0..n) |j| sum += A[i * n + j] * D_inv[j] * rhs_x[j];
+            rli.* = sum - rb[i];
+        }
+
+        // Solve A D^{-1} A^T dlambda = rhs_lambda (normal equations)
+        // Build Gram matrix: G = A D^{-1} A^T (m × m)
+        var G = try alloc.alloc(T, m * m);
+        defer alloc.free(G);
+        for (0..m) |i| {
+            for (0..m) |j| {
+                var sum: T = 0;
+                for (0..n) |k| {
+                    sum += A[i * n + k] * D_inv[k] * A[j * n + k];
+                }
+                G[i * m + j] = sum;
+            }
+        }
+
+        // Solve G dlambda = rhs_lambda using Cholesky (assume SPD)
+        // For simplicity, use diagonal approximation if Cholesky fails
+        const solved = solveLU(T, G, rhs_lambda, dlambda, alloc) catch false;
+        if (!solved) {
+            // Fallback: use diagonal approximation
+            for (dlambda, 0..) |*dli, i| {
+                const diag = G[i * m + i];
+                dli.* = if (@abs(diag) > tol) rhs_lambda[i] / diag else 0;
+            }
+        }
+
+        // Compute dx = D^{-1} (rhs_x - A^T dlambda)
+        for (dx, 0..) |*dxi, j| {
+            var sum: T = 0;
+            for (0..m) |i| sum += A[i * n + j] * dlambda[i];
+            dxi.* = D_inv[j] * (rhs_x[j] - sum);
+        }
+
+        // Compute ds = -S^{-1}(rxs + X dx)
+        for (ds, 0..) |*dsi, j| {
+            const num = rxs[j] + x[j] * dx[j];
+            dsi.* = if (@abs(s[j]) > tol) -num / s[j] else 0;
+        }
+
+        // Line search: find maximum step size maintaining x > 0, s > 0
+        var alpha_primal: T = 1.0;
+        for (0..n) |j| {
+            if (dx[j] < 0) {
+                const ratio = -x[j] / dx[j];
+                alpha_primal = @min(alpha_primal, ratio);
+            }
+        }
+
+        var alpha_dual: T = 1.0;
+        for (0..n) |j| {
+            if (ds[j] < 0) {
+                const ratio = -s[j] / ds[j];
+                alpha_dual = @min(alpha_dual, ratio);
+            }
+        }
+
+        // Apply damping factor
+        alpha_primal = @min(alpha_max * alpha_primal, 1.0);
+        alpha_dual = @min(alpha_max * alpha_dual, 1.0);
+
+        // Check for stall
+        if (alpha_primal < options.min_step and alpha_dual < options.min_step) {
+            break;
+        }
+
+        // Update variables
+        for (0..n) |j| {
+            x[j] += alpha_primal * dx[j];
+            s[j] += alpha_dual * ds[j];
+        }
+        for (0..m) |i| {
+            lambda[i] += alpha_dual * dlambda[i];
+        }
+
+        // Reduce barrier parameter
+        mu *= sigma;
+    }
+
+    // Compute final objective
+    var objective: T = 0;
+    for (0..n) |j| objective += c[j] * x[j];
+
+    alloc.free(lambda);
+    alloc.free(s);
+
+    return InteriorPointResult(T){
+        .x = x,
+        .objective = objective,
+        .n_iter = iter,
+        .success = success,
+    };
+}
+
+/// Solve linear system using LU decomposition (helper for interior_point)
+fn solveLU(
+    comptime T: type,
+    A: []const T,
+    b: []const T,
+    x: []T,
+    alloc: std.mem.Allocator,
+) !bool {
+    const n = b.len;
+    if (A.len != n * n or x.len != n) return false;
+
+    // Simple Gaussian elimination with partial pivoting
+    var A_copy = try alloc.alloc(T, n * n);
+    defer alloc.free(A_copy);
+    @memcpy(A_copy, A);
+
+    var b_copy = try alloc.alloc(T, n);
+    defer alloc.free(b_copy);
+    @memcpy(b_copy, b);
+
+    const tol: T = 1e-10;
+
+    // Forward elimination
+    for (0..n) |k| {
+        // Partial pivoting
+        var max_idx = k;
+        var max_val = @abs(A_copy[k * n + k]);
+        for (k + 1..n) |i| {
+            const val = @abs(A_copy[i * n + k]);
+            if (val > max_val) {
+                max_val = val;
+                max_idx = i;
+            }
+        }
+
+        if (max_val < tol) return false; // singular
+
+        // Swap rows if needed
+        if (max_idx != k) {
+            for (0..n) |j| {
+                const tmp = A_copy[k * n + j];
+                A_copy[k * n + j] = A_copy[max_idx * n + j];
+                A_copy[max_idx * n + j] = tmp;
+            }
+            const tmp_b = b_copy[k];
+            b_copy[k] = b_copy[max_idx];
+            b_copy[max_idx] = tmp_b;
+        }
+
+        // Eliminate column k
+        for (k + 1..n) |i| {
+            const factor = A_copy[i * n + k] / A_copy[k * n + k];
+            for (k..n) |j| {
+                A_copy[i * n + j] -= factor * A_copy[k * n + j];
+            }
+            b_copy[i] -= factor * b_copy[k];
+        }
+    }
+
+    // Back substitution
+    var i = n;
+    while (i > 0) {
+        i -= 1;
+        var sum: T = b_copy[i];
+        for (i + 1..n) |j| {
+            sum -= A_copy[i * n + j] * x[j];
+        }
+        x[i] = sum / A_copy[i * n + i];
+    }
+
+    return true;
+}
+
+// ============================================================================
+// Tests for interior_point
+// ============================================================================
+
+test "interior_point: invalid inputs" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // Empty arrays
+    {
+        const c: []const T = &[_]T{};
+        const A: []const T = &[_]T{};
+        const b: []const T = &[_]T{};
+        const options = InteriorPointOptions(T){};
+        const result = interior_point(T, c, A, b, options, allocator);
+        try testing.expectError(error.InvalidInput, result);
+    }
+
+    // Mismatched dimensions
+    {
+        const c = [_]T{ 1.0, 2.0 };
+        const A = [_]T{ 1.0, 1.0 }; // should be 1×2 but only 2 elements
+        const b = [_]T{5.0};
+        const options = InteriorPointOptions(T){};
+        const result = interior_point(T, &c, &A, &b, options, allocator);
+        try testing.expectError(error.InvalidInput, result);
+    }
+}
+
+test "interior_point: 1D problem - minimize x s.t. x ≥ 0" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // minimize x subject to x = 1 (forces x = 1)
+    const c = [_]T{1.0};
+    const A = [_]T{1.0}; // 1×1 matrix
+    const b = [_]T{1.0};
+
+    const options = InteriorPointOptions(T){ .tol = 1e-4 };
+    var result = try interior_point(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.success);
+    try testing.expectApproxEqAbs(@as(T, 1.0), result.x[0], 1e-3);
+    try testing.expectApproxEqAbs(@as(T, 1.0), result.objective, 1e-3);
+}
+
+test "interior_point: 2D simple LP" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // minimize x1 + 2*x2
+    // subject to: x1 + x2 = 5, x1 ≥ 0, x2 ≥ 0
+    // optimal: x1 = 5, x2 = 0, objective = 5
+    const c = [_]T{ 1.0, 2.0 };
+    const A = [_]T{ 1.0, 1.0 }; // 1×2
+    const b = [_]T{5.0};
+
+    const options = InteriorPointOptions(T){ .tol = 1e-4 };
+    var result = try interior_point(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.success);
+    // x1 + x2 = 5
+    const sum = result.x[0] + result.x[1];
+    try testing.expectApproxEqAbs(@as(T, 5.0), sum, 1e-3);
+    // objective = x1 + 2*x2, optimal when x2 = 0
+    try testing.expectApproxEqAbs(@as(T, 0.0), result.x[1], 1e-3);
+    try testing.expectApproxEqAbs(@as(T, 5.0), result.x[0], 1e-3);
+}
+
+test "interior_point: 2D with two constraints" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // minimize x1 + x2
+    // subject to: x1 + x2 = 4, 2*x1 + x2 = 6
+    // solution: x1 = 2, x2 = 2
+    const c = [_]T{ 1.0, 1.0 };
+    const A = [_]T{
+        1.0, 1.0, // row 1
+        2.0, 1.0, // row 2
+    };
+    const b = [_]T{ 4.0, 6.0 };
+
+    const options = InteriorPointOptions(T){ .tol = 1e-4 };
+    var result = try interior_point(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.success);
+    try testing.expectApproxEqAbs(@as(T, 2.0), result.x[0], 1e-3);
+    try testing.expectApproxEqAbs(@as(T, 2.0), result.x[1], 1e-3);
+    try testing.expectApproxEqAbs(@as(T, 4.0), result.objective, 1e-3);
+}
+
+test "interior_point: 3D problem" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    // minimize x1 + 2*x2 + 3*x3
+    // subject to: x1 + x2 + x3 = 6, x1 ≥ 0, x2 ≥ 0, x3 ≥ 0
+    // optimal: x1 = 6, x2 = 0, x3 = 0, objective = 6
+    const c = [_]T{ 1.0, 2.0, 3.0 };
+    const A = [_]T{ 1.0, 1.0, 1.0 }; // 1×3
+    const b = [_]T{6.0};
+
+    const options = InteriorPointOptions(T){ .tol = 1e-4 };
+    var result = try interior_point(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.success);
+    const sum = result.x[0] + result.x[1] + result.x[2];
+    try testing.expectApproxEqAbs(@as(T, 6.0), sum, 1e-3);
+    // Should minimize, so x1 should be large, x2 and x3 small
+    try testing.expect(result.x[0] > 4.0); // x1 should be dominant
+}
+
+test "interior_point: convergence within iteration limit" {
+    const allocator = testing.allocator;
+    const T = f64;
+
+    const c = [_]T{ 1.0, 1.0 };
+    const A = [_]T{ 1.0, 1.0 };
+    const b = [_]T{10.0};
+
+    const options = InteriorPointOptions(T){ .max_iter = 50, .tol = 1e-5 };
+    var result = try interior_point(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.success);
+    try testing.expect(result.n_iter < 50);
+}
+
+test "interior_point: f32 type support" {
+    const allocator = testing.allocator;
+    const T = f32;
+
+    const c = [_]T{ 1.0, 2.0 };
+    const A = [_]T{ 1.0, 1.0 };
+    const b = [_]T{5.0};
+
+    const options = InteriorPointOptions(T){ .tol = 1e-3 };
+    var result = try interior_point(T, &c, &A, &b, options, allocator);
+    defer result.deinit(allocator);
+
+    try testing.expect(result.success);
+    try testing.expectApproxEqAbs(@as(T, 5.0), result.x[0] + result.x[1], 1e-2);
+}
+
+test "interior_point: no memory leaks" {
+    const allocator = testing.allocator;
+
+    for (0..3) |_| {
+        const T = f64;
+        const c = [_]T{ 1.0, 2.0 };
+        const A = [_]T{ 1.0, 1.0 };
+        const b = [_]T{5.0};
+
+        const options = InteriorPointOptions(T){};
+        var result = try interior_point(T, &c, &A, &b, options, allocator);
+        result.deinit(allocator);
+    }
+}
