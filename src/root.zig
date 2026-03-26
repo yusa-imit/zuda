@@ -406,6 +406,8 @@ pub const stats = struct {
 pub const signal = struct {
     /// Fast Fourier Transform (FFT) — Cooley-Tukey algorithm for time/frequency domain conversion
     pub const fft = @import("signal/fft.zig");
+    /// SIMD-accelerated FFT operations
+    pub const simd_fft = @import("signal/simd_fft.zig");
     /// 2D Fast Fourier Transform — Row-then-column decomposition for 2D signal/image processing
     pub const fft2d = @import("signal/fft2d.zig");
     /// Window functions for spectral analysis (Hamming, Hann, Blackman, Bartlett, Kaiser)
