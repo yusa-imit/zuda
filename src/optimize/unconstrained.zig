@@ -41,6 +41,8 @@ pub fn ObjectiveFn(comptime T: type) type {
     return fn (x: []const T) T;
 }
 
+/// Gradient function type for optimization
+/// Takes current point x and outputs gradient into out_grad
 pub fn GradientFn(comptime T: type) type {
     return fn (x: []const T, out_grad: []T) void;
 }
