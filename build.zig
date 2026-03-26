@@ -172,6 +172,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_memory_safety_tests = b.addRunArtifact(memory_safety_tests);
 
+    // Cross-module integration tests (Phase 12)
+    const cross_module_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/cross_module_integration.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_cross_module_tests = b.addRunArtifact(cross_module_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
@@ -179,10 +192,15 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_memory_safety_tests.step);
+    test_step.dependOn(&run_cross_module_tests.step);
 
     // Separate step for memory safety audit
     const memory_safety_step = b.step("test-memory", "Run memory safety audit tests");
     memory_safety_step.dependOn(&run_memory_safety_tests.step);
+
+    // Separate step for cross-module integration tests
+    const cross_module_step = b.step("test-integration", "Run cross-module integration tests");
+    cross_module_step.dependOn(&run_cross_module_tests.step);
 
     // Benchmark executables
     const bench_trees = b.addExecutable(.{
