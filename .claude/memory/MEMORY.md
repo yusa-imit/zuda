@@ -1,4 +1,35 @@
-## Latest Session (Session 66, 2026-03-26) — FEATURE MODE
+## Latest Session (Session 67, 2026-03-26) — FEATURE MODE
+- Phase: **v2.0.0 RELEASED** ✅
+- Action: Prepared and published v2.0.0 release — Scientific Computing Platform
+- Release Components:
+  1. **CHANGELOG.md** created — comprehensive release notes for v2.0.0 and all prior releases
+     - v2.0.0 section: 6 new modules, 4600+ tests, 3385 lines of docs, performance metrics
+     - Complete history: v1.16.0-v1.25.0 (scientific computing phases)
+     - Links to all release tags
+  2. **README.md** updated — v2.0 marked as stable, documentation links added
+     - v2.0 moved to top with "Stable" status
+     - Added benchmark counts, test counts, guide links
+     - Updated installation example to v2.0.0
+  3. **build.zig.zon** — version bump 1.25.0 → 2.0.0 (monotonic increase validated)
+  4. **GitHub Release**: https://github.com/yusa-imit/zuda/releases/tag/v2.0.0
+     - Complete feature list (6 modules with counts)
+     - Documentation links (7 guides + NumPy compatibility)
+     - Performance metrics (SIMD speedups, benchmark targets)
+     - Quick start guide and code examples
+     - Migration notes (backward compatible)
+- Release Scope:
+  - 6 new modules: NDArray, linalg, stats, signal, numeric, optimize
+  - 4600+ tests (100% passing)
+  - 3385 lines of documentation (7 tutorial guides + NumPy guide)
+  - 15 benchmarks validating performance targets
+  - SIMD acceleration (4-8× element-wise, 2-4× GEMM)
+  - Backward compatible with v1.x (746 DSA tests unchanged)
+- Commits: 52155d0 (v2.0.0 preparation) → pushed, v2.0.0 tag → pushed ✅
+- CI Status: GREEN (all tests passing, zero issues)
+- Test Count: 4600+ tests (100% success rate)
+- Next: v2.1 planning or consumer migrations
+
+## Previous Session (Session 66, 2026-03-26) — FEATURE MODE
 - Phase: **v2.0.0 IN PROGRESS** (Benchmarks & Documentation)
 - Documentation: Scientific Computing Guides COMPLETE ✅
   - Created docs/guides/ with 7 comprehensive tutorials (3385 lines, 100+ code examples)
@@ -19,7 +50,6 @@
 - Commits: 1932e25 (scientific computing guides) → pushed ✅
 - Test Count: 4600+ tests passing (100% success rate)
 - v2.0.0 Progress: Benchmark suite ✅, Scientific computing guides ✅ (3/4 categories done)
-- Next: API reference documentation (complete function signatures), then v2.0.0 release preparation
 
 ## Previous Session (Session 65, 2026-03-26) — STABILIZATION MODE
 - Phase: **v2.0.0 IN PROGRESS** (Benchmarks & Documentation)
