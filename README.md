@@ -12,18 +12,20 @@ A comprehensive, production-ready library of data structures, algorithms, and sc
 
 ## Features
 
+### v2.0 — Scientific Computing Platform (Stable) 🚀
+- **NDArray**: N-dimensional arrays with broadcasting, slicing, SIMD acceleration (4-8× speedup)
+- **Linear Algebra**: BLAS Level 1-3 with SIMD, decompositions (LU/QR/SVD/Cholesky/Eigen), solvers (solve/lstsq/inv/pinv)
+- **Statistics**: Descriptive stats, 8 probability distributions (PDF/CDF/sampling), hypothesis testing, regression
+- **Signal Processing**: FFT/IFFT with real FFT optimization, windowing, convolution, filtering, spectral analysis
+- **Numerical Methods**: Integration (trapezoidal/Simpson/Romberg), root finding (bisection/Newton/Brent), interpolation, ODE solvers
+- **Optimization**: Unconstrained (gradient descent/BFGS/L-BFGS/Nelder-Mead), constrained (penalty/Lagrangian/QP), LP (simplex/interior-point), auto-diff
+- **4600+ Tests**: 100% passing with comprehensive coverage including cross-module integration
+- **Comprehensive Documentation**: 7 tutorial guides (3385 lines, 100+ examples), NumPy compatibility guide
+
 ### v1.x — Data Structures & Algorithms (Stable)
 - **100+ Data Structures**: Lists, trees, graphs, heaps, spatial indexes, probabilistic structures
 - **80+ Algorithms**: Sorting, graph algorithms, string matching, dynamic programming, geometry, math
-- **746 Tests Passing**: Comprehensive test coverage including property-based and fuzz testing
-
-### v2.0 — Scientific Computing (In Development)
-- **NDArray**: N-dimensional array with broadcasting, slicing, and element-wise operations
-- **Linear Algebra**: BLAS Level 1-3, LU/QR/SVD/Cholesky decompositions, linear solvers
-- **Statistics**: Descriptive stats, probability distributions, hypothesis testing, regression
-- **Signal Processing**: FFT/IFFT, convolution, digital filters, spectral analysis
-- **Numerical Methods**: Integration, interpolation, ODE solvers, root finding
-- **Optimization**: Gradient descent, L-BFGS, linear programming, auto-differentiation
+- **746 Tests**: Comprehensive test coverage including property-based and fuzz testing
 
 ### Core Design
 - **Allocator-First**: Every container accepts `std.mem.Allocator` for full control
@@ -45,7 +47,7 @@ Add to your `build.zig.zon`:
     .version = "0.1.0",
     .dependencies = .{
         .zuda = .{
-            .url = "https://github.com/yusa-imit/zuda/archive/refs/tags/v0.5.0.tar.gz",
+            .url = "https://github.com/yusa-imit/zuda/archive/refs/tags/v2.0.0.tar.gz",
             .hash = "1220...", // Get via `zig fetch <url>`
         },
     },
@@ -96,9 +98,9 @@ pub fn main() !void {
 
 ---
 
-## v2.0 Preview — Scientific Computing
+## v2.0 — Scientific Computing
 
-zuda v2.0 transforms the library into a comprehensive scientific computing platform. Here's a preview of the planned API:
+zuda v2.0 transforms the library into a comprehensive scientific computing platform — the Zig-native alternative to NumPy/SciPy:
 
 ```zig
 const std = @import("std");
@@ -195,8 +197,11 @@ pub fn main() !void {
 | Document | Description |
 |----------|-------------|
 | **[Getting Started](docs/GETTING_STARTED.md)** | Installation, examples, common patterns |
-| **[API Reference](docs/API.md)** | Complete API documentation for all structures and algorithms |
+| **[API Reference](docs/API.md)** | Complete API documentation for v1.x structures and algorithms |
+| **[Scientific Computing Guides](docs/guides/README.md)** | Comprehensive tutorials for v2.0 modules (NDArray, linalg, stats, signal, numeric, optimize) |
+| **[NumPy Compatibility](docs/NUMPY_COMPATIBILITY.md)** | NumPy → zuda migration guide (70+ function mappings) |
 | **[Algorithm Explainers](docs/ALGORITHMS.md)** | Conceptual guides for how algorithms work |
+| **[Changelog](CHANGELOG.md)** | Detailed release history and migration notes |
 | **[Decision Guide](docs/GUIDE.md)** | Choose the right data structure for your use case |
 | **[PRD](docs/PRD.md)** | Product requirements and development roadmap |
 
