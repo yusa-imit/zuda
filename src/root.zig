@@ -444,6 +444,8 @@ pub const optimize = struct {
     pub const constrained = @import("optimize/constrained.zig");
     /// Nonlinear least squares — Levenberg-Marquardt, Gauss-Newton for curve fitting and parameter estimation
     pub const least_squares = @import("optimize/least_squares.zig");
+    /// Auto-differentiation — Forward-mode AD using dual numbers for gradient, Jacobian, Hessian computation
+    pub const autodiff = @import("optimize/autodiff.zig");
 };
 
 /// Internal utilities (not part of public API)
