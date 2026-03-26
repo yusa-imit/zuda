@@ -383,6 +383,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const bench_scientific = b.addExecutable(.{
+        .name = "bench_scientific",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/scientific_computing.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+
     // Install benchmark executables
     b.installArtifact(bench_trees);
     b.installArtifact(bench_heaps);
@@ -399,6 +411,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_hashing);
     b.installArtifact(bench_cache);
     b.installArtifact(bench_cache_profile);
+    b.installArtifact(bench_scientific);
 
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench_trees = b.addRunArtifact(bench_trees);
