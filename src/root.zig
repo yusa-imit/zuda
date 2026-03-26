@@ -360,6 +360,8 @@ pub const ndarray = struct {
 pub const linalg = struct {
     /// BLAS Level 1 — Vector-vector operations
     pub const blas = @import("linalg/blas.zig");
+    /// SIMD-accelerated BLAS operations
+    pub const simd_blas = @import("linalg/simd_blas.zig");
     /// Matrix decompositions — LU, QR, SVD, Cholesky
     pub const decompositions = @import("linalg/decompositions.zig");
     /// LU decomposition with partial pivoting
