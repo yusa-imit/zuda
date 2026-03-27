@@ -321,6 +321,24 @@ pub fn build(b: *std.Build) void {
     kalman_example_step.dependOn(&run_kalman_example.step);
     run_kalman_example.step.dependOn(b.getInstallStep());
 
+    // Anomaly detection example
+    const anomaly_example = b.addExecutable(.{
+        .name = "anomaly_detection",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/anomaly_detection.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(anomaly_example);
+    const run_anomaly_example = b.addRunArtifact(anomaly_example);
+    const anomaly_example_step = b.step("example-anomaly", "Run the anomaly detection example");
+    anomaly_example_step.dependOn(&run_anomaly_example.step);
+    run_anomaly_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
