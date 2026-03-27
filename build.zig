@@ -235,6 +235,23 @@ pub fn build(b: *std.Build) void {
     image_example_step.dependOn(&run_image_example.step);
     run_image_example.step.dependOn(b.getInstallStep());
 
+    // Monte Carlo simulation example
+    const monte_carlo_example = b.addExecutable(.{
+        .name = "monte_carlo_simulation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/monte_carlo_simulation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_monte_carlo_example = b.addRunArtifact(monte_carlo_example);
+    const monte_carlo_example_step = b.step("example-montecarlo", "Run the Monte Carlo simulation example");
+    monte_carlo_example_step.dependOn(&run_monte_carlo_example.step);
+    run_monte_carlo_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
