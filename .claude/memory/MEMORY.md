@@ -1,23 +1,49 @@
-## Latest Session (Session 78, 2026-03-27) — FEATURE MODE
+## Latest Session (Session 83, 2026-03-27) — FEATURE MODE
 - Phase: **v2.0.0 POST-RELEASE** ✅ (Practical Examples Expansion)
 - Actions:
   1. ✅ CI Status: All green on main
   2. ✅ Issues: Zero open issues
-  3. ✅ Time Series Analysis Example:
-     - Created comprehensive time series forecasting workflow (254 lines)
-     - Steps: synthetic data → moving average filter → FFT spectral analysis → polynomial trend fitting → forecasting → residual analysis
-     - Modules integrated: distributions.Normal, NDArray, signal.fft.rfft, linalg.solve.lstsq, stats.descriptive
-     - Demonstrates: noise filtering, frequency domain analysis, least squares regression, R² validation, autocorrelation checks
-     - Executable via `zig build example-timeseries`
-     - File: examples/timeseries_analysis.zig
-     - Output: 128 samples, dominant period detection, R² ≈ 0.91, lag-1 autocorrelation ≈ 0.87
-  4. ✅ Build system: Added `example-timeseries` step to build.zig
+  3. ✅ Image Processing Example:
+     - Created comprehensive computer vision demonstration (400 lines)
+     - Workflow: synthetic image generation → Gaussian blur → Sobel edge detection → histogram analysis → contrast enhancement → quality metrics
+     - Steps: 256×256 Gaussian blobs → separable 5×5 convolution → gradient magnitude → mode/entropy → histogram equalization → PSNR/MSE
+     - Modules integrated: NDArray (2D tensors, indexing), stats.descriptive (mean, stdDev)
+     - Manual implementations: min/max, convolution, Sobel kernels, histogram, CDF normalization
+     - Demonstrates: image processing pipeline, convolution-based filtering, edge detection, histogram-based enhancement
+     - Executable via `zig build example-image`
+     - File: examples/image_processing.zig
+     - Output: Original mean 85.76, PSNR 43.27 dB (blur), edge mean 13.36, enhanced std 65.01
+  4. ✅ Build system: Added `example-image` step to build.zig
   5. ✅ Tests: All tests passing (exit code 0)
 - Commits:
-  - aae09e3: feat(examples): add time series analysis & forecasting demonstration ✅
-- Examples Count: 3 comprehensive examples (scientific workflow, ML pipeline, time series analysis)
-- v2.0.0 Status: Stable, comprehensive docs + 3 diverse practical examples covering all v2.0 modules
-- Next: Additional examples (optimization, ODE solvers, PDE solvers) or consumer migration support
+  - 961715a: feat(examples): add image processing demonstration ✅
+- Examples Count: 7 comprehensive examples (scientific workflow, ML pipeline, time series, physics, optimization, neural network, image processing)
+- v2.0.0 Status: Stable, comprehensive docs + 7 diverse practical examples covering all v2.0 modules + computer vision
+- Next: Additional examples (PDE solvers, signal analysis) or consumer migration support
+
+## Previous Session (Session 82, 2026-03-27) — FEATURE MODE
+- Phase: **v2.0.0 POST-RELEASE** ✅ (Practical Examples Expansion)
+- Actions:
+  1. ✅ CI Status: All green on main
+  2. ✅ Issues: Zero open issues
+  3. ✅ Neural Network/Linear Regression Example:
+     - Created gradient descent demonstration (195 lines)
+     - Workflow: data generation → SGD training → evaluation
+     - Model: y = 3x₁ + 2x₂ + 1 with Gaussian noise
+     - APIs: NDArray (fromSlice, transpose, data), BLAS (gemv), stats (Normal, mean)
+     - Manual backprop: gradient computation, parameter updates
+     - Metrics: R², RMSE from stats.descriptive
+     - Demonstrates complete ML pipeline with v2.0 APIs
+     - Executable via `zig build example-nn`
+     - File: examples/neural_network.zig
+     - Output: 500 epochs, loss convergence, parameter estimation
+  4. ✅ Build system: Added `example-nn` step to build.zig
+  5. ✅ Tests: All tests passing (exit code 0)
+- Commits:
+  - 8a99ae1: feat(examples): add neural network/linear regression demonstration ✅
+- Examples Count: 6 comprehensive examples (scientific workflow, ML pipeline, time series, physics, optimization, neural network)
+- v2.0.0 Status: Stable, comprehensive docs + 6 diverse practical examples covering all v2.0 modules
+- Next: Additional examples or consumer migration support
 
 ## Previous Session (Session 73, 2026-03-27) — FEATURE MODE
 - Phase: **v2.0.0 POST-RELEASE MAINTENANCE** ✅
