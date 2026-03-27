@@ -1,4 +1,31 @@
-## Latest Session (Session 92, 2026-03-28) — FEATURE MODE
+## Latest Session (Session 93, 2026-03-28) — FEATURE MODE
+- Phase: **v2.0.0 POST-RELEASE** ✅ (Practical Examples Expansion)
+- Actions:
+  1. ✅ CI Status: All green on main (3 consecutive successful runs)
+  2. ✅ Issues: Zero open issues
+  3. ✅ Anomaly Detection Example:
+     - Created comprehensive statistical anomaly detection demonstration (323 lines)
+     - Part 1: Z-Score Method (parametric, assumes Gaussian, 3-sigma threshold)
+     - Part 2: MAD Method (Median Absolute Deviation, robust to outliers)
+     - Part 3: IQR Method (Interquartile Range, quartile-based)
+     - Part 4: Time Series Anomaly Detection (smoothing + residual analysis)
+     - Part 5: Multivariate Anomaly Detection (Mahalanobis distance, correlation-aware)
+     - APIs integrated: stats.descriptive (mean, stdDev, median, quantile), stats.distributions.Normal, stats.correlation.pearson, NDArray (fromSlice)
+     - Use cases: Network traffic monitoring, sensor fault detection, fraud detection
+     - Demonstrates: 5 detection methods on synthetic data with injected outliers
+     - Methods compared: Z-score (4/100), MAD (4/100), IQR (4/100), Time Series (5/200), Multivariate (1/50)
+     - Executable via `zig build example-anomaly`
+     - File: examples/anomaly_detection.zig
+     - Output: Detection rates, thresholds, best practices for each method
+  4. ✅ Build system: Added `example-anomaly` step to build.zig
+  5. ✅ Tests: All tests passing (exit code 0)
+- Commits:
+  - 3f9f4fb: feat(examples): add anomaly detection demonstration ✅
+- Examples Count: 13 comprehensive examples (scientific workflow, ML pipeline, time series, physics, optimization, neural network, image processing, Monte Carlo, PDE solver, computational geometry, clustering, Kalman filter, anomaly detection)
+- v2.0.0 Status: Stable, comprehensive docs + 13 diverse examples + active consumer migration
+- Next: Additional examples or consumer migration support
+
+## Previous Session (Session 92, 2026-03-28) — FEATURE MODE
 - Phase: **v2.0.0 POST-RELEASE** ✅ (Practical Examples Expansion)
 - Actions:
   1. ✅ CI Status: All green on main
