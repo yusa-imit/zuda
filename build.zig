@@ -286,6 +286,23 @@ pub fn build(b: *std.Build) void {
     geometry_example_step.dependOn(&run_geometry_example.step);
     run_geometry_example.step.dependOn(b.getInstallStep());
 
+    // K-Means clustering example
+    const clustering_example = b.addExecutable(.{
+        .name = "clustering",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/clustering.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_clustering_example = b.addRunArtifact(clustering_example);
+    const clustering_example_step = b.step("example-clustering", "Run the K-Means clustering example");
+    clustering_example_step.dependOn(&run_clustering_example.step);
+    run_clustering_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
