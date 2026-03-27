@@ -375,6 +375,24 @@ pub fn build(b: *std.Build) void {
     financial_example_step.dependOn(&run_financial_example.step);
     run_financial_example.step.dependOn(b.getInstallStep());
 
+    // Bayesian Inference Example
+    const bayesian_example = b.addExecutable(.{
+        .name = "bayesian_inference",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/bayesian_inference.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(bayesian_example);
+    const run_bayesian_example = b.addRunArtifact(bayesian_example);
+    const bayesian_example_step = b.step("example-bayesian", "Run the Bayesian inference example");
+    bayesian_example_step.dependOn(&run_bayesian_example.step);
+    run_bayesian_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
