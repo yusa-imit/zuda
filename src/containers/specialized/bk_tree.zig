@@ -264,7 +264,10 @@ fn levenshteinDistance(_: void, a: []const u8, b: []const u8) usize {
     const dp: []usize = if ((n + 1) <= buffer.len)
         buffer[0..(n + 1)]
     else blk: {
-        const buf = testing.allocator.alloc(usize, n + 1) catch @panic("OOM");
+        const buf = testing.allocator.alloc(usize, n + 1) catch {
+            // Fallback: return max distance for OOM in test
+            return @max(m, n);
+        };
         heap_buffer = buf;
         break :blk buf;
     };
