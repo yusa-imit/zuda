@@ -393,6 +393,24 @@ pub fn build(b: *std.Build) void {
     bayesian_example_step.dependOn(&run_bayesian_example.step);
     run_bayesian_example.step.dependOn(b.getInstallStep());
 
+    // Control systems example
+    const control_example = b.addExecutable(.{
+        .name = "control_systems",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/control_systems.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(control_example);
+    const run_control_example = b.addRunArtifact(control_example);
+    const control_example_step = b.step("example-control", "Run the control systems example");
+    control_example_step.dependOn(&run_control_example.step);
+    run_control_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
