@@ -252,6 +252,23 @@ pub fn build(b: *std.Build) void {
     monte_carlo_example_step.dependOn(&run_monte_carlo_example.step);
     run_monte_carlo_example.step.dependOn(b.getInstallStep());
 
+    // PDE solver example
+    const pde_example = b.addExecutable(.{
+        .name = "pde_solver",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/pde_solver.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_pde_example = b.addRunArtifact(pde_example);
+    const pde_example_step = b.step("example-pde", "Run the PDE solver example");
+    pde_example_step.dependOn(&run_pde_example.step);
+    run_pde_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
