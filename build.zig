@@ -303,6 +303,24 @@ pub fn build(b: *std.Build) void {
     clustering_example_step.dependOn(&run_clustering_example.step);
     run_clustering_example.step.dependOn(b.getInstallStep());
 
+    // Kalman filter example
+    const kalman_example = b.addExecutable(.{
+        .name = "kalman_filter",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/kalman_filter.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(kalman_example);
+    const run_kalman_example = b.addRunArtifact(kalman_example);
+    const kalman_example_step = b.step("example-kalman", "Run the Kalman filter example");
+    kalman_example_step.dependOn(&run_kalman_example.step);
+    run_kalman_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
