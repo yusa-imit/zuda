@@ -201,6 +201,23 @@ pub fn build(b: *std.Build) void {
     optimization_example_step.dependOn(&run_optimization_example.step);
     run_optimization_example.step.dependOn(b.getInstallStep());
 
+    // Neural network example
+    const nn_example = b.addExecutable(.{
+        .name = "neural_network",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/neural_network.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_nn_example = b.addRunArtifact(nn_example);
+    const nn_example_step = b.step("example-nn", "Run the neural network training example");
+    nn_example_step.dependOn(&run_nn_example.step);
+    run_nn_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
