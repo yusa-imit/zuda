@@ -411,6 +411,24 @@ pub fn build(b: *std.Build) void {
     control_example_step.dependOn(&run_control_example.step);
     run_control_example.step.dependOn(b.getInstallStep());
 
+    // Stochastic processes example
+    const stochastic_example = b.addExecutable(.{
+        .name = "stochastic_processes",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/stochastic_processes.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(stochastic_example);
+    const run_stochastic_example = b.addRunArtifact(stochastic_example);
+    const stochastic_example_step = b.step("example-stochastic", "Run the stochastic processes example");
+    stochastic_example_step.dependOn(&run_stochastic_example.step);
+    run_stochastic_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
