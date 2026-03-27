@@ -167,6 +167,23 @@ pub fn build(b: *std.Build) void {
     timeseries_example_step.dependOn(&run_timeseries_example.step);
     run_timeseries_example.step.dependOn(b.getInstallStep());
 
+    // Physics simulation example
+    const physics_example = b.addExecutable(.{
+        .name = "physics_simulation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/physics_simulation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_physics_example = b.addRunArtifact(physics_example);
+    const physics_example_step = b.step("example-physics", "Run the physics simulation example");
+    physics_example_step.dependOn(&run_physics_example.step);
+    run_physics_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
