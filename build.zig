@@ -133,6 +133,23 @@ pub fn build(b: *std.Build) void {
     example_step.dependOn(&run_scientific_example.step);
     run_scientific_example.step.dependOn(b.getInstallStep());
 
+    // Machine learning pipeline example
+    const ml_example = b.addExecutable(.{
+        .name = "ml_pipeline",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/ml_pipeline.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_ml_example = b.addRunArtifact(ml_example);
+    const ml_example_step = b.step("example-ml", "Run the machine learning pipeline example");
+    ml_example_step.dependOn(&run_ml_example.step);
+    run_ml_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
