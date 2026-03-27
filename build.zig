@@ -150,6 +150,23 @@ pub fn build(b: *std.Build) void {
     ml_example_step.dependOn(&run_ml_example.step);
     run_ml_example.step.dependOn(b.getInstallStep());
 
+    // Time series analysis example
+    const timeseries_example = b.addExecutable(.{
+        .name = "timeseries_analysis",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/timeseries_analysis.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_timeseries_example = b.addRunArtifact(timeseries_example);
+    const timeseries_example_step = b.step("example-timeseries", "Run the time series analysis example");
+    timeseries_example_step.dependOn(&run_timeseries_example.step);
+    run_timeseries_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
