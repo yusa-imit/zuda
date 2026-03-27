@@ -269,6 +269,23 @@ pub fn build(b: *std.Build) void {
     pde_example_step.dependOn(&run_pde_example.step);
     run_pde_example.step.dependOn(b.getInstallStep());
 
+    // Computational geometry example
+    const geometry_example = b.addExecutable(.{
+        .name = "computational_geometry",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/computational_geometry.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_geometry_example = b.addRunArtifact(geometry_example);
+    const geometry_example_step = b.step("example-geometry", "Run the computational geometry example");
+    geometry_example_step.dependOn(&run_geometry_example.step);
+    run_geometry_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
