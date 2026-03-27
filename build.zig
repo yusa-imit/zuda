@@ -218,6 +218,23 @@ pub fn build(b: *std.Build) void {
     nn_example_step.dependOn(&run_nn_example.step);
     run_nn_example.step.dependOn(b.getInstallStep());
 
+    // Image processing example
+    const image_example = b.addExecutable(.{
+        .name = "image_processing",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/image_processing.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    const run_image_example = b.addRunArtifact(image_example);
+    const image_example_step = b.step("example-image", "Run the image processing example");
+    image_example_step.dependOn(&run_image_example.step);
+    run_image_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
