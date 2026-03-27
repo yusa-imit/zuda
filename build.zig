@@ -357,6 +357,24 @@ pub fn build(b: *std.Build) void {
     signal_example_step.dependOn(&run_signal_example.step);
     run_signal_example.step.dependOn(b.getInstallStep());
 
+    // Financial Modeling Example
+    const financial_example = b.addExecutable(.{
+        .name = "financial_modeling",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/financial_modeling.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(financial_example);
+    const run_financial_example = b.addRunArtifact(financial_example);
+    const financial_example_step = b.step("example-financial", "Run the financial modeling example");
+    financial_example_step.dependOn(&run_financial_example.step);
+    run_financial_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
