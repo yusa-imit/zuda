@@ -289,6 +289,9 @@ pub const algorithms = struct {
     /// Graph coloring algorithms (greedy heuristics, exact backtracking)
     pub const graph_coloring = @import("algorithms/graph_coloring.zig");
 
+    /// Cache algorithms (eviction policies for bounded memory)
+    pub const cache = @import("algorithms/cache.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
