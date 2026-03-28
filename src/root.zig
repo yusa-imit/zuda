@@ -277,6 +277,9 @@ pub const algorithms = struct {
     /// Approximation algorithms for NP-hard problems
     pub const approximation = @import("algorithms/approximation.zig");
 
+    /// Network flow algorithms (max flow, min cut, bipartite matching)
+    pub const network_flow = @import("algorithms/network_flow.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
