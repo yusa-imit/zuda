@@ -259,6 +259,9 @@ pub const algorithms = struct {
         pub const GeohashDirection = @import("algorithms/geometry/geohash.zig").Direction;
     };
 
+    /// Bitwise manipulation algorithms
+    pub const bitwise = @import("algorithms/bitwise.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
