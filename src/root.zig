@@ -286,6 +286,9 @@ pub const algorithms = struct {
     /// Computational biology algorithms (sequence alignment, pattern matching, molecular biology)
     pub const computational_biology = @import("algorithms/computational_biology.zig");
 
+    /// Graph coloring algorithms (greedy heuristics, exact backtracking)
+    pub const graph_coloring = @import("algorithms/graph_coloring.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
