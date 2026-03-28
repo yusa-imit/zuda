@@ -268,6 +268,9 @@ pub const algorithms = struct {
     /// Backtracking algorithms
     pub const backtracking = @import("algorithms/backtracking.zig");
 
+    /// Divide-and-conquer algorithms
+    pub const divide_conquer = @import("algorithms/divide_conquer.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
