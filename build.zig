@@ -429,6 +429,24 @@ pub fn build(b: *std.Build) void {
     stochastic_example_step.dependOn(&run_stochastic_example.step);
     run_stochastic_example.step.dependOn(b.getInstallStep());
 
+    // Example: Robotics & Motion Planning
+    const robotics_example = b.addExecutable(.{
+        .name = "robotics",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/robotics.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(robotics_example);
+    const run_robotics_example = b.addRunArtifact(robotics_example);
+    const robotics_example_step = b.step("example-robotics", "Run the robotics & motion planning example");
+    robotics_example_step.dependOn(&run_robotics_example.step);
+    run_robotics_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
