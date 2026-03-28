@@ -262,6 +262,9 @@ pub const algorithms = struct {
     /// Bitwise manipulation algorithms
     pub const bitwise = @import("algorithms/bitwise.zig");
 
+    /// Greedy algorithms
+    pub const greedy = @import("algorithms/greedy.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
