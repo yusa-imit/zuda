@@ -274,6 +274,9 @@ pub const algorithms = struct {
     /// Randomized algorithms
     pub const randomized = @import("algorithms/randomized.zig");
 
+    /// Approximation algorithms for NP-hard problems
+    pub const approximation = @import("algorithms/approximation.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
