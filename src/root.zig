@@ -280,6 +280,9 @@ pub const algorithms = struct {
     /// Network flow algorithms (max flow, min cut, bipartite matching)
     pub const network_flow = @import("algorithms/network_flow.zig");
 
+    /// Number theory algorithms (GCD, modular arithmetic, primes, factorization)
+    pub const number_theory = @import("algorithms/number_theory.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
