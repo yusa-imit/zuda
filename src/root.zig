@@ -298,6 +298,9 @@ pub const algorithms = struct {
     /// Online algorithms (streaming, competitive analysis, partial information)
     pub const online = @import("algorithms/online.zig");
 
+    /// Compression algorithms (lossless data compression)
+    pub const compression = @import("algorithms/compression.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
