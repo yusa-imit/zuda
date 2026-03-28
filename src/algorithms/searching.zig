@@ -5,6 +5,8 @@
 pub const binary_search = @import("searching/binary_search.zig");
 pub const interpolation_search = @import("searching/interpolation_search.zig");
 pub const ternary_search = @import("searching/ternary_search.zig");
+pub const jump_search = @import("searching/jump_search.zig");
+pub const fibonacci_search = @import("searching/fibonacci_search.zig");
 
 // Re-export commonly used functions for convenience
 pub const binarySearch = binary_search.binarySearch;
@@ -18,3 +20,6 @@ pub const ternarySearchMin = ternary_search.ternarySearchMin;
 pub const ternarySearchMaxContinuous = ternary_search.ternarySearchMaxContinuous;
 pub const ternarySearchMinContinuous = ternary_search.ternarySearchMinContinuous;
 pub const TernaryResult = ternary_search.TernaryResult;
+pub const jumpSearch = jump_search.jumpSearch;
+pub const jumpSearchCustom = jump_search.jumpSearchCustom;
+pub const fibonacciSearch = fibonacci_search.fibonacciSearch;
