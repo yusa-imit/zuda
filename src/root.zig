@@ -295,6 +295,9 @@ pub const algorithms = struct {
     /// Automata algorithms (finite state machines, pattern matching)
     pub const automata = @import("algorithms/automata.zig");
 
+    /// Online algorithms (streaming, competitive analysis, partial information)
+    pub const online = @import("algorithms/online.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
