@@ -2,6 +2,7 @@
 //!
 //! This module provides efficient search algorithms for sorted and unsorted data.
 
+pub const linear_search = @import("searching/linear_search.zig");
 pub const binary_search = @import("searching/binary_search.zig");
 pub const interpolation_search = @import("searching/interpolation_search.zig");
 pub const ternary_search = @import("searching/ternary_search.zig");
@@ -9,6 +10,12 @@ pub const jump_search = @import("searching/jump_search.zig");
 pub const fibonacci_search = @import("searching/fibonacci_search.zig");
 
 // Re-export commonly used functions for convenience
+pub const linearSearch = linear_search.linearSearch;
+pub const linearSearchBy = linear_search.linearSearchBy;
+pub const sentinelLinearSearch = linear_search.sentinelLinearSearch;
+pub const linearSearchLast = linear_search.linearSearchLast;
+pub const linearSearchAll = linear_search.linearSearchAll;
+pub const linearSearchCount = linear_search.linearSearchCount;
 pub const binarySearch = binary_search.binarySearch;
 pub const lowerBound = binary_search.lowerBound;
 pub const upperBound = binary_search.upperBound;
