@@ -283,6 +283,9 @@ pub const algorithms = struct {
     /// Number theory algorithms (GCD, modular arithmetic, primes, factorization)
     pub const number_theory = @import("algorithms/number_theory.zig");
 
+    /// Computational biology algorithms (sequence alignment, pattern matching, molecular biology)
+    pub const computational_biology = @import("algorithms/computational_biology.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
