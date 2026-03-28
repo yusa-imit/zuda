@@ -1,29 +1,52 @@
-## Latest Session (Session 111, 2026-03-28) — FEATURE MODE
+## Latest Session (Session 117, 2026-03-29) — FEATURE MODE (Number Theory Algorithms)
 - Phase: **v2.0.0 POST-RELEASE** ✅ (Core Algorithm Expansion)
 - Actions:
   1. ✅ CI Status: All green on main (3 consecutive successes)
   2. ✅ Issues: Zero open issues
-  3. ✅ Backtracking Algorithms Implementation:
-     - Created NEW algorithm category: backtracking algorithms
-     - Implemented 5 classic backtracking problems with 35 comprehensive tests
+  3. ✅ Number Theory Algorithms Implementation:
+     - Created NEW algorithm category: number theory algorithms (15th category)
+     - Implemented 19 fundamental number theory algorithms with 57 comprehensive tests
      - Algorithms:
-       * N-Queens (5 tests): Place N queens on NxN board with no attacks (O(N!) with pruning, 92 solutions for 8x8)
-       * Sudoku (6 tests): Solve 9x9 puzzles with constraint checking (O(9^(n*n)) with pruning)
-       * Permutations (7 tests): All orderings (O(N! * N)), handles duplicates with sorting + pruning
-       * Subsets (9 tests): Power set (O(N * 2^N)), size-K subsets (C(N,K)), handles duplicates
-       * Combination Sum (8 tests): Find combinations summing to target (O(N^(T/M))), with/without reuse
-     - Time complexity: O(N!) to O(2^N) depending on problem (exponential with heavy pruning)
-     - Space complexity: O(N) for recursion stack + result storage
-     - Use cases: constraint satisfaction, combinatorial optimization, puzzle solving
-     - Files: src/algorithms/backtracking/*.zig (5 files), src/algorithms/backtracking.zig (module index)
-     - Updated src/root.zig to export backtracking module
-  4. ✅ Tests: All tests passing (exit code 0) — 35 new tests added
+       * GCD & Extended Euclidean (5 functions, 18 tests): gcd(), lcm(), extendedGcd(), modInverse(), solveDiophantine()
+       * Modular Arithmetic (6 functions, 18 tests): modPow(), modAdd/Sub/Mul(), crt() (Chinese Remainder Theorem), eulerTotient(), fibonacci()
+       * Prime Numbers (8 functions, 21 tests): isPrime(), sieveOfEratosthenes(), primeFactorization(), countDivisors(), sumOfDivisors(), nextPrime(), largestPrimeFactor(), isPerfectPower()
+     - Time complexity: O(log n) to O(n log log n) depending on algorithm
+     - Space complexity: O(1) to O(n) for sieve
+     - Use cases: cryptography (RSA, Diffie-Hellman), modular arithmetic, solving congruences, prime generation, factorization
+     - Files: src/algorithms/number_theory/*.zig (3 files), number_theory.zig (module index)
+     - Updated src/root.zig to export number_theory module
+  4. ✅ Tests: All tests passing (exit code 0) — 57 new tests added
 - Commits:
-  - ff52e22: feat(algorithms): add comprehensive backtracking algorithms ✅
-- Library Status: 100+ data structures, 101+ algorithms (added 5 backtracking algorithms in 1 new category)
-- Algorithm Categories: 10 total (sorting, searching, graph, string, DP, math, geometry, bitwise, greedy, **backtracking**)
+  - 37c449a: feat(algorithms): add comprehensive number theory algorithms ✅
+- Library Status: 100+ data structures, 113+ algorithms (added 19 number theory algorithms in 1 new category)
+- Algorithm Categories: 15 total (sorting, searching, graph, string, DP, math, geometry, bitwise, greedy, backtracking, divide-conquer, randomized, approximation, network_flow, **number_theory**)
 - v2.0.0 Status: Stable, comprehensive docs + 19 examples + expanding algorithm library
-- Next: Additional algorithm categories (divide-and-conquer) or other improvements
+- Next: Additional algorithm categories (computational biology, advanced geometry) or other improvements
+
+## Previous Session (Session 116, 2026-03-29) — FEATURE MODE (Network Flow Algorithms)
+- Phase: **v2.0.0 POST-RELEASE** ✅ (Core Algorithm Expansion)
+- Actions:
+  1. ✅ CI Status: All green on main (latest run successful)
+  2. ✅ Issues: Zero open issues
+  3. ✅ Network Flow Algorithms Implementation:
+     - Created NEW algorithm category: network flow algorithms
+     - Implemented 3 fundamental max flow algorithms with 43 comprehensive tests
+     - Algorithms:
+       * Ford-Fulkerson (13 tests): DFS-based, O(E × max_flow) time, includes minCut() for min-cut computation
+       * Edmonds-Karp (14 tests): BFS-based, O(V × E²) guaranteed polynomial time, includes getFlowMatrix()
+       * Dinic's Algorithm (16 tests): Level graph + blocking flow, O(V² × E) general / O(E × √V) unit capacity, includes maxBipartiteMatching()
+     - Time complexity: O(E × max_flow) to O(E × √V) depending on algorithm and network structure
+     - Space complexity: O(V) to O(V²) for residual graph and auxiliary structures
+     - Use cases: max flow / min cut, bipartite matching (job assignment, resource allocation), network capacity analysis
+     - Files: src/algorithms/network_flow/*.zig (3 files), network_flow.zig (module index)
+     - Updated src/root.zig to export network_flow module
+  4. ✅ Tests: All tests passing (exit code 0) — 43 new tests added
+- Commits:
+  - 9a2871b: feat(algorithms): add comprehensive network flow algorithms ✅
+- Library Status: 100+ data structures, 110+ algorithms (added 3 network flow algorithms in 1 new category)
+- Algorithm Categories: 14 total (sorting, searching, graph, string, DP, math, geometry, bitwise, greedy, backtracking, divide-conquer, randomized, approximation, **network_flow**)
+- v2.0.0 Status: Stable, comprehensive docs + 19 examples + expanding algorithm library
+- Next: Additional algorithm categories (computational biology, advanced number theory) or other improvements
 
 ## Previous Session (Session 102, 2026-03-28) — FEATURE MODE
 - Phase: **v2.0.0 POST-RELEASE** ✅ (System Maintenance)
