@@ -265,6 +265,9 @@ pub const algorithms = struct {
     /// Greedy algorithms
     pub const greedy = @import("algorithms/greedy.zig");
 
+    /// Backtracking algorithms
+    pub const backtracking = @import("algorithms/backtracking.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
