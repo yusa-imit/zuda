@@ -271,6 +271,9 @@ pub const algorithms = struct {
     /// Divide-and-conquer algorithms
     pub const divide_conquer = @import("algorithms/divide_conquer.zig");
 
+    /// Randomized algorithms
+    pub const randomized = @import("algorithms/randomized.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
