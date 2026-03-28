@@ -292,6 +292,9 @@ pub const algorithms = struct {
     /// Cache algorithms (eviction policies for bounded memory)
     pub const cache = @import("algorithms/cache.zig");
 
+    /// Automata algorithms (finite state machines, pattern matching)
+    pub const automata = @import("algorithms/automata.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
