@@ -164,9 +164,7 @@ pub const algorithms = struct {
     };
 
     /// Searching algorithms
-    pub const searching = struct {
-        // TODO: Binary search variants, etc. will be added here
-    };
+    pub const searching = @import("algorithms/searching.zig");
 
     /// Graph algorithms
     pub const graph = struct {
