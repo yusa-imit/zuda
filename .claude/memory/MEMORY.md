@@ -1,4 +1,36 @@
-## Latest Session (Session 117, 2026-03-29) — FEATURE MODE (Number Theory Algorithms)
+## Latest Session (Session 118, 2026-03-29) — FEATURE MODE (Computational Biology Algorithms)
+- Phase: **v2.0.0 POST-RELEASE** ✅ (Core Algorithm Expansion)
+- Actions:
+  1. ✅ CI Status: All green on main (3 consecutive successes)
+  2. ✅ Issues: Zero open issues
+  3. ✅ Computational Biology Algorithms Implementation:
+     - Created NEW algorithm category: computational biology (16th category)
+     - Implemented 7 bioinformatics algorithms with 39 comprehensive tests
+     - Algorithms:
+       * Sequence Alignment (2 algorithms, 14 tests):
+         - needlemanWunsch(): Global alignment O(mn) time/space, DP traceback
+         - smithWaterman(): Local alignment O(mn) time/space, conserved regions
+       * Pattern Matching & Molecular Biology (5 functions, 25 tests):
+         - findPattern(): KMP motif finding O(n+m), restriction sites
+         - reverseComplement(): DNA complement O(n), palindromic sites
+         - gcContent(): GC percentage O(n) time, O(1) space
+         - transcribe(): DNA→RNA conversion O(n)
+         - translate(): RNA→protein O(n/3), full genetic code (64 codons)
+     - Features: DNA_SCORE/PROTEIN_SCORE schemes, standard genetic code, memory-safe
+     - Time complexity: O(n+m) for pattern matching, O(mn) for alignment, O(n) for molecular ops
+     - Space complexity: O(mn) for alignment DP tables, O(m) for KMP LPS, O(n) for conversions
+     - Use cases: sequence comparison, motif discovery, gene annotation, restriction mapping, evolutionary analysis
+     - Files: src/algorithms/computational_biology/*.zig (2 files, 838 lines), computational_biology.zig (module index)
+     - Updated src/root.zig to export computational_biology module
+  4. ✅ Tests: All tests passing (exit code 0) — 39 new tests added
+- Commits:
+  - 4595daf: feat(algorithms): add comprehensive computational biology algorithms ✅
+- Library Status: 100+ data structures, 120+ algorithms (added 7 computational biology algorithms in 1 new category)
+- Algorithm Categories: 16 total (sorting, searching, graph, string, DP, math, geometry, bitwise, greedy, backtracking, divide-conquer, randomized, approximation, network_flow, number_theory, **computational_biology**)
+- v2.0.0 Status: Stable, comprehensive docs + 19 examples + expanding algorithm library
+- Next: Additional algorithm categories (advanced geometry, graph coloring, string indexing) or other improvements
+
+## Previous Session (Session 117, 2026-03-29) — FEATURE MODE (Number Theory Algorithms)
 - Phase: **v2.0.0 POST-RELEASE** ✅ (Core Algorithm Expansion)
 - Actions:
   1. ✅ CI Status: All green on main (3 consecutive successes)
