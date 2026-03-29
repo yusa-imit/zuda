@@ -13,6 +13,7 @@
 ///   - Support Vector Machine (SVM): Maximum margin classification with SMO (O(n²×iter) training)
 ///   - Random Forest: Ensemble learning with bagging and random features (O(n_trees × nm log n) training)
 ///   - Gradient Boosting: Sequential ensemble learning with gradient descent (O(n_trees × nmd) training)
+///   - Logistic Regression: Linear classification with sigmoid function (O(n_iter × nm) training)
 ///
 /// Future additions:
 /// - Principal Component Analysis (PCA) for dimensionality reduction
@@ -39,3 +40,4 @@ pub const GaussianNaiveBayes = @import("machine_learning/naive_bayes.zig").Gauss
 pub const SVM = @import("machine_learning/svm.zig").SVM;
 pub const RandomForest = @import("machine_learning/random_forest.zig").RandomForest;
 pub const GradientBoosting = @import("machine_learning/gradient_boosting.zig").GradientBoosting;
+pub const LogisticRegression = @import("machine_learning/logistic_regression.zig").LogisticRegression;
