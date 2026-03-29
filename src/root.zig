@@ -301,6 +301,9 @@ pub const algorithms = struct {
     /// Compression algorithms (lossless data compression)
     pub const compression = @import("algorithms/compression.zig");
 
+    /// Parallel algorithms (multi-threaded data processing)
+    pub const parallel = @import("algorithms/parallel.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
