@@ -21,6 +21,7 @@
 ///   - Polynomial Regression: Non-linear modeling via polynomial features (O(np² + p³) OLS where p = poly features)
 ///   - Ridge Regression: L2 regularized regression for handling multicollinearity (O(nm² + m³) training)
 ///   - Lasso Regression: L1 regularized regression for feature selection and sparsity (O(n_iter × nm) coordinate descent)
+///   - Elastic Net Regression: Combined L1+L2 regularization for balanced sparsity and shrinkage (O(n_iter × nm) coordinate descent)
 ///
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
@@ -56,6 +57,7 @@ pub const LinearRegression = @import("machine_learning/linear_regression.zig").L
 pub const PolynomialRegression = @import("machine_learning/polynomial_regression.zig").PolynomialRegression;
 pub const RidgeRegression = @import("machine_learning/ridge_regression.zig").RidgeRegression;
 pub const LassoRegression = @import("machine_learning/lasso_regression.zig").LassoRegression;
+pub const ElasticNetRegression = @import("machine_learning/elastic_net_regression.zig").ElasticNetRegression;
 
 // Dimensionality reduction algorithms
 pub const PCA = @import("machine_learning/pca.zig").PCA;
