@@ -16,6 +16,9 @@
 ///   - Logistic Regression: Linear classification with sigmoid function (O(n_iter × nm) training)
 ///   - AdaBoost: Adaptive boosting with weighted weak learners (O(n_learners × nm log n) training)
 ///
+/// - **Regression** (Supervised): Predict continuous values
+///   - Linear Regression: OLS or gradient descent for continuous prediction (O(nm² + m³) OLS, O(n_iter × nm) GD)
+///
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
 ///
@@ -44,6 +47,9 @@ pub const RandomForest = @import("machine_learning/random_forest.zig").RandomFor
 pub const GradientBoosting = @import("machine_learning/gradient_boosting.zig").GradientBoosting;
 pub const LogisticRegression = @import("machine_learning/logistic_regression.zig").LogisticRegression;
 pub const AdaBoost = @import("machine_learning/adaboost.zig").AdaBoost;
+
+// Regression algorithms
+pub const LinearRegression = @import("machine_learning/linear_regression.zig").LinearRegression;
 
 // Dimensionality reduction algorithms
 pub const PCA = @import("machine_learning/pca.zig").PCA;
