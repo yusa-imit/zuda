@@ -11,11 +11,12 @@
 ///   - Decision Trees: Recursive partitioning with multiple criteria (O(nm log n) training)
 ///   - Naive Bayes: Probabilistic classification with independence assumptions (O(nm) training)
 ///   - Support Vector Machine (SVM): Maximum margin classification with SMO (O(n²×iter) training)
+///   - Random Forest: Ensemble learning with bagging and random features (O(n_trees × nm log n) training)
 ///
 /// Future additions:
 /// - Principal Component Analysis (PCA) for dimensionality reduction
-/// - Random Forest for ensemble learning
 /// - Neural Networks for deep learning
+/// - Gradient Boosting for ensemble learning
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means)
@@ -35,3 +36,4 @@ pub const KNN = @import("machine_learning/knn.zig").KNN;
 pub const DecisionTree = @import("machine_learning/decision_tree.zig").DecisionTree;
 pub const GaussianNaiveBayes = @import("machine_learning/naive_bayes.zig").GaussianNaiveBayes;
 pub const SVM = @import("machine_learning/svm.zig").SVM;
+pub const RandomForest = @import("machine_learning/random_forest.zig").RandomForest;
