@@ -304,6 +304,9 @@ pub const algorithms = struct {
     /// Parallel algorithms (multi-threaded data processing)
     pub const parallel = @import("algorithms/parallel.zig");
 
+    /// Streaming algorithms (single-pass, sublinear space)
+    pub const streaming = @import("algorithms/streaming.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
