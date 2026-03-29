@@ -12,11 +12,12 @@
 ///   - Naive Bayes: Probabilistic classification with independence assumptions (O(nm) training)
 ///   - Support Vector Machine (SVM): Maximum margin classification with SMO (O(n²×iter) training)
 ///   - Random Forest: Ensemble learning with bagging and random features (O(n_trees × nm log n) training)
+///   - Gradient Boosting: Sequential ensemble learning with gradient descent (O(n_trees × nmd) training)
 ///
 /// Future additions:
 /// - Principal Component Analysis (PCA) for dimensionality reduction
 /// - Neural Networks for deep learning
-/// - Gradient Boosting for ensemble learning
+/// - Adaptive Boosting (AdaBoost) for ensemble learning
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means)
@@ -37,3 +38,4 @@ pub const DecisionTree = @import("machine_learning/decision_tree.zig").DecisionT
 pub const GaussianNaiveBayes = @import("machine_learning/naive_bayes.zig").GaussianNaiveBayes;
 pub const SVM = @import("machine_learning/svm.zig").SVM;
 pub const RandomForest = @import("machine_learning/random_forest.zig").RandomForest;
+pub const GradientBoosting = @import("machine_learning/gradient_boosting.zig").GradientBoosting;
