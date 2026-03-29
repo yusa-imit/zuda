@@ -20,6 +20,7 @@
 ///   - Linear Regression: OLS or gradient descent for continuous prediction (O(nm² + m³) OLS, O(n_iter × nm) GD)
 ///   - Polynomial Regression: Non-linear modeling via polynomial features (O(np² + p³) OLS where p = poly features)
 ///   - Ridge Regression: L2 regularized regression for handling multicollinearity (O(nm² + m³) training)
+///   - Lasso Regression: L1 regularized regression for feature selection and sparsity (O(n_iter × nm) coordinate descent)
 ///
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
@@ -54,6 +55,7 @@ pub const AdaBoost = @import("machine_learning/adaboost.zig").AdaBoost;
 pub const LinearRegression = @import("machine_learning/linear_regression.zig").LinearRegression;
 pub const PolynomialRegression = @import("machine_learning/polynomial_regression.zig").PolynomialRegression;
 pub const RidgeRegression = @import("machine_learning/ridge_regression.zig").RidgeRegression;
+pub const LassoRegression = @import("machine_learning/lasso_regression.zig").LassoRegression;
 
 // Dimensionality reduction algorithms
 pub const PCA = @import("machine_learning/pca.zig").PCA;
