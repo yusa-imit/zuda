@@ -307,6 +307,9 @@ pub const algorithms = struct {
     /// Streaming algorithms (single-pass, sublinear space)
     pub const streaming = @import("algorithms/streaming.zig");
 
+    /// Machine learning algorithms (clustering, classification, pattern recognition)
+    pub const machine_learning = @import("algorithms/machine_learning.zig");
+
     /// Dynamic programming utilities
     pub const dynamic_programming = struct {
         // Longest Increasing Subsequence
