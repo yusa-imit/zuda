@@ -1,21 +1,57 @@
 # zuda Project Context
 
 ## Current Status
-- **Version**: 1.23.0 (current)
-- **Phase**: v2.0 Track — Phase 11 IN PROGRESS (Optimization)
+- **Version**: 2.0.0 (current — released 2026-03-26)
+- **Phase**: v2.0.0 POST-RELEASE — Core Algorithm Expansion (Machine Learning)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-26 Session 53)
-- **Latest Milestone**: v1.23.0 ✅ — Numerical Methods (Integration, Differentiation, Interpolation) RELEASED (2026-03-24)
-- **Current Milestone**: Phase 11 (Optimization) — Linear Programming COMPLETE ✅ (2/2: simplex ✅, interior_point ✅)
-- **Next Priority**: Phase 11 (Optimization) — Sequential Quadratic Programming (SQP) for nonlinear constrained optimization
-- **Test Count**: 2455 tests passing (+8 interior_point from Session 53, all passing)
+- **Last CI Status**: ✅ GREEN (verified 2026-03-30 Session 141)
+- **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
+- **Current Focus**: Machine Learning Algorithms Expansion (10 algorithms implemented)
+- **Next Priority**: Additional ML algorithms (Neural Networks) or other algorithm categories
+- **Test Count**: 5460 tests passing (+14 AdaBoost from Session 141, all passing)
   - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 282 optimize (line_search 35 + gradient_descent 28 + conjugate_gradient 34 + bfgs 34 + lbfgs 32 + nelder_mead 29 + penalty_method 20 + augmented_lagrangian 21 + levenberg_marquardt 10 + gauss_newton 16 + quadratic_programming 25 + simplex 19 + interior_point 8) + ndarray + containers + algorithms + internal
   - Skipped: 4 (2 Normal quantile, 2 correlation empty array)
   - Failed: 6 (3 nelder_mead edge cases, 3 penalty_method complex multi-constraint problems)
   - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained ✅ (5/5), Constrained ✅ (3/3), Least Squares ✅ (2/2), Linear Programming ✅ (2/2), Auto-diff (0/4)
 - **System Status**: STABLE — 2455/2461 tests passing (99.76%)
 
-## Recent Progress (Session 2026-03-26 - Session 53)
+## Recent Progress (Session 2026-03-30 - Session 141)
+**FEATURE MODE:**
+
+### AdaBoost Implementation (commit b506960) ✅
+- ✅ **Algorithm**: AdaBoost.M1 (Adaptive Boosting) for binary classification
+- ✅ **Features**:
+  - Sequential training of weak learners with exponential loss
+  - Sample weight updates: w_i = w_i × exp(-alpha × y_i × h_t(x_i))
+  - Learner weights (alpha): 0.5 × log((1 - error) / error)
+  - Weighted voting for final predictions
+  - Early stopping when error ≥ 0.5 (worse than random)
+  - Epsilon smoothing for perfect classification (error = 0)
+  - Decision function for confidence scores
+- ✅ **Configuration**:
+  - n_learners: Number of weak learners (default: 50)
+  - max_depth: Depth of decision stumps (default: 1)
+  - learning_rate: Shrinkage parameter (default: 1.0)
+  - random_seed: For reproducibility (default: 42)
+- ✅ **Methods**: fit(), predict(), predictBatch(), decisionFunction(), score()
+- ✅ **Type support**: f32/f64 via comptime generics
+- ✅ **Time complexity**: O(n_learners × n × m × log n) training, O(n_learners × depth) prediction
+- ✅ **Space complexity**: O(n_learners × nodes + n) for learners and sample weights
+- ✅ **Tests**: 14/14 passing (100%)
+  - Initialization and cleanup
+  - Linearly separable data (perfect accuracy)
+  - Non-linear problems (XOR with deeper trees)
+  - Decision function values
+  - Batch prediction
+  - Error handling (empty data, mismatched dimensions, invalid labels)
+  - Learning rate effects
+  - Stump vs deeper trees comparison
+  - Memory safety with testing.allocator
+- ✅ **Implementation**: src/algorithms/machine_learning/adaboost.zig (534 lines)
+- ✅ **Commit**: b506960 "feat(algorithms): add AdaBoost ensemble learning"
+- ✅ **ML Progress**: 10 algorithms (K-Means, KNN, Decision Trees, Naive Bayes, SVM, Random Forest, Gradient Boosting, Logistic Regression, PCA, **AdaBoost**)
+
+## Previous Progress (Session 2026-03-26 - Session 53)
 **FEATURE MODE:**
 
 ### Interior Point Method Implementation (commit 1268832) ✅
