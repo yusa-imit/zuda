@@ -4,18 +4,107 @@
 - **Version**: 2.0.0 (current — released 2026-03-26)
 - **Phase**: v2.0.0 POST-RELEASE — Core Algorithm Expansion (Machine Learning)
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-30 Session 141)
+- **Last CI Status**: ✅ GREEN (verified 2026-03-30 Session 143)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
-- **Current Focus**: Machine Learning Algorithms Expansion (10 algorithms implemented)
-- **Next Priority**: Additional ML algorithms (Neural Networks) or other algorithm categories
-- **Test Count**: 5460 tests passing (+14 AdaBoost from Session 141, all passing)
+- **Current Focus**: Machine Learning Algorithms Expansion (12 algorithms implemented)
+- **Next Priority**: Additional ML algorithms (Neural Networks, clustering variants) or other algorithm categories
+- **Test Count**: 5488 tests passing (+14 Polynomial Regression from Session 143, all passing)
   - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 282 optimize (line_search 35 + gradient_descent 28 + conjugate_gradient 34 + bfgs 34 + lbfgs 32 + nelder_mead 29 + penalty_method 20 + augmented_lagrangian 21 + levenberg_marquardt 10 + gauss_newton 16 + quadratic_programming 25 + simplex 19 + interior_point 8) + ndarray + containers + algorithms + internal
   - Skipped: 4 (2 Normal quantile, 2 correlation empty array)
   - Failed: 6 (3 nelder_mead edge cases, 3 penalty_method complex multi-constraint problems)
   - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained ✅ (5/5), Constrained ✅ (3/3), Least Squares ✅ (2/2), Linear Programming ✅ (2/2), Auto-diff (0/4)
 - **System Status**: STABLE — 2455/2461 tests passing (99.76%)
 
-## Recent Progress (Session 2026-03-30 - Session 141)
+## Recent Progress (Session 2026-03-30 - Session 143)
+**FEATURE MODE:**
+
+### Polynomial Regression Implementation (commit 3da9624) ✅
+- ✅ **Algorithm**: Polynomial Regression for non-linear modeling
+- ✅ **Feature expansion**: Transforms x → φ(x) with polynomial and interaction terms
+- ✅ **Training methods**:
+  - fitOLS(): Closed-form solution via normal equations (O(np² + p³))
+  - fitGD(): Gradient descent with Ridge regularization (O(n_iter × np))
+- ✅ **Evaluation metrics**:
+  - score(): Mean Squared Error (MSE)
+  - r2Score(): Coefficient of determination (R²)
+  - coefficients(): Get learned weights
+- ✅ **Features**:
+  - Degree support: 1 (linear) to arbitrary degree
+  - Interaction terms: Supported for degree ≤ 2 (x₁x₂, x₁x₃, etc.)
+  - Exact OLS solution using Gaussian elimination
+  - Gradient descent with Ridge (L2) regularization
+  - Type-generic support for f32/f64
+- ✅ **Configuration** (GD):
+  - learning_rate: Step size (default: 0.01)
+  - max_iterations: Maximum iterations (default: 1000)
+  - tolerance: Convergence threshold (default: 1e-6)
+  - l2_lambda: Ridge regularization strength (default: 0.0)
+- ✅ **Time complexity**: O(np² + p³) OLS, O(n_iter × np) GD (p = poly features)
+- ✅ **Space complexity**: O(p) for weights, O(p²) temp for OLS
+- ✅ **Tests**: 14/14 passing (100%)
+  - Simple quadratic fit (y = 2x² + 3x + 1)
+  - Cubic polynomial (y = x³)
+  - Multivariate without interaction
+  - With interaction terms (x₁x₂)
+  - Gradient descent convergence
+  - R² score computation
+  - Coefficients getter
+  - Empty input validation
+  - Predict before training error
+  - Feature mismatch detection
+  - f32 type support
+  - Large dataset stress test (500 samples)
+  - Ridge regularization (L2 penalty)
+- ✅ **Implementation**: src/algorithms/machine_learning/polynomial_regression.zig (717 lines)
+- ✅ **Use cases**: Temperature modeling, physics equations, growth curves, economics (diminishing returns), engineering (stress-strain)
+
+## Previous Progress (Session 2026-03-30 - Session 142)
+**FEATURE MODE:**
+
+### Linear Regression Implementation (commit 13a4f13) ✅
+- ✅ **Algorithm**: Linear Regression for continuous value prediction
+- ✅ **Training methods**:
+  - fitOLS(): Closed-form solution via normal equations (O(nm² + m³))
+  - fitGD(): Gradient descent with L2 regularization (O(n_iter × nm))
+- ✅ **Evaluation metrics**:
+  - score(): Mean Squared Error (MSE)
+  - r2Score(): Coefficient of determination (R²)
+  - mae(): Mean Absolute Error
+  - rmse(): Root Mean Squared Error
+- ✅ **Model inspection**:
+  - coefficients(): Get feature weights
+  - intercept(): Get bias/intercept term
+- ✅ **Features**:
+  - Exact OLS solution using Gaussian elimination with partial pivoting
+  - Gradient descent with Ridge (L2) regularization
+  - Convergence detection with configurable tolerance
+  - Type-generic support for f32/f64
+- ✅ **Configuration** (GD):
+  - learning_rate: Step size (default: 0.01)
+  - max_iterations: Maximum iterations (default: 1000)
+  - tolerance: Convergence threshold (default: 1e-6)
+  - l2_lambda: Ridge regularization strength (default: 0.0)
+- ✅ **Time complexity**: O(nm² + m³) OLS, O(n_iter × nm) GD, O(m) prediction
+- ✅ **Space complexity**: O(m) for weights, O(m²) temp for OLS
+- ✅ **Tests**: 14/14 passing (100%)
+  - Basic OLS fit and prediction
+  - Gradient descent convergence
+  - Multivariate regression
+  - R² score for perfect fit
+  - MSE and RMSE computation
+  - Mean Absolute Error
+  - Empty input validation
+  - Prediction before training error
+  - Feature mismatch detection
+  - Ridge regularization (L2 penalty)
+  - f32 type support
+  - Large dataset stress test (1000×5)
+  - Coefficient and intercept getters
+  - Convergence tolerance check
+- ✅ **Implementation**: src/algorithms/machine_learning/linear_regression.zig (717 lines)
+- ✅ **Use cases**: Price prediction, sales forecasting, scientific modeling, trend analysis, resource estimation
+
+## Previous Progress (Session 2026-03-30 - Session 141)
 **FEATURE MODE:**
 
 ### AdaBoost Implementation (commit b506960) ✅
