@@ -15,8 +15,10 @@
 ///   - Gradient Boosting: Sequential ensemble learning with gradient descent (O(n_trees × nmd) training)
 ///   - Logistic Regression: Linear classification with sigmoid function (O(n_iter × nm) training)
 ///
+/// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
+///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
+///
 /// Future additions:
-/// - Principal Component Analysis (PCA) for dimensionality reduction
 /// - Neural Networks for deep learning
 /// - Adaptive Boosting (AdaBoost) for ensemble learning
 ///
@@ -41,3 +43,6 @@ pub const SVM = @import("machine_learning/svm.zig").SVM;
 pub const RandomForest = @import("machine_learning/random_forest.zig").RandomForest;
 pub const GradientBoosting = @import("machine_learning/gradient_boosting.zig").GradientBoosting;
 pub const LogisticRegression = @import("machine_learning/logistic_regression.zig").LogisticRegression;
+
+// Dimensionality reduction algorithms
+pub const PCA = @import("machine_learning/pca.zig").PCA;
