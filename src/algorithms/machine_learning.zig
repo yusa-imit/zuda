@@ -9,11 +9,12 @@
 /// - **Classification** (Supervised): Predict categorical labels
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
 ///   - Decision Trees: Recursive partitioning with multiple criteria (O(nm log n) training)
+///   - Naive Bayes: Probabilistic classification with independence assumptions (O(nm) training)
 ///
 /// Future additions:
-/// - Naive Bayes for probabilistic classification
 /// - Principal Component Analysis (PCA) for dimensionality reduction
 /// - Support Vector Machines (SVM) for binary classification
+/// - Random Forest for ensemble learning
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means)
@@ -31,3 +32,4 @@ pub const KMeansOptions = @import("machine_learning/kmeans.zig").KMeansOptions;
 // Classification algorithms
 pub const KNN = @import("machine_learning/knn.zig").KNN;
 pub const DecisionTree = @import("machine_learning/decision_tree.zig").DecisionTree;
+pub const GaussianNaiveBayes = @import("machine_learning/naive_bayes.zig").GaussianNaiveBayes;
