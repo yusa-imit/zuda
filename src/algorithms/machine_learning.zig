@@ -31,6 +31,7 @@
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
 ///   - t-SNE: Non-linear manifold learning for visualization (O(n²×iter) exact algorithm)
+///   - Self-Organizing Map (SOM): Competitive learning on topological grid (O(n×iter×grid_size×d) training)
 ///
 /// - **Anomaly Detection** (Unsupervised): Identify outliers
 ///   - Isolation Forest: Ensemble of isolation trees (O(n_trees × ψ log ψ) training where ψ = subsample size)
@@ -92,6 +93,7 @@ pub const KernelType = @import("machine_learning/gaussian_process.zig").KernelTy
 pub const PCA = @import("machine_learning/pca.zig").PCA;
 pub const TSNE = @import("machine_learning/tsne.zig").TSNE;
 pub const TSNEOptions = @import("machine_learning/tsne.zig").TSNEOptions;
+pub const SOM = @import("machine_learning/som.zig").SOM;
 
 // Anomaly detection algorithms
 pub const IsolationForest = @import("machine_learning/isolation_forest.zig").IsolationForest;
