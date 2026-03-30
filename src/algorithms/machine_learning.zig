@@ -5,6 +5,7 @@
 /// Categories:
 /// - **Clustering** (Unsupervised): Group similar data points
 ///   - K-Means: Partition-based clustering (O(nkd×iter))
+///   - K-Medoids (PAM): Medoid-based clustering robust to outliers (O(k(n-k)²×iter))
 ///   - Gaussian Mixture Model (GMM): Soft clustering via EM algorithm (O(nkd²×iter))
 ///   - DBSCAN: Density-based clustering with noise detection (O(n²) naive, finds arbitrary shapes)
 ///   - Hierarchical Clustering: Agglomerative clustering with dendrogram (O(n³) naive, O(n² log n) optimized)
@@ -38,18 +39,24 @@
 ///   - Multi-Layer Perceptron (MLP): Feedforward neural network with backpropagation (O(epochs × batches × L × n_max² × batch) training)
 ///
 /// Use cases:
-/// - Customer segmentation (K-Means)
+/// - Customer segmentation (K-Means, K-Medoids)
 /// - Pattern recognition (KNN)
 /// - Anomaly detection (Isolation Forest, DBSCAN)
 /// - Image compression (K-Means)
 /// - Medical diagnosis (KNN)
 /// - Recommendation systems (KNN)
 /// - Fraud detection (Isolation Forest)
+/// - Robust clustering with outliers (K-Medoids)
+/// - Time series clustering with DTW (K-Medoids)
 
 // Clustering algorithms
 pub const kmeans = @import("machine_learning/kmeans.zig").kmeans;
 pub const KMeansResult = @import("machine_learning/kmeans.zig").KMeansResult;
 pub const KMeansOptions = @import("machine_learning/kmeans.zig").KMeansOptions;
+pub const kmedoids = @import("machine_learning/kmedoids.zig").kmedoids;
+pub const KMedoidsResult = @import("machine_learning/kmedoids.zig").KMedoidsResult;
+pub const KMedoidsOptions = @import("machine_learning/kmedoids.zig").KMedoidsOptions;
+pub const manhattanDistance = @import("machine_learning/kmedoids.zig").manhattanDistance;
 pub const gmm = @import("machine_learning/gmm.zig").gmm;
 pub const GMMResult = @import("machine_learning/gmm.zig").GMMResult;
 pub const GMMOptions = @import("machine_learning/gmm.zig").GMMOptions;
