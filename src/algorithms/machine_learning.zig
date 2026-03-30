@@ -8,6 +8,7 @@
 ///   - K-Medoids (PAM): Medoid-based clustering robust to outliers (O(k(n-k)²×iter))
 ///   - Gaussian Mixture Model (GMM): Soft clustering via EM algorithm (O(nkd²×iter))
 ///   - DBSCAN: Density-based clustering with noise detection (O(n²) naive, finds arbitrary shapes)
+///   - OPTICS: Ordering points to identify clustering structure (O(n²) naive, hierarchical density-based)
 ///   - Hierarchical Clustering: Agglomerative clustering with dendrogram (O(n³) naive, O(n² log n) optimized)
 ///   - Mean Shift: Mode-seeking density-based clustering (O(n²×iter×d), automatic K discovery)
 ///
@@ -68,6 +69,7 @@ pub const GMMOptions = @import("machine_learning/gmm.zig").GMMOptions;
 pub const dbscan = @import("machine_learning/dbscan.zig").dbscan;
 pub const DBSCANResult = @import("machine_learning/dbscan.zig").DBSCANResult;
 pub const DBSCANOptions = @import("machine_learning/dbscan.zig").DBSCANOptions;
+pub const OPTICS = @import("machine_learning/optics.zig").OPTICS;
 pub const HierarchicalClustering = @import("machine_learning/hierarchical_clustering.zig").HierarchicalClustering;
 pub const HierarchicalClusteringConfig = @import("machine_learning/hierarchical_clustering.zig").HierarchicalClusteringConfig;
 pub const LinkageMethod = @import("machine_learning/hierarchical_clustering.zig").LinkageMethod;
