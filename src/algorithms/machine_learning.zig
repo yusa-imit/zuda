@@ -27,6 +27,7 @@
 ///
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
+///   - t-SNE: Non-linear manifold learning for visualization (O(n²×iter) exact algorithm)
 ///
 /// - **Neural Networks** (Deep Learning): Multi-layer function approximation
 ///   - Multi-Layer Perceptron (MLP): Feedforward neural network with backpropagation (O(epochs × batches × L × n_max² × batch) training)
@@ -69,6 +70,8 @@ pub const ElasticNetRegression = @import("machine_learning/elastic_net_regressio
 
 // Dimensionality reduction algorithms
 pub const PCA = @import("machine_learning/pca.zig").PCA;
+pub const TSNE = @import("machine_learning/tsne.zig").TSNE;
+pub const TSNEOptions = @import("machine_learning/tsne.zig").TSNEOptions;
 
 // Neural networks
 pub const MLP = @import("machine_learning/mlp.zig").MLP;
