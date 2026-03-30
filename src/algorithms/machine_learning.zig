@@ -7,6 +7,7 @@
 ///   - K-Means: Partition-based clustering (O(nkd×iter))
 ///   - Gaussian Mixture Model (GMM): Soft clustering via EM algorithm (O(nkd²×iter))
 ///   - DBSCAN: Density-based clustering with noise detection (O(n²) naive, finds arbitrary shapes)
+///   - Hierarchical Clustering: Agglomerative clustering with dendrogram (O(n³) naive, O(n² log n) optimized)
 ///
 /// - **Classification** (Supervised): Predict categorical labels
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
@@ -55,6 +56,10 @@ pub const GMMOptions = @import("machine_learning/gmm.zig").GMMOptions;
 pub const dbscan = @import("machine_learning/dbscan.zig").dbscan;
 pub const DBSCANResult = @import("machine_learning/dbscan.zig").DBSCANResult;
 pub const DBSCANOptions = @import("machine_learning/dbscan.zig").DBSCANOptions;
+pub const HierarchicalClustering = @import("machine_learning/hierarchical_clustering.zig").HierarchicalClustering;
+pub const HierarchicalClusteringConfig = @import("machine_learning/hierarchical_clustering.zig").HierarchicalClusteringConfig;
+pub const LinkageMethod = @import("machine_learning/hierarchical_clustering.zig").LinkageMethod;
+pub const MergeStep = @import("machine_learning/hierarchical_clustering.zig").MergeStep;
 
 // Classification algorithms
 pub const KNN = @import("machine_learning/knn.zig").KNN;
