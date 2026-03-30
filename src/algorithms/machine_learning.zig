@@ -11,6 +11,7 @@
 ///   - OPTICS: Ordering points to identify clustering structure (O(n²) naive, hierarchical density-based)
 ///   - Hierarchical Clustering: Agglomerative clustering with dendrogram (O(n³) naive, O(n² log n) optimized)
 ///   - Mean Shift: Mode-seeking density-based clustering (O(n²×iter×d), automatic K discovery)
+///   - Spectral Clustering: Graph-based clustering using Laplacian eigendecomposition (O(n² × k + n³), handles non-convex clusters)
 ///
 /// - **Classification** (Supervised): Predict categorical labels
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
@@ -77,6 +78,7 @@ pub const MergeStep = @import("machine_learning/hierarchical_clustering.zig").Me
 pub const meanShift = @import("machine_learning/mean_shift.zig").meanShift;
 pub const MeanShiftResult = @import("machine_learning/mean_shift.zig").MeanShiftResult;
 pub const MeanShiftOptions = @import("machine_learning/mean_shift.zig").MeanShiftOptions;
+pub const SpectralClustering = @import("machine_learning/spectral_clustering.zig").SpectralClustering;
 
 // Classification algorithms
 pub const KNN = @import("machine_learning/knn.zig").KNN;
