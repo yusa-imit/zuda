@@ -18,6 +18,7 @@
 ///   - Random Forest: Ensemble learning with bagging and random features (O(n_trees × nm log n) training)
 ///   - Gradient Boosting: Sequential ensemble learning with gradient descent (O(n_trees × nmd) training)
 ///   - XGBoost: eXtreme gradient boosting with regularization and 2nd-order optimization (O(n_trees × nmd log n) training)
+///   - LightGBM: Light gradient boosting with leaf-wise growth and histogram-based splits (O(n_trees × nm × num_leaves) training)
 ///   - Logistic Regression: Linear classification with sigmoid function (O(n_iter × nm) training)
 ///   - AdaBoost: Adaptive boosting with weighted weak learners (O(n_learners × nm log n) training)
 ///
@@ -78,6 +79,7 @@ pub const SVM = @import("machine_learning/svm.zig").SVM;
 pub const RandomForest = @import("machine_learning/random_forest.zig").RandomForest;
 pub const GradientBoosting = @import("machine_learning/gradient_boosting.zig").GradientBoosting;
 pub const XGBoost = @import("machine_learning/xgboost.zig").XGBoost;
+pub const LightGBM = @import("machine_learning/lightgbm.zig").LightGBM;
 pub const LogisticRegression = @import("machine_learning/logistic_regression.zig").LogisticRegression;
 pub const AdaBoost = @import("machine_learning/adaboost.zig").AdaBoost;
 
