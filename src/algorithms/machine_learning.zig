@@ -29,16 +29,20 @@
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
 ///   - t-SNE: Non-linear manifold learning for visualization (O(n²×iter) exact algorithm)
 ///
+/// - **Anomaly Detection** (Unsupervised): Identify outliers
+///   - Isolation Forest: Ensemble of isolation trees (O(n_trees × ψ log ψ) training where ψ = subsample size)
+///
 /// - **Neural Networks** (Deep Learning): Multi-layer function approximation
 ///   - Multi-Layer Perceptron (MLP): Feedforward neural network with backpropagation (O(epochs × batches × L × n_max² × batch) training)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means)
 /// - Pattern recognition (KNN)
-/// - Anomaly detection (K-Means, KNN)
+/// - Anomaly detection (Isolation Forest, DBSCAN)
 /// - Image compression (K-Means)
 /// - Medical diagnosis (KNN)
 /// - Recommendation systems (KNN)
+/// - Fraud detection (Isolation Forest)
 
 // Clustering algorithms
 pub const kmeans = @import("machine_learning/kmeans.zig").kmeans;
@@ -72,6 +76,9 @@ pub const ElasticNetRegression = @import("machine_learning/elastic_net_regressio
 pub const PCA = @import("machine_learning/pca.zig").PCA;
 pub const TSNE = @import("machine_learning/tsne.zig").TSNE;
 pub const TSNEOptions = @import("machine_learning/tsne.zig").TSNEOptions;
+
+// Anomaly detection algorithms
+pub const IsolationForest = @import("machine_learning/isolation_forest.zig").IsolationForest;
 
 // Neural networks
 pub const MLP = @import("machine_learning/mlp.zig").MLP;
