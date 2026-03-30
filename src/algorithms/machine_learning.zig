@@ -5,6 +5,7 @@
 /// Categories:
 /// - **Clustering** (Unsupervised): Group similar data points
 ///   - K-Means: Partition-based clustering (O(nkd×iter))
+///   - Gaussian Mixture Model (GMM): Soft clustering via EM algorithm (O(nkd²×iter))
 ///
 /// - **Classification** (Supervised): Predict categorical labels
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
@@ -41,6 +42,9 @@
 pub const kmeans = @import("machine_learning/kmeans.zig").kmeans;
 pub const KMeansResult = @import("machine_learning/kmeans.zig").KMeansResult;
 pub const KMeansOptions = @import("machine_learning/kmeans.zig").KMeansOptions;
+pub const gmm = @import("machine_learning/gmm.zig").gmm;
+pub const GMMResult = @import("machine_learning/gmm.zig").GMMResult;
+pub const GMMOptions = @import("machine_learning/gmm.zig").GMMOptions;
 
 // Classification algorithms
 pub const KNN = @import("machine_learning/knn.zig").KNN;
