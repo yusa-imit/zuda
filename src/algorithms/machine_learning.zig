@@ -9,6 +9,7 @@
 ///   - Gaussian Mixture Model (GMM): Soft clustering via EM algorithm (O(nkd²×iter))
 ///   - DBSCAN: Density-based clustering with noise detection (O(n²) naive, finds arbitrary shapes)
 ///   - Hierarchical Clustering: Agglomerative clustering with dendrogram (O(n³) naive, O(n² log n) optimized)
+///   - Mean Shift: Mode-seeking density-based clustering (O(n²×iter×d), automatic K discovery)
 ///
 /// - **Classification** (Supervised): Predict categorical labels
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
@@ -71,6 +72,9 @@ pub const HierarchicalClustering = @import("machine_learning/hierarchical_cluste
 pub const HierarchicalClusteringConfig = @import("machine_learning/hierarchical_clustering.zig").HierarchicalClusteringConfig;
 pub const LinkageMethod = @import("machine_learning/hierarchical_clustering.zig").LinkageMethod;
 pub const MergeStep = @import("machine_learning/hierarchical_clustering.zig").MergeStep;
+pub const meanShift = @import("machine_learning/mean_shift.zig").meanShift;
+pub const MeanShiftResult = @import("machine_learning/mean_shift.zig").MeanShiftResult;
+pub const MeanShiftOptions = @import("machine_learning/mean_shift.zig").MeanShiftOptions;
 
 // Classification algorithms
 pub const KNN = @import("machine_learning/knn.zig").KNN;
