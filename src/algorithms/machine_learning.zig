@@ -28,8 +28,8 @@
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
 ///   - Principal Component Analysis (PCA): Linear projection onto maximum variance directions (O(nm²) via eigendecomposition)
 ///
-/// Future additions:
-/// - Neural Networks for deep learning
+/// - **Neural Networks** (Deep Learning): Multi-layer function approximation
+///   - Multi-Layer Perceptron (MLP): Feedforward neural network with backpropagation (O(epochs × batches × L × n_max² × batch) training)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means)
@@ -69,3 +69,6 @@ pub const ElasticNetRegression = @import("machine_learning/elastic_net_regressio
 
 // Dimensionality reduction algorithms
 pub const PCA = @import("machine_learning/pca.zig").PCA;
+
+// Neural networks
+pub const MLP = @import("machine_learning/mlp.zig").MLP;
