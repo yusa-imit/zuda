@@ -12,6 +12,7 @@
 ///   - Hierarchical Clustering: Agglomerative clustering with dendrogram (O(n³) naive, O(n² log n) optimized)
 ///   - Mean Shift: Mode-seeking density-based clustering (O(n²×iter×d), automatic K discovery)
 ///   - Spectral Clustering: Graph-based clustering using Laplacian eigendecomposition (O(n² × k + n³), handles non-convex clusters)
+///   - Affinity Propagation: Message-passing clustering with automatic K discovery (O(n²×iter), preference-based granularity control)
 ///
 /// - **Classification** (Supervised): Predict categorical labels
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
@@ -79,6 +80,9 @@ pub const meanShift = @import("machine_learning/mean_shift.zig").meanShift;
 pub const MeanShiftResult = @import("machine_learning/mean_shift.zig").MeanShiftResult;
 pub const MeanShiftOptions = @import("machine_learning/mean_shift.zig").MeanShiftOptions;
 pub const SpectralClustering = @import("machine_learning/spectral_clustering.zig").SpectralClustering;
+pub const affinityPropagation = @import("machine_learning/affinity_propagation.zig").affinityPropagation;
+pub const AffinityPropagationResult = @import("machine_learning/affinity_propagation.zig").AffinityPropagationResult;
+pub const AffinityPropagationOptions = @import("machine_learning/affinity_propagation.zig").AffinityPropagationOptions;
 
 // Classification algorithms
 pub const KNN = @import("machine_learning/knn.zig").KNN;
