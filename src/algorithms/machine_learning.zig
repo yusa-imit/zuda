@@ -60,6 +60,7 @@
 ///   - Q-Learning: Off-policy TD learning for optimal action-value function (O(|A|) per update, O(|S| × |A|) space)
 ///   - SARSA: On-policy TD learning that learns policy being followed (O(|A|) per update, O(|S| × |A|) space)
 ///   - Expected SARSA: On-policy TD learning with expected value update (O(|A|) per update, O(|S| × |A|) space, lower variance than SARSA)
+///   - Actor-Critic: Policy gradient with value baseline (O(|A|) per update, O(|S| + |S|×|A|) space, foundation for A2C/A3C/PPO)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -152,3 +153,4 @@ pub const CRF = @import("machine_learning/crf.zig").CRF;
 pub const QLearning = @import("machine_learning/q_learning.zig").QLearning;
 pub const SARSA = @import("machine_learning/sarsa.zig").SARSA;
 pub const ExpectedSARSA = @import("machine_learning/expected_sarsa.zig").ExpectedSARSA;
+pub const ActorCritic = @import("machine_learning/actor_critic.zig").ActorCritic;
