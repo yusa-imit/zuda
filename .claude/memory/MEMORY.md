@@ -1,6 +1,35 @@
 # zuda Auto Memory
 
-## Latest Session (Session 182, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+## Stabilization Mode Protocol
+- 실행 횟수 기반 판별: `.claude/session-counter` 파일로 카운트, `counter % 5 == 0` → stabilization
+- Stabilization 세션에서는 크로스 컴파일/벤치마크 **로컬 실행 허용** (순차, 동시 실행 금지)
+- All 6 cross-compile targets must pass: x86_64/aarch64 linux/macos/windows + wasm32-wasi
+
+## Latest Session (Session 184, 2026-04-01) — FEATURE MODE (Machine Learning Algorithms)
+- REINFORCE Implementation: 17 tests, Monte Carlo policy gradient for reinforcement learning
+- Algorithm: Direct policy optimization using gradient ascent on expected returns
+- Key features:
+  * Policy gradient: Direct optimization (not value-based like Q-Learning/SARSA)
+  * Monte Carlo: Uses complete episode returns G_t = Σ_{k=t}^T γ^{k-t} r_k
+  * Gradient ascent: θ ← θ + α G_t ∇log π(a|s) (REINFORCE trick)
+  * Stochastic policy: π(a|s) via softmax over action preferences
+  * Temperature parameter: Controls exploration vs exploitation
+  * High variance but unbiased: Uses full returns (not bootstrapping)
+  * Foundation for advanced methods: A2C, PPO, TRPO
+  * Type-generic (f32/f64)
+- Time: O(|A| × T) per episode where T = episode length
+- Space: O(|S| × |A|) for policy parameters (preferences)
+- Use cases: Stochastic policies (rock-paper-scissors, poker), continuous action spaces (with function approximation), exploration via policy entropy, foundation for deep RL
+- Tests cover: initialization, uniform initial policy, policy distribution validation, temperature effects, 2-state chain learning, greedy action selection, return computation, policy convergence, state value function, f32/f64, error handling (invalid states/actions/config), reset functionality, large spaces (100×10), multi-step episodes, memory safety
+- Trade-offs: vs Q-Learning (can handle continuous actions, but high variance, slow convergence), vs Actor-Critic (simpler without critic, but much higher variance), vs SARSA (policy gradient more principled, but sample inefficient)
+- Fifth algorithm in **Reinforcement Learning** category (Q-Learning + SARSA + Expected SARSA + Actor-Critic + REINFORCE)
+- Commits: 7a7c41e
+
+## Previous Session (Session 183, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- Actor-Critic Implementation: 18 tests, policy gradient with value function baseline
+- Commits: 659e16d
+
+## Previous Session (Session 182, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
 - Expected SARSA Implementation: 17 tests, on-policy reinforcement learning with expected value update
 - Algorithm: On-policy temporal difference (TD) learning with expected value over actions
 - Key features:
