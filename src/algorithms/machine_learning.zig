@@ -64,6 +64,7 @@
 ///   - REINFORCE: Monte Carlo policy gradient (O(|A| × T) per episode, O(|S| × |A|) space, foundational policy gradient algorithm)
 ///   - DQN: Deep Q-Network with experience replay and target network (O(batch × network) per update, handles large state spaces)
 ///   - DDPG: Deep Deterministic Policy Gradient for continuous control (O(batch × network) per update, actor-critic with replay buffer)
+///   - PPO: Proximal Policy Optimization with clipped objective (O(K × epochs × |A|) per update, stable on-policy learning)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -161,3 +162,4 @@ pub const REINFORCE = @import("machine_learning/reinforce.zig").REINFORCE;
 pub const REINFORCEConfig = @import("machine_learning/reinforce.zig").Config;
 pub const DQN = @import("machine_learning/dqn.zig").DQN;
 pub const DDPG = @import("machine_learning/ddpg.zig").DDPG;
+pub const PPO = @import("machine_learning/ppo.zig").PPO;
