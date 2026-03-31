@@ -56,6 +56,9 @@
 ///   - Hidden Markov Model (HMM): Probabilistic model for sequences with hidden states (O(T × N²) forward/viterbi where T = sequence length, N = states)
 ///   - Conditional Random Field (CRF): Discriminative sequence labeling with feature functions (O(T × N² × K) training where K = features)
 ///
+/// - **Reinforcement Learning** (Agent-Environment): Learning optimal policies through interaction
+///   - Q-Learning: Off-policy TD learning for optimal action-value function (O(|A|) per update, O(|S| × |A|) space)
+///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
 /// - Pattern recognition (KNN)
@@ -142,3 +145,6 @@ pub const WidthMethod = @import("machine_learning/rbf_network.zig").WidthMethod;
 // Sequence modeling algorithms
 pub const HMM = @import("machine_learning/hidden_markov_model.zig").HMM;
 pub const CRF = @import("machine_learning/crf.zig").CRF;
+
+// Reinforcement learning algorithms
+pub const QLearning = @import("machine_learning/q_learning.zig").QLearning;
