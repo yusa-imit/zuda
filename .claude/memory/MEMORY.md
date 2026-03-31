@@ -39,3 +39,23 @@
 - Algorithm categories: Clustering (9), Classification (12), Regression (7 including SVR), Dimensionality Reduction (3), Anomaly Detection (1), Neural Networks (1), Ensemble Methods (2)
 - Test count: 5800+ tests passing (100% success rate)
 - All algorithms: type-generic (f32/f64), comprehensive tests, Big-O documented
+
+## Latest Session (Session 176, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- Bayesian Ridge Regression Implementation: 14 tests, automatic hyperparameter tuning via Bayesian inference
+- Algorithm: Conjugate Gaussian priors with inverse-gamma hyperpriors on precision parameters
+- Key features:
+  * Automatic regularization tuning (no manual lambda selection)
+  * Iterative updates: alpha (noise precision), lambda (weight precision)
+  * Predictive distributions with uncertainty quantification (mean + std)
+  * Posterior covariance diagonal computation
+  * Log marginal likelihood tracking (optional)
+  * Gaussian elimination with partial pivoting for ridge system
+  * Data centering for numerical stability
+  * Type-generic (f32/f64)
+- Time: O(n_iter × (n×d² + d³)) training (iterative ridge regression), O(n×d) prediction
+- Space: O(d² + n×d) for posterior computation
+- Use cases: Regression with automatic regularization, uncertainty quantification, small samples, feature relevance, scientific computing
+- Tests cover: basic fit, multiple features, uncertainty prediction, automatic regularization, convergence, R² scoring, f32/f64, large/high-dim datasets, error handling (not fitted, dimension mismatch, invalid input), posterior covariance, memory safety
+- Trade-offs: vs Ridge (auto-tunes lambda, provides uncertainty), vs Gaussian Process (diagonal covariance approximation, O(n³) → O(nd² + d³)), vs Lasso (L2 only, no sparsity)
+- Complements: Ridge Regression (manual lambda), Gaussian Process (full covariance), Elastic Net (L1+L2)
+- Commits: dcd50b4
