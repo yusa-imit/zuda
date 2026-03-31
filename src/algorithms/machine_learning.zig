@@ -66,6 +66,7 @@
 ///   - DDPG: Deep Deterministic Policy Gradient for continuous control (O(batch × network) per update, actor-critic with replay buffer)
 ///   - PPO: Proximal Policy Optimization with clipped objective (O(K × epochs × |A|) per update, stable on-policy learning)
 ///   - TD3: Twin Delayed DDPG with clipped double Q-learning (O(batch × network) per update, improved stability over DDPG)
+///   - SAC: Soft Actor-Critic with maximum entropy (O(batch × network) per update, stochastic policy with automatic temperature tuning)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -165,3 +166,6 @@ pub const DQN = @import("machine_learning/dqn.zig").DQN;
 pub const DDPG = @import("machine_learning/ddpg.zig").DDPG;
 pub const PPO = @import("machine_learning/ppo.zig").PPO;
 pub const TD3 = @import("machine_learning/td3.zig").TD3;
+pub const SAC = @import("machine_learning/sac.zig").SAC;
+pub const SACConfig = @import("machine_learning/sac.zig").Config;
+pub const SACTrainingMetrics = @import("machine_learning/sac.zig").TrainingMetrics;
