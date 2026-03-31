@@ -62,6 +62,7 @@
 ///   - Expected SARSA: On-policy TD learning with expected value update (O(|A|) per update, O(|S| × |A|) space, lower variance than SARSA)
 ///   - Actor-Critic: Policy gradient with value baseline (O(|A|) per update, O(|S| + |S|×|A|) space, foundation for A2C/A3C/PPO)
 ///   - REINFORCE: Monte Carlo policy gradient (O(|A| × T) per episode, O(|S| × |A|) space, foundational policy gradient algorithm)
+///   - DQN: Deep Q-Network with experience replay and target network (O(batch × network) per update, handles large state spaces)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -157,3 +158,4 @@ pub const ExpectedSARSA = @import("machine_learning/expected_sarsa.zig").Expecte
 pub const ActorCritic = @import("machine_learning/actor_critic.zig").ActorCritic;
 pub const REINFORCE = @import("machine_learning/reinforce.zig").REINFORCE;
 pub const REINFORCEConfig = @import("machine_learning/reinforce.zig").Config;
+pub const DQN = @import("machine_learning/dqn.zig").DQN;
