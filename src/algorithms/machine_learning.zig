@@ -36,6 +36,7 @@
 ///   - Ridge Regression: L2 regularized regression for handling multicollinearity (O(nm² + m³) training)
 ///   - Lasso Regression: L1 regularized regression for feature selection and sparsity (O(n_iter × nm) coordinate descent)
 ///   - Elastic Net Regression: Combined L1+L2 regularization for balanced sparsity and shrinkage (O(n_iter × nm) coordinate descent)
+///   - Support Vector Regression (SVR): Epsilon-insensitive loss with kernel trick (O(n²×iter) training, O(n_sv) prediction)
 ///   - Gaussian Process Regression: Bayesian non-parametric regression with uncertainty quantification (O(n³) training, O(n) per prediction)
 ///
 /// - **Dimensionality Reduction** (Unsupervised): Reduce feature space
@@ -109,6 +110,8 @@ pub const PolynomialRegression = @import("machine_learning/polynomial_regression
 pub const RidgeRegression = @import("machine_learning/ridge_regression.zig").RidgeRegression;
 pub const LassoRegression = @import("machine_learning/lasso_regression.zig").LassoRegression;
 pub const ElasticNetRegression = @import("machine_learning/elastic_net_regression.zig").ElasticNetRegression;
+pub const SVR = @import("machine_learning/svr.zig").SVR;
+pub const SVRKernelType = @import("machine_learning/svr.zig").KernelType;
 pub const GaussianProcess = @import("machine_learning/gaussian_process.zig").GaussianProcess;
 pub const GaussianProcessConfig = @import("machine_learning/gaussian_process.zig").Config;
 pub const KernelType = @import("machine_learning/gaussian_process.zig").KernelType;
