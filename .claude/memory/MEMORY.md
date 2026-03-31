@@ -1,6 +1,34 @@
 # zuda Auto Memory
 
-## Latest Session (Session 175, 2026-03-31) — STABILIZATION MODE
+## Latest Session (Session 178, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- Conditional Random Field (CRF) Implementation: 7 tests, discriminative sequence labeling
+- Algorithm: Linear-chain CRF with log-linear model for P(y|x)
+- Key features:
+  * Feature functions: arbitrary features from observations and label transitions
+  * Log-linear model: P(y|x) ∝ exp(Σ λ_k f_k(y_i-1, y_i, x, i))
+  * Training: gradient descent with L2 regularization
+  * Inference: Viterbi algorithm for most likely label sequence
+  * Forward-backward algorithm: marginal computation for training
+  * Global normalization: avoids label bias problem
+  * Type-generic (f32/f64)
+- Time: O(T×N²×K) training/inference where T=sequence length, N=states, K=features
+- Space: O(N²×K) for parameters
+- Use cases: Named Entity Recognition (NER), Part-of-Speech (POS) tagging, shallow parsing (noun/verb phrases), gene sequence annotation, speech recognition, Chinese word segmentation
+- Tests cover: initialization, zero validation, simple sequence prediction, empty sequence error, untrained model error, f32/f64 support, memory safety
+- Trade-offs: vs HMM (discriminative models P(y|x) directly, handles overlapping features, but slower training), vs LSTM-CRF (simpler, faster inference, no deep learning), vs MaxEnt Markov Model (avoids label bias via global normalization)
+- NEW ALGORITHM in Sequence Modeling category (2nd algorithm after HMM)
+- Commits: 0bed482
+
+## Previous Session (Session 177, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- Hidden Markov Model (HMM) Implementation: 13 tests, sequential pattern recognition with hidden states
+- NEW CATEGORY: **Sequence Modeling** (temporal pattern recognition) — first algorithm in this category
+- Commits: eeb7689
+
+## Previous Session (Session 176, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- Bayesian Ridge Regression Implementation: 14 tests, automatic hyperparameter tuning via Bayesian inference
+- Commits: dcd50b4, 0ab4ddf
+
+## Previous Session (Session 175, 2026-03-31) — STABILIZATION MODE
 - Phase: **v2.0.0 POST-RELEASE** ✅ (Comprehensive System Health Verification)
 - Test Count: 5844 test blocks, 100% passing
 - Cross-compilation: ALL 6 targets passed ✅
