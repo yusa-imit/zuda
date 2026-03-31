@@ -34,6 +34,7 @@
 ///   - Linear Regression: OLS or gradient descent for continuous prediction (O(nm² + m³) OLS, O(n_iter × nm) GD)
 ///   - Polynomial Regression: Non-linear modeling via polynomial features (O(np² + p³) OLS where p = poly features)
 ///   - Ridge Regression: L2 regularized regression for handling multicollinearity (O(nm² + m³) training)
+///   - Bayesian Ridge Regression: Bayesian approach with automatic regularization tuning (O(n_iter × (nm² + m³)) training, O(nm) prediction with uncertainty)
 ///   - Lasso Regression: L1 regularized regression for feature selection and sparsity (O(n_iter × nm) coordinate descent)
 ///   - Elastic Net Regression: Combined L1+L2 regularization for balanced sparsity and shrinkage (O(n_iter × nm) coordinate descent)
 ///   - Support Vector Regression (SVR): Epsilon-insensitive loss with kernel trick (O(n²×iter) training, O(n_sv) prediction)
@@ -109,6 +110,7 @@ pub const SoftmaxRegression = @import("machine_learning/softmax_regression.zig")
 pub const LinearRegression = @import("machine_learning/linear_regression.zig").LinearRegression;
 pub const PolynomialRegression = @import("machine_learning/polynomial_regression.zig").PolynomialRegression;
 pub const RidgeRegression = @import("machine_learning/ridge_regression.zig").RidgeRegression;
+pub const BayesianRidge = @import("machine_learning/bayesian_ridge.zig").BayesianRidge;
 pub const LassoRegression = @import("machine_learning/lasso_regression.zig").LassoRegression;
 pub const ElasticNetRegression = @import("machine_learning/elastic_net_regression.zig").ElasticNetRegression;
 pub const SVR = @import("machine_learning/svr.zig").SVR;
