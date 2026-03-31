@@ -58,6 +58,7 @@
 ///
 /// - **Reinforcement Learning** (Agent-Environment): Learning optimal policies through interaction
 ///   - Q-Learning: Off-policy TD learning for optimal action-value function (O(|A|) per update, O(|S| × |A|) space)
+///   - SARSA: On-policy TD learning that learns policy being followed (O(|A|) per update, O(|S| × |A|) space)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -148,3 +149,4 @@ pub const CRF = @import("machine_learning/crf.zig").CRF;
 
 // Reinforcement learning algorithms
 pub const QLearning = @import("machine_learning/q_learning.zig").QLearning;
+pub const SARSA = @import("machine_learning/sarsa.zig").SARSA;
