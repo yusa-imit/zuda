@@ -28,6 +28,7 @@
 ///   - Logistic Regression: Linear classification with sigmoid function (O(n_iter × nm) training)
 ///   - AdaBoost: Adaptive boosting with weighted weak learners (O(n_learners × nm log n) training)
 ///   - Perceptron: Simple linear classifier with online learning (O(n_epochs × nm) training)
+///   - Softmax Regression: Multinomial logistic regression for true multi-class classification (O(n_iter × nmk) training)
 ///
 /// - **Regression** (Supervised): Predict continuous values
 ///   - Linear Regression: OLS or gradient descent for continuous prediction (O(nm² + m³) OLS, O(n_iter × nm) GD)
@@ -100,6 +101,7 @@ pub const CatBoost = @import("machine_learning/catboost.zig").CatBoost;
 pub const LogisticRegression = @import("machine_learning/logistic_regression.zig").LogisticRegression;
 pub const AdaBoost = @import("machine_learning/adaboost.zig").AdaBoost;
 pub const Perceptron = @import("machine_learning/perceptron.zig").Perceptron;
+pub const SoftmaxRegression = @import("machine_learning/softmax_regression.zig").SoftmaxRegression;
 
 // Regression algorithms
 pub const LinearRegression = @import("machine_learning/linear_regression.zig").LinearRegression;
