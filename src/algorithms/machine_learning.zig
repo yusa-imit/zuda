@@ -18,6 +18,7 @@
 ///   - K-Nearest Neighbors (KNN): Instance-based learning (O(nd) per query)
 ///   - Decision Trees: Recursive partitioning with multiple criteria (O(nm log n) training)
 ///   - Naive Bayes: Probabilistic classification with independence assumptions (O(nm) training)
+///   - Gaussian Discriminant Analysis (LDA/QDA): Probabilistic classification with Gaussian class-conditional densities (O(nmd²) training)
 ///   - Support Vector Machine (SVM): Maximum margin classification with SMO (O(n²×iter) training)
 ///   - Random Forest: Ensemble learning with bagging and random features (O(n_trees × nm log n) training)
 ///   - Gradient Boosting: Sequential ensemble learning with gradient descent (O(n_trees × nmd) training)
@@ -88,6 +89,7 @@ pub const AffinityPropagationOptions = @import("machine_learning/affinity_propag
 pub const KNN = @import("machine_learning/knn.zig").KNN;
 pub const DecisionTree = @import("machine_learning/decision_tree.zig").DecisionTree;
 pub const GaussianNaiveBayes = @import("machine_learning/naive_bayes.zig").GaussianNaiveBayes;
+pub const GaussianDiscriminant = @import("machine_learning/gaussian_discriminant.zig").GaussianDiscriminant;
 pub const SVM = @import("machine_learning/svm.zig").SVM;
 pub const RandomForest = @import("machine_learning/random_forest.zig").RandomForest;
 pub const GradientBoosting = @import("machine_learning/gradient_boosting.zig").GradientBoosting;
