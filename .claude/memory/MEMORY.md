@@ -1,13 +1,34 @@
 # zuda Auto Memory
 
-## Latest Session (Session 180, 2026-03-31) — STABILIZATION MODE
-- Phase: **v2.0.0 POST-RELEASE** ✅ (Comprehensive System Health Verification)
+## Latest Session (Session 182, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- Expected SARSA Implementation: 17 tests, on-policy reinforcement learning with expected value update
+- Algorithm: On-policy temporal difference (TD) learning with expected value over actions
+- Key features:
+  * On-policy learning: learns value of policy being followed (like SARSA)
+  * Expected update: Q(s,a) ← Q(s,a) + α[r + γ E[Q(s',·)] - Q(s,a)]
+  * Expected value: E[Q(s',·)] = Σ_a' π(a'|s') Q(s',a') under current policy
+  * Lower variance than SARSA (uses expectation instead of sampled action)
+  * More stable learning, nearly as good as Q-Learning
+  * Epsilon-greedy action selection with decay
+  * Terminal state handling (zero future rewards)
+  * State value function V(s) = E[Q(s,a)] under current policy
+  * Type-generic (f32/f64)
+- Time: O(|A|) per update (compute expected value), O(T×|A|) per episode
+- Space: O(|S|×|A|) for Q-table
+- Use cases: General RL problems (stability + sample efficiency), stochastic environments, robotics (safer exploration), game AI (balanced exploration-exploitation)
+- Tests cover: basic initialization, 2-state chain learning, gridworld navigation, expected value computation, state value function, epsilon-greedy/greedy action selection, expected update validation, terminal states, epsilon decay, error handling (invalid states/actions/params), f32/f64, large spaces (100×10), convergence validation, memory safety
+- Trade-offs: vs SARSA (lower variance via expectation, more stable), vs Q-Learning (on-policy learns actual policy, safer exploration), vs Actor-Critic (simpler, no policy gradient, but limited to discrete actions)
+- Third algorithm in **Reinforcement Learning** category (Q-Learning + SARSA + Expected SARSA)
+- Commits: b306e5f
+
+## Previous Session (Session 181, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
+- SARSA Implementation: 16 tests, on-policy reinforcement learning
+- Commits: f6ba930
+
+## Previous Session (Session 180, 2026-03-31) — STABILIZATION MODE
 - Test Count: 5870 test blocks, 100% passing
-- Cross-compilation: ALL 6 targets passed ✅ (sequential execution)
-- Code Quality: EXCELLENT (0 @panic, 0 problematic print, 1910 Time O(), 1861 Space O(), 60 validate())
-- Metrics improved from Session 175: +26 test blocks, +27 Time O(), +20 Space O(), +0 validate(), +16 testing.allocator
-- All systems green: CI passing (4 consecutive successes), zero open issues
-- Test Quality: Excellent (0 trivial assertions, 4 valid memory safety tests with clear comments)
+- Cross-compilation: ALL 6 targets passed ✅
+- Commits: 132fe3b
 
 ## Previous Session (Session 179, 2026-03-31) — FEATURE MODE (Machine Learning Algorithms)
 - Q-Learning Implementation: 17 tests, off-policy reinforcement learning for optimal action-value function
