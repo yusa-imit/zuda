@@ -49,6 +49,7 @@
 ///
 /// - **Neural Networks** (Deep Learning): Multi-layer function approximation
 ///   - Multi-Layer Perceptron (MLP): Feedforward neural network with backpropagation (O(epochs × batches × L × n_max² × batch) training)
+///   - RBF Network: Radial basis function network for regression/classification (O(n_centers × n × d + n_centers³) training)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -127,3 +128,7 @@ pub const IsolationForest = @import("machine_learning/isolation_forest.zig").Iso
 
 // Neural networks
 pub const MLP = @import("machine_learning/mlp.zig").MLP;
+pub const RBFNetwork = @import("machine_learning/rbf_network.zig").RBFNetwork;
+pub const RBFConfig = @import("machine_learning/rbf_network.zig").Config;
+pub const CenterMethod = @import("machine_learning/rbf_network.zig").CenterMethod;
+pub const WidthMethod = @import("machine_learning/rbf_network.zig").WidthMethod;
