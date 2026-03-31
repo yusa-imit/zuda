@@ -54,6 +54,7 @@
 ///
 /// - **Sequence Modeling** (Temporal): Sequential pattern recognition
 ///   - Hidden Markov Model (HMM): Probabilistic model for sequences with hidden states (O(T × N²) forward/viterbi where T = sequence length, N = states)
+///   - Conditional Random Field (CRF): Discriminative sequence labeling with feature functions (O(T × N² × K) training where K = features)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -140,3 +141,4 @@ pub const WidthMethod = @import("machine_learning/rbf_network.zig").WidthMethod;
 
 // Sequence modeling algorithms
 pub const HMM = @import("machine_learning/hidden_markov_model.zig").HMM;
+pub const CRF = @import("machine_learning/crf.zig").CRF;
