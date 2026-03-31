@@ -52,6 +52,9 @@
 ///   - Multi-Layer Perceptron (MLP): Feedforward neural network with backpropagation (O(epochs × batches × L × n_max² × batch) training)
 ///   - RBF Network: Radial basis function network for regression/classification (O(n_centers × n × d + n_centers³) training)
 ///
+/// - **Sequence Modeling** (Temporal): Sequential pattern recognition
+///   - Hidden Markov Model (HMM): Probabilistic model for sequences with hidden states (O(T × N²) forward/viterbi where T = sequence length, N = states)
+///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
 /// - Pattern recognition (KNN)
@@ -134,3 +137,6 @@ pub const RBFNetwork = @import("machine_learning/rbf_network.zig").RBFNetwork;
 pub const RBFConfig = @import("machine_learning/rbf_network.zig").Config;
 pub const CenterMethod = @import("machine_learning/rbf_network.zig").CenterMethod;
 pub const WidthMethod = @import("machine_learning/rbf_network.zig").WidthMethod;
+
+// Sequence modeling algorithms
+pub const HMM = @import("machine_learning/hidden_markov_model.zig").HMM;
