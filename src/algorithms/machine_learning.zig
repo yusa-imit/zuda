@@ -71,6 +71,7 @@
 ///   - TRPO: Trust Region Policy Optimization with KL constraint (O(K × m × cg_iters) per update, monotonic improvement guarantee)
 ///   - Rainbow: DQN with multiple enhancements (Double Q, Prioritized Replay, Dueling Networks, Multi-step) (O(batch × network) per update, state-of-the-art sample efficiency)
 ///   - Dueling DQN: DQN with value-advantage decomposition (O(batch × network) per update, improved learning in states where action choice doesn't matter)
+///   - C51: Categorical DQN with distributional value function (O(batch × N × network) per update, models full return distribution over N atoms)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -180,3 +181,5 @@ pub const TRPOConfig = @import("machine_learning/trpo.zig").Config;
 pub const Rainbow = @import("machine_learning/rainbow.zig").Rainbow;
 pub const DuelingDQN = @import("machine_learning/dueling_dqn.zig").DuelingDQN;
 pub const DuelingDQNConfig = @import("machine_learning/dueling_dqn.zig").Config;
+pub const C51 = @import("machine_learning/c51.zig").C51;
+pub const C51Config = @import("machine_learning/c51.zig").Config;
