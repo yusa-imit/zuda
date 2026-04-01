@@ -1,4 +1,25 @@
-# zuda Auto Memory
+## Latest Session (Session 203, 2026-04-01) — FEATURE MODE (Machine Learning Algorithms)
+- Stacking (Stacked Generalization) Implementation: 20 tests, meta-learning ensemble
+- Algorithm: Meta-model trained on base estimator predictions using k-fold cross-validation
+- Key features:
+  * Cross-validated meta-features: k-fold CV generates out-of-fold predictions (prevents overfitting)
+  * Learned combination: Meta-model learns optimal base prediction weighting
+  * Heterogeneous base models: 3 decision trees with different depths (3/6/10) for diversity
+  * Two-level architecture: Base estimators (level 0) + Meta-model (level 1)
+  * Classification: StackingClassifier (trees → logistic regression)
+  * Regression: StackingRegressor (trees → linear regression)
+  * Type-generic (f32/f64)
+- Architecture: Base predictions → Meta-model learns combination
+- Time: O(k × m × n × log n) training, O(m × depth) prediction (k=folds, m=base estimators)
+- Space: O(k × m × n + nodes) for CV predictions + trees
+- Use cases: Kaggle competitions (state-of-the-art ensembles), combining diverse algorithms (SVM+Tree+KNN), when simple voting underperforms, high-stakes predictions (medical, finance)
+- Tests cover: initialization, linear/quadratic/multi-feature regression, binary/multi-class classification, XOR pattern, large datasets (100 samples), reset, error handling (empty data, not fitted, invalid config), f32/f64, memory safety
+- Trade-offs: vs Voting (learns combination weights vs fixed aggregation), vs Bagging (heterogeneous models + meta-learner vs homogeneous + simple average), vs Boosting (parallel training vs sequential)
+- Complements ensemble methods: Voting (simple aggregation), Bagging (bootstrap variance reduction), Random Forest (feature sampling)
+- Third ensemble meta-learner (after Voting + Bagging)
+- Fifty-eighth algorithm in **Machine Learning** category (57 previous + Stacking)
+- Commits: 277aba1
+
 
 ## Stabilization Mode Protocol
 - 실행 횟수 기반 판별: `.claude/session-counter` 파일로 카운트, `counter % 5 == 0` → stabilization
