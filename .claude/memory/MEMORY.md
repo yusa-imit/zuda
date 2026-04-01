@@ -5,7 +5,28 @@
 - Stabilization 세션에서는 크로스 컴파일/벤치마크 **로컬 실행 허용** (순차, 동시 실행 금지)
 - All 6 cross-compile targets must pass: x86_64/aarch64 linux/macos/windows + wasm32-wasi
 
-## Latest Session (Session 196, 2026-04-01) — FEATURE MODE (Machine Learning Algorithms)
+## Latest Session (Session 197, 2026-04-01) — FEATURE MODE (Machine Learning Algorithms)
+- Dueling DQN Implementation: 14 tests, value-advantage decomposition for improved learning
+- Algorithm: DQN with dueling architecture that separates state value and action advantages
+- Key features:
+  * Dueling architecture: Q(s,a) = V(s) + [A(s,a) - mean(A(s,:))]
+  * Value stream: Learns which states are valuable independent of actions
+  * Advantage stream: Learns action-specific advantages for each state
+  * Mean aggregation: Ensures identifiability (prevents arbitrary V/A shifts)
+  * Better gradient flow: V stream updates even when A is flat
+  * Same cost as DQN: No additional computational overhead
+  * Experience replay + target network (inherited from DQN)
+  * Type-generic (f64 only - network operations)
+- Architecture: Shared stream → (value stream, advantage stream) → aggregation layer
+- Time: O(batch × network_forward × network_backward) per train()
+- Space: O(buffer_size × state_dim + network_params)
+- Use cases: Atari games (outperforms standard DQN), environments with many irrelevant actions, sparse reward problems, any DQN application
+- Tests cover: initialization, dueling architecture validation (value/advantage streams), epsilon-greedy/greedy action selection, replay buffer (circular overflow), training updates, target network sync, terminal state handling, epsilon decay, decomposition inspection, reset, error handling (invalid configs/states), memory safety
+- Trade-offs: vs DQN (better performance, same cost, but slightly more complex architecture), vs Rainbow (simpler, less performant), vs Distributional RL (learns mean Q, not distribution), vs Policy Gradient (discrete actions, more sample efficient)
+- Fourteenth algorithm in **Reinforcement Learning** category (Q-Learning + SARSA + Expected SARSA + Actor-Critic + REINFORCE + DQN + DDPG + PPO + TD3 + SAC + A2C + TRPO + Rainbow + Dueling DQN)
+- Commits: 2a3c1c7
+
+## Previous Session (Session 196, 2026-04-01) — FEATURE MODE (Machine Learning Algorithms)
 - Rainbow DQN Implementation: 16 tests, state-of-the-art deep RL with multiple enhancements
 - Algorithm: DQN with 4 key improvements for sample efficiency and stability
 - Key features:
