@@ -72,6 +72,7 @@
 ///   - Rainbow: DQN with multiple enhancements (Double Q, Prioritized Replay, Dueling Networks, Multi-step) (O(batch × network) per update, state-of-the-art sample efficiency)
 ///   - Dueling DQN: DQN with value-advantage decomposition (O(batch × network) per update, improved learning in states where action choice doesn't matter)
 ///   - C51: Categorical DQN with distributional value function (O(batch × N × network) per update, models full return distribution over N atoms)
+///   - QR-DQN: Quantile Regression DQN with quantile distribution (O(batch × N² × network) per update, no fixed support bounds)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -183,3 +184,5 @@ pub const DuelingDQN = @import("machine_learning/dueling_dqn.zig").DuelingDQN;
 pub const DuelingDQNConfig = @import("machine_learning/dueling_dqn.zig").Config;
 pub const C51 = @import("machine_learning/c51.zig").C51;
 pub const C51Config = @import("machine_learning/c51.zig").Config;
+pub const QRDQN = @import("machine_learning/qr_dqn.zig").QRDQN;
+pub const QRDQNConfig = @import("machine_learning/qr_dqn.zig").Config;
