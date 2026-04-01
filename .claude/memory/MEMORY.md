@@ -1,11 +1,11 @@
-## Latest Session (Session 213, 2026-04-02) — FEATURE MODE (Machine Learning Algorithms - Optimization)
-- Nadam Optimizer Implementation: 21 tests, Nesterov-accelerated Adam for faster convergence
-- Algorithm: Combines Nesterov Accelerated Gradient with Adam's adaptive learning rates
+## Latest Session (Session 214, 2026-04-02) — FEATURE MODE (Machine Learning Algorithms - Optimization)
+- AMSGrad Optimizer Implementation: 21 tests, Adam with maximum of second moments for better convergence guarantees
+- Algorithm: Improvement over Adam using maximum of past second moments instead of exponential moving average
 - Key features:
-  * Nesterov lookahead: m̂_nesterov = β₁ × m̂_t + (1-β₁)/(1-β₁^t) × g_t
-  * Faster convergence than Adam for RNNs and non-convex tasks
-  * Same adaptive per-parameter learning rates as Adam
-  * Bias correction for moment estimates
+  * Maximum second moment: v̂_t = max(v̂_{t-1}, v_t) ensures monotonically decreasing effective learning rate
+  * Better convergence guarantees than Adam (proven convergence)
+  * Addresses Adam's failure to converge in certain scenarios
+  * Non-decreasing second moment (monotonicity property)
   * Type-generic (f32/f64)
 - Configuration:
   * learning_rate: 0.001 (default, typical: 0.0001-0.001)
@@ -13,13 +13,17 @@
   * beta2: 0.999 (velocity decay)
   * epsilon: 1e-8 (numerical stability)
 - Time: O(n) per update where n = number of parameters
-- Space: O(n) for momentum and velocity vectors
-- Use cases: Training RNNs/LSTMs (Nesterov helps with gradients), when Adam converges slowly, non-convex optimization with momentum, deep learning with adaptive rates
-- Tests cover: initialization, custom config, simple/multivariate quadratic, Rosenbrock function, Nesterov lookahead validation, bias correction, adaptive learning rates, sparse gradients, reset, f32/f64, large scale (100-dim), error handling (empty params, mismatched lengths, invalid config), memory safety, convergence comparison
-- Trade-offs: vs Adam (faster convergence via Nesterov momentum, minimal overhead), vs SGD (adaptive rates, no manual tuning), vs RMSprop (adds momentum and bias correction)
-- Reference: Dozat (2016) "Incorporating Nesterov Momentum into Adam"
-- Sixty-fifth algorithm in **Machine Learning** category (64 previous + Nadam)
-- Optimization Algorithms: 7 total (SGD, Adam, AdamW, Nadam, RMSprop, Adagrad, Adadelta)
+- Space: O(n) for momentum and maximum second moment vectors (same as Adam + v̂)
+- Use cases: When Adam fails to converge (some RL tasks), non-convex optimization requiring convergence guarantees, long-running training where exponential averaging might forget information, settings requiring monotonic learning rate decay
+- Tests cover: initialization, custom config, simple/multivariate quadratic, Rosenbrock function, maximum second moment validation (v̂ monotonicity), bias correction, adaptive learning rates, sparse gradients, reset, f32/f64, large scale (100-dim), error handling (empty params, mismatched lengths, invalid config), memory safety, convergence with varying gradients
+- Trade-offs: vs Adam (better convergence guarantees, but can be slower due to monotonic v̂), vs SGD (adaptive rates reduce tuning, but more memory), vs AdamW (similar stability, AMSGrad focuses on convergence guarantees)
+- Reference: Reddi et al. (2018) "On the Convergence of Adam and Beyond" (ICLR 2018)
+- Sixty-sixth algorithm in **Machine Learning** category (65 previous + AMSGrad)
+- Optimization Algorithms: 8 total (SGD, Adam, AdamW, Nadam, AMSGrad, RMSprop, Adagrad, Adadelta)
+- Commits: a445e9e
+
+## Previous Session (Session 213, 2026-04-02) — FEATURE MODE (Machine Learning Algorithms - Optimization)
+- Nadam Optimizer Implementation: 21 tests, Nesterov-accelerated Adam for faster convergence
 - Commits: 9ba6ca2
 
 ## Previous Session (Session 212, 2026-04-02) — FEATURE MODE (Machine Learning Algorithms - Optimization)
