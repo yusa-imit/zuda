@@ -84,6 +84,7 @@
 /// - **Optimization Algorithms** (Training): Parameter update strategies for gradient-based learning
 ///   - SGD: Stochastic gradient descent with optional momentum (O(n) per update, simple and robust baseline)
 ///   - Adam: Adaptive moment estimation with momentum and RMSProp (O(n) per update, adaptive per-parameter learning rates)
+///   - RMSprop: Root mean square propagation with adaptive learning rates (O(n) per update, works well with RNNs and non-stationary objectives)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -213,3 +214,4 @@ pub const StackingRegressor = @import("machine_learning/stacking.zig").StackingR
 // Optimization algorithms
 pub const SGD = @import("machine_learning/sgd.zig").SGD;
 pub const Adam = @import("machine_learning/adam.zig").Adam;
+pub const RMSprop = @import("machine_learning/rmsprop.zig").RMSprop;
