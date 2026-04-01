@@ -68,6 +68,7 @@
 ///   - TD3: Twin Delayed DDPG with clipped double Q-learning (O(batch × network) per update, improved stability over DDPG)
 ///   - SAC: Soft Actor-Critic with maximum entropy (O(batch × network) per update, stochastic policy with automatic temperature tuning)
 ///   - A2C: Advantage Actor-Critic with n-step returns (O(|A|) per update, O(|S| + |S|×|A|) space, entropy regularization, foundation for A3C)
+///   - TRPO: Trust Region Policy Optimization with KL constraint (O(K × m × cg_iters) per update, monotonic improvement guarantee)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -172,3 +173,5 @@ pub const SACConfig = @import("machine_learning/sac.zig").Config;
 pub const SACTrainingMetrics = @import("machine_learning/sac.zig").TrainingMetrics;
 pub const A2C = @import("machine_learning/a2c.zig").A2C;
 pub const A2CConfig = @import("machine_learning/a2c.zig").Config;
+pub const TRPO = @import("machine_learning/trpo.zig").TRPO;
+pub const TRPOConfig = @import("machine_learning/trpo.zig").Config;
