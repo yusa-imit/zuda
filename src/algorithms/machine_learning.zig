@@ -81,6 +81,9 @@
 ///   - Voting Regressor: Weighted averaging for regression (O(k × n) per prediction where k = estimators)
 ///   - Stacking: Stacked generalization with meta-learner trained on base predictions (O(k × m × T_base + T_meta) training where k = folds, m = base estimators)
 ///
+/// - **Optimization Algorithms** (Training): Parameter update strategies for gradient-based learning
+///   - Adam: Adaptive moment estimation with momentum and RMSProp (O(n) per update, adaptive per-parameter learning rates)
+///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
 /// - Pattern recognition (KNN)
@@ -205,3 +208,6 @@ pub const RegressorEstimator = @import("machine_learning/voting.zig").RegressorE
 pub const VotingStrategy = @import("machine_learning/voting.zig").VotingStrategy;
 pub const StackingClassifier = @import("machine_learning/stacking.zig").StackingClassifier;
 pub const StackingRegressor = @import("machine_learning/stacking.zig").StackingRegressor;
+
+// Optimization algorithms
+pub const Adam = @import("machine_learning/adam.zig").Adam;
