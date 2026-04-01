@@ -75,6 +75,7 @@
 ///   - QR-DQN: Quantile Regression DQN with quantile distribution (O(batch × N² × network) per update, no fixed support bounds)
 ///
 /// - **Ensemble Meta-learners** (Meta): Combining multiple base estimators
+///   - Bagging: Bootstrap aggregating for variance reduction (O(k × T_train) training, O(k × T_predict) prediction where k = estimators)
 ///   - Voting Classifier: Hard/soft voting for classification (O(k × n) per prediction where k = estimators)
 ///   - Voting Regressor: Weighted averaging for regression (O(k × n) per prediction where k = estimators)
 ///
@@ -192,6 +193,8 @@ pub const QRDQN = @import("machine_learning/qr_dqn.zig").QRDQN;
 pub const QRDQNConfig = @import("machine_learning/qr_dqn.zig").Config;
 
 // Ensemble meta-learners
+pub const BaggingClassifier = @import("machine_learning/bagging.zig").BaggingClassifier;
+pub const BaggingRegressor = @import("machine_learning/bagging.zig").BaggingRegressor;
 pub const VotingClassifier = @import("machine_learning/voting.zig").VotingClassifier;
 pub const VotingRegressor = @import("machine_learning/voting.zig").VotingRegressor;
 pub const ClassifierEstimator = @import("machine_learning/voting.zig").ClassifierEstimator;
