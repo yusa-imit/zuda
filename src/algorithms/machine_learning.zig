@@ -85,6 +85,7 @@
 ///   - SGD: Stochastic gradient descent with optional momentum (O(n) per update, simple and robust baseline)
 ///   - Adam: Adaptive moment estimation with momentum and RMSProp (O(n) per update, adaptive per-parameter learning rates)
 ///   - AdamW: Adam with decoupled weight decay (O(n) per update, better generalization than Adam with L2 regularization)
+///   - AdaMax: Adam variant using infinity norm for second moment (O(n) per update, O(n) space, more stable than Adam for sparse/unbounded gradients)
 ///   - Nadam: Nesterov-accelerated Adam with lookahead momentum (O(n) per update, faster convergence than Adam for RNNs and non-convex tasks)
 ///   - AMSGrad: Adam with maximum of second moments for better convergence guarantees (O(n) per update, O(n) space, monotonic effective learning rate)
 ///   - RMSprop: Root mean square propagation with adaptive learning rates (O(n) per update, works well with RNNs and non-stationary objectives)
@@ -220,6 +221,7 @@ pub const StackingRegressor = @import("machine_learning/stacking.zig").StackingR
 pub const SGD = @import("machine_learning/sgd.zig").SGD;
 pub const Adam = @import("machine_learning/adam.zig").Adam;
 pub const AdamW = @import("machine_learning/adamw.zig").AdamW;
+pub const AdaMax = @import("machine_learning/adamax.zig").AdaMax;
 pub const Nadam = @import("machine_learning/nadam.zig").Nadam;
 pub const AMSGrad = @import("machine_learning/amsgrad.zig").AMSGrad;
 pub const RMSprop = @import("machine_learning/rmsprop.zig").RMSprop;
