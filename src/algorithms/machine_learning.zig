@@ -86,6 +86,7 @@
 ///   - Adam: Adaptive moment estimation with momentum and RMSProp (O(n) per update, adaptive per-parameter learning rates)
 ///   - AdamW: Adam with decoupled weight decay (O(n) per update, better generalization than Adam with L2 regularization)
 ///   - Nadam: Nesterov-accelerated Adam with lookahead momentum (O(n) per update, faster convergence than Adam for RNNs and non-convex tasks)
+///   - AMSGrad: Adam with maximum of second moments for better convergence guarantees (O(n) per update, O(n) space, monotonic effective learning rate)
 ///   - RMSprop: Root mean square propagation with adaptive learning rates (O(n) per update, works well with RNNs and non-stationary objectives)
 ///   - Adagrad: Adaptive gradient with cumulative squared gradients (O(n) per update, excellent for sparse data and NLP tasks)
 ///   - Adadelta: Extension of Adagrad with moving average and no learning rate required (O(n) per update, O(2n) space, fixes learning rate collapse)
@@ -220,6 +221,7 @@ pub const SGD = @import("machine_learning/sgd.zig").SGD;
 pub const Adam = @import("machine_learning/adam.zig").Adam;
 pub const AdamW = @import("machine_learning/adamw.zig").AdamW;
 pub const Nadam = @import("machine_learning/nadam.zig").Nadam;
+pub const AMSGrad = @import("machine_learning/amsgrad.zig").AMSGrad;
 pub const RMSprop = @import("machine_learning/rmsprop.zig").RMSprop;
 pub const Adagrad = @import("machine_learning/adagrad.zig").Adagrad;
 pub const Adadelta = @import("machine_learning/adadelta.zig").Adadelta;
