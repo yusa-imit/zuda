@@ -74,6 +74,10 @@
 ///   - C51: Categorical DQN with distributional value function (O(batch × N × network) per update, models full return distribution over N atoms)
 ///   - QR-DQN: Quantile Regression DQN with quantile distribution (O(batch × N² × network) per update, no fixed support bounds)
 ///
+/// - **Ensemble Meta-learners** (Meta): Combining multiple base estimators
+///   - Voting Classifier: Hard/soft voting for classification (O(k × n) per prediction where k = estimators)
+///   - Voting Regressor: Weighted averaging for regression (O(k × n) per prediction where k = estimators)
+///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
 /// - Pattern recognition (KNN)
@@ -186,3 +190,10 @@ pub const C51 = @import("machine_learning/c51.zig").C51;
 pub const C51Config = @import("machine_learning/c51.zig").Config;
 pub const QRDQN = @import("machine_learning/qr_dqn.zig").QRDQN;
 pub const QRDQNConfig = @import("machine_learning/qr_dqn.zig").Config;
+
+// Ensemble meta-learners
+pub const VotingClassifier = @import("machine_learning/voting.zig").VotingClassifier;
+pub const VotingRegressor = @import("machine_learning/voting.zig").VotingRegressor;
+pub const ClassifierEstimator = @import("machine_learning/voting.zig").ClassifierEstimator;
+pub const RegressorEstimator = @import("machine_learning/voting.zig").RegressorEstimator;
+pub const VotingStrategy = @import("machine_learning/voting.zig").VotingStrategy;
