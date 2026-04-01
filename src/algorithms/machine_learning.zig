@@ -78,6 +78,7 @@
 ///   - Bagging: Bootstrap aggregating for variance reduction (O(k × T_train) training, O(k × T_predict) prediction where k = estimators)
 ///   - Voting Classifier: Hard/soft voting for classification (O(k × n) per prediction where k = estimators)
 ///   - Voting Regressor: Weighted averaging for regression (O(k × n) per prediction where k = estimators)
+///   - Stacking: Stacked generalization with meta-learner trained on base predictions (O(k × m × T_base + T_meta) training where k = folds, m = base estimators)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -200,3 +201,5 @@ pub const VotingRegressor = @import("machine_learning/voting.zig").VotingRegress
 pub const ClassifierEstimator = @import("machine_learning/voting.zig").ClassifierEstimator;
 pub const RegressorEstimator = @import("machine_learning/voting.zig").RegressorEstimator;
 pub const VotingStrategy = @import("machine_learning/voting.zig").VotingStrategy;
+pub const StackingClassifier = @import("machine_learning/stacking.zig").StackingClassifier;
+pub const StackingRegressor = @import("machine_learning/stacking.zig").StackingRegressor;
