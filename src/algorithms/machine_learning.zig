@@ -82,6 +82,7 @@
 ///   - Stacking: Stacked generalization with meta-learner trained on base predictions (O(k × m × T_base + T_meta) training where k = folds, m = base estimators)
 ///
 /// - **Optimization Algorithms** (Training): Parameter update strategies for gradient-based learning
+///   - SGD: Stochastic gradient descent with optional momentum (O(n) per update, simple and robust baseline)
 ///   - Adam: Adaptive moment estimation with momentum and RMSProp (O(n) per update, adaptive per-parameter learning rates)
 ///
 /// Use cases:
@@ -210,4 +211,5 @@ pub const StackingClassifier = @import("machine_learning/stacking.zig").Stacking
 pub const StackingRegressor = @import("machine_learning/stacking.zig").StackingRegressor;
 
 // Optimization algorithms
+pub const SGD = @import("machine_learning/sgd.zig").SGD;
 pub const Adam = @import("machine_learning/adam.zig").Adam;
