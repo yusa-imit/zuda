@@ -84,6 +84,7 @@
 /// - **Optimization Algorithms** (Training): Parameter update strategies for gradient-based learning
 ///   - SGD: Stochastic gradient descent with optional momentum (O(n) per update, simple and robust baseline)
 ///   - Adam: Adaptive moment estimation with momentum and RMSProp (O(n) per update, adaptive per-parameter learning rates)
+///   - AdamW: Adam with decoupled weight decay (O(n) per update, better generalization than Adam with L2 regularization)
 ///   - RMSprop: Root mean square propagation with adaptive learning rates (O(n) per update, works well with RNNs and non-stationary objectives)
 ///   - Adagrad: Adaptive gradient with cumulative squared gradients (O(n) per update, excellent for sparse data and NLP tasks)
 ///   - Adadelta: Extension of Adagrad with moving average and no learning rate required (O(n) per update, O(2n) space, fixes learning rate collapse)
@@ -216,6 +217,7 @@ pub const StackingRegressor = @import("machine_learning/stacking.zig").StackingR
 // Optimization algorithms
 pub const SGD = @import("machine_learning/sgd.zig").SGD;
 pub const Adam = @import("machine_learning/adam.zig").Adam;
+pub const AdamW = @import("machine_learning/adamw.zig").AdamW;
 pub const RMSprop = @import("machine_learning/rmsprop.zig").RMSprop;
 pub const Adagrad = @import("machine_learning/adagrad.zig").Adagrad;
 pub const Adadelta = @import("machine_learning/adadelta.zig").Adadelta;
