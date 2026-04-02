@@ -301,6 +301,11 @@ pub const algorithms = struct {
         pub const DelaunayTriangle = @import("algorithms/geometry/delaunay.zig").Triangle;
         pub const DelaunayEdge = @import("algorithms/geometry/delaunay.zig").Edge;
         pub const DelaunayTriangulation = @import("algorithms/geometry/delaunay.zig").DelaunayTriangulation;
+        pub const BBPoint = @import("algorithms/geometry/bounding_box.zig").Point;
+        pub const AABB = @import("algorithms/geometry/bounding_box.zig").AABB;
+        pub const OBB = @import("algorithms/geometry/bounding_box.zig").OBB;
+        pub const computeAABB = @import("algorithms/geometry/bounding_box.zig").computeAABB;
+        pub const computeMinimumOBB = @import("algorithms/geometry/bounding_box.zig").computeMinimumOBB;
     };
 
     /// Bitwise manipulation algorithms
