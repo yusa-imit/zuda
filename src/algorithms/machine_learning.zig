@@ -91,6 +91,7 @@
 ///   - RMSprop: Root mean square propagation with adaptive learning rates (O(n) per update, works well with RNNs and non-stationary objectives)
 ///   - Adagrad: Adaptive gradient with cumulative squared gradients (O(n) per update, excellent for sparse data and NLP tasks)
 ///   - Adadelta: Extension of Adagrad with moving average and no learning rate required (O(n) per update, O(2n) space, fixes learning rate collapse)
+///   - RAdam: Rectified Adam with variance correction (O(n) per update, O(n) space, no warmup needed, stable early training)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -227,3 +228,4 @@ pub const AMSGrad = @import("machine_learning/amsgrad.zig").AMSGrad;
 pub const RMSprop = @import("machine_learning/rmsprop.zig").RMSprop;
 pub const Adagrad = @import("machine_learning/adagrad.zig").Adagrad;
 pub const Adadelta = @import("machine_learning/adadelta.zig").Adadelta;
+pub const RAdam = @import("machine_learning/radam.zig").RAdam;
