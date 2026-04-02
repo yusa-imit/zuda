@@ -276,6 +276,16 @@ pub const algorithms = struct {
         pub const simplify = @import("algorithms/geometry/douglas_peucker.zig").simplify;
         pub const compressionRatio = @import("algorithms/geometry/douglas_peucker.zig").compressionRatio;
         pub const maxDeviation = @import("algorithms/geometry/douglas_peucker.zig").maxDeviation;
+        pub const CalipersPoint = @import("algorithms/geometry/rotating_calipers.zig").Point;
+        pub const DiameterResult = @import("algorithms/geometry/rotating_calipers.zig").DiameterResult;
+        pub const WidthResult = @import("algorithms/geometry/rotating_calipers.zig").WidthResult;
+        pub const MinBoundingRectResult = @import("algorithms/geometry/rotating_calipers.zig").MinBoundingRectResult;
+        pub const diameter = @import("algorithms/geometry/rotating_calipers.zig").diameter;
+        pub const diameterOnConvexHull = @import("algorithms/geometry/rotating_calipers.zig").diameterOnConvexHull;
+        pub const width = @import("algorithms/geometry/rotating_calipers.zig").width;
+        pub const widthOnConvexHull = @import("algorithms/geometry/rotating_calipers.zig").widthOnConvexHull;
+        pub const minBoundingRect = @import("algorithms/geometry/rotating_calipers.zig").minBoundingRect;
+        pub const minBoundingRectOnConvexHull = @import("algorithms/geometry/rotating_calipers.zig").minBoundingRectOnConvexHull;
     };
 
     /// Bitwise manipulation algorithms
