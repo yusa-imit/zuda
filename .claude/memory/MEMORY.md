@@ -1,4 +1,36 @@
-## Latest Session (Session 232, 2026-04-03) — FEATURE MODE (Geometry Algorithms)
+## Latest Session (Session 234, 2026-04-03) — FEATURE MODE (Advanced Trees)
+- Wavelet Tree Implementation: 20 tests, space-efficient data structure for range queries on sequences
+- Algorithm: Balanced binary tree with bitmap branching decisions for efficient sequence indexing
+- Key features:
+  * Balanced binary tree: Each node splits alphabet range at midpoint
+  * Bitmap encoding: DynamicBitSet stores left(0)/right(1) branching decisions
+  * Recursive construction: O(n log σ) build from sequence where σ is alphabet size
+  * Range query support: rank, select, access, rangeCount, rangeQuantile
+  * Type-generic (u32, i8, any ordered type)
+- Operations:
+  * rank(c, i): Count occurrences of c in [0, i), O(log σ)
+  * select(c, k): Find k-th occurrence of c, O(log σ)
+  * access(i): Get element at position i, O(log σ)
+  * rangeCount(l, r, c): Count c in [l, r), O(log σ)
+  * rangeQuantile(l, r, k): k-th smallest in [l, r), O(log σ)
+- Node structure:
+  * bitmap: DynamicBitSet for left(0)/right(1) decisions
+  * left/right: Child nodes for alphabet range split
+  * min_val/max_val: Value range at this node
+- Time: O(n log σ) construction, O(log σ) per query
+- Space: O(n log σ) bits for bitmaps, O(log σ) tree depth
+- Use cases: Compressed suffix arrays (text indexing), range counting queries, range quantile queries (k-th smallest), document retrieval, sequence indexing with small alphabets, competitive programming
+- Tests cover: initialization, build from sequence, element access (all positions), access bounds, rank queries (multiple elements), rank non-existent elements, select queries (finding occurrences), select not found, range count queries, range quantile (min/median/max), range quantile in subarrays, single element, all same elements, large alphabet, memory safety (testing.allocator), i8 signed support
+- Trade-offs: vs SegmentTree (Wavelet supports quantile, Segment supports arbitrary monoids), vs FenwickTree (Wavelet supports quantile, Fenwick faster for prefix sums), vs SparseTable (Wavelet supports updates implicitly, SparseTable for static RMQ)
+- Fourth advanced tree in PRD list: CartesianTree, FusionTree, Link-Cut Tree, WaveletTree
+- Complements query structures: SegmentTree (range sum), FenwickTree (prefix sums), SparseTable (RMQ)
+- Commits: a7eb3e1
+
+## Previous Session (Session 233, 2026-04-03) — FEATURE MODE (Persistent Data Structures)
+- Persistent HashMap (HAMT) Implementation: 15 tests, Hash Array Mapped Trie for immutable mapping
+- Commits: c02cc14
+
+## Previous Session (Session 232, 2026-04-03) — FEATURE MODE (Geometry Algorithms)
 - Voronoi Diagram Implementation: 14 tests, Fortune's sweep line algorithm for proximity analysis
 - Algorithm: Optimal O(n log n) sweep line algorithm for computing Voronoi diagrams
 - Key features:
