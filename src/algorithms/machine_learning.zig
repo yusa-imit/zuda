@@ -92,6 +92,7 @@
 ///   - Adagrad: Adaptive gradient with cumulative squared gradients (O(n) per update, excellent for sparse data and NLP tasks)
 ///   - Adadelta: Extension of Adagrad with moving average and no learning rate required (O(n) per update, O(2n) space, fixes learning rate collapse)
 ///   - RAdam: Rectified Adam with variance correction (O(n) per update, O(n) space, no warmup needed, stable early training)
+///   - LAMB: Layer-wise Adaptive Moments for Batch training (O(n) per update, O(n) space, enables large-batch training, trust ratio adaptation)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -229,3 +230,4 @@ pub const RMSprop = @import("machine_learning/rmsprop.zig").RMSprop;
 pub const Adagrad = @import("machine_learning/adagrad.zig").Adagrad;
 pub const Adadelta = @import("machine_learning/adadelta.zig").Adadelta;
 pub const RAdam = @import("machine_learning/radam.zig").RAdam;
+pub const LAMB = @import("machine_learning/lamb.zig").LAMB;
