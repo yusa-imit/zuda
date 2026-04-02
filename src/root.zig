@@ -290,6 +290,13 @@ pub const algorithms = struct {
         pub const Triangle = @import("algorithms/geometry/ear_clipping.zig").Triangle;
         pub const triangulate = @import("algorithms/geometry/ear_clipping.zig").triangulate;
         pub const triangulationArea = @import("algorithms/geometry/ear_clipping.zig").triangulationArea;
+        pub const BOPoint = @import("algorithms/geometry/bentley_ottmann.zig").Point;
+        pub const BOSegment = @import("algorithms/geometry/bentley_ottmann.zig").Segment;
+        pub const EventType = @import("algorithms/geometry/bentley_ottmann.zig").EventType;
+        pub const BOEvent = @import("algorithms/geometry/bentley_ottmann.zig").Event;
+        pub const BOIntersectionResult = @import("algorithms/geometry/bentley_ottmann.zig").IntersectionResult;
+        pub const findIntersections = @import("algorithms/geometry/bentley_ottmann.zig").findIntersections;
+        pub const countIntersections = @import("algorithms/geometry/bentley_ottmann.zig").countIntersections;
     };
 
     /// Bitwise manipulation algorithms
