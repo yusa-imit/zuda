@@ -264,6 +264,13 @@ pub const algorithms = struct {
         pub const orientation = @import("algorithms/geometry/line_intersection.zig").orientation;
         pub const doSegmentsIntersect = @import("algorithms/geometry/line_intersection.zig").doSegmentsIntersect;
         pub const segmentIntersection = @import("algorithms/geometry/line_intersection.zig").segmentIntersection;
+        pub const Point2D = @import("algorithms/geometry/polygon.zig").Point2D;
+        pub const signedArea = @import("algorithms/geometry/polygon.zig").signedArea;
+        pub const polygonArea = @import("algorithms/geometry/polygon.zig").polygonArea;
+        pub const perimeter = @import("algorithms/geometry/polygon.zig").perimeter;
+        pub const centroid = @import("algorithms/geometry/polygon.zig").centroid;
+        pub const pointInPolygon = @import("algorithms/geometry/polygon.zig").pointInPolygon;
+        pub const isConvex = @import("algorithms/geometry/polygon.zig").isConvex;
     };
 
     /// Bitwise manipulation algorithms
