@@ -142,7 +142,7 @@ pub const containers = struct {
     /// Persistent (immutable) data structures
     pub const persistent = struct {
         pub const PersistentArray = @import("containers/persistent/persistent_array.zig").PersistentArray;
-        pub const PersistentHashMap = @import("containers/hashing/persistent_hash_map.zig").PersistentHashMap;
+        pub const PersistentHashMap = @import("containers/persistent/persistent_hashmap.zig").PersistentHashMap;
         pub const PersistentRBTree = @import("containers/persistent/persistent_rbtree.zig").PersistentRBTree;
     };
 };
