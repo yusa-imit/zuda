@@ -79,6 +79,7 @@ pub const containers = struct {
         pub const SparseTable = @import("containers/trees/sparse_table.zig").SparseTable;
         pub const IntervalTree = @import("containers/trees/interval_tree.zig").IntervalTree;
         pub const VanEmdeBoasTree = @import("containers/trees/van_emde_boas_tree.zig").VanEmdeBoasTree;
+        pub const WaveletTree = @import("containers/trees/wavelet_tree.zig").WaveletTree;
     };
 
     /// Graph representations
