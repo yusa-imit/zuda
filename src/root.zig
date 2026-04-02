@@ -306,6 +306,12 @@ pub const algorithms = struct {
         pub const OBB = @import("algorithms/geometry/bounding_box.zig").OBB;
         pub const computeAABB = @import("algorithms/geometry/bounding_box.zig").computeAABB;
         pub const computeMinimumOBB = @import("algorithms/geometry/bounding_box.zig").computeMinimumOBB;
+        pub const VoronoiPoint = @import("algorithms/geometry/voronoi.zig").Point;
+        pub const VoronoiEdge = @import("algorithms/geometry/voronoi.zig").Edge;
+        pub const VoronoiCell = @import("algorithms/geometry/voronoi.zig").Cell;
+        pub const VoronoiDiagram = @import("algorithms/geometry/voronoi.zig").VoronoiDiagram;
+        pub const voronoi = @import("algorithms/geometry/voronoi.zig").voronoi;
+        pub const voronoiFromDelaunay = @import("algorithms/geometry/voronoi.zig").voronoiFromDelaunay;
     };
 
     /// Bitwise manipulation algorithms
