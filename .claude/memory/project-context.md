@@ -2,20 +2,71 @@
 
 ## Current Status
 - **Version**: 2.0.0 (current — released 2026-03-26)
-- **Phase**: v2.0.0 POST-RELEASE — Core Algorithm Expansion (Machine Learning)
+- **Phase**: v2.0.0 POST-RELEASE — Persistent Data Structures Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-03-30 Session 143)
+- **Last CI Status**: ✅ GREEN (verified 2026-04-03 Session 233)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
-- **Current Focus**: Machine Learning Algorithms Expansion (12 algorithms implemented)
-- **Next Priority**: Additional ML algorithms (Neural Networks, clustering variants) or other algorithm categories
-- **Test Count**: 5488 tests passing (+14 Polynomial Regression from Session 143, all passing)
-  - Breakdown: 301 linalg + 102 stats descriptive + 602 distributions + 143 hypothesis tests + 129 correlation/regression + 213 signal + 439 numeric + 282 optimize (line_search 35 + gradient_descent 28 + conjugate_gradient 34 + bfgs 34 + lbfgs 32 + nelder_mead 29 + penalty_method 20 + augmented_lagrangian 21 + levenberg_marquardt 10 + gauss_newton 16 + quadratic_programming 25 + simplex 19 + interior_point 8) + ndarray + containers + algorithms + internal
-  - Skipped: 4 (2 Normal quantile, 2 correlation empty array)
-  - Failed: 6 (3 nelder_mead edge cases, 3 penalty_method complex multi-constraint problems)
-  - Phase 11 Progress: Line Search ✅ (3/3), Unconstrained ✅ (5/5), Constrained ✅ (3/3), Least Squares ✅ (2/2), Linear Programming ✅ (2/2), Auto-diff (0/4)
-- **System Status**: STABLE — 2455/2461 tests passing (99.76%)
+- **Current Focus**: Expanding persistent (immutable) data structures with structural sharing
+- **Next Priority**: Additional persistent structures or other container categories
+- **Test Count**: 5503 tests passing (+15 PersistentHashMap from Session 233, all passing)
+  - Breakdown: containers (persistent +15) + linalg + stats + algorithms + internal
+  - Persistent containers: 3 total (PersistentArray, PersistentHashMap, PersistentRBTree)
+- **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-03-30 - Session 143)
+## Recent Progress (Session 2026-04-03 - Session 233)
+**FEATURE MODE:**
+
+### Persistent HashMap (HAMT) Implementation (commit c02cc14) ✅
+- ✅ **Data Structure**: Hash Array Mapped Trie (HAMT) for immutable mapping
+- ✅ **Branching**: 32-way fanout (5 bits per level) for shallow trees
+- ✅ **Structural sharing**: Only modified paths are copied, shared nodes reused
+- ✅ **Collision handling**: Chaining in leaf nodes for same bitmap index
+- ✅ **Split strategy**: Automatic leaf-to-branch conversion when >4 entries or >depth 60
+- ✅ **Time complexity**: O(log₃₂ n) ≈ O(1) for practical sizes
+  - get: O(log₃₂ n) hash + tree traversal
+  - insert: O(log₃₂ n) with path copying (structural sharing)
+  - remove: O(log₃₂ n) with path copying
+- ✅ **Space complexity**: O(n) total, O(log₃₂ n) extra per version
+- ✅ **Operations**:
+  - get(key): Retrieve value (returns null if not found)
+  - insert(key, value): Create new version with inserted/updated entry
+  - remove(key): Create new version with entry removed
+  - contains(key): Check existence
+  - count(): Get number of entries (O(1))
+  - isEmpty(): Check if empty (O(1))
+  - iterator(): Traverse all entries (depth-first)
+- ✅ **Features**:
+  - Immutable: all operations return new version
+  - Structural sharing: versions share unmodified subtrees
+  - Bitmap optimization: sparse child arrays (only present children stored)
+  - Type-generic: K/V types with Context (hash/eql functions)
+  - Memory safe: proper allocator tracking for all versions
+- ✅ **Tests**: 15/15 passing (100%)
+  - Initialization (empty map)
+  - Single insert and get
+  - Multiple inserts (sequential)
+  - Update existing key (overwrite)
+  - Persistence validation (structural sharing between versions)
+  - Remove key
+  - Remove preserves old version
+  - Get nonexistent key
+  - Hash collisions (10 entries, same bitmap indices)
+  - Iterator traversal
+  - Large dataset (100 entries)
+  - Remove all elements
+  - Complex persistence (branching versions: v2→v3, v2→v4)
+  - f32 type support (value type flexibility)
+  - Memory safety with testing.allocator
+- ✅ **Implementation**: src/containers/persistent/persistent_hashmap.zig (745 lines)
+- ✅ **Use cases**:
+  - Functional programming (Clojure/Scala-style immutable maps)
+  - Version control systems (efficient snapshots)
+  - Undo/redo systems (state history)
+  - Concurrent data structures (lock-free reads on shared versions)
+  - Transactional memory (rollback on failure)
+- ✅ **Export**: Added to src/root.zig persistent namespace (fixed incorrect path)
+
+## Previous Progress (Session 2026-03-30 - Session 143)
 **FEATURE MODE:**
 
 ### Polynomial Regression Implementation (commit 3da9624) ✅
