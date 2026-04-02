@@ -94,6 +94,7 @@
 ///   - RAdam: Rectified Adam with variance correction (O(n) per update, O(n) space, no warmup needed, stable early training)
 ///   - LAMB: Layer-wise Adaptive Moments for Batch training (O(n) per update, O(n) space, enables large-batch training, trust ratio adaptation)
 ///   - Lookahead: Meta-optimizer wrapping any base optimizer (O(n) per sync period, O(n) additional space, reduces variance and improves generalization)
+///   - LARS: Layer-wise Adaptive Rate Scaling for large-batch training (O(n) per update, O(n) space, enables batch sizes > 8K, ImageNet-style training)
 ///
 /// Use cases:
 /// - Customer segmentation (K-Means, K-Medoids)
@@ -234,3 +235,5 @@ pub const RAdam = @import("machine_learning/radam.zig").RAdam;
 pub const LAMB = @import("machine_learning/lamb.zig").LAMB;
 pub const Lookahead = @import("machine_learning/lookahead.zig").Lookahead;
 pub const LookaheadConfig = @import("machine_learning/lookahead.zig").LookaheadConfig;
+pub const LARS = @import("machine_learning/lars.zig").LARS;
+pub const LARSConfig = @import("machine_learning/lars.zig").LARSConfig;
