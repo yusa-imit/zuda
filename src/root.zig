@@ -416,6 +416,9 @@ pub const algorithms = struct {
         pub const searchRotated = @import("algorithms/dynamic_programming/binary_search.zig").searchRotated;
         pub const findPeak = @import("algorithms/dynamic_programming/binary_search.zig").findPeak;
         pub const findMinRotated = @import("algorithms/dynamic_programming/binary_search.zig").findMinRotated;
+
+        // Matrix Chain Multiplication
+        pub const MatrixChain = @import("algorithms/dynamic_programming/matrix_chain.zig").MatrixChain;
     };
 };
 
