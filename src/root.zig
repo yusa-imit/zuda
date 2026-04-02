@@ -257,6 +257,13 @@ pub const algorithms = struct {
         pub const geohashNeighbor = @import("algorithms/geometry/geohash.zig").neighbor;
         pub const geohashNeighbors = @import("algorithms/geometry/geohash.zig").neighbors;
         pub const GeohashDirection = @import("algorithms/geometry/geohash.zig").Direction;
+        pub const LinePoint = @import("algorithms/geometry/line_intersection.zig").Point;
+        pub const Segment = @import("algorithms/geometry/line_intersection.zig").Segment;
+        pub const Orientation = @import("algorithms/geometry/line_intersection.zig").Orientation;
+        pub const IntersectionResult = @import("algorithms/geometry/line_intersection.zig").IntersectionResult;
+        pub const orientation = @import("algorithms/geometry/line_intersection.zig").orientation;
+        pub const doSegmentsIntersect = @import("algorithms/geometry/line_intersection.zig").doSegmentsIntersect;
+        pub const segmentIntersection = @import("algorithms/geometry/line_intersection.zig").segmentIntersection;
     };
 
     /// Bitwise manipulation algorithms
