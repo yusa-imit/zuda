@@ -271,6 +271,11 @@ pub const algorithms = struct {
         pub const centroid = @import("algorithms/geometry/polygon.zig").centroid;
         pub const pointInPolygon = @import("algorithms/geometry/polygon.zig").pointInPolygon;
         pub const isConvex = @import("algorithms/geometry/polygon.zig").isConvex;
+        pub const DPPoint = @import("algorithms/geometry/douglas_peucker.zig").Point;
+        pub const perpendicularDistance = @import("algorithms/geometry/douglas_peucker.zig").perpendicularDistance;
+        pub const simplify = @import("algorithms/geometry/douglas_peucker.zig").simplify;
+        pub const compressionRatio = @import("algorithms/geometry/douglas_peucker.zig").compressionRatio;
+        pub const maxDeviation = @import("algorithms/geometry/douglas_peucker.zig").maxDeviation;
     };
 
     /// Bitwise manipulation algorithms
