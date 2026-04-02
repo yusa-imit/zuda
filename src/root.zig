@@ -297,6 +297,10 @@ pub const algorithms = struct {
         pub const BOIntersectionResult = @import("algorithms/geometry/bentley_ottmann.zig").IntersectionResult;
         pub const findIntersections = @import("algorithms/geometry/bentley_ottmann.zig").findIntersections;
         pub const countIntersections = @import("algorithms/geometry/bentley_ottmann.zig").countIntersections;
+        pub const DelaunayPoint = @import("algorithms/geometry/delaunay.zig").Point;
+        pub const DelaunayTriangle = @import("algorithms/geometry/delaunay.zig").Triangle;
+        pub const DelaunayEdge = @import("algorithms/geometry/delaunay.zig").Edge;
+        pub const DelaunayTriangulation = @import("algorithms/geometry/delaunay.zig").DelaunayTriangulation;
     };
 
     /// Bitwise manipulation algorithms
