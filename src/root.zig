@@ -286,6 +286,10 @@ pub const algorithms = struct {
         pub const widthOnConvexHull = @import("algorithms/geometry/rotating_calipers.zig").widthOnConvexHull;
         pub const minBoundingRect = @import("algorithms/geometry/rotating_calipers.zig").minBoundingRect;
         pub const minBoundingRectOnConvexHull = @import("algorithms/geometry/rotating_calipers.zig").minBoundingRectOnConvexHull;
+        pub const TriPoint = @import("algorithms/geometry/ear_clipping.zig").Point;
+        pub const Triangle = @import("algorithms/geometry/ear_clipping.zig").Triangle;
+        pub const triangulate = @import("algorithms/geometry/ear_clipping.zig").triangulate;
+        pub const triangulationArea = @import("algorithms/geometry/ear_clipping.zig").triangulationArea;
     };
 
     /// Bitwise manipulation algorithms
