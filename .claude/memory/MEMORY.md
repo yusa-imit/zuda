@@ -632,3 +632,28 @@
 - Trade-offs: vs Ridge (auto-tunes lambda, provides uncertainty), vs Gaussian Process (diagonal covariance approximation, O(n³) → O(nd² + d³)), vs Lasso (L2 only, no sparsity)
 - Complements: Ridge Regression (manual lambda), Gaussian Process (full covariance), Elastic Net (L1+L2)
 - Commits: dcd50b4
+
+## Current Session (Session 229, 2026-04-02) — FEATURE MODE (Geometry Algorithms)
+- Delaunay Triangulation Implementation: 15 tests, Bowyer-Watson incremental algorithm
+- Algorithm: Incremental construction with super-triangle and circumcircle property
+- Key features:
+  * Bowyer-Watson algorithm: Incremental point insertion with cavity retrieval
+  * Super-triangle initialization: Contains all input points
+  * Circumcircle test: Point-in-circumcircle predicate using determinant
+  * Polygonal hole boundary: Extract non-shared edges of bad triangles
+  * Incremental construction: Add points one at a time, retriangulate affected region
+  * Type-generic (f32/f64)
+- Algorithm steps:
+  * Create super-triangle containing all points
+  * For each point: find triangles with point in circumcircle (bad triangles)
+  * Extract boundary of polygonal hole (non-shared edges)
+  * Remove bad triangles, create new triangles from hole edges to new point
+  * Remove super-triangle vertices at end
+- Time: O(n log n) expected, O(n²) worst case per point insertion
+- Space: O(n) for triangulation
+- Use cases: Mesh generation (FEA, computer graphics), terrain modeling, surface reconstruction, Voronoi diagram (dual structure), nearest neighbor interpolation
+- Tests cover: basic shapes (triangle, square, pentagon), random points (10), grid points (50), collinear points (degenerate handling), insufficient points error, duplicate points, Euler's formula validation (triangle count), Point/Triangle/Edge equality, containsVertex/hasEdge queries, f32/f64 support, memory safety
+- Trade-offs: vs Divide-and-conquer (O(n log n) guaranteed but more complex), vs Sweep line (similar complexity, different approach)
+- Reference: Bowyer (1981), Watson (1981) - widely used in computational geometry
+- Sixth algorithm in Geometry Algorithms category (convex hull, closest pair, geohash, haversine, line intersection, Delaunay)
+- Commits: 6428627
