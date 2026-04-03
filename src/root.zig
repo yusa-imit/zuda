@@ -457,6 +457,13 @@ pub const algorithms = struct {
         pub const PartitionResult = @import("algorithms/dynamic_programming/palindrome_partition.zig").PartitionResult;
         pub const allPartitions = @import("algorithms/dynamic_programming/palindrome_partition.zig").allPartitions;
         pub const isPalindrome = @import("algorithms/dynamic_programming/palindrome_partition.zig").isPalindrome;
+
+        // Climbing Stairs
+        pub const climbingStairsCount = @import("algorithms/dynamic_programming/climbing_stairs.zig").countWays;
+        pub const climbingStairsTabulation = @import("algorithms/dynamic_programming/climbing_stairs.zig").countWaysTabulation;
+        pub const climbingStairsGeneral = @import("algorithms/dynamic_programming/climbing_stairs.zig").countWaysGeneral;
+        pub const climbingStairsMinCost = @import("algorithms/dynamic_programming/climbing_stairs.zig").minCost;
+        pub const climbingStairsExactSteps = @import("algorithms/dynamic_programming/climbing_stairs.zig").countWaysExactSteps;
     };
 };
 
