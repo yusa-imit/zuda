@@ -4,16 +4,51 @@
 - **Version**: 2.0.0 (current — released 2026-03-26)
 - **Phase**: v2.0.0 POST-RELEASE — Dynamic Programming Algorithms Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-04-04 Session 249)
+- **Last CI Status**: ✅ GREEN (verified 2026-04-04 Session 252)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
 - **Current Focus**: Expanding dynamic programming algorithm category
 - **Next Priority**: Additional DP algorithms (Distinct Subsequences, Wildcard Matching, Regular Expression, Longest Increasing Path)
-- **Test Count**: 5591 tests passing (+21 House Robber from Session 249, all passing)
-  - Breakdown: containers + linalg + stats + algorithms (15 DP algorithms) + internal
-  - DP algorithms: 15 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber)
+- **Test Count**: 5610 tests passing (+19 Longest Common Substring from Session 252, all passing)
+  - Breakdown: containers + linalg + stats + algorithms (17 DP algorithms) + internal
+  - DP algorithms: 17 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring)
 - **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-04-04 - Session 249)
+## Recent Progress (Session 2026-04-04 - Session 252)
+**FEATURE MODE:**
+
+### Longest Common Substring Algorithm (Session 252, commit 178b4ad) ✅
+- ✅ **Algorithm**: Three dynamic programming variants for contiguous substring matching
+- ✅ **Functions**:
+  - longestCommonSubstring(): Full tabulation — O(n×m) time, O(n×m) space
+  - longestCommonSubstringOptimized(): Rolling buffer — O(n×m) time, O(min(n,m)) space
+  - allCommonSubstrings(minLength): Find all common substrings above threshold — O(n×m + k×L) time
+  - SubstringResult: Struct with length and starting indices in both strings
+- ✅ **Features**:
+  - DP recurrence: dp[i][j] = dp[i-1][j-1] + 1 if chars match, else 0 (reset for contiguity)
+  - Key difference from LCS: requires contiguous match (no gaps allowed)
+  - Space optimization: two-row rolling buffer, automatically swaps inputs to use smaller dimension
+  - Deduplication via StringHashMap for allCommonSubstrings
+  - substring1()/substring2() methods for extracting actual substrings
+  - Type-generic (works with any byte sequences)
+- ✅ **Time complexity**: O(n×m) for all variants
+- ✅ **Space complexity**: O(n×m) tabulation, O(min(n,m)) optimized
+- ✅ **Use cases**: Text comparison (plagiarism detection), DNA sequence analysis (contiguous genes), code clone detection, string similarity metrics, pattern mining
+- ✅ **Tests**: 19/19 passing (100%)
+  - Basic cases (match, no match, partial match, multiple matches)
+  - Edge cases (empty strings, single char, full match)
+  - Prefix/suffix matching
+  - Case sensitivity validation
+  - Optimized variant (input swapping for space efficiency)
+  - Large strings (50+ chars with embedded common part)
+  - All common substrings (min length filtering, deduplication)
+  - Index validation (correct start positions in both strings)
+  - Memory safety (multiple alloc/dealloc cycles)
+- ✅ **Implementation**: src/algorithms/dynamic_programming/longest_common_substring.zig (479 lines)
+- ✅ **Export**: Added SubstringResult, longestCommonSubstring, longestCommonSubstringOptimized, allCommonSubstrings to src/root.zig dynamic_programming namespace
+- ✅ **Algorithm category**: Classic DP extension of LCS for contiguous matching
+- ✅ **Reference**: Contiguous variant of Longest Common Subsequence problem
+
+## Previous Progress (Session 2026-04-04 - Session 249)
 **FEATURE MODE:**
 
 ### House Robber Algorithm (Session 249, commit 40e74c2) ✅

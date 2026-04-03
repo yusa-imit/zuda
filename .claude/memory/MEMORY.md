@@ -1,4 +1,23 @@
-## Latest Session (Session 251, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 252, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+- Longest Common Substring Implementation: 19 tests, contiguous substring matching with space optimization
+- Algorithm: Dynamic programming for finding longest contiguous substring common to two strings
+- Key features:
+  * longestCommonSubstring(): O(n×m) time, O(n×m) space — full tabulation
+  * longestCommonSubstringOptimized(): O(n×m) time, O(min(n,m)) space — rolling buffer (two rows)
+  * allCommonSubstrings(minLength): Find all common substrings above threshold
+  * SubstringResult: Provides length and starting indices in both strings
+- Algorithm: DP recurrence dp[i][j] = dp[i-1][j-1] + 1 if s1[i] == s2[j], else 0 (reset for non-contiguous)
+- Key difference from LCS: Requires contiguous match (resets to 0 on mismatch), LCS allows gaps
+- Space optimization: Two-row rolling buffer, swaps strings to use smaller dimension
+- Time: O(n×m) for all variants, Space: O(n×m) tabulation, O(min(n,m)) optimized
+- Use cases: Text comparison (plagiarism detection), DNA sequence analysis (contiguous gene matching), code clone detection, string similarity metrics, pattern mining
+- Tests cover: basic (match/no match/partial), edge cases (empty/single/full), multiple matches, prefix/suffix, case sensitivity, optimized variant (input swapping), large strings (50+ chars), all common substrings (min length, deduplication), index validation, memory safety
+- Trade-offs: vs LCS (contiguous vs subsequence), Space O(n×m) vs O(min(n,m)) (reconstruction vs optimization), allCommonSubstrings uses deduplication (StringHashMap)
+- Reference: Classic DP extension of LCS for contiguous matching
+- Seventeenth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring)
+- Commits: 178b4ad
+
+## Previous Session (Session 251, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
 - Unique Paths Implementation: 19 tests, grid path counting with multiple variants
 - Algorithm: Dynamic programming for counting paths in m×n grid (top-left to bottom-right, right/down moves only)
 - Key features:
