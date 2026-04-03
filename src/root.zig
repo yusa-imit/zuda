@@ -451,6 +451,12 @@ pub const algorithms = struct {
         pub const canBreak = @import("algorithms/dynamic_programming/word_break.zig").canBreak;
         pub const countBreaks = @import("algorithms/dynamic_programming/word_break.zig").countBreaks;
         pub const allBreaks = @import("algorithms/dynamic_programming/word_break.zig").allBreaks;
+
+        // Palindrome Partitioning
+        pub const minCuts = @import("algorithms/dynamic_programming/palindrome_partition.zig").minCuts;
+        pub const PartitionResult = @import("algorithms/dynamic_programming/palindrome_partition.zig").PartitionResult;
+        pub const allPartitions = @import("algorithms/dynamic_programming/palindrome_partition.zig").allPartitions;
+        pub const isPalindrome = @import("algorithms/dynamic_programming/palindrome_partition.zig").isPalindrome;
     };
 };
 
