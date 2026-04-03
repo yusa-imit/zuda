@@ -1,4 +1,43 @@
-## Latest Session (Session 247, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 249, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+- House Robber Implementation: 21 tests, classic DP with non-adjacent constraint
+- Algorithm: Optimal robbery planning with adjacent house constraint
+- Key features:
+  * maxRob(): O(n) time, O(1) space — space-optimized two-variable solution
+  * maxRobTable(): O(n) time, O(n) space — full DP table for reconstruction
+  * maxRobCircular(): O(n) time, O(1) space — circular street variant (LeetCode #213)
+  * maxRobStrategy(): O(n) time, O(n) space — backtracking reconstruction
+- Algorithm steps:
+  * State: rob[i] = maximum money robbing houses 0..i
+  * Recurrence: rob[i] = max(rob[i-1], rob[i-2] + houses[i])
+  * Base: rob[0] = houses[0], rob[1] = max(houses[0], houses[1])
+  * Circular: Run twice (exclude last, exclude first) and take max
+  * Strategy: Backtrack through DP table to find which houses were robbed
+- Example: houses=[2,7,9,3,1] → max=12 (rob houses 0,2,4 → 2+9+1)
+- Time: O(n) for all variants
+- Space: O(1) optimized, O(n) table/reconstruction
+- Use cases: Resource allocation (non-adjacent resources), scheduling (maximize value with non-overlapping), game strategy, investment planning
+- Tests cover: basic streets, larger streets, all same values, increasing, edge cases (empty/single/two), DP table validation, circular variants (basic/larger/all same/edge cases), strategy reconstruction (basic/simple/edge cases), type-generic (f64), large scale (100 houses), non-adjacent constraint verification, memory safety
+- Trade-offs: vs Greedy (DP finds optimal), vs Backtracking alone (DP avoids recomputation), Space O(1) vs O(n) (reconstruction), Linear vs Circular (boundary handling)
+- Reference: LeetCode #198 (House Robber I — linear), #213 (House Robber II — circular), #337 (House Robber III — binary tree)
+- Fifteenth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber)
+- Commits: 40e74c2
+
+## Previous Session (Session 248, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+- Climbing Stairs Implementation: 14 tests, classic Fibonacci-like DP recurrence
+- Algorithm: Classic DP problem with multiple solution approaches
+- Key features:
+  * countWays(): O(n) time, O(1) space — space-optimized iterative DP
+  * countWaysTabulation(): O(n) time, O(n) space — DP table for clarity
+  * countWaysGeneral(): O(n×k) time — generalized with k step options
+  * minCost(): O(n) time, O(1) space — minimum cost variant with per-step costs
+  * countWaysExactSteps(): O(n×k) time, O(n×k) space — exactly k moves constraint
+- Algorithm: ways(n) = ways(n-1) + ways(n-2), Fibonacci property
+- Time: O(n) for basic variants, O(n×k) for generalized/constrained
+- Space: O(1) optimized, O(n) tabulation, O(n×k) for 2D DP
+- Use cases: Combinatorial counting, path counting in grids/graphs, educational DP, interview questions
+- Commits: 0204a42
+
+## Previous Session (Session 247, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
 - Palindrome Partitioning Implementation: 13 tests, minimum cuts to partition string into palindromes
 - Algorithm: Two-stage dynamic programming with palindrome lookup table
 - Key features:
