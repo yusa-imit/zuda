@@ -419,6 +419,9 @@ pub const algorithms = struct {
 
         // Matrix Chain Multiplication
         pub const MatrixChain = @import("algorithms/dynamic_programming/matrix_chain.zig").MatrixChain;
+
+        // Rod Cutting Problem
+        pub const RodCutting = @import("algorithms/dynamic_programming/rod_cutting.zig").RodCutting;
     };
 };
 
