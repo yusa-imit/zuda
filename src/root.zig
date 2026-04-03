@@ -478,6 +478,12 @@ pub const algorithms = struct {
         pub const uniquePathsWithObstacles = @import("algorithms/dynamic_programming/unique_paths.zig").uniquePathsWithObstacles;
         pub const minPathSum = @import("algorithms/dynamic_programming/unique_paths.zig").minPathSum;
         pub const uniquePathsExact = @import("algorithms/dynamic_programming/unique_paths.zig").uniquePathsExact;
+
+        // Longest Common Substring
+        pub const SubstringResult = @import("algorithms/dynamic_programming/longest_common_substring.zig").SubstringResult;
+        pub const longestCommonSubstring = @import("algorithms/dynamic_programming/longest_common_substring.zig").longestCommonSubstring;
+        pub const longestCommonSubstringOptimized = @import("algorithms/dynamic_programming/longest_common_substring.zig").longestCommonSubstringOptimized;
+        pub const allCommonSubstrings = @import("algorithms/dynamic_programming/longest_common_substring.zig").allCommonSubstrings;
     };
 };
 
