@@ -2,19 +2,51 @@
 
 ## Current Status
 - **Version**: 2.0.0 (current — released 2026-03-26)
-- **Phase**: v2.0.0 POST-RELEASE — Persistent Data Structures Expansion
+- **Phase**: v2.0.0 POST-RELEASE — Dynamic Programming Algorithms Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-04-03 Session 233)
+- **Last CI Status**: ✅ GREEN (verified 2026-04-03 Session 243)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
-- **Current Focus**: Expanding persistent (immutable) data structures with structural sharing
-- **Next Priority**: Additional persistent structures or other container categories
-- **Test Count**: 5503 tests passing (+15 PersistentHashMap from Session 233, all passing)
-  - Breakdown: containers (persistent +15) + linalg + stats + algorithms + internal
-  - Persistent containers: 3 total (PersistentArray, PersistentHashMap, PersistentRBTree)
+- **Current Focus**: Expanding dynamic programming algorithm category
+- **Next Priority**: Additional DP algorithms (Egg Drop, Word Break, Maximum Subarray)
+- **Test Count**: 5525 tests passing (+22 Subset Sum from Session 243, all passing)
+  - Breakdown: containers + linalg + stats + algorithms (10 DP algorithms) + internal
+  - DP algorithms: 10 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum)
 - **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-04-03 - Session 241)
+## Recent Progress (Session 2026-04-03 - Session 243)
 **FEATURE MODE:**
+
+### Subset Sum Algorithm (Session 243, commit b7355dd) ✅
+- ✅ **Algorithm**: Five dynamic programming variants for the subset sum problem
+- ✅ **Functions**:
+  - canPartition(): Check if subset exists that sums to target (O(n*target))
+  - findSubset(): Get actual subset indices via backtracking reconstruction
+  - countSubsets(): Count all possible subsets for target sum
+  - canPartitionEqual(): Special case for equal partition (target = sum/2)
+  - minSubsetSumDiff(): Minimize difference when partitioning into two subsets
+- ✅ **Features**:
+  - Bottom-up DP with space-optimized 1D arrays (O(target) space)
+  - Backtracking for subset reconstruction (requires 2D table)
+  - Handles negative/impossible cases gracefully
+  - Type-generic (works with i32, i64, etc.)
+  - Reverse iteration to avoid using same element twice
+- ✅ **Time complexity**: O(n*target) for all variants
+- ✅ **Space complexity**: O(target) for canPartition/count/equal/minDiff, O(n*target) for findSubset
+- ✅ **Use cases**: Resource allocation (scheduling with constraints), partition problems, cryptography (knapsack encryption), load balancing, financial planning (exact budgets)
+- ✅ **Tests**: 22/22 passing (100%)
+  - Basic subset existence (target 9 from {3,34,4,12,5,2})
+  - Non-existent subsets (target 30, target 100)
+  - Edge cases (target 0, single element, empty set, negative target)
+  - Subset reconstruction validation (sum equals target)
+  - Counting subsets (with duplicates)
+  - Equal partition (even/odd sum handling)
+  - Minimum difference partition
+  - Large datasets (50 elements, sum=1275)
+  - Memory safety validation
+- ✅ **Implementation**: src/algorithms/dynamic_programming/subset_sum.zig (528 lines)
+- ✅ **Export**: Added canPartition, findSubset, countSubsets, canPartitionEqual, minSubsetSumDiff to src/root.zig dynamic_programming namespace
+- ✅ **Algorithm category**: NP-complete problem solved efficiently via DP for small target values
+- ✅ **Reference**: Cormen et al., "Introduction to Algorithms" (2009), Section 35.5
 
 ### Coin Change Algorithm (Session 241, commit 66b8521) ✅
 - ✅ **Algorithm**: Three dynamic programming variants for the coin change problem
