@@ -484,6 +484,11 @@ pub const algorithms = struct {
         pub const longestCommonSubstring = @import("algorithms/dynamic_programming/longest_common_substring.zig").longestCommonSubstring;
         pub const longestCommonSubstringOptimized = @import("algorithms/dynamic_programming/longest_common_substring.zig").longestCommonSubstringOptimized;
         pub const allCommonSubstrings = @import("algorithms/dynamic_programming/longest_common_substring.zig").allCommonSubstrings;
+
+        // Distinct Subsequences
+        pub const countSubsequences = @import("algorithms/dynamic_programming/distinct_subsequences.zig").countSubsequences;
+        pub const countSubsequencesOptimized = @import("algorithms/dynamic_programming/distinct_subsequences.zig").countSubsequencesOptimized;
+        pub const allSubsequences = @import("algorithms/dynamic_programming/distinct_subsequences.zig").allSubsequences;
     };
 };
 
