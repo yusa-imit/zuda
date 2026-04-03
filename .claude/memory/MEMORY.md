@@ -1,4 +1,23 @@
-## Latest Session (Session 249, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 251, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+- Unique Paths Implementation: 19 tests, grid path counting with multiple variants
+- Algorithm: Dynamic programming for counting paths in m×n grid (top-left to bottom-right, right/down moves only)
+- Key features:
+  * uniquePaths(m, n): O(m×n) time, O(n) space — rolling array optimization
+  * uniquePathsTable(m, n): O(m×n) time, O(m×n) space — full 2D table for visualization
+  * uniquePathsWithObstacles(grid): O(m×n) time, O(n) space — handle obstacles in grid
+  * minPathSum(grid): O(m×n) time, O(n) space — minimum cost path with weighted grid
+  * uniquePathsExact(m, n, k): exactly k steps variant (k = m+n-2 for minimum)
+- Algorithm: Recurrence paths[i][j] = paths[i-1][j] + paths[i][j-1] (sum from above and left)
+- Space optimization: Rolling array reduces O(m×n) to O(n) by updating in-place row-by-row
+- Time: O(m×n) for all variants, Space: O(n) optimized, O(m×n) table
+- Use cases: Robotics navigation (path counting), grid game mechanics (reachability), route optimization (minimum cost), combinatorial counting (Pascal's triangle property)
+- Tests cover: basic grids (1×1, 2×2, 3×3, 4×5), paths formula validation (combinatorics), edge cases (empty, 1×n, m×1 single-path grids), large grids (10×10), obstacles (blocking start/end/middle), cost grids (uniform, increasing), exact step counting, memory safety (allocator tests)
+- Trade-offs: Space O(n) vs O(m×n) (reconstruction trade-off), obstacle handling (0 paths for blocked cells), cost minimization (min instead of sum)
+- Reference: LeetCode #62 (Unique Paths — basic), #63 (Unique Paths II — obstacles), #64 (Minimum Path Sum)
+- Sixteenth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths)
+- Commits: 1d94ecc
+
+## Previous Session (Session 249, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
 - House Robber Implementation: 21 tests, classic DP with non-adjacent constraint
 - Algorithm: Optimal robbery planning with adjacent house constraint
 - Key features:
