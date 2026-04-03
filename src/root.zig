@@ -471,6 +471,13 @@ pub const algorithms = struct {
         pub const houseRobberCircular = @import("algorithms/dynamic_programming/house_robber.zig").maxRobCircular;
         pub const RobStrategy = @import("algorithms/dynamic_programming/house_robber.zig").RobStrategy;
         pub const houseRobberStrategy = @import("algorithms/dynamic_programming/house_robber.zig").maxRobStrategy;
+
+        // Unique Paths
+        pub const uniquePaths = @import("algorithms/dynamic_programming/unique_paths.zig").uniquePaths;
+        pub const uniquePathsTable = @import("algorithms/dynamic_programming/unique_paths.zig").uniquePathsTable;
+        pub const uniquePathsWithObstacles = @import("algorithms/dynamic_programming/unique_paths.zig").uniquePathsWithObstacles;
+        pub const minPathSum = @import("algorithms/dynamic_programming/unique_paths.zig").minPathSum;
+        pub const uniquePathsExact = @import("algorithms/dynamic_programming/unique_paths.zig").uniquePathsExact;
     };
 };
 
