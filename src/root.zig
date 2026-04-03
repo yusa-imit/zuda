@@ -446,6 +446,11 @@ pub const algorithms = struct {
         pub const minTrials = @import("algorithms/dynamic_programming/egg_drop.zig").minTrials;
         pub const minTrialsOptimized = @import("algorithms/dynamic_programming/egg_drop.zig").minTrialsOptimized;
         pub const minTrialsWithStrategy = @import("algorithms/dynamic_programming/egg_drop.zig").minTrialsWithStrategy;
+
+        // Word Break Problem
+        pub const canBreak = @import("algorithms/dynamic_programming/word_break.zig").canBreak;
+        pub const countBreaks = @import("algorithms/dynamic_programming/word_break.zig").countBreaks;
+        pub const allBreaks = @import("algorithms/dynamic_programming/word_break.zig").allBreaks;
     };
 };
 
