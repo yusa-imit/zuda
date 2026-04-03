@@ -4,16 +4,47 @@
 - **Version**: 2.0.0 (current — released 2026-03-26)
 - **Phase**: v2.0.0 POST-RELEASE — Dynamic Programming Algorithms Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-04-04 Session 252)
+- **Last CI Status**: ✅ GREEN (verified 2026-04-04 Session 253)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
 - **Current Focus**: Expanding dynamic programming algorithm category
-- **Next Priority**: Additional DP algorithms (Distinct Subsequences, Wildcard Matching, Regular Expression, Longest Increasing Path)
-- **Test Count**: 5610 tests passing (+19 Longest Common Substring from Session 252, all passing)
-  - Breakdown: containers + linalg + stats + algorithms (17 DP algorithms) + internal
-  - DP algorithms: 17 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring)
+- **Next Priority**: Additional DP algorithms (Wildcard Matching, Regular Expression Matching, Longest Increasing Path, Interleaving String)
+- **Test Count**: 5627 tests passing (+17 Distinct Subsequences from Session 253, all passing)
+  - Breakdown: containers + linalg + stats + algorithms (18 DP algorithms) + internal
+  - DP algorithms: 18 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences)
 - **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-04-04 - Session 252)
+## Recent Progress (Session 2026-04-04 - Session 253)
+**FEATURE MODE:**
+
+### Distinct Subsequences Algorithm (Session 253, commit 1f23ea3) ✅
+- ✅ **Algorithm**: Three dynamic programming variants for counting distinct subsequences matching pattern
+- ✅ **Functions**:
+  - countSubsequences(): Full DP table — O(n×m) time, O(n×m) space
+  - countSubsequencesOptimized(): Rolling buffer — O(n×m) time, O(m) space
+  - allSubsequences(): Backtracking enumeration — O(n×m + k) time, O(n×m + k×m) space
+- ✅ **Features**:
+  - DP recurrence: dp[i][j] = dp[i-1][j] + (s[i-1]==t[j-1] ? dp[i-1][j-1] : 0)
+  - Counts distinct ways to select subsequence of s that equals t
+  - Space optimization: single row with reverse iteration (avoids overwriting)
+  - Backtracking: DFS with state stack to enumerate all solutions
+  - Base cases: dp[i][0] = 1 (empty pattern), dp[0][j] = 0 (empty source)
+  - Type-generic (works with any byte sequences)
+- ✅ **Time complexity**: O(n×m) for counting, O(n×m + k) for enumeration
+- ✅ **Space complexity**: O(n×m) full table, O(m) optimized, O(n×m + k×m) backtracking
+- ✅ **Use cases**: String matching analysis (count pattern formation ways), text comparison (subsequence counting), DNA sequence analysis (pattern matching), pattern recognition in sequential data
+- ✅ **Tests**: 17/17 passing (100%)
+  - Basic examples ("rabbbit"→"rabbit" = 3 ways, "babgbag"→"bag" = 5 ways)
+  - Edge cases (empty strings, no match, pattern longer than source)
+  - Large examples ("aabbbcccc"→"abc" = 24 ways via combinatorics)
+  - Optimized variant consistency (both methods produce same count)
+  - All subsequences enumeration (basic, empty, no match cases)
+  - Memory safety (multiple allocation/deallocation cycles)
+- ✅ **Implementation**: src/algorithms/dynamic_programming/distinct_subsequences.zig (408 lines)
+- ✅ **Export**: Added countSubsequences, countSubsequencesOptimized, allSubsequences to src/root.zig dynamic_programming namespace
+- ✅ **Algorithm category**: Classic DP string matching problem
+- ✅ **Reference**: LeetCode #115 (Distinct Subsequences)
+
+## Previous Progress (Session 2026-04-04 - Session 252)
 **FEATURE MODE:**
 
 ### Longest Common Substring Algorithm (Session 252, commit 178b4ad) ✅

@@ -1,4 +1,23 @@
-## Latest Session (Session 252, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 253, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+- Distinct Subsequences Implementation: 17 tests, counting distinct ways to match pattern via subsequence selection
+- Algorithm: Dynamic programming for counting number of distinct subsequences of s that equal t
+- Key features:
+  * countSubsequences(): O(n×m) time, O(n×m) space — full DP table
+  * countSubsequencesOptimized(): O(n×m) time, O(m) space — rolling buffer (single row, reverse iteration)
+  * allSubsequences(): O(n×m + k) time — backtracking to enumerate all solutions
+- Algorithm: DP recurrence dp[i][j] = dp[i-1][j] + (s[i-1]==t[j-1] ? dp[i-1][j-1] : 0)
+- Key insight: When chars match, can either use or skip current char; when don't match, can only skip
+- Space optimization: Single row with reverse iteration to avoid overwriting needed values
+- Time: O(n×m) for counting, O(n×m + k) for enumeration where k = number of distinct subsequences
+- Space: O(n×m) full table, O(m) optimized, O(n×m + k×m) with backtracking
+- Use cases: String matching analysis (count ways to form pattern), text comparison (subsequence counting), DNA sequence analysis (pattern matching), pattern recognition in sequential data
+- Tests cover: basic ("rabbbit"→"rabbit" = 3 ways), edge cases (empty strings, no match, pattern longer), multiple matches ("babgbag"→"bag" = 5 ways), large examples ("aabbbcccc"→"abc" = 24 ways), optimized variant consistency, all subsequences enumeration, memory safety
+- Trade-offs: Space O(n×m) vs O(m) (reconstruction vs optimization), counting vs enumeration (O(n×m) vs O(n×m + k))
+- Reference: LeetCode #115, classic DP problem
+- Eighteenth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences)
+- Commits: 1f23ea3
+
+## Previous Session (Session 252, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
 - Longest Common Substring Implementation: 19 tests, contiguous substring matching with space optimization
 - Algorithm: Dynamic programming for finding longest contiguous substring common to two strings
 - Key features:
