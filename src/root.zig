@@ -434,6 +434,13 @@ pub const algorithms = struct {
         pub const findLPS = @import("algorithms/dynamic_programming/lps.zig").findSequence;
         pub const minDeletionsForPalindrome = @import("algorithms/dynamic_programming/lps.zig").minDeletionsForPalindrome;
         pub const minInsertionsForPalindrome = @import("algorithms/dynamic_programming/lps.zig").minInsertionsForPalindrome;
+
+        // Subset Sum Problem
+        pub const canPartition = @import("algorithms/dynamic_programming/subset_sum.zig").canPartition;
+        pub const findSubset = @import("algorithms/dynamic_programming/subset_sum.zig").findSubset;
+        pub const countSubsets = @import("algorithms/dynamic_programming/subset_sum.zig").countSubsets;
+        pub const canPartitionEqual = @import("algorithms/dynamic_programming/subset_sum.zig").canPartitionEqual;
+        pub const minSubsetSumDiff = @import("algorithms/dynamic_programming/subset_sum.zig").minSubsetSumDiff;
     };
 };
 
