@@ -422,6 +422,11 @@ pub const algorithms = struct {
 
         // Rod Cutting Problem
         pub const RodCutting = @import("algorithms/dynamic_programming/rod_cutting.zig").RodCutting;
+
+        // Coin Change
+        pub const minCoins = @import("algorithms/dynamic_programming/coin_change.zig").minCoins;
+        pub const countWays = @import("algorithms/dynamic_programming/coin_change.zig").countWays;
+        pub const getCoinsBreakdown = @import("algorithms/dynamic_programming/coin_change.zig").getCoinsBreakdown;
     };
 };
 
