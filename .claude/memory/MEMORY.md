@@ -1,4 +1,27 @@
-## Latest Session (Session 238, 2026-04-03) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 241, 2026-04-03) — FEATURE MODE (Dynamic Programming Algorithms)
+- Coin Change Implementation: 12 tests, minimum coins and counting ways via dynamic programming
+- Algorithm: Three coin change problem variants using bottom-up DP
+- Key features:
+  * minCoins(): Find minimum number of coins needed to make amount (returns null if impossible)
+  * countWays(): Count distinct combinations to make amount (order-independent)
+  * getCoinsBreakdown(): Get actual coins used in minimum solution via backtracking
+  * Type-generic (works with any usize coin denominations)
+  * Space-optimized 1D DP arrays
+- Operations:
+  * minCoins(): O(n*amount) time, O(amount) space — bottom-up DP with optimal substructure
+  * countWays(): O(n*amount) time, O(amount) space — counts combinations without order
+  * getCoinsBreakdown(): O(n*amount) time, O(amount) space — parent tracking for reconstruction
+- Example: For coins [1,5,10,25] and amount 63, minimum is 6 coins (25+25+10+1+1+1)
+- Time: O(n*amount) where n = number of coin denominations
+- Space: O(amount) for DP array (space-optimized from O(n*amount) 2D approach)
+- Use cases: Making change (currency systems), resource allocation (discrete units), combinatorial optimization
+- Tests cover: basic minimum coins (0,1,6,63,99), impossible amounts (non-canonical systems), count ways (4 ways for amount 5), single denomination, coins breakdown validation, large amounts (1000,9999), empty coins edge case, different denominations comparison (US vs Euro coins), order independence verification, breakdown-minimum consistency, memory safety
+- Trade-offs: vs Greedy (DP guarantees optimal for any coin system, greedy only works for canonical systems like US coins), vs Memoization (bottom-up avoids recursion overhead)
+- Reference: Classic DP problem from CLRS Chapter 15
+- Eighth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search variants, Matrix Chain, Rod Cutting, Coin Change)
+- Commits: 66b8521
+
+## Previous Session (Session 238, 2026-04-03) — FEATURE MODE (Dynamic Programming Algorithms)
 - Rod Cutting Implementation: 14 tests, optimal revenue maximization via bottom-up DP
 - Algorithm: Rod cutting problem finds optimal cut positions to maximize revenue
 - Key features:

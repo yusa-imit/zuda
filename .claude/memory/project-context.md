@@ -13,8 +13,39 @@
   - Persistent containers: 3 total (PersistentArray, PersistentHashMap, PersistentRBTree)
 - **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-04-03 - Session 233)
+## Recent Progress (Session 2026-04-03 - Session 241)
 **FEATURE MODE:**
+
+### Coin Change Algorithm (Session 241, commit 66b8521) ✅
+- ✅ **Algorithm**: Three dynamic programming variants for the coin change problem
+- ✅ **Functions**:
+  - minCoins(): Find minimum number of coins needed to make amount (O(n*amount))
+  - countWays(): Count distinct combinations to make amount (O(n*amount))
+  - getCoinsBreakdown(): Get actual coins used in minimum solution via backtracking
+- ✅ **Features**:
+  - Bottom-up DP with space-optimized 1D arrays
+  - Works with any coin denominations (not just canonical systems)
+  - Order-independent (different orderings give same result)
+  - Handles impossible amounts (returns null/0)
+  - Backtracking for actual coin breakdown
+  - Type-generic (works with usize)
+- ✅ **Time complexity**: O(n*amount) where n = number of coin denominations
+- ✅ **Space complexity**: O(amount) for DP array (space-optimized from O(n*amount))
+- ✅ **Use cases**: Making change (currency systems), resource allocation (discrete units), combinatorial optimization
+- ✅ **Tests**: 12/12 passing (100%)
+  - Basic minimum coins (0, 1, 6, 63, 99)
+  - Impossible amounts (non-canonical denominations)
+  - Count ways (4 ways for amount 5 with coins [1,2,5])
+  - Single denomination edge cases
+  - Coins breakdown validation (sum equals amount, uses valid denominations)
+  - Large amounts (1000, 9999)
+  - Empty coins edge case
+  - Different denominations comparison (US vs Euro coins)
+  - Order independence verification
+  - Breakdown-minimum consistency
+  - Memory safety validation
+- ✅ **Implementation**: src/algorithms/dynamic_programming/coin_change.zig (362 lines)
+- ✅ **Export**: Added minCoins, countWays, getCoinsBreakdown to src/root.zig dynamic_programming namespace
 
 ### Persistent HashMap (HAMT) Implementation (commit c02cc14) ✅
 - ✅ **Data Structure**: Hash Array Mapped Trie (HAMT) for immutable mapping
