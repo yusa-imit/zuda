@@ -427,6 +427,13 @@ pub const algorithms = struct {
         pub const minCoins = @import("algorithms/dynamic_programming/coin_change.zig").minCoins;
         pub const countWays = @import("algorithms/dynamic_programming/coin_change.zig").countWays;
         pub const getCoinsBreakdown = @import("algorithms/dynamic_programming/coin_change.zig").getCoinsBreakdown;
+
+        // Longest Palindromic Subsequence
+        pub const lengthLPS = @import("algorithms/dynamic_programming/lps.zig").length;
+        pub const lengthLPS_Optimized = @import("algorithms/dynamic_programming/lps.zig").lengthOptimized;
+        pub const findLPS = @import("algorithms/dynamic_programming/lps.zig").findSequence;
+        pub const minDeletionsForPalindrome = @import("algorithms/dynamic_programming/lps.zig").minDeletionsForPalindrome;
+        pub const minInsertionsForPalindrome = @import("algorithms/dynamic_programming/lps.zig").minInsertionsForPalindrome;
     };
 };
 
