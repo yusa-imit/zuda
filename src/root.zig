@@ -464,6 +464,13 @@ pub const algorithms = struct {
         pub const climbingStairsGeneral = @import("algorithms/dynamic_programming/climbing_stairs.zig").countWaysGeneral;
         pub const climbingStairsMinCost = @import("algorithms/dynamic_programming/climbing_stairs.zig").minCost;
         pub const climbingStairsExactSteps = @import("algorithms/dynamic_programming/climbing_stairs.zig").countWaysExactSteps;
+
+        // House Robber
+        pub const houseRobberMax = @import("algorithms/dynamic_programming/house_robber.zig").maxRob;
+        pub const houseRobberTable = @import("algorithms/dynamic_programming/house_robber.zig").maxRobTable;
+        pub const houseRobberCircular = @import("algorithms/dynamic_programming/house_robber.zig").maxRobCircular;
+        pub const RobStrategy = @import("algorithms/dynamic_programming/house_robber.zig").RobStrategy;
+        pub const houseRobberStrategy = @import("algorithms/dynamic_programming/house_robber.zig").maxRobStrategy;
     };
 };
 
