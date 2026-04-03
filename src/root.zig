@@ -441,6 +441,11 @@ pub const algorithms = struct {
         pub const countSubsets = @import("algorithms/dynamic_programming/subset_sum.zig").countSubsets;
         pub const canPartitionEqual = @import("algorithms/dynamic_programming/subset_sum.zig").canPartitionEqual;
         pub const minSubsetSumDiff = @import("algorithms/dynamic_programming/subset_sum.zig").minSubsetSumDiff;
+
+        // Egg Drop Problem
+        pub const minTrials = @import("algorithms/dynamic_programming/egg_drop.zig").minTrials;
+        pub const minTrialsOptimized = @import("algorithms/dynamic_programming/egg_drop.zig").minTrialsOptimized;
+        pub const minTrialsWithStrategy = @import("algorithms/dynamic_programming/egg_drop.zig").minTrialsWithStrategy;
     };
 };
 
