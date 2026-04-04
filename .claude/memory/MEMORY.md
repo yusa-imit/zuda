@@ -1208,3 +1208,24 @@
 - Reference: Bowyer (1981), Watson (1981) - widely used in computational geometry
 - Sixth algorithm in Geometry Algorithms category (convex hull, closest pair, geohash, haversine, line intersection, Delaunay)
 - Commits: 6428627
+
+## Current Session (Session 266, 2026-04-04) — FEATURE MODE
+- Optimal Binary Search Tree Implementation: 17 tests, classic DP optimization problem
+- Algorithm: Finds optimal BST arrangement to minimize expected search cost
+- Key features:
+  * optimalBST(): O(n³) time, O(n²) space — basic version with successful searches only
+  * optimalBSTWithDummy(): Extended version considering unsuccessful searches
+  * reconstructTree(): Converts DP solution to parent-child tree structure
+  * DP recurrence: cost[i][j] = min over k in [i..j] of { cost[i][k-1] + cost[k+1][j] + sum(freq[i..j]) }
+  * Builds optimal BST bottom-up by increasing subproblem size
+  * Returns minimum cost and root indices for all subproblems
+  * Type-generic (f32, f64, i32, u32, etc.)
+- Algorithm: Bottom-up DP with nested optimization
+- Time: O(n³) where n = number of keys
+- Space: O(n²) for DP tables
+- Use cases: Database index optimization, compiler symbol tables, autocomplete structures, dictionary construction with known access patterns
+- Tests cover: basic examples (3/4/5 keys), single/two keys, equal frequencies, decreasing frequencies, dummy keys (unsuccessful searches), tree reconstruction, large input (10 keys), empty input error, length mismatch, negative frequency validation, f32/f64/i32/u32 support, memory safety
+- Trade-offs: O(n³) optimal vs O(n log n) balanced BST (greedy but not optimal), O(n²) space for DP tables vs O(n) for greedy construction
+- Reference: Classic DP problem from CLRS Chapter 15.5, optimal arrangement minimizes weighted path length
+- Twenty-seventh algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Decode Ways, Partition Equal Subset Sum, Longest Palindromic Substring, Optimal BST)
+- Commits: 7cf0f70
