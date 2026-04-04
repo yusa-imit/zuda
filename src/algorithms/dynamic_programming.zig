@@ -5,6 +5,7 @@
 
 pub const binary_search = @import("dynamic_programming/binary_search.zig");
 pub const bitonic_subsequence = @import("dynamic_programming/bitonic_subsequence.zig");
+pub const burst_balloons = @import("dynamic_programming/burst_balloons.zig");
 pub const climbing_stairs = @import("dynamic_programming/climbing_stairs.zig");
 pub const coin_change = @import("dynamic_programming/coin_change.zig");
 pub const decode_ways = @import("dynamic_programming/decode_ways.zig");
@@ -85,3 +86,6 @@ pub const minimumTotalBottomUp = triangle.minimumTotalBottomUp;
 pub const minimumTotalWithPath = triangle.minimumTotalWithPath;
 pub const countMinimumPaths = triangle.countMinimumPaths;
 pub const maximumTotal = triangle.maximumTotal;
+pub const maxCoins = burst_balloons.maxCoins;
+pub const maxCoinsWithPath = burst_balloons.maxCoinsWithPath;
+pub const coinsForOrder = burst_balloons.coinsForOrder;
