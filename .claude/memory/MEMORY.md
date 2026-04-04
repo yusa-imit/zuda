@@ -1,4 +1,22 @@
-## Latest Session (Session 256, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 259, 2026-04-04) — FEATURE MODE
+- Interleaving String Implementation: 20 tests, classic 2D DP for merge validation
+- Algorithm: Check if s3 is formed by interleaving s1 and s2 while preserving order
+- Key features:
+  * isInterleave(): O(n×m) time, O(n×m) space — full DP table for validation
+  * isInterleaveOptimized(): O(n×m) time, O(m) space — rolling array optimization
+  * isInterleaveAlloc(): Heap-allocated version for arbitrary string lengths
+  * getInterleavePath(): O(n×m) — returns one valid interleaving sequence
+  * countInterleaveWays(): O(n×m) — counts distinct ways to interleave
+- Algorithm: 2D DP where dp[i][j] = can form s3[0..i+j-1] using s1[0..i-1] and s2[0..j-1]
+- Recurrence: dp[i][j] = (dp[i-1][j] && s1[i-1]==s3[k]) || (dp[i][j-1] && s2[j-1]==s3[k]) where k=i+j-1
+- Time: O(n×m) for all variants, Space: O(n×m) full table, O(m) rolling array
+- Use cases: Merge validation, string generation, bioinformatics, version control
+- Tests cover: basic valid/invalid, empty/single chars, order preservation, patterns, path reconstruction, counting (aa+aa=aaaa has 6 ways), large inputs, memory safety
+- Reference: LeetCode #97 (Interleaving String)
+- Twenty-third algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String)
+- Commits: da10fbc
+
+## Previous Session (Session 256, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
 - Maximum Sum Subarray Implementation: 31 tests, classic Kadane's algorithm with multiple variants
 - Algorithm: Dynamic programming for finding contiguous subarray with maximum sum
 - Key features:
