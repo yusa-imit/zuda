@@ -1,4 +1,28 @@
-## Latest Session (Session 260, 2026-04-04) — STABILIZATION MODE
+## Latest Session (Session 262, 2026-04-04) — FEATURE MODE
+- Decode Ways Implementation: 18 tests, classic DP for string decoding counting
+- Algorithm: Count ways to decode digit string to letters (1-26 → A-Z)
+- Key features:
+  * countWays(): O(n) time, O(1) space — space-optimized with rolling variables
+  * countWaysTable(): O(n) time, O(n) space — explicit DP table for debugging
+  * countWaysWildcard(): Wildcard support ('*' = 1-9) with modular arithmetic
+  * canDecode(): Boolean validation helper
+  * allDecodings(): O(2^n) — enumerate all valid decoded strings
+- Algorithm: dp[i] = ways to decode s[0..i-1], recurrence considers single (1-9) and two-digit (10-26) decodes
+- Base cases: dp[0] = 1 (empty), dp[1] = 1 if s[0] != '0'
+- Key constraint: '0' only valid as part of "10" or "20" (leading zeros invalid)
+- Time: O(n) counting, O(2^n) enumeration | Space: O(1) optimized, O(n) table, O(n×output) enumeration
+- Use cases: String decoding puzzles (LeetCode #91, #639), encoding validation, communication protocols, data compression analysis
+- Tests cover: basic examples ("12" → 2 ways, "226" → 3 ways), leading zeros (invalid), zeros in middle ("10"/"20" valid, "30" invalid), boundary values (11-26 range), long strings (Fibonacci growth), wildcard support ("*" expansion), enumeration (all decoded strings), memory safety
+- Trade-offs: Space-optimized O(1) vs table O(n) (debugging), counting O(n) vs enumeration O(2^n) (output size)
+- Reference: LeetCode #91 (Decode Ways), #639 (Decode Ways II with wildcards)
+- Twenty-fourth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Decode Ways)
+- Commits: be64b38
+
+## Previous Session (Session 261, 2026-04-04) — FEATURE MODE
+- Longest Bitonic Subsequence Implementation: 18 tests, classic DP LIS variation
+- Commits: 7b370ad
+
+## Previous Session (Session 260, 2026-04-04) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 5 consecutive successful runs on main (all recent passing)
 - Issues: Zero open
