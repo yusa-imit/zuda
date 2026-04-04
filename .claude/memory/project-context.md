@@ -4,16 +4,52 @@
 - **Version**: 2.0.0 (current — released 2026-03-26)
 - **Phase**: v2.0.0 POST-RELEASE — Dynamic Programming Algorithms Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-04-04 Session 253)
+- **Last CI Status**: ✅ GREEN (verified 2026-04-04 Session 257)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
 - **Current Focus**: Expanding dynamic programming algorithm category
-- **Next Priority**: Additional DP algorithms (Wildcard Matching, Regular Expression Matching, Longest Increasing Path, Interleaving String)
-- **Test Count**: 5627 tests passing (+17 Distinct Subsequences from Session 253, all passing)
-  - Breakdown: containers + linalg + stats + algorithms (18 DP algorithms) + internal
-  - DP algorithms: 18 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences)
+- **Next Priority**: Additional DP algorithms (Regular Expression Matching, Longest Increasing Path, Interleaving String, Scramble String)
+- **Test Count**: 5639 tests passing (+12 Wildcard Matching from Session 257, all passing)
+  - Breakdown: containers + linalg + stats + algorithms (21 DP algorithms) + internal
+  - DP algorithms: 21 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching)
 - **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-04-04 - Session 253)
+## Recent Progress (Session 2026-04-04 - Session 257)
+**FEATURE MODE:**
+
+### Wildcard Matching Algorithm (Session 257, commit 7aeddfc) ✅
+- ✅ **Algorithm**: Three dynamic programming variants for wildcard pattern matching
+- ✅ **Functions**:
+  - isMatch(): Full DP table — O(n×m) time, O(n×m) space
+  - isMatchOptimized(): Rolling buffer — O(n×m) time, O(m) space
+  - isMatchGreedy(): Two-pointer greedy — O(n+m) best, O(n×m) worst, O(1) space
+- ✅ **Features**:
+  - Pattern syntax: '?' matches any single character, '*' matches zero or more characters
+  - DP recurrence: dp[i][j] based on pattern character ('?', '*', or literal match)
+  - Space optimization: two-row rolling buffer reduces space from O(n×m) to O(m)
+  - Greedy optimization: two-pointer approach with backtracking for simple patterns
+  - Base cases: dp[0][0] = true (empty matches empty), dp[0][j] = true if p[0..j-1] all '*'
+  - Type-generic (works with any byte sequences)
+- ✅ **Time complexity**: O(n×m) for DP variants, O(n+m) to O(n×m) for greedy
+- ✅ **Space complexity**: O(n×m) full table, O(m) optimized, O(1) greedy
+- ✅ **Use cases**: File path matching (*.txt, test?.log), shell globbing (bash/zsh wildcards), pattern matching engines, wildcard search in text editors, text filtering in log parsers
+- ✅ **Tests**: 12/12 passing (100%)
+  - Basic examples ("aa"→"a" false, "aa"→"*" true, "cb"→"?a" false, "adceb"→"*a*b" true)
+  - Empty strings (empty matches empty, empty matches all '*', non-empty vs empty)
+  - Single character (exact match, '?', '*')
+  - Question mark ('?' matching single char, mixed with literals, length constraints)
+  - Asterisk ('*' matches zero/multiple chars, multiple '*', at start/middle)
+  - Complex patterns (mixed wildcards, adjacent '*', "mississippi"→"m*si*p*")
+  - Optimized/greedy consistency (all three variants produce identical results)
+  - Large strings (100-char string with long pattern)
+  - Edge cases (pattern longer than string, all wildcards, trailing '*')
+  - Backtracking scenarios ("aaaa"→"*a", complex patterns requiring backtracking)
+  - Memory safety (multiple allocation/deallocation cycles)
+- ✅ **Implementation**: src/algorithms/dynamic_programming/wildcard_matching.zig (499 lines)
+- ✅ **Export**: Added wildcardMatch, wildcardMatchOptimized, wildcardMatchGreedy to src/root.zig dynamic_programming namespace
+- ✅ **Algorithm category**: Classic DP string matching problem (related to regex matching but simpler)
+- ✅ **Reference**: LeetCode #44 (Wildcard Matching)
+
+## Previous Progress (Session 2026-04-04 - Session 253)
 **FEATURE MODE:**
 
 ### Distinct Subsequences Algorithm (Session 253, commit 1f23ea3) ✅
