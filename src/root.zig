@@ -498,6 +498,16 @@ pub const algorithms = struct {
         pub const maxProductWithZeros = @import("algorithms/dynamic_programming/max_product_subarray.zig").maxProductWithZeros;
         pub const countProductGreaterThan = @import("algorithms/dynamic_programming/max_product_subarray.zig").countProductGreaterThan;
         pub const minProduct = @import("algorithms/dynamic_programming/max_product_subarray.zig").minProduct;
+
+        // Maximum Sum Subarray (Kadane's Algorithm)
+        pub const SubarrayResult = @import("algorithms/dynamic_programming/max_sum_subarray.zig").SubarrayResult;
+        pub const maxSum = @import("algorithms/dynamic_programming/max_sum_subarray.zig").maxSum;
+        pub const maxSumWithIndices = @import("algorithms/dynamic_programming/max_sum_subarray.zig").maxSumWithIndices;
+        pub const maxSumTable = @import("algorithms/dynamic_programming/max_sum_subarray.zig").maxSumTable;
+        pub const maxCircularSum = @import("algorithms/dynamic_programming/max_sum_subarray.zig").maxCircularSum;
+        pub const maxSumKSubarrays = @import("algorithms/dynamic_programming/max_sum_subarray.zig").maxSumKSubarrays;
+        pub const countSumGreaterThan = @import("algorithms/dynamic_programming/max_sum_subarray.zig").countSumGreaterThan;
+        pub const minSum = @import("algorithms/dynamic_programming/max_sum_subarray.zig").minSum;
     };
 };
 
