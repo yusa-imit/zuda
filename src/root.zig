@@ -489,6 +489,15 @@ pub const algorithms = struct {
         pub const countSubsequences = @import("algorithms/dynamic_programming/distinct_subsequences.zig").countSubsequences;
         pub const countSubsequencesOptimized = @import("algorithms/dynamic_programming/distinct_subsequences.zig").countSubsequencesOptimized;
         pub const allSubsequences = @import("algorithms/dynamic_programming/distinct_subsequences.zig").allSubsequences;
+
+        // Maximum Product Subarray
+        pub const ProductResult = @import("algorithms/dynamic_programming/max_product_subarray.zig").ProductResult;
+        pub const maxProduct = @import("algorithms/dynamic_programming/max_product_subarray.zig").maxProduct;
+        pub const maxProductWithIndices = @import("algorithms/dynamic_programming/max_product_subarray.zig").maxProductWithIndices;
+        pub const maxProductTable = @import("algorithms/dynamic_programming/max_product_subarray.zig").maxProductTable;
+        pub const maxProductWithZeros = @import("algorithms/dynamic_programming/max_product_subarray.zig").maxProductWithZeros;
+        pub const countProductGreaterThan = @import("algorithms/dynamic_programming/max_product_subarray.zig").countProductGreaterThan;
+        pub const minProduct = @import("algorithms/dynamic_programming/max_product_subarray.zig").minProduct;
     };
 };
 
