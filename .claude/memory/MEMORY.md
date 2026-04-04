@@ -1,4 +1,26 @@
-## Latest Session (Session 253, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+## Latest Session (Session 254, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
+- Maximum Product Subarray Implementation: 22 tests, Kadane's algorithm variant for product instead of sum
+- Algorithm: Track both maximum and minimum products at each position (negative numbers flip max/min)
+- Key features:
+  * maxProduct(): O(n) time, O(1) space — space-optimized dual tracking (max and min products)
+  * maxProductWithIndices(): Returns product + start/end indices for subarray location
+  * maxProductTable(): Full DP table — O(n) time, O(n) space for clarity/reconstruction
+  * maxProductWithZeros(): Splits array by zeros, finds max in each subarray
+  * countProductGreaterThan(k): Count subarrays with product > threshold
+  * minProduct(): Find minimum product subarray (dual problem)
+- Algorithm: dp[i] = max/min product ending at index i, swap max↔min on negative multiplier
+- Core insight: Multiplying by negative number makes minimum product become maximum (and vice versa)
+- Dual tracking prevents missing optimal solution when negatives flip sign
+- Time: O(n) for most variants, O(n²) for countProductGreaterThan
+- Space: O(1) optimized, O(n) for tabulation
+- Use cases: Stock analysis (price changes with gains/losses), signal processing (amplitude products), optimization (profit/loss with negative multipliers), array analytics (max consecutive product)
+- Tests cover: basic (positive/negative/mixed), all negative (even/odd count), all positive (monotonic), with zeros (split strategy), single negative (flip), alternating signs, empty array, indices tracking (start/end/length), tabulation (DP table), memory safety (allocator cycles), zero splits (subarray isolation), count >k (threshold), minimum product (dual), floating point (f64), large values (i64), stress test (1000 elements)
+- Trade-offs: Space O(1) vs O(n) (optimization vs reconstruction), max vs min tracking (dual problem), single element reset (start fresh when better)
+- Reference: Classic DP extension of Kadane's Maximum Subarray for product instead of sum
+- Eighteenth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray)
+- Commits: 9a5f0f1
+
+## Previous Session (Session 253, 2026-04-04) — FEATURE MODE (Dynamic Programming Algorithms)
 - Distinct Subsequences Implementation: 17 tests, counting distinct ways to match pattern via subsequence selection
 - Algorithm: Dynamic programming for counting number of distinct subsequences of s that equal t
 - Key features:
