@@ -1,22 +1,26 @@
-## Latest Session (Session 276, 2026-04-05) — FEATURE MODE
-- Longest Increasing Path in Matrix Implementation: 19 tests, 2D DP with DFS memoization
-- Algorithm: Find longest strictly increasing path in matrix (move in 4 directions)
+## Latest Session (Session 277, 2026-04-05) — FEATURE MODE
+- Stock Trading Implementation: 32 tests, classic DP series with 6 variants
+- Algorithm: Best Time to Buy and Sell Stock - optimal profit from stock trading with various constraints
 - Key features:
-  * longestIncreasingPath(): Standard O(m×n) DFS with O(m×n) memoization
-  * longestIncreasingPathWithPath(): Returns length + actual path coordinates
-  * longestDecreasingPath(): Variant for longest decreasing path
-  * DFS recurrence: memo[i][j] = 1 + max(dfs(neighbor)) for valid increasing neighbors
-  * Each cell visited once due to memoization (no backtracking in DFS, forward-only)
-  * Path reconstruction via greedy neighbor selection following memo values
-  * Type-generic (i32, f32, f64)
-- Algorithm: DFS with memoization from each cell
-- Time: O(m×n) for all variants where m = rows, n = cols
-- Space: O(m×n) for memoization table
-- Use cases: Terrain analysis (elevation paths), game pathfinding (increasing difficulty), matrix optimization, educational DP (classic 2D memoization)
-- Tests cover: basic 3×3 matrices (various patterns), single cell/row/column, all equal values, strictly increasing/decreasing, large matrix (20×20), path reconstruction with validation (4-connected adjacency), empty matrix error, f32/f64 support, negative values, mixed values, memory safety
-- Trade-offs: Standard O(m×n) space for memoization, path reconstruction adds O(length) space for coordinates, DFS naturally handles complex path patterns without explicit state
-- Reference: LeetCode #329 - Longest Increasing Path in Matrix
-- Thirty-second algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path)
+  * maxProfitSingle(): At most 1 transaction (buy once, sell once) - O(n) time, O(1) space
+  * maxProfitUnlimited(): Unlimited transactions - O(n) time, O(1) space, greedy (sum positive diffs)
+  * maxProfitTwoTransactions(): At most 2 transactions - O(n) time, O(1) space, track 4 states (buy1, sell1, buy2, sell2)
+  * maxProfitKTransactions(): At most k transactions - O(n×k) time, O(n×k) space, 2D DP with optimization (k >= n/2 reduces to unlimited)
+  * maxProfitWithCooldown(): Unlimited with 1-day cooldown - O(n) time, O(1) space, track 3 states (hold, sold, rest)
+  * maxProfitWithFee(): Unlimited with transaction fee - O(n) time, O(1) space, track 2 states (hold, not_hold), fee on sell
+  * Type-generic (i32, f64)
+- Algorithm: State machine DP tracking buy/sell/rest states with optimal transitions
+- Time: O(n) for most variants, O(n×k) for k-transactions
+- Space: O(1) for 1/2/unlimited/cooldown/fee variants, O(n×k) for k-transactions
+- Use cases: Financial trading algorithms (profit optimization), resource allocation (buy/sell with constraints), inventory management (timing purchase/sale), economic modeling (transaction cost analysis)
+- Tests cover: basic examples (all 6 variants), edge cases (empty, single, two prices), monotonic sequences (increasing, decreasing), peak-valley patterns, multiple transactions, cooldown scenarios, fee variations, k-transaction variants (k=0/1/2/3/100), f64 support, large prices, memory safety
+- Trade-offs: Single O(1) space vs k-transactions O(n×k), greedy unlimited vs state-tracking cooldown/fee, optimization k >= n/2 reduces complexity
+- Reference: LeetCode #121 (Single), #122 (Unlimited), #123 (Two), #188 (K), #309 (Cooldown), #714 (Fee)
+- Thirty-third algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path, Stock Trading)
+- Commits: b43f9fe
+
+## Previous Session (Session 276, 2026-04-05) — FEATURE MODE
+- Longest Increasing Path in Matrix Implementation: 19 tests, 2D DP with DFS memoization
 - Commits: 1bd6e85
 
 ## Previous Session (Session 275, 2026-04-05) — STABILIZATION MODE
