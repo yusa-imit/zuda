@@ -1,4 +1,21 @@
-## Latest Session (Session 265, 2026-04-04) — STABILIZATION MODE
+## Latest Session (Session 267, 2026-04-04) — FEATURE MODE (Bug Fix)
+- zr_dag Compat Module API Fix: Issue #21 resolved ✅
+- Problem: zr_dag.zig used non-existent AdjacencyList methods (hasVertex, neighborIterator, hasEdge)
+- Root cause: Compat module written for outdated API, doesn't match v2.0.0 AdjacencyList
+- Fix details:
+  * hasVertex(name) → containsVertex(name) (lines 127, 185)
+  * neighborIterator(vertex) → inDegree(vertex) for getEntryNodes (line 151)
+  * hasEdge(from, to) → removed, use inDegree() directly (line 194)
+  * Simplified getInDegree() to delegate to AdjacencyList.inDegree() instead of manual iteration
+- Impact: **UNBLOCKED** zr migration issues (#23, #24, #36, #37 — 715 LOC reduction potential)
+- Tests: All passing (2389/2396, 7 intentionally skipped)
+- Commits: 0a112a8
+
+## Previous Session (Session 266, 2026-04-04) — FEATURE MODE
+- Optimal Binary Search Tree Implementation: 15 tests, classic DP tree optimization
+- Commits: 7cf0f70
+
+## Previous Session (Session 265, 2026-04-04) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 5 consecutive successful runs on main (all recent passing)
 - Issues: Zero open
