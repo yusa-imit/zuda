@@ -124,7 +124,7 @@ pub const DAG = struct {
     /// Time: O(1) | Space: O(1)
     pub fn getNode(self: *const Self, name: []const u8) ?*const anyopaque {
         // Check if vertex exists
-        const exists = self.graph.hasVertex(name);
+        const exists = self.graph.containsVertex(name);
         if (exists) {
             // Return a non-null opaque pointer (zr code only checks for null)
             return @ptrCast(&self.graph);
@@ -146,15 +146,9 @@ pub const DAG = struct {
 
         var vertex_it = self.graph.vertexIterator();
         while (vertex_it.next()) |vertex| {
-            // Count incoming edges (dependencies)
-            var has_dependencies = false;
-            var neighbor_it = self.graph.neighborIterator(vertex) catch continue;
-            while (neighbor_it.next()) |_| {
-                has_dependencies = true;
-                break;
-            }
-
-            if (!has_dependencies) {
+            // Entry nodes have in-degree 0 (no incoming edges)
+            const in_deg = self.graph.inDegree(vertex);
+            if (in_deg == 0) {
                 try result.append(allocator, try allocator.dupe(u8, vertex));
             }
         }
@@ -182,21 +176,12 @@ pub const DAG = struct {
     /// Time: O(V + E) worst case | Space: O(1)
     pub fn getInDegree(self: *const Self, name: []const u8) usize {
         // Check if vertex exists
-        if (!self.graph.hasVertex(name)) {
+        if (!self.graph.containsVertex(name)) {
             return 0;
         }
 
-        // Count incoming edges by iterating all vertices and their adjacencies
-        var count: usize = 0;
-        var vertex_it = self.graph.vertexIterator();
-        while (vertex_it.next()) |vertex| {
-            // Check if vertex has an edge to `name`
-            if (self.graph.hasEdge(vertex, name)) {
-                count += 1;
-            }
-        }
-
-        return count;
+        // Use AdjacencyList's inDegree method
+        return self.graph.inDegree(name);
     }
 
     /// Expose internal graph's adjacencies hashmap for compatibility with zr's API.
