@@ -508,6 +508,11 @@ pub const algorithms = struct {
         pub const maxSumKSubarrays = @import("algorithms/dynamic_programming/max_sum_subarray.zig").maxSumKSubarrays;
         pub const countSumGreaterThan = @import("algorithms/dynamic_programming/max_sum_subarray.zig").countSumGreaterThan;
         pub const minSum = @import("algorithms/dynamic_programming/max_sum_subarray.zig").minSum;
+
+        // Wildcard Matching
+        pub const wildcardMatch = @import("algorithms/dynamic_programming/wildcard_matching.zig").isMatch;
+        pub const wildcardMatchOptimized = @import("algorithms/dynamic_programming/wildcard_matching.zig").isMatchOptimized;
+        pub const wildcardMatchGreedy = @import("algorithms/dynamic_programming/wildcard_matching.zig").isMatchGreedy;
     };
 };
 
