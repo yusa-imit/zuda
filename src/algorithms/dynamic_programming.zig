@@ -4,6 +4,7 @@
 // counting, and string matching problems.
 
 pub const binary_search = @import("dynamic_programming/binary_search.zig");
+pub const bitonic_subsequence = @import("dynamic_programming/bitonic_subsequence.zig");
 pub const climbing_stairs = @import("dynamic_programming/climbing_stairs.zig");
 pub const coin_change = @import("dynamic_programming/coin_change.zig");
 pub const distinct_subsequences = @import("dynamic_programming/distinct_subsequences.zig");
@@ -41,3 +42,6 @@ pub const regexMatchOptimized = regex_matching.isMatchOptimized;
 pub const regexMatchRecursive = regex_matching.isMatchRecursive;
 pub const isInterleave = interleaving_string.isInterleave;
 pub const isInterleaveOptimized = interleaving_string.isInterleaveOptimized;
+pub const longestBitonicSubsequence = bitonic_subsequence.longestBitonicSubsequence;
+pub const longestBitonicSubsequenceAlloc = bitonic_subsequence.longestBitonicSubsequenceAlloc;
+pub const longestBitonicSubsequenceWithPath = bitonic_subsequence.longestBitonicSubsequenceWithPath;
