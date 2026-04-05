@@ -1,22 +1,27 @@
-## Latest Session (Session 291, 2026-04-05) — FEATURE MODE
-- Knight's Tour Implementation: 16 tests, classic backtracking with Warnsdorff's heuristic
-- Algorithm: Find sequence of knight moves visiting all squares on n×n chessboard exactly once
+## Latest Session (Session 292, 2026-04-05) — FEATURE MODE
+- Hamiltonian Path/Cycle Implementation: 17 tests, classic graph backtracking (NP-complete)
+- Algorithm: Find path/cycle visiting all vertices exactly once using backtracking DFS
 - Key features:
-  * knightsTour(): Find complete tour from starting position - O(n²) average with heuristic
-  * countTours(): Count all possible tours (exponential, small boards only)
-  * isValidTour(): Validate a given path (checks length, uniqueness, valid knight moves)
-  * Warnsdorff's heuristic: Prioritize moves to squares with fewer onward options
-  * TourResult type: path (sequence of positions) + found (boolean)
-  * Position type: board coordinates (row, col)
-- Algorithm: Backtracking with move prioritization. At each step, choose the move to the square with the fewest accessible neighbors (Warnsdorff's rule). Dramatically reduces search space.
-- Time: O(n²) average with Warnsdorff's heuristic, O(8^(n²)) worst case without heuristic
-- Space: O(n²) for board + path storage + O(n²) recursion depth
-- Use cases: Chess AI (puzzle solving), graph theory (Hamiltonian paths on knight graphs), algorithm education (classic backtracking demonstration), recreational mathematics
-- Tests cover: 5×5/6×6/8×8 board solutions, different start positions (corners, center, edge), path validation (valid tour, wrong length, duplicate positions, invalid knight moves, out of bounds), count tours on small boards, Warnsdorff's heuristic effectiveness, error handling (invalid board size, invalid start position), memory safety (multiple allocations)
-- Trade-offs: Warnsdorff's heuristic dramatically improves average case but doesn't guarantee solution in all cases, counting tours is exponential (O(8^(n²))) without pruning
-- Key insight: Warnsdorff's rule (1823) — choosing less-accessible squares first reduces backtracking by avoiding dead ends. Modern heuristic still used in chess AI.
-- Reference: Classic backtracking problem, Warnsdorff (1823), De Jaenisch (1862) - first complete analysis
-- Eighth algorithm in Backtracking category (N-Queens, Sudoku, Permutations, Subsets, Combination Sum, Word Search, Palindrome Partition, Knight's Tour)
+  * hamiltonianPath(): Find path visiting all vertices from start - O(N!) worst case
+  * hamiltonianCycle(): Find cycle visiting all vertices + return to start - O(N!) worst case, min 3 vertices
+  * isValidPath(): Validate path correctness (length n, all unique, edges exist)
+  * isValidCycle(): Validate cycle correctness (valid path + edge back to start)
+  * PathResult type: path (slice of vertices) + found (boolean)
+  * Type-generic: supports any hashable vertex type (u32, strings, etc.)
+  * Graph representation: AutoHashMap(T, ArrayList(T)) adjacency list
+- Algorithm: Backtracking DFS with visited tracking. Mark current as visited, add to path, recurse on unvisited neighbors. If all vertices visited (path) or cycle formed (cycle), success. Otherwise backtrack.
+- Time: O(N!) worst case (explore all permutations), pruned heavily for sparse graphs
+- Space: O(N) for recursion stack + visited map + path storage
+- Use cases: Graph theory (classic NP-complete problem), routing (visit all cities exactly once), circuit design (trace paths), bioinformatics (genome sequencing - de Bruijn graphs), game theory
+- Tests cover: simple path (linear chain 4 vertices), complete graph K4, disconnected graph (no path), simple cycle (triangle), square cycle, no cycle (path graph), too few vertices (<3), path validation (valid, wrong length, duplicates, missing edge), cycle validation (valid, no return edge), invalid start, single vertex, Peterson graph (10 vertices, Hamiltonian path but no cycle), memory safety (5 iterations)
+- Trade-offs: Exponential complexity makes it impractical for large graphs (>20 vertices), but fundamental problem with many practical approximations
+- Key insight: NP-complete problem - no known polynomial solution. Related to Knight's Tour (special case on knight graph) and TSP (weighted variant).
+- Reference: Classic graph theory problem, foundational NP-complete problem (Karp 1972)
+- Ninth algorithm in Backtracking category (N-Queens, Sudoku, Permutations, Subsets, Combination Sum, Word Search, Palindrome Partition, Knight's Tour, Hamiltonian)
+- Commits: 5c977bb
+
+## Previous Session (Session 291, 2026-04-05) — FEATURE MODE
+- Knight's Tour Implementation: 16 tests, classic backtracking with Warnsdorff's heuristic
 - Commits: bad44be
 
 ## Previous Session (Session 290, 2026-04-05) — STABILIZATION MODE
