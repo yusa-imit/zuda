@@ -1,4 +1,27 @@
-## Latest Session (Session 293, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 294, 2026-04-06) — FEATURE MODE
+- QuickSort Implementation: 19 tests, classic divide-and-conquer sorting with multiple partitioning schemes
+- Algorithm: One of the fastest general-purpose sorting algorithms in practice
+- Key features:
+  * Classic QuickSort: Lomuto partition with median-of-three pivot selection - O(n log n) average, O(n²) worst
+  * 3-way partitioning: Dijkstra's Dutch National Flag algorithm - efficient for arrays with many duplicates
+  * Dual-pivot partitioning: Java-style with two pivots - often faster than single-pivot in practice
+  * QuickSort(T, Context, compareFn): Generic type with custom comparison
+  * Hybrid optimization: switches to insertion sort for small subarrays (<16 elements)
+  * Convenience functions: sort(), sort3Way(), sortDualPivot() for default comparison
+  * Unstable: does not preserve relative order of equal elements
+  * In-place: O(log n) space for recursion stack
+- Algorithm: Select pivot (median-of-three), partition array into ≤pivot and >pivot regions, recursively sort sub-arrays. Lomuto partition puts pivot in final position. 3-way creates three regions: <pivot, =pivot, >pivot. Dual-pivot partitions into three segments using two pivots.
+- Time: O(n log n) average for all variants, O(n²) worst case (rare with good pivot selection)
+- Space: O(log n) average recursion depth, O(n) worst case
+- Use cases: General-purpose sorting (fast average case), teaching algorithm (fundamental CS concept), baseline comparisons, systems where unstable sort is acceptable
+- Tests cover: basic sorting (10 elements), already sorted, reverse sorted, single element, two elements, all equal, large array (1000 random), duplicates, 3-way basic, 3-way many duplicates (efficient for this case), 3-way all equal, dual-pivot basic, dual-pivot large (500 elements), convenience functions, f64 support, stress test (10K elements), 3-way stress (10K with duplicates), dual-pivot stress (10K elements), custom context (reverse sort)
+- Trade-offs: vs MergeSort (faster in practice, unstable, not stable), vs HeapSort (better cache locality, but O(n²) worst case), vs IntroSort (QuickSort switches to HeapSort at depth limit to guarantee O(n log n))
+- Key insight: Quicksort's efficiency comes from good pivot selection (median-of-three), cache-friendly partitioning, and hybrid optimization (insertion sort for small subarrays). 3-way partitioning is crucial for handling duplicates efficiently.
+- Reference: Hoare (1961) original algorithm, Sedgewick (1977) improvements, Dijkstra (1976) 3-way partition, Yaroslavskiy (2009) dual-pivot for Java 7
+- First standalone QuickSort in sorting category (previously only embedded in IntroSort)
+- Commits: 5a259c2
+
+## Previous Session (Session 293, 2026-04-06) — FEATURE MODE
 - Manacher's Algorithm Implementation: 20 tests, O(n) longest palindromic substring detection
 - Algorithm: Linear-time palindrome detection using symmetry properties and mirroring
 - Key features:
