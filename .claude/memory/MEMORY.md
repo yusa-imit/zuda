@@ -1,4 +1,26 @@
-## Latest Session (Session 280, 2026-04-05) — STABILIZATION MODE
+## Latest Session (Session 281, 2026-04-05) — FEATURE MODE
+- Ugly Numbers Implementation: 21 tests, classic DP number theory problem
+- Algorithm: Find nth ugly number (numbers whose only prime factors are 2, 3, 5)
+- Key features:
+  * nthUgly(): Three-pointer DP technique - O(n) time, O(n) space
+  * firstNUgly(): Generate first n ugly numbers as array
+  * isUgly(): Check if number is ugly via O(log n) factorization
+  * uglyNumbersUpTo(): Find all ugly numbers up to limit
+  * countUgly(): Count ugly numbers up to limit
+  * nthUglyWithPrimes(): Generalized version with custom prime factors
+  * Type-generic (u8, u16, u32, u64)
+- Algorithm: Three pointers (idx2, idx3, idx5) track multiples of 2, 3, 5. Next ugly = min(dp[idx2]*2, dp[idx3]*3, dp[idx5]*5). Advance pointers that produced minimum (handles duplicates).
+- Time: O(n) for generating n ugly numbers
+- Space: O(n) for DP array
+- Use cases: Number theory (smooth numbers, Hamming numbers), sequence generation with constraints, algorithm interviews
+- Tests cover: basic sequence (1,2,3,4,5,6,8,9,10,12), large indices (15th=24, 150th=5832), edge cases (zero/single), array generation with sorting verification, ugly detection (15=3×5 is ugly, 14=2×7 is not), powers (16, 27, 125, 243), range queries (34 ugly numbers ≤ 100), generalized with custom primes (2,7: 1,2,4,7,8,14...), type support, memory safety
+- Trade-offs: DP O(n) is optimal for generating sequence, isUgly O(log n) for checking individual numbers, generalized version O(n×p) where p=number of primes
+- Reference: Classic DP problem, related to Hamming numbers and smooth numbers
+- Thirty-ninth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path, Stock Trading, Russian Doll, Perfect Squares, Ugly Numbers)
+- Zig 0.15 Fix: Used @rem instead of % for remainder, ArrayList methods take allocator param in Zig 0.15
+- Commits: e765be6
+
+## Previous Session (Session 280, 2026-04-05) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 5 consecutive successful runs on main (all recent passing)
 - Issues: Zero open issues
