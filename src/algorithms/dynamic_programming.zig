@@ -16,6 +16,7 @@ pub const edit_distance = @import("dynamic_programming/edit_distance.zig");
 pub const egg_drop = @import("dynamic_programming/egg_drop.zig");
 pub const house_robber = @import("dynamic_programming/house_robber.zig");
 pub const interleaving_string = @import("dynamic_programming/interleaving_string.zig");
+pub const jump_game = @import("dynamic_programming/jump_game.zig");
 pub const knapsack = @import("dynamic_programming/knapsack.zig");
 pub const lcs = @import("dynamic_programming/lcs.zig");
 pub const lis = @import("dynamic_programming/lis.zig");
