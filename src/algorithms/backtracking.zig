@@ -14,6 +14,7 @@
 /// - **Word Search**: Find word in 2D character grid with DFS
 /// - **Palindrome Partition**: Partition string into palindromic substrings
 /// - **Knight's Tour**: Find sequence of knight moves visiting all board squares
+/// - **Hamiltonian Path/Cycle**: Find path/cycle visiting all vertices exactly once
 ///
 /// ## Algorithm Pattern
 ///
@@ -54,6 +55,7 @@ pub const combination_sum = @import("backtracking/combination_sum.zig");
 pub const word_search = @import("backtracking/word_search.zig");
 pub const palindrome_partition = @import("backtracking/palindrome_partition.zig");
 pub const knights_tour = @import("backtracking/knights_tour.zig");
+pub const hamiltonian = @import("backtracking/hamiltonian.zig");
 
 // Re-export common functions
 pub const solveNQueens = n_queens.solveNQueens;
@@ -81,6 +83,11 @@ pub const countTours = knights_tour.countTours;
 pub const isValidTour = knights_tour.isValidTour;
 pub const KnightPosition = knights_tour.Position;
 pub const TourResult = knights_tour.TourResult;
+pub const hamiltonianPath = hamiltonian.hamiltonianPath;
+pub const hamiltonianCycle = hamiltonian.hamiltonianCycle;
+pub const isValidPath = hamiltonian.isValidPath;
+pub const isValidCycle = hamiltonian.isValidCycle;
+pub const PathResult = hamiltonian.PathResult;
 
 test {
     @import("std").testing.refAllDecls(@This());
