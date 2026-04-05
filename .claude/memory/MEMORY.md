@@ -1,4 +1,25 @@
-## Latest Session (Session 277, 2026-04-05) — FEATURE MODE
+## Latest Session (Session 278, 2026-04-05) — FEATURE MODE
+- Russian Doll Envelopes Implementation: 20 tests, 2D LIS extension with dual constraints
+- Algorithm: Find maximum number of envelopes that can be nested (both width and height strictly increasing)
+- Key features:
+  * maxEnvelopes(): O(n log n) time, O(n) space — maximum nesting count
+  * maxEnvelopesWithSequence(): Returns actual nesting sequence with original indices
+  * countValidNestings(): Count all valid nesting chains using DP
+  * validateNesting(): Verify if a sequence can be nested in order (both dimensions checked)
+  * Type-generic (i32, f64)
+- Algorithm: Sort by width ascending, height descending → extract heights → LIS on heights
+- Key insight: Descending height sort when widths are equal ensures we only pick one envelope per width group in LIS
+- Time: O(n log n) - sorting + LIS binary search
+- Space: O(n) - sorted array, heights, LIS tracking
+- Use cases: 2D resource allocation (container fitting), optimization with dual constraints, extension of LIS to 2D, classic DP/greedy problem
+- Tests cover: basic examples (3-4 envelopes, answer=3), edge cases (empty, single, all same), same width different heights (answer=1, validates descending height correctness), all increasing (answer=n), no nesting (decreasing heights, answer=1), complex cases, sequence reconstruction with validation, large datasets (100 envelopes), f64 support, memory safety
+- Trade-offs: Sorting dominates (O(n log n)), LIS uses binary search (O(n log n)), space-optimized via single pass
+- Reference: LeetCode #354 - Russian Doll Envelopes
+- Thirty-sixth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path, Stock Trading, Russian Doll)
+- Commits: 523e05f
+- Zig 0.15 Fix: Used `_ = &sorted;` to force mutable variable (std.mem.sort mutates in-place but Zig doesn't detect it)
+
+## Previous Session (Session 277, 2026-04-05) — FEATURE MODE
 - Stock Trading Implementation: 32 tests, classic DP series with 6 variants
 - Algorithm: Best Time to Buy and Sell Stock - optimal profit from stock trading with various constraints
 - Key features:
