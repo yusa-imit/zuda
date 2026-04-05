@@ -1,4 +1,27 @@
-## Latest Session (Session 298, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 299, 2026-04-06) — FEATURE MODE
+- Target Sum Implementation: 19 tests, classic DP counting problem with subset sum reduction
+- Algorithm: Assign +/- signs to array elements to reach target sum, count ways
+- Key features:
+  * findTargetSumWays(): Space-optimized DP - O(n×sum) time, O(sum) space
+  * findTargetSumWaysTable(): 2D DP table variant - O(n×sum) time/space (educational)
+  * findTargetSumWaysMemo(): Top-down memoization - O(n×sum) time/space
+  * getTargetSumAssignment(): Path reconstruction with backtracking
+  * Mathematical reduction: P - N = target, P + N = total → P = (target + total) / 2
+  * Reduces to subset sum: count subsets with sum = (target + total_sum) / 2
+  * Feasibility checks: target within [-total, total], (target + total) must be even
+  * Handles zeros: each 0 contributes 2^k ways (can be +0 or -0)
+- Algorithm: Validate target feasibility (range, parity). Reduce to subset sum counting with target_sum = (target + total_sum) / 2. Bottom-up DP with backward updates to avoid reusing same element. Backtracking for one valid assignment.
+- Time: O(n×sum) where sum = total of all elements
+- Space: O(sum) optimized, O(n×sum) for 2D/memo variants, O(n) for assignment
+- Use cases: Expression evaluation (parenthesization with +/-), portfolio optimization (long/short positions), resource allocation (positive/negative contributions), game theory (scoring with gains/losses), statistical modeling (signed feature combinations)
+- Tests cover: basic examples ([1,1,1,1,1] target 3 → 5 ways), zero target ([1,2,3] → 2 ways), single/two elements, empty array (target 0 → 1 way), invalid targets (too large, wrong parity), all zeros (2^n ways), with zeros (each 0 doubles count), large arrays (20 elements), table variant consistency, memo variant consistency, assignment reconstruction with sum validation, i64 support, memory safety (10 iterations)
+- Trade-offs: Space-optimized O(sum) vs 2D O(n×sum) (educational), bottom-up vs top-down memo (map overhead), assignment reconstruction adds backtracking complexity
+- Key insight: Mathematical reduction to subset sum eliminates need for complex recursion. Feasibility checks (parity, range) prune impossible cases early. Zero elements require special handling - they don't contribute to sum but double the count of ways.
+- Reference: LeetCode #494 (Target Sum), classic counting DP with subset sum reduction
+- Forty-seventh algorithm in Dynamic Programming category
+- Commits: 74596ae
+
+## Previous Session (Session 298, 2026-04-06) — FEATURE MODE
 - Jump Game Implementation: 13 tests, classic DP/greedy problem
 - Algorithm: Array jump reachability and minimum jumps optimization
 - Key features:
