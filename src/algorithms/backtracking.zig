@@ -13,6 +13,7 @@
 /// - **Combination Sum**: Find combinations summing to target
 /// - **Word Search**: Find word in 2D character grid with DFS
 /// - **Palindrome Partition**: Partition string into palindromic substrings
+/// - **Knight's Tour**: Find sequence of knight moves visiting all board squares
 ///
 /// ## Algorithm Pattern
 ///
@@ -52,6 +53,7 @@ pub const subsets = @import("backtracking/subsets.zig");
 pub const combination_sum = @import("backtracking/combination_sum.zig");
 pub const word_search = @import("backtracking/word_search.zig");
 pub const palindrome_partition = @import("backtracking/palindrome_partition.zig");
+pub const knights_tour = @import("backtracking/knights_tour.zig");
 
 // Re-export common functions
 pub const solveNQueens = n_queens.solveNQueens;
@@ -74,6 +76,11 @@ pub const partitionPalindromes = palindrome_partition.partition;
 pub const countPalindromePartitions = palindrome_partition.countPartitions;
 pub const minCutPalindrome = palindrome_partition.minCut;
 pub const isValidPalindromePartition = palindrome_partition.isValidPartition;
+pub const knightsTour = knights_tour.knightsTour;
+pub const countTours = knights_tour.countTours;
+pub const isValidTour = knights_tour.isValidTour;
+pub const KnightPosition = knights_tour.Position;
+pub const TourResult = knights_tour.TourResult;
 
 test {
     @import("std").testing.refAllDecls(@This());
