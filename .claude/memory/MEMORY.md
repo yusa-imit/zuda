@@ -1,3 +1,27 @@
+## Latest Session (Session 293, 2026-04-06) — FEATURE MODE
+- Manacher's Algorithm Implementation: 20 tests, O(n) longest palindromic substring detection
+- Algorithm: Linear-time palindrome detection using symmetry properties and mirroring
+- Key features:
+  * longestPalindromicSubstring(): Find longest palindrome + position - O(n) time, O(n) space
+  * longestPalindromeLength(): Get length only (more efficient) - O(n) time, O(n) space
+  * countPalindromes(): Count all palindromic substrings - O(n) time, O(n) space
+  * allPalindromes(): Extract all palindromes - O(n) radii + O(n²) extraction worst case
+  * PalindromeResult type: substring, start, length
+  * Preprocessing: Insert '#' separators ("abc" → "#a#b#c#") for uniform even/odd handling
+  * Expansion with mirroring: Use previously computed radii to avoid redundant comparisons
+  * Track rightmost boundary: Update center when finding longer palindrome
+- Algorithm: Transform string → compute radius array via mirroring → extract results. For each position i, initialize radius[i] using mirror position if within rightmost boundary, then expand manually. Update center/right when i+radius[i] exceeds current right.
+- Time: O(n) despite nested loops (each character examined at most twice via boundary tracking)
+- Space: O(n) for transformed string (2n+1 chars) + radius array
+- Use cases: Text processing (find longest palindrome), bioinformatics (DNA palindrome sequences), string analysis (count palindromes), LeetCode #5 (Longest Palindromic Substring)
+- Tests cover: basic examples ("babad"→"bab"/"aba", "cbbd"→"bb"), entire palindrome ("racecar"), no long palindrome ("abcdef"→1), single char, empty error, two chars (same/different), multiple palindromes ("abacabad"→"abaca"), even length ("abba"), length-only function, count function ("aaa"→6), all palindromes extraction, large string (52 chars), repeated chars ("aaaaaaa"), memory safety (10 iterations)
+- Trade-offs: O(n) linear vs naive O(n²) expansion (25x faster for large strings), O(n) space for radii vs O(1) naive (acceptable tradeoff)
+- Key insight: Manacher's brilliance is using symmetry — mirror position's radius provides a starting point, and rightmost boundary tracks progress to ensure linear time.
+- Reference: Manacher (1975) "A New Linear-Time On-Line Algorithm for Finding the Smallest Initial Palindrome of a String"
+- Also: Created missing src/algorithms/string.zig module index (exports 7 algorithms: KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm, glob, Manacher)
+- Seventh algorithm in String Algorithms category (KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-algorithm, glob matching, Manacher)
+- Commits: 6cb7be0
+
 ## Latest Session (Session 292, 2026-04-05) — FEATURE MODE
 - Hamiltonian Path/Cycle Implementation: 17 tests, classic graph backtracking (NP-complete)
 - Algorithm: Find path/cycle visiting all vertices exactly once using backtracking DFS
