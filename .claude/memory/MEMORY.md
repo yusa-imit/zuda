@@ -1,4 +1,25 @@
-## Latest Session (Session 290, 2026-04-05) — STABILIZATION MODE
+## Latest Session (Session 291, 2026-04-05) — FEATURE MODE
+- Knight's Tour Implementation: 16 tests, classic backtracking with Warnsdorff's heuristic
+- Algorithm: Find sequence of knight moves visiting all squares on n×n chessboard exactly once
+- Key features:
+  * knightsTour(): Find complete tour from starting position - O(n²) average with heuristic
+  * countTours(): Count all possible tours (exponential, small boards only)
+  * isValidTour(): Validate a given path (checks length, uniqueness, valid knight moves)
+  * Warnsdorff's heuristic: Prioritize moves to squares with fewer onward options
+  * TourResult type: path (sequence of positions) + found (boolean)
+  * Position type: board coordinates (row, col)
+- Algorithm: Backtracking with move prioritization. At each step, choose the move to the square with the fewest accessible neighbors (Warnsdorff's rule). Dramatically reduces search space.
+- Time: O(n²) average with Warnsdorff's heuristic, O(8^(n²)) worst case without heuristic
+- Space: O(n²) for board + path storage + O(n²) recursion depth
+- Use cases: Chess AI (puzzle solving), graph theory (Hamiltonian paths on knight graphs), algorithm education (classic backtracking demonstration), recreational mathematics
+- Tests cover: 5×5/6×6/8×8 board solutions, different start positions (corners, center, edge), path validation (valid tour, wrong length, duplicate positions, invalid knight moves, out of bounds), count tours on small boards, Warnsdorff's heuristic effectiveness, error handling (invalid board size, invalid start position), memory safety (multiple allocations)
+- Trade-offs: Warnsdorff's heuristic dramatically improves average case but doesn't guarantee solution in all cases, counting tours is exponential (O(8^(n²))) without pruning
+- Key insight: Warnsdorff's rule (1823) — choosing less-accessible squares first reduces backtracking by avoiding dead ends. Modern heuristic still used in chess AI.
+- Reference: Classic backtracking problem, Warnsdorff (1823), De Jaenisch (1862) - first complete analysis
+- Eighth algorithm in Backtracking category (N-Queens, Sudoku, Permutations, Subsets, Combination Sum, Word Search, Palindrome Partition, Knight's Tour)
+- Commits: bad44be
+
+## Previous Session (Session 290, 2026-04-05) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 5 consecutive successful runs on main (all recent passing)
 - Issues: Zero open
