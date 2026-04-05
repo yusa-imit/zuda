@@ -5,6 +5,7 @@
 
 pub const binary_search = @import("dynamic_programming/binary_search.zig");
 pub const bitonic_subsequence = @import("dynamic_programming/bitonic_subsequence.zig");
+pub const boolean_parenthesization = @import("dynamic_programming/boolean_parenthesization.zig");
 pub const burst_balloons = @import("dynamic_programming/burst_balloons.zig");
 pub const climbing_stairs = @import("dynamic_programming/climbing_stairs.zig");
 pub const coin_change = @import("dynamic_programming/coin_change.zig");
