@@ -12,6 +12,7 @@
 /// - **Subsets**: Generate all subsets (power set)
 /// - **Combination Sum**: Find combinations summing to target
 /// - **Word Search**: Find word in 2D character grid with DFS
+/// - **Palindrome Partition**: Partition string into palindromic substrings
 ///
 /// ## Algorithm Pattern
 ///
@@ -50,6 +51,7 @@ pub const permutations = @import("backtracking/permutations.zig");
 pub const subsets = @import("backtracking/subsets.zig");
 pub const combination_sum = @import("backtracking/combination_sum.zig");
 pub const word_search = @import("backtracking/word_search.zig");
+pub const palindrome_partition = @import("backtracking/palindrome_partition.zig");
 
 // Re-export common functions
 pub const solveNQueens = n_queens.solveNQueens;
@@ -68,6 +70,10 @@ pub const existWithPath = word_search.existWithPath;
 pub const findAll = word_search.findAll;
 pub const countOccurrences = word_search.countOccurrences;
 pub const Position = word_search.Position;
+pub const partitionPalindromes = palindrome_partition.partition;
+pub const countPalindromePartitions = palindrome_partition.countPartitions;
+pub const minCutPalindrome = palindrome_partition.minCut;
+pub const isValidPalindromePartition = palindrome_partition.isValidPartition;
 
 test {
     @import("std").testing.refAllDecls(@This());
