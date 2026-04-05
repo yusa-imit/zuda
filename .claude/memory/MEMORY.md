@@ -1,4 +1,29 @@
-## Latest Session (Session 299, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 301, 2026-04-06) — FEATURE MODE
+- Min Cost Climbing Stairs Implementation: 20 tests, classic DP cost minimization problem
+- Algorithm: Find minimum cost to reach top of stairs where each step has a cost
+- Key features:
+  * minCostClimbingStairs(): Space-optimized DP - O(n) time, O(1) space
+  * minCostClimbingStairsTabulation(): Full DP table - O(n) time, O(n) space
+  * minCostClimbingStairsWithPath(): Path reconstruction with backtracking
+  * minCostClimbingStairsFrom(): Start from specific step (0 or 1)
+  * minCostClimbingStairsVariable(): Variable step sizes (1 to k steps)
+  * DP state: dp[i] = minimum cost to reach step i
+  * Recurrence: dp[i] = cost[i] + min(dp[i-1], dp[i-2])
+  * Base cases: dp[0] = cost[0], dp[1] = cost[1]
+  * Final answer: min(dp[n-1], dp[n-2]) - can step from either of last two steps
+  * Can start from step 0 or 1 (your choice)
+- Algorithm: Bottom-up DP with space optimization using two variables. For path reconstruction, backtrack from final step determining which previous step was used based on minimum values.
+- Time: O(n) for standard variants, O(n×k) for variable step sizes
+- Space: O(1) optimized, O(n) for tabulation/path reconstruction
+- Use cases: Resource optimization (minimize cost while climbing), path planning with costs, game theory (minimize damage/cost to reach goal), educational DP (classic interview problem)
+- Tests cover: basic examples (LeetCode #746 [10,15,20]→15, [1,100,1,1,1,100,1,1,100,1]→6), single/two steps, all equal costs, empty input error, tabulation consistency (2 variants match), path reconstruction (validates steps and total cost), start from specific step (0 or 1), variable step sizes (2 vs 3 steps), large array (100 elements), negative costs, f32/f64 support, invalid parameters, memory safety (10 iterations with allocations)
+- Trade-offs: Optimized O(1) vs tabulation O(n) (educational/path reconstruction), standard 2-step vs variable k-step (flexibility), immediate computation vs path storage
+- Key insight: Unlike climbing stairs (counts ways), this minimizes cost. Can reach top from either of last two steps, so answer is min of both. Space optimization uses only two variables (prev2, prev1) instead of full array.
+- Reference: LeetCode #746 (Min Cost Climbing Stairs) - classic DP cost minimization
+- Forty-eighth algorithm in Dynamic Programming category
+- Commits: 1abc5f2
+
+## Previous Session (Session 299, 2026-04-06) — FEATURE MODE
 - Target Sum Implementation: 19 tests, classic DP counting problem with subset sum reduction
 - Algorithm: Assign +/- signs to array elements to reach target sum, count ways
 - Key features:
