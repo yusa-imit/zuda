@@ -1,4 +1,33 @@
-## Latest Session (Session 302, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 304, 2026-04-06) — FEATURE MODE
+- Paint House Implementation: 17 tests, classic DP resource allocation with neighbor constraints
+- Algorithm: Minimum cost to paint n houses with k colors where adjacent houses can't have same color
+- Key features:
+  * paintHouse(): Standard 3-color problem - O(n) time, O(1) space
+  * paintHouseK(): Generalized k-color - O(n×k²) time, O(k) space with rolling array
+  * paintHouseKOptimized(): O(n×k) time using min/second-min tracking (no inner O(k) loop)
+  * paintHouseWithPath(): Returns color choices with backtracking - O(n×k²) time, O(n×k) space
+  * PaintResult type: Struct with min_cost, colors (ArrayList), allocator for cleanup
+  * DP state: dp[i][c] = minimum cost to paint house i with color c
+  * Recurrence: dp[i][c] = cost[i][c] + min(dp[i-1][c'] for all c' ≠ c)
+  * Base case: dp[0][c] = cost[0][c] (first house)
+  * Optimized variant: Track min/second-min from previous row to avoid O(k) inner loop per color
+  * Adjacent constraint: If c was min in prev row, use second-min; otherwise use min
+  * ArrayList API: initCapacity, resize(allocator), deinit(allocator) for Zig 0.15.x
+- Algorithm: Bottom-up DP filling table row by row. For each house, try all colors and pick min cost excluding previous color. Optimized variant maintains running min/second-min instead of scanning all k colors.
+- Time: O(n) for 3-color, O(n×k²) for general k-color, O(n×k) for optimized
+- Space: O(1) for 3-color rolling, O(k) for k-color rolling, O(n×k) for path reconstruction
+- Use cases: Resource allocation with neighbor constraints (paint/color problems), scheduling with adjacent conflicts, graph coloring variants, optimization with local dependencies, cost minimization with exclusion rules
+- Tests cover: basic 3-color ([17,2,17],[16,16,5],[14,3,19]→10), single/two houses, all same costs, empty input error, k-color (4 colors with validation), single color insufficient error (can't paint adjacent), optimized consistency (5-color array matches standard), path reconstruction (validates adjacent colors differ and total cost), large scale (50 houses), f64 support, memory safety (10 iterations with allocations)
+- Trade-offs: Standard O(n×k²) vs optimized O(n×k) (min/second-min tracking eliminates inner loop), O(1) rolling vs O(n×k) full table (path reconstruction), 3-color hardcoded vs general k-color (flexibility)
+- Key insight: Tracking min/second-min from previous row eliminates O(k) inner loop. If current color was the min in prev row, we must use second-min (can't repeat); otherwise use min. This reduces from O(n×k²) to O(n×k) time.
+- Reference: LeetCode #256 (Paint House), #265 (Paint House II) - classic DP with neighbor constraints
+- Fiftieth algorithm in Dynamic Programming category
+- Commits: aa909ba
+
+## Previous Session (Session 303, 2026-04-06) — FEATURE MODE
+- Longest Consecutive Sequence Implementation: 12 tests, hash set approach
+
+## Previous Session (Session 302, 2026-04-06) — FEATURE MODE
 - Trapping Rain Water Implementation: 23 tests, classic DP water trapping problem
 - Algorithm: Compute water trapped after raining given elevation map
 - Key features:
