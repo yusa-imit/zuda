@@ -1,4 +1,31 @@
-## Latest Session (Session 318, 2026-04-07) — FEATURE MODE
+## Latest Session (Session 319, 2026-04-07) — FEATURE MODE
+- Gnome Sort Implementation: 20 tests, simple position-based sorting algorithm
+- Algorithm: Moves forward when elements are in order, swaps and moves backward when out of order
+- Key features:
+  * gnomeSort(): Generic with custom comparison - O(n²) average, O(n) best case (adaptive)
+  * gnomeSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * gnomeSortBy(): Order-based comparison wrapper
+  * gnomeSortOptimized(): Optimized variant with continuous backward movement
+  * In-place: O(1) space complexity, no allocation
+  * Stable: Preserves relative order of equal elements
+  * Adaptive: Terminates early on sorted data - O(n) best case
+  * Type-generic: Works with any comparable type (i32, f64, u8, custom structs)
+- Algorithm: Position-based sorting that moves forward when current >= previous (or at start), swaps and moves backward when current < previous. Repeats until reaching the end. Similar to insertion sort but simpler - no nested loop structure.
+- Time: O(n²) average/worst case, O(n) best case when already sorted
+- Space: O(1) — in-place sorting, no allocation
+- Stability: Stable - preserves relative order of equal elements
+- Use cases: Educational purposes (demonstrates position-based sorting), small datasets where simplicity matters, nearly sorted data (adaptive behavior), minimal code size requirements
+- Tests cover: basic operations (ascending, descending, duplicates), edge cases (empty, single, two, already sorted, reverse sorted, all equal), negative numbers, floating point (f64), custom comparison (struct sorting), Order-based comparison, u8 type, optimized variant, optimized vs standard consistency, large arrays (100 elements with allocator), stability test, stress test (50 pseudo-random)
+- Trade-offs: vs Insertion Sort (simpler to implement - no nested loops, same complexity), vs Bubble Sort (more efficient - no unnecessary passes), vs Cocktail Sort (Gnome moves backward when needed, not bidirectional passes)
+- Key insight: One of the simplest sorting algorithms to implement and understand. Also known as "Stupid Sort". Works like a garden gnome sorting flower pots - move forward if in order, swap and move backward if not.
+- Reference: Dick Grune (2000) - Originally called "Stupid Sort"
+- Seventeenth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort, Shell Sort, Cycle Sort, Comb Sort, Bucket Sort, Cocktail Sort, Gnome Sort)
+- Commits: 3d95c21
+
+## Previous Session (Session 318, 2026-04-07) — FEATURE MODE
+- Cocktail Sort Implementation: 20 tests, bidirectional bubble sort (shaker sort)
+- Commits: 1cb8fca
+
 - Cocktail Sort Implementation: 20 tests, bidirectional bubble sort (shaker sort)
 - Algorithm: Sorts in both directions on each pass, alternating between bubbling largest to right and smallest to left
 - Key features:
