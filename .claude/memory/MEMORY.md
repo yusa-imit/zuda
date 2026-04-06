@@ -1,4 +1,27 @@
-## Latest Session (Session 308, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 309, 2026-04-06) — FEATURE MODE
+- Selection Sort Implementation: 21 tests, simple comparison-based sorting algorithm
+- Algorithm: Finds minimum element in unsorted portion and swaps it to the front
+- Key features:
+  * selectionSort(): Generic with custom comparison - O(n²) time, O(1) space
+  * selectionSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * sortBy(): Custom comparison wrapper for flexible sorting
+  * countSwaps(): Track swap operations (always ≤ n-1)
+  * NOT stable: Can reorder equal elements out of original order
+  * Non-adaptive: Always O(n²) comparisons even on sorted data
+  * Minimal swaps: Always ≤ n-1 swaps regardless of input
+  * In-place: O(1) extra space
+- Algorithm: For each position i from 0 to n-1, find minimum element in arr[i..n] and swap with arr[i]. After pass i, arr[0..i] is sorted and contains the i smallest elements.
+- Time: O(n²) comparisons, O(n) swaps (best/average/worst case)
+- Space: O(1) in-place sorting
+- Use cases: Small datasets, expensive write operations (flash memory), teaching algorithm fundamentals, embedded systems with limited memory
+- Tests cover: basic operations (ascending, descending, duplicates), edge cases (empty, single, two elements), stability validation (NOT stable, equal elements can reorder), swap counting (sorted array=0 swaps, reverse sorted=n/2 swaps, general≤n-1), custom comparisons (struct sorting), large arrays (100 elements), non-adaptive property (always O(n²) even sorted), f32/f64 support, minimal swaps property
+- Trade-offs: vs Insertion Sort (simpler but not adaptive, NOT stable vs stable, fewer swaps but more comparisons), vs Bubble Sort (same O(n²) but fewer swaps), vs QuickSort/MergeSort (simpler but slower for large data)
+- Key insight: Selection sort minimizes the number of write operations (swaps). Always performs ≤ n-1 swaps, making it ideal when write operations are expensive (e.g., flash memory, EEPROM). Unlike insertion sort, it's not adaptive - always O(n²) comparisons regardless of input order.
+- Reference: Classic sorting algorithm, foundational for teaching algorithm analysis
+- Tenth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort)
+- Commits: 6155995
+
+## Previous Session (Session 308, 2026-04-06) — FEATURE MODE
 - Insertion Sort Implementation: 23 tests, stable adaptive sorting algorithm
 - Algorithm: Simple comparison-based sorting with online property
 - Key features:
