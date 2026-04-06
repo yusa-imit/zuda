@@ -199,6 +199,10 @@ pub const algorithms = struct {
         pub const bucketSort = @import("algorithms/sorting/bucketsort.zig").bucketSort;
         pub const bucketSortNormalized = @import("algorithms/sorting/bucketsort.zig").bucketSortNormalized;
         pub const bucketSortCustom = @import("algorithms/sorting/bucketsort.zig").bucketSortCustom;
+        pub const cocktailSort = @import("algorithms/sorting/cocktailsort.zig").cocktailSort;
+        pub const cocktailSortAsc = @import("algorithms/sorting/cocktailsort.zig").cocktailSortAsc;
+        pub const cocktailSortDesc = @import("algorithms/sorting/cocktailsort.zig").cocktailSortDesc;
+        pub const cocktailSortBy = @import("algorithms/sorting/cocktailsort.zig").cocktailSortBy;
     };
 
     /// Searching algorithms
