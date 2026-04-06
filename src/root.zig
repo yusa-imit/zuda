@@ -191,6 +191,11 @@ pub const algorithms = struct {
         pub const cycleSortDesc = @import("algorithms/sorting/cyclesort.zig").cycleSortDesc;
         pub const cycleSortBy = @import("algorithms/sorting/cyclesort.zig").sortBy;
         pub const cycleSortCountWrites = @import("algorithms/sorting/cyclesort.zig").countWrites;
+        pub const combSort = @import("algorithms/sorting/combsort.zig").combSort;
+        pub const combSortAsc = @import("algorithms/sorting/combsort.zig").combSortAsc;
+        pub const combSortDesc = @import("algorithms/sorting/combsort.zig").combSortDesc;
+        pub const combSortBy = @import("algorithms/sorting/combsort.zig").combSortBy;
+        pub const combSortCustom = @import("algorithms/sorting/combsort.zig").combSortCustom;
     };
 
     /// Searching algorithms
