@@ -1,4 +1,28 @@
-## Latest Session (Session 320, 2026-04-07) — STABILIZATION MODE
+## Latest Session (Session 321, 2026-04-07) — FEATURE MODE
+- Bitonic Sort Implementation: 21 tests, parallel sorting network algorithm
+- Algorithm: Data-oblivious comparison network with O(log² n) parallel depth
+- Key features:
+  * bitonicSort(): Generic with custom comparison - O(n log² n) sequential, O(log² n) parallel depth
+  * bitonicSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * bitonicSortBy(): Order-based comparison wrapper
+  * bitonicSortAny(): Arbitrary length support (pads to next power of 2)
+  * In-place: O(1) space complexity (O(n) for arbitrary length variant)
+  * Unstable: Does not preserve relative order of equal elements
+  * Data-oblivious: Comparison sequence independent of input values (useful for security/privacy)
+  * Type-generic: Works with any comparable type (i32, f64, u8, custom structs)
+- Algorithm: Recursive bitonic sequence construction (sort halves in opposite directions) + bitonic merge (compare-and-swap at decreasing distances). Deterministic comparison pattern forms a sorting network.
+- Time: O(n log² n) sequential, O(log² n) parallel depth with O(n) processors
+- Space: O(1) — in-place sorting, no allocation (O(n) for arbitrary length with padding)
+- Stability: Unstable - does not preserve relative order
+- Use cases: Parallel/SIMD sorting (GPU, multi-core), hardware sorting networks (FPGA, ASIC), oblivious sorting (constant-time execution for security), fixed-size power-of-2 arrays
+- Tests cover: basic operations (ascending, descending, power of 2), edge cases (empty, single, two, already sorted, reverse sorted, all equal), negative numbers, floating point (f64), custom comparison (struct by age), Order-based comparison, u8 type, larger arrays (16 elements), arbitrary lengths (5, 7, 10 with padding), power-of-2 detection, memory safety (allocator verification), large arbitrary (50 elements)
+- Trade-offs: vs QuickSort (parallelizable but more comparisons O(n log² n) vs O(n log n)), vs MergeSort (simpler parallel implementation, data-oblivious), vs other parallel sorts (deterministic network, no data dependencies)
+- Key insight: Sorting network allows complete parallelization - all comparisons at same depth can run simultaneously. Data-oblivious property (comparison pattern independent of values) is crucial for secure computing and hardware implementation.
+- Reference: K. E. Batcher (1968) "Sorting networks and their applications"
+- Eighteenth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort, Shell Sort, Cycle Sort, Comb Sort, Bucket Sort, Cocktail Sort, Gnome Sort, Bitonic Sort)
+- Commits: 287d84e
+
+## Previous Session (Session 320, 2026-04-07) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 4 consecutive successful runs on main (all recent passing)
 - Issues: Zero open
