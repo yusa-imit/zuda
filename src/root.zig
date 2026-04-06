@@ -196,6 +196,9 @@ pub const algorithms = struct {
         pub const combSortDesc = @import("algorithms/sorting/combsort.zig").combSortDesc;
         pub const combSortBy = @import("algorithms/sorting/combsort.zig").combSortBy;
         pub const combSortCustom = @import("algorithms/sorting/combsort.zig").combSortCustom;
+        pub const bucketSort = @import("algorithms/sorting/bucketsort.zig").bucketSort;
+        pub const bucketSortNormalized = @import("algorithms/sorting/bucketsort.zig").bucketSortNormalized;
+        pub const bucketSortCustom = @import("algorithms/sorting/bucketsort.zig").bucketSortCustom;
     };
 
     /// Searching algorithms
