@@ -1,4 +1,28 @@
-## Latest Session (Session 313, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 314, 2026-04-06) — FEATURE MODE
+- Comb Sort Implementation: 20 tests, improved Bubble Sort with gap-based comparisons
+- Algorithm: Eliminates "turtles" (small values near the end) by comparing elements separated by a gap
+- Key features:
+  * combSort(): Generic with custom comparison function - O(n log n) to O(n²) time
+  * combSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * combSortBy(): Order-based comparison wrapper for flexible sorting
+  * combSortCustom(): Experimental with configurable shrink factor (standard 1.3)
+  * In-place: O(1) space complexity, no allocation
+  * Unstable: Does not preserve relative order of equal elements
+  * Slightly adaptive: Can terminate early if no swaps occur
+  * Gap reduction: Start with n/1.3, shrink by 1.3 each pass until gap=1
+- Algorithm: Similar concept to Shell Sort but for Bubble Sort. Compares elements at gap distance, swaps if needed, reduces gap by shrink factor. Final pass with gap=1 ensures correctness.
+- Time: O(n log n) best case, O(n²/2^p) average case, O(n²) worst case
+- Space: O(1) — in-place sorting, no allocation
+- Shrink factor: 1.3 empirically optimal (Lacey & Box 1991)
+- Use cases: Educational (gap-based improvements), small/medium datasets where simplicity matters, memory-constrained systems (O(1) space), drop-in replacement for Bubble Sort, systems where O(n log n) unavailable
+- Tests cover: basic operations (ascending, descending, duplicates), edge cases (empty, single, two, already sorted, reverse sorted, all same), negative numbers, floating point (f64), custom comparison (struct sorting), Order-based comparison, large arrays (100 elements with allocator), u8 type, custom shrink factors (1.25, 1.5), stress test (50 elements pseudo-random), turtle elimination (small value at end), shrink factor comparison (1.25, 1.3, 1.5 all correct)
+- Trade-offs: vs Bubble Sort (much faster, eliminates turtles, same simplicity), vs Shell Sort (similar concept but for Bubble Sort instead of Insertion Sort), vs QuickSort/MergeSort (simpler but slower, no worst-case O(n log n) guarantee), vs Insertion Sort (better for random data, worse for nearly sorted)
+- Key insight: Gap-based approach eliminates "turtles" problem in Bubble Sort (small values at end move slowly). Shrink factor 1.3 provides optimal balance between number of passes and work per pass. Similar to how Shell Sort improves Insertion Sort.
+- Reference: Włodzimierz Dobosiewicz (1980), Stephen Lacey and Richard Box (1991)
+- Fourteenth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort, Shell Sort, Cycle Sort, Comb Sort)
+- Commits: 6e96d4a
+
+## Previous Session (Session 313, 2026-04-06) — FEATURE MODE
 - Cycle Sort Implementation: 20 tests, in-place sorting with minimal write operations
 - Algorithm: Minimizes the number of memory writes by placing each element in its final position at most once
 - Key features:
