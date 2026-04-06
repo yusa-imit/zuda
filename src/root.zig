@@ -213,6 +213,12 @@ pub const algorithms = struct {
         pub const bitonicSortDesc = @import("algorithms/sorting/bitonicsort.zig").bitonicSortDesc;
         pub const bitonicSortBy = @import("algorithms/sorting/bitonicsort.zig").bitonicSortBy;
         pub const bitonicSortAny = @import("algorithms/sorting/bitonicsort.zig").bitonicSortAny;
+        pub const pigeonholeSort = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSort;
+        pub const pigeonholeSortAlloc = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSortAlloc;
+        pub const pigeonholeSortAsc = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSortAsc;
+        pub const pigeonholeSortDesc = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSortDesc;
+        pub const pigeonholeSortBy = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSortBy;
+        pub const countDistinct = @import("algorithms/sorting/pigeonholesort.zig").countDistinct;
     };
 
     /// Searching algorithms
