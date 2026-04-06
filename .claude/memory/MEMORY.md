@@ -1,4 +1,28 @@
-## Latest Session (Session 312, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 313, 2026-04-06) — FEATURE MODE
+- Cycle Sort Implementation: 20 tests, in-place sorting with minimal write operations
+- Algorithm: Minimizes the number of memory writes by placing each element in its final position at most once
+- Key features:
+  * cycleSort(): Generic with custom comparison function - O(n²) time, at most n-1 writes
+  * cycleSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * sortBy(): Order-based comparison wrapper for flexible sorting
+  * countWrites(): Track write operations to verify optimality (theoretical minimum for comparison sorts)
+  * In-place: O(1) space complexity
+  * Unstable: Does not preserve relative order of equal elements
+  * Non-adaptive: Always O(n²) comparisons regardless of input order
+  * Optimal writes: At most n-1 writes to array (theoretical minimum for comparison sorts)
+- Algorithm: For each position, count how many elements are smaller to find correct final position. Swap into position and continue cycle until returning to starting position. Each element written at most once.
+- Time: O(n²) comparisons (best/average/worst case)
+- Space: O(1) — in-place sorting
+- Writes: O(n) — at most n-1 writes regardless of input
+- Use cases: Flash memory/EEPROM (expensive writes, limited endurance), embedded systems where write count matters, SSD optimization, educational (understanding optimal write algorithms), systems with slow write operations
+- Tests cover: basic operations (ascending, descending, duplicates), edge cases (empty, single, two elements, all equal), write counting (sorted=0 writes, reverse sorted=4 writes, optimal property verified), custom comparisons (struct sorting), type support (i32, f32, f64, u8, negative numbers), large arrays (100 elements with random data), stress test with verification
+- Trade-offs: vs Insertion Sort (minimal writes vs adaptive O(n) best case), vs Selection Sort (similar write efficiency but cycle sort achieves theoretical minimum), vs QuickSort/MergeSort (simpler but O(n²) vs O(n log n))
+- Key insight: Cycle sort achieves theoretical minimum number of writes for comparison-based sorting. Critical for write-constrained environments (flash, EEPROM) where write endurance matters more than read/comparison speed. Uses comparison-based equality check (!lessThan(a,b) && !lessThan(b,a)) for type-generic duplicate handling.
+- Reference: Classic algorithm for write-constrained environments, optimal write operations
+- Thirteenth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort, Shell Sort, Cycle Sort)
+- Commits: 6cc6eff
+
+## Previous Session (Session 312, 2026-04-06) — FEATURE MODE
 - Shell Sort Implementation: 19 tests, gap-based insertion sort with diminishing increments
 - Algorithm: Improves insertion sort by comparing elements separated by a gap, gradually reducing gap to 1
 - Key features:
