@@ -186,6 +186,11 @@ pub const algorithms = struct {
         pub const shellSort = @import("algorithms/sorting/shellsort.zig").shellSort;
         pub const shellSortBy = @import("algorithms/sorting/shellsort.zig").shellSortBy;
         pub const GapSequence = @import("algorithms/sorting/shellsort.zig").GapSequence;
+        pub const cycleSort = @import("algorithms/sorting/cyclesort.zig").cycleSort;
+        pub const cycleSortAsc = @import("algorithms/sorting/cyclesort.zig").cycleSortAsc;
+        pub const cycleSortDesc = @import("algorithms/sorting/cyclesort.zig").cycleSortDesc;
+        pub const cycleSortBy = @import("algorithms/sorting/cyclesort.zig").sortBy;
+        pub const cycleSortCountWrites = @import("algorithms/sorting/cyclesort.zig").countWrites;
     };
 
     /// Searching algorithms
