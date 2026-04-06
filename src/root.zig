@@ -223,6 +223,13 @@ pub const algorithms = struct {
         pub const oddEvenSortAsc = @import("algorithms/sorting/oddevensort.zig").oddEvenSortAsc;
         pub const oddEvenSortDesc = @import("algorithms/sorting/oddevensort.zig").oddEvenSortDesc;
         pub const oddEvenSortBy = @import("algorithms/sorting/oddevensort.zig").oddEvenSortBy;
+        pub const pancakeSort = @import("algorithms/sorting/pancakesort.zig").pancakeSort;
+        pub const pancakeSortAsc = @import("algorithms/sorting/pancakesort.zig").pancakeSortAsc;
+        pub const pancakeSortDesc = @import("algorithms/sorting/pancakesort.zig").pancakeSortDesc;
+        pub const pancakeSortBy = @import("algorithms/sorting/pancakesort.zig").pancakeSortBy;
+        pub const pancakeSortCountFlips = @import("algorithms/sorting/pancakesort.zig").pancakeSortCountFlips;
+        pub const pancakeSortSequence = @import("algorithms/sorting/pancakesort.zig").pancakeSortSequence;
+        pub const maxFlipsBound = @import("algorithms/sorting/pancakesort.zig").maxFlipsBound;
     };
 
     /// Searching algorithms
