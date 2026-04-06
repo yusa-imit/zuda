@@ -208,6 +208,11 @@ pub const algorithms = struct {
         pub const gnomeSortDesc = @import("algorithms/sorting/gnomesort.zig").gnomeSortDesc;
         pub const gnomeSortBy = @import("algorithms/sorting/gnomesort.zig").gnomeSortBy;
         pub const gnomeSortOptimized = @import("algorithms/sorting/gnomesort.zig").gnomeSortOptimized;
+        pub const bitonicSort = @import("algorithms/sorting/bitonicsort.zig").bitonicSort;
+        pub const bitonicSortAsc = @import("algorithms/sorting/bitonicsort.zig").bitonicSortAsc;
+        pub const bitonicSortDesc = @import("algorithms/sorting/bitonicsort.zig").bitonicSortDesc;
+        pub const bitonicSortBy = @import("algorithms/sorting/bitonicsort.zig").bitonicSortBy;
+        pub const bitonicSortAny = @import("algorithms/sorting/bitonicsort.zig").bitonicSortAny;
     };
 
     /// Searching algorithms
