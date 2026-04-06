@@ -1,19 +1,30 @@
-## Latest Session (Session 316, 2026-04-06) — FEATURE MODE
-- Bucket Sort Implementation: 20 tests, distribution-based sorting for uniformly distributed data
-- Algorithm: Distributes elements into buckets, sorts each bucket, concatenates results
+## Latest Session (Session 318, 2026-04-07) — FEATURE MODE
+- Cocktail Sort Implementation: 20 tests, bidirectional bubble sort (shaker sort)
+- Algorithm: Sorts in both directions on each pass, alternating between bubbling largest to right and smallest to left
 - Key features:
-  * bucketSort(): Generic bucket sort - O(n+k) average, O(n²) worst case
-  * bucketSortNormalized(): Optimized for floating-point data in [0,1) range
-  * bucketSortCustom(): Custom bucket mapping function for flexible distribution
-  * Stable sort within buckets (insertion sort)
-  * Type-generic: Works with integers (i32, u8) and floats (f32, f64)
-- Time: O(n + k) average case for uniform data, O(n²) worst case
-- Space: O(n + k) for bucket storage
-- Use cases: Floating-point normalized data, uniformly distributed data, external/distributed sorting
-- Tests: 20 comprehensive tests (basic, edge cases, normalized, custom mapping, large arrays, type support)
-- ArrayList API (Zig 0.15.x): initCapacity(allocator, 0), append(allocator, val), deinit(allocator)
-- Reference: E.J. Isaac and R.C. Singleton (1956), Knuth Vol. 3
-- Fifteenth algorithm in Sorting category
+  * cocktailSort(): Generic with custom comparison - O(n²) average, O(n) best case (adaptive)
+  * cocktailSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * cocktailSortBy(): Order-based comparison wrapper
+  * Bidirectional passes: forward (bubble largest right) + backward (bubble smallest left)
+  * In-place: O(1) space complexity, no allocation
+  * Stable: Preserves relative order of equal elements
+  * Adaptive: Terminates early if no swaps occur (already sorted)
+  * Type-generic: Works with any comparable type (i32, f64, u8, custom structs)
+- Algorithm: Forward pass bubbles largest element to right end, backward pass bubbles smallest element to left end. Shrinks search range from both ends. Terminates when no swaps occur.
+- Time: O(n²) average/worst case, O(n) best case when already sorted
+- Space: O(1) — in-place sorting, no allocation
+- Stability: Stable - preserves relative order of equal elements
+- Advantages over standard bubble sort: Addresses "turtle problem" (small values near end move slowly), reduces number of passes by sorting from both ends, up to 2x faster on some inputs
+- Use cases: Educational (demonstrates bidirectional sorting), small datasets where simplicity matters, nearly sorted data (adaptive behavior), drop-in replacement for bubble sort
+- Tests cover: basic operations (ascending, descending), edge cases (empty, single, two, already sorted, reverse sorted, all equal), duplicates, negative numbers, floating point (f64), custom comparison (struct sorting), Order-based comparison, large arrays (100 elements with allocator), u8 type, stability test, turtle problem (small value at end), rabbit problem (large value at start), stress test (50 pseudo-random), memory safety
+- Trade-offs: vs Bubble Sort (faster, addresses turtle problem, same simplicity), vs Insertion Sort (worse for nearly sorted), vs QuickSort/MergeSort (simpler but much slower)
+- Key insight: Bidirectional approach eliminates "turtle problem" where small values near end move slowly in standard bubble sort. Also known as Shaker Sort, Ripple Sort, Shuttle Sort, Happy Hour Sort.
+- Reference: Knuth "The Art of Computer Programming" Vol. 3 (1998)
+- Sixteenth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort, Shell Sort, Cycle Sort, Comb Sort, Bucket Sort, Cocktail Sort)
+- Commits: 1cb8fca
+
+## Previous Session (Session 316, 2026-04-06) — FEATURE MODE
+- Bucket Sort Implementation: 20 tests, distribution-based sorting for uniformly distributed data
 - Commits: fe2b722
 
 ## Previous Session (Session 315, 2026-04-06) — STABILIZATION MODE
