@@ -183,6 +183,9 @@ pub const algorithms = struct {
         pub const bubbleSortBy = @import("algorithms/sorting/bubblesort.zig").sortBy;
         pub const bubbleSortCountSwaps = @import("algorithms/sorting/bubblesort.zig").countSwaps;
         pub const bubbleSortCountComparisons = @import("algorithms/sorting/bubblesort.zig").countComparisons;
+        pub const shellSort = @import("algorithms/sorting/shellsort.zig").shellSort;
+        pub const shellSortBy = @import("algorithms/sorting/shellsort.zig").shellSortBy;
+        pub const GapSequence = @import("algorithms/sorting/shellsort.zig").GapSequence;
     };
 
     /// Searching algorithms
