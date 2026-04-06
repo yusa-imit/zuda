@@ -177,6 +177,12 @@ pub const algorithms = struct {
         pub const selectionSortDesc = @import("algorithms/sorting/selectionsort.zig").selectionSortDesc;
         pub const selectionSortBy = @import("algorithms/sorting/selectionsort.zig").sortBy;
         pub const selectionSortCountSwaps = @import("algorithms/sorting/selectionsort.zig").countSwaps;
+        pub const bubbleSort = @import("algorithms/sorting/bubblesort.zig").bubbleSort;
+        pub const bubbleSortAsc = @import("algorithms/sorting/bubblesort.zig").bubbleSortAsc;
+        pub const bubbleSortDesc = @import("algorithms/sorting/bubblesort.zig").bubbleSortDesc;
+        pub const bubbleSortBy = @import("algorithms/sorting/bubblesort.zig").sortBy;
+        pub const bubbleSortCountSwaps = @import("algorithms/sorting/bubblesort.zig").countSwaps;
+        pub const bubbleSortCountComparisons = @import("algorithms/sorting/bubblesort.zig").countComparisons;
     };
 
     /// Searching algorithms
