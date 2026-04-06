@@ -219,6 +219,10 @@ pub const algorithms = struct {
         pub const pigeonholeSortDesc = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSortDesc;
         pub const pigeonholeSortBy = @import("algorithms/sorting/pigeonholesort.zig").pigeonholeSortBy;
         pub const countDistinct = @import("algorithms/sorting/pigeonholesort.zig").countDistinct;
+        pub const oddEvenSort = @import("algorithms/sorting/oddevensort.zig").oddEvenSort;
+        pub const oddEvenSortAsc = @import("algorithms/sorting/oddevensort.zig").oddEvenSortAsc;
+        pub const oddEvenSortDesc = @import("algorithms/sorting/oddevensort.zig").oddEvenSortDesc;
+        pub const oddEvenSortBy = @import("algorithms/sorting/oddevensort.zig").oddEvenSortBy;
     };
 
     /// Searching algorithms
