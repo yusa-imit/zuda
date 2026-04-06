@@ -203,6 +203,11 @@ pub const algorithms = struct {
         pub const cocktailSortAsc = @import("algorithms/sorting/cocktailsort.zig").cocktailSortAsc;
         pub const cocktailSortDesc = @import("algorithms/sorting/cocktailsort.zig").cocktailSortDesc;
         pub const cocktailSortBy = @import("algorithms/sorting/cocktailsort.zig").cocktailSortBy;
+        pub const gnomeSort = @import("algorithms/sorting/gnomesort.zig").gnomeSort;
+        pub const gnomeSortAsc = @import("algorithms/sorting/gnomesort.zig").gnomeSortAsc;
+        pub const gnomeSortDesc = @import("algorithms/sorting/gnomesort.zig").gnomeSortDesc;
+        pub const gnomeSortBy = @import("algorithms/sorting/gnomesort.zig").gnomeSortBy;
+        pub const gnomeSortOptimized = @import("algorithms/sorting/gnomesort.zig").gnomeSortOptimized;
     };
 
     /// Searching algorithms
