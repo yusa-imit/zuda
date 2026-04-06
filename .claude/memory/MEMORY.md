@@ -1,4 +1,27 @@
-## Latest Session (Session 314, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 316, 2026-04-06) — FEATURE MODE
+- Bucket Sort Implementation: 20 tests, distribution-based sorting for uniformly distributed data
+- Algorithm: Distributes elements into buckets, sorts each bucket, concatenates results
+- Key features:
+  * bucketSort(): Generic bucket sort - O(n+k) average, O(n²) worst case
+  * bucketSortNormalized(): Optimized for floating-point data in [0,1) range
+  * bucketSortCustom(): Custom bucket mapping function for flexible distribution
+  * Stable sort within buckets (insertion sort)
+  * Type-generic: Works with integers (i32, u8) and floats (f32, f64)
+- Time: O(n + k) average case for uniform data, O(n²) worst case
+- Space: O(n + k) for bucket storage
+- Use cases: Floating-point normalized data, uniformly distributed data, external/distributed sorting
+- Tests: 20 comprehensive tests (basic, edge cases, normalized, custom mapping, large arrays, type support)
+- ArrayList API (Zig 0.15.x): initCapacity(allocator, 0), append(allocator, val), deinit(allocator)
+- Reference: E.J. Isaac and R.C. Singleton (1956), Knuth Vol. 3
+- Fifteenth algorithm in Sorting category
+- Commits: fe2b722
+
+## Previous Session (Session 315, 2026-04-06) — STABILIZATION MODE
+- Stabilization audit: ALL systems green ✅
+- No code changes needed
+- Commits: (memory update only)
+
+## Previous Session (Session 314, 2026-04-06) — FEATURE MODE
 - Comb Sort Implementation: 20 tests, improved Bubble Sort with gap-based comparisons
 - Algorithm: Eliminates "turtles" (small values near the end) by comparing elements separated by a gap
 - Key features:
