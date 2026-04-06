@@ -1,4 +1,28 @@
-## Latest Session (Session 304, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 306, 2026-04-06) — FEATURE MODE
+- Box Stacking Implementation: 13 tests, classic 3D packing optimization DP problem
+- Algorithm: Stack boxes to maximize height with base area constraints
+- Key features:
+  * maxStackHeight(): Standard DP - O(n² log n) time, O(n) space
+  * maxStackHeightWithPath(): Returns optimal stack sequence with backtracking
+  * countMaxStackWays(): Count number of ways to achieve maximum height
+  * 3 rotations per box: Each dimension can serve as height (h,w,d), (w,h,d), (d,h,w)
+  * Base constraint: Box can only go on top if BOTH width and depth are strictly smaller
+  * Sort by base area: Descending order enables LIS-style DP
+  * DP state: dp[i] = max height achievable with box i on top
+  * Recurrence: dp[i] = boxes[i].height + max(dp[j]) for all j where boxes[i].canPlaceOn(boxes[j])
+  * Base case: dp[i] = boxes[i].height (each box can start a stack)
+- Algorithm: Generate all rotations (3 per box type), sort by base area descending, apply LIS-style DP where each box can stack on any box with larger base dimensions. Track parent pointers for path reconstruction.
+- Time: O(n² log n) where n = number of rotations (3 × box types)
+- Space: O(n) for DP array + rotations + parent tracking
+- Use cases: 3D packing optimization, warehouse stacking constraints, physical stability problems, resource allocation with dependencies, inventory management with stacking rules
+- Tests cover: basic example (3 boxes), single box (3 rotations → 11 height), two boxes stackable, empty input, identical boxes (can't stack), path reconstruction with validation, non-stackable boxes (same base), optimal sequence, count ways, large input (20 boxes), decreasing dimensions (perfect chain: 10+8+6+4=28), path validation (verify base constraints), memory safety (10 iterations)
+- Trade-offs: Standard O(n²) DP vs path reconstruction (adds parent tracking overhead), counting ways vs single optimal (counting tracks all paths to max)
+- Key insight: 3D extension of LIS. Each box type contributes 3 rotations (treating each dimension as height). Sorting by base area (width × depth) descending ensures we only need to look at previous boxes in DP (larger bases come first). Constraint is 2D: both width AND depth must be strictly smaller.
+- Reference: Classic DP problem, 3D variant of LIS with geometric constraints
+- Fifty-first algorithm in Dynamic Programming category
+- Commits: 31b7f1d
+
+## Previous Session (Session 304, 2026-04-06) — FEATURE MODE
 - Paint House Implementation: 17 tests, classic DP resource allocation with neighbor constraints
 - Algorithm: Minimum cost to paint n houses with k colors where adjacent houses can't have same color
 - Key features:
