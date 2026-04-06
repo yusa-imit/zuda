@@ -6,6 +6,7 @@
 pub const binary_search = @import("dynamic_programming/binary_search.zig");
 pub const bitonic_subsequence = @import("dynamic_programming/bitonic_subsequence.zig");
 pub const boolean_parenthesization = @import("dynamic_programming/boolean_parenthesization.zig");
+pub const box_stacking = @import("dynamic_programming/box_stacking.zig");
 pub const burst_balloons = @import("dynamic_programming/burst_balloons.zig");
 pub const catalan_numbers = @import("dynamic_programming/catalan_numbers.zig");
 pub const climbing_stairs = @import("dynamic_programming/climbing_stairs.zig");
@@ -181,3 +182,6 @@ pub const paintHouse = paint_house.paintHouse;
 pub const paintHouseK = paint_house.paintHouseK;
 pub const paintHouseKOptimized = paint_house.paintHouseKOptimized;
 pub const paintHouseWithPath = paint_house.paintHouseWithPath;
+pub const maxStackHeight = box_stacking.maxStackHeight;
+pub const maxStackHeightWithPath = box_stacking.maxStackHeightWithPath;
+pub const countMaxStackWays = box_stacking.countMaxStackWays;
