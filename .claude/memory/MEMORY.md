@@ -1,4 +1,29 @@
-## Latest Session (Session 311, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 312, 2026-04-06) — FEATURE MODE
+- Shell Sort Implementation: 19 tests, gap-based insertion sort with diminishing increments
+- Algorithm: Improves insertion sort by comparing elements separated by a gap, gradually reducing gap to 1
+- Key features:
+  * shellSort(): 4 configurable gap sequences (Shell, Knuth, Sedgewick, Tokuda)
+  * shellSortBy(): Custom comparator support
+  * GapSequence enum: shell (O(n²)), knuth (O(n^(3/2))), sedgewick (O(n^(4/3))), tokuda (O(n^(4/3)))
+  * In-place: O(1) space complexity
+  * Unstable: Relative order of equal elements not preserved
+  * Overflow-safe Sedgewick sequence calculation
+- Algorithm steps: Start with large gap → gapped insertion sort → reduce gap → repeat until gap=1 (standard insertion sort)
+- Time: O(n log n) to O(n²) depending on gap sequence
+  * Shell's sequence: O(n²) worst case (simplest but slowest)
+  * Knuth's sequence: O(n^(3/2)) worst case (good balance)
+  * Sedgewick's: O(n^(4/3)) worst case (best theoretical)
+  * Tokuda's: O(n^(4/3)) empirical (good practical performance)
+- Space: O(1) — in-place sorting
+- Use cases: Medium datasets (1K-100K elements), memory-constrained systems (no allocation), simple O(n^1.5) alternative to O(n log n) algorithms, embedded systems, educational (understanding gap-based sorting)
+- Tests cover: basic sorting (all 4 sequences), edge cases (empty, single, sorted, reverse, duplicates, all same), large arrays (100 elements with each sequence), custom comparator (descending), type support (i32, f64, u8), sequence comparison (all produce same result), stress test (50 elements pseudo-random)
+- Trade-offs: vs Insertion Sort (much faster for large data, same O(1) space), vs QuickSort/MergeSort (simpler but slower, no worst-case O(n log n) guarantee), vs HeapSort (simpler but gap sequence choice matters)
+- Key insight: Gap sequence dramatically affects performance. Sedgewick/Tokuda provide best empirical results. Shell's original n/2 sequence has worst theoretical bounds but simplest to understand. Final pass with gap=1 ensures correctness.
+- Reference: Donald Shell (1959), Knuth (1973), Sedgewick (1986), Tokuda (1992)
+- Twelfth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort, Shell Sort)
+- Commits: 3925871
+
+## Previous Session (Session 311, 2026-04-06) — FEATURE MODE
 - Bubble Sort Implementation: 21 tests, classic simple sorting algorithm with stability
 - Algorithm: Repeatedly swap adjacent elements if out of order until no swaps occur
 - Key features:
