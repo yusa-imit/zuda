@@ -172,6 +172,11 @@ pub const algorithms = struct {
         pub const insertionSort = @import("algorithms/sorting/insertionsort.zig").insertionSort;
         pub const binaryInsertionSort = @import("algorithms/sorting/insertionsort.zig").binaryInsertionSort;
         pub const insertionSortBy = @import("algorithms/sorting/insertionsort.zig").sortBy;
+        pub const selectionSort = @import("algorithms/sorting/selectionsort.zig").selectionSort;
+        pub const selectionSortAsc = @import("algorithms/sorting/selectionsort.zig").selectionSortAsc;
+        pub const selectionSortDesc = @import("algorithms/sorting/selectionsort.zig").selectionSortDesc;
+        pub const selectionSortBy = @import("algorithms/sorting/selectionsort.zig").sortBy;
+        pub const selectionSortCountSwaps = @import("algorithms/sorting/selectionsort.zig").countSwaps;
     };
 
     /// Searching algorithms
