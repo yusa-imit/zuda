@@ -1,4 +1,30 @@
-## Latest Session (Session 306, 2026-04-06) — FEATURE MODE
+## Latest Session (Session 308, 2026-04-06) — FEATURE MODE
+- Insertion Sort Implementation: 23 tests, stable adaptive sorting algorithm
+- Algorithm: Simple comparison-based sorting with online property
+- Key features:
+  * insertionSort(): Standard O(n²) stable adaptive sort - O(n) best case when sorted
+  * binaryInsertionSort(): O(n log n) comparisons variant using binary search for insertion position
+  * sortBy(): Custom comparison wrapper for flexible sorting
+  * asc/desc: Default ascending/descending comparison functions
+  * Stability: Maintains relative order of equal elements (verified in tests)
+  * Adaptive: Efficient for nearly sorted data (O(n) when already sorted)
+  * In-place: O(1) extra space
+  * Online: Can sort stream as it receives data
+- Algorithm: For each element starting from index 1, shift all larger elements to the right and insert into correct position. Binary variant uses binary search to find insertion position (reduces comparisons from O(n²) to O(n log n), but shifts remain O(n²)).
+- Time: O(n²) average/worst case, O(n) best case (sorted), binary variant O(n log n) comparisons + O(n²) shifts
+- Space: O(1) in-place sorting
+- Use cases: Small datasets (< 30-50 elements), nearly sorted data, stability required (multi-key sorting), online/streaming data, subroutine in hybrid sorts (IntroSort, TimSort use insertion sort for small partitions)
+- Tests cover: basic operations (ascending, descending, duplicates), edge cases (empty, single, two elements), stability check (equal keys maintain original relative order), best/worst case scenarios (already sorted O(n), reverse sorted O(n²)), floating point support, nearly sorted data (adaptive performance), custom comparison (struct sorting), large arrays (100 elements), binary insertion variant consistency
+- Trade-offs: Standard O(n²) vs binary insertion (fewer comparisons but same shifts), vs QuickSort/MergeSort (simpler, stable, better for small/nearly sorted), vs HeapSort (stable but slower for large random data)
+- Key insight: Binary insertion reduces comparisons via binary search but doesn't improve shift operations. Stability is guaranteed by shifting elements right (never swapping equal elements). Adaptive property makes it optimal for maintaining nearly sorted lists.
+- Reference: Classic sorting algorithm, used in IntroSort (< 16 elements), TimSort (< 64 elements)
+- Ninth algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort)
+- Commits: e9a5cfb
+
+## Previous Session (Session 307, 2026-04-06) — FEATURE MODE
+- Heap Sort Implementation: sorting algorithm
+
+## Previous Session (Session 306, 2026-04-06) — FEATURE MODE
 - Box Stacking Implementation: 13 tests, classic 3D packing optimization DP problem
 - Algorithm: Stack boxes to maximize height with base area constraints
 - Key features:
