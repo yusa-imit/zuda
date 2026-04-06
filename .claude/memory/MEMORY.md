@@ -1,4 +1,27 @@
-## Latest Session (Session 310, 2026-04-06) — STABILIZATION MODE
+## Latest Session (Session 311, 2026-04-06) — FEATURE MODE
+- Bubble Sort Implementation: 21 tests, classic simple sorting algorithm with stability
+- Algorithm: Repeatedly swap adjacent elements if out of order until no swaps occur
+- Key features:
+  * bubbleSort(): Generic with custom comparison function - O(n²) worst case, O(n) best case
+  * bubbleSortAsc/Desc(): Convenience wrappers for ascending/descending order
+  * sortBy(): Order-based comparison wrapper for flexible sorting
+  * countSwaps(): Track swap operations for behavior analysis
+  * countComparisons(): Track comparison operations for adaptive behavior analysis
+  * Stable: Equal elements maintain relative order (verified in tests)
+  * Adaptive: O(n) best case with early exit optimization when sorted
+  * In-place: O(1) extra space
+- Algorithm: For each pass through array, compare adjacent elements and swap if out of order. After each pass, largest unsorted element "bubbles" to its position. Early exit when no swaps occur (already sorted).
+- Time: O(n²) average/worst case, O(n) best case (sorted with early exit)
+- Space: O(1) in-place sorting
+- Use cases: Educational purposes (teaching fundamentals), small datasets (< 10-20 elements), nearly sorted data (adaptive), stability required with minimal complexity
+- Tests cover: basic operations (ascending, descending, duplicates), edge cases (empty, single, two elements), stability check (equal keys maintain original relative order), swap/comparison counting (sorted=0 swaps, reverse sorted=n(n-1)/2 swaps), adaptive behavior (early exit on sorted/nearly sorted), custom comparisons (struct sorting, Order-based), large arrays (100 elements), floating point support (f32/f64), early exit optimization verification, all equal elements (no swaps), alternating patterns
+- Trade-offs: vs Insertion Sort (similar O(n²) but insertion typically faster in practice), vs Selection Sort (more swaps but adaptive with early exit vs minimal swaps but non-adaptive), vs QuickSort/MergeSort (much simpler but slower for large data)
+- Key insight: Bubble sort's main advantage is stability with adaptive behavior (early exit). Unlike selection sort, it can detect when array is sorted and terminate early. Most useful for teaching algorithm analysis and understanding stability/adaptivity concepts. Maximum swaps = n(n-1)/2 for reverse sorted.
+- Reference: Classic sorting algorithm, foundational for teaching algorithm fundamentals
+- Eleventh algorithm in Sorting Algorithms category (TimSort, IntroSort, QuickSort, HeapSort, RadixSort, CountingSort, MergeSort, BlockSort, Insertion Sort, Selection Sort, Bubble Sort)
+- Commits: dd543a9
+
+## Previous Session (Session 310, 2026-04-06) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 4 consecutive successful runs on main (all recent passing)
 - Issues: Zero open
