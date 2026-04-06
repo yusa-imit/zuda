@@ -357,3 +357,23 @@
 ## Previous Session (Session 280, 2026-04-05) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - Commits: (memory update only)
+
+## Current Session (Session 307, 2026-04-06) — FEATURE MODE
+- Heap Sort Implementation: 15 tests, fundamental O(n log n) comparison-based sorting
+- Algorithm: Build max heap → repeatedly extract max to end → restore heap property
+- Key features:
+  * heapSort(T, items, context, lessThanFn): Generic with custom comparator
+  * heapSortAsc(T, items): Ascending order convenience wrapper
+  * heapSortDesc(T, items): Descending order convenience wrapper
+  * Sift-down operation: Maintains max heap property (parent >= children)
+  * Build heap: Start from last non-leaf (n/2 - 1), sift down to root
+  * Extract phase: Swap root with last, reduce heap size, restore property
+  * Time: O(n log n) worst case - GUARANTEED (better than quicksort's O(n²))
+  * Space: O(1) - in-place (better than mergesort's O(n))
+  * Not stable: Equal elements may change relative order
+- Use cases: Real-time systems (guaranteed performance), memory-constrained (O(1) space), priority queue, when stability not required
+- Tests: 15 comprehensive (basic order, edge cases, duplicates, negatives, large arrays, custom comparison, f64, stability check, worst case)
+- Trade-offs: vs Quicksort (slower average, better worst case), vs Mergesort (in-place but not stable), vs Introsort (Introsort uses heapsort as fallback)
+- Sorting Algorithms: Now 8 total (Tim Sort, Intro Sort, Quick Sort, Heap Sort, Radix Sort, Counting Sort, Merge Sort, Block Sort)
+- Commits: 936f84e
+
