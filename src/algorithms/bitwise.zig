@@ -1,11 +1,12 @@
 //! Bitwise Algorithms
 //!
 //! This module provides efficient algorithms for bit manipulation operations,
-//! Hamming distance computation, and subset generation.
+//! Hamming distance computation, subset generation, and Gray code operations.
 
 pub const bit_tricks = @import("bitwise/bit_tricks.zig");
 pub const hamming = @import("bitwise/hamming.zig");
 pub const subsets = @import("bitwise/subsets.zig");
+pub const gray_code = @import("bitwise/gray_code.zig");
 
 // Re-export commonly used functions for convenience
 pub const popcount = bit_tricks.popcount;
@@ -42,3 +43,13 @@ pub const subsetSize = subsets.subsetSize;
 pub const isInSubset = subsets.isInSubset;
 pub const generateAllSubsets = subsets.generateAllSubsets;
 pub const generateSubsetsOfSize = subsets.generateSubsetsOfSize;
+
+// Gray code generation and navigation
+pub const generateGraySequence = gray_code.generateSequence;
+pub const generateReflectedGray = gray_code.generateReflected;
+pub const nextGray = gray_code.nextGray;
+pub const previousGray = gray_code.previousGray;
+pub const areAdjacentGray = gray_code.areAdjacent;
+pub const changingBit = gray_code.changingBit;
+pub const rankGray = gray_code.rank;
+pub const unrankGray = gray_code.unrank;
