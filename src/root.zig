@@ -320,6 +320,15 @@ pub const algorithms = struct {
         pub const ntt = @import("algorithms/math/ntt.zig").ntt;
         pub const intt = @import("algorithms/math/ntt.zig").intt;
         pub const nttMultiply = @import("algorithms/math/ntt.zig").multiply;
+        pub const horner = @import("algorithms/math/polynomial.zig").horner;
+        pub const hornerWithDerivative = @import("algorithms/math/polynomial.zig").hornerWithDerivative;
+        pub const lagrangeInterpolate = @import("algorithms/math/polynomial.zig").lagrangeInterpolate;
+        pub const newtonDividedDifferences = @import("algorithms/math/polynomial.zig").newtonDividedDifferences;
+        pub const newtonEvaluate = @import("algorithms/math/polynomial.zig").newtonEvaluate;
+        pub const polynomialAdd = @import("algorithms/math/polynomial.zig").add;
+        pub const polynomialMultiply = @import("algorithms/math/polynomial.zig").multiply;
+        pub const polynomialDerivative = @import("algorithms/math/polynomial.zig").derivative;
+        pub const polynomialIntegrate = @import("algorithms/math/polynomial.zig").integrate;
     };
 
     /// Geometric algorithms
