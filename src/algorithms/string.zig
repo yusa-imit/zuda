@@ -15,6 +15,9 @@
 ///
 /// - **Manacher's Algorithm**: O(n) longest palindromic substring
 /// - **Glob Matching**: Wildcard pattern matching with * and ?
+/// - **Longest Common Prefix**: O(n) find common prefix of string array
+///   - Horizontal/vertical scanning, divide-and-conquer, binary search variants
+///   - Suffix-based LCP for suffix array analysis
 /// - **Suffix Array**: O(n log² n) construction, O(m log n) pattern search
 ///   - LCP array construction in O(n) using Kasai's algorithm
 ///   - Longest repeated substring, distinct substrings counting
@@ -47,6 +50,7 @@ pub const z_algorithm = @import("string/z_algorithm.zig");
 pub const glob_match = @import("string/glob_match.zig");
 pub const manacher = @import("string/manacher.zig");
 pub const suffix_array = @import("string/suffix_array.zig");
+pub const longest_common_prefix = @import("string/longest_common_prefix.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -72,6 +76,13 @@ pub const longestRepeatedSubstring = suffix_array.longestRepeatedSubstring;
 pub const countDistinctSubstrings = suffix_array.countDistinctSubstrings;
 pub const SuffixArrayResult = suffix_array.SuffixArrayResult;
 pub const LCPResult = suffix_array.LCPResult;
+pub const longestCommonPrefix = longest_common_prefix.longestCommonPrefix;
+pub const longestCommonPrefixVertical = longest_common_prefix.longestCommonPrefixVertical;
+pub const longestCommonPrefixDivideConquer = longest_common_prefix.longestCommonPrefixDivideConquer;
+pub const longestCommonPrefixBinarySearch = longest_common_prefix.longestCommonPrefixBinarySearch;
+pub const findAllCommonPrefixLengths = longest_common_prefix.findAllCommonPrefixLengths;
+pub const countStringsWithPrefix = longest_common_prefix.countStringsWithPrefix;
+pub const longestCommonPrefixOfSuffixes = longest_common_prefix.longestCommonPrefixOfSuffixes;
 
 test {
     @import("std").testing.refAllDecls(@This());
