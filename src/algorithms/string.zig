@@ -21,6 +21,10 @@
 /// - **Suffix Array**: O(n log² n) construction, O(m log n) pattern search
 ///   - LCP array construction in O(n) using Kasai's algorithm
 ///   - Longest repeated substring, distinct substrings counting
+/// - **Anagram Detection**: O(n) frequency-based anagram checking
+///   - Character frequency matching, sorting-based comparison
+///   - Sliding window anagram search, grouping by canonical form
+///   - Case-insensitive and space-ignoring variants
 ///
 /// ## Time Complexity
 ///
@@ -51,6 +55,7 @@ pub const glob_match = @import("string/glob_match.zig");
 pub const manacher = @import("string/manacher.zig");
 pub const suffix_array = @import("string/suffix_array.zig");
 pub const longest_common_prefix = @import("string/longest_common_prefix.zig");
+pub const anagrams = @import("string/anagrams.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -83,6 +88,13 @@ pub const longestCommonPrefixBinarySearch = longest_common_prefix.longestCommonP
 pub const findAllCommonPrefixLengths = longest_common_prefix.findAllCommonPrefixLengths;
 pub const countStringsWithPrefix = longest_common_prefix.countStringsWithPrefix;
 pub const longestCommonPrefixOfSuffixes = longest_common_prefix.longestCommonPrefixOfSuffixes;
+pub const areAnagrams = anagrams.areAnagrams;
+pub const areAnagramsSorted = anagrams.areAnagramsSorted;
+pub const findAllAnagrams = anagrams.findAllAnagrams;
+pub const groupAnagrams = anagrams.groupAnagrams;
+pub const countAnagramPairs = anagrams.countAnagramPairs;
+pub const areAnagramsIgnoreCaseAndSpaces = anagrams.areAnagramsIgnoreCaseAndSpaces;
+pub const getCanonicalForm = anagrams.getCanonicalForm;
 
 test {
     @import("std").testing.refAllDecls(@This());
