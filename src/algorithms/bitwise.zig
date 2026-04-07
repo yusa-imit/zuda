@@ -1,8 +1,11 @@
 //! Bitwise Algorithms
 //!
-//! This module provides efficient algorithms for bit manipulation operations.
+//! This module provides efficient algorithms for bit manipulation operations,
+//! Hamming distance computation, and subset generation.
 
 pub const bit_tricks = @import("bitwise/bit_tricks.zig");
+pub const hamming = @import("bitwise/hamming.zig");
+pub const subsets = @import("bitwise/subsets.zig");
 
 // Re-export commonly used functions for convenience
 pub const popcount = bit_tricks.popcount;
@@ -22,3 +25,20 @@ pub const findMSB = bit_tricks.findMSB;
 pub const findLSB = bit_tricks.findLSB;
 pub const isolateRightmostBit = bit_tricks.isolateRightmostBit;
 pub const clearRightmostBit = bit_tricks.clearRightmostBit;
+
+// Hamming distance functions
+pub const hammingDistance = hamming.hammingDistance;
+pub const totalHammingDistance = hamming.totalHammingDistance;
+pub const findNearestHamming = hamming.findNearestHamming;
+pub const countWithinHammingRadius = hamming.countWithinHammingRadius;
+pub const hammingDistanceBytes = hamming.hammingDistanceBytes;
+pub const hammingDistanceBitwise = hamming.hammingDistanceBitwise;
+
+// Subset generation
+pub const SubsetIterator = subsets.SubsetIterator;
+pub const SubsetOfSizeIterator = subsets.SubsetOfSizeIterator;
+pub const SubmaskIterator = subsets.SubmaskIterator;
+pub const subsetSize = subsets.subsetSize;
+pub const isInSubset = subsets.isInSubset;
+pub const generateAllSubsets = subsets.generateAllSubsets;
+pub const generateSubsetsOfSize = subsets.generateSubsetsOfSize;
