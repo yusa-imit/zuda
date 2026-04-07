@@ -15,15 +15,20 @@
 ///
 /// - **Manacher's Algorithm**: O(n) longest palindromic substring
 /// - **Glob Matching**: Wildcard pattern matching with * and ?
+/// - **Suffix Array**: O(n log² n) construction, O(m log n) pattern search
+///   - LCP array construction in O(n) using Kasai's algorithm
+///   - Longest repeated substring, distinct substrings counting
 ///
 /// ## Time Complexity
 ///
 /// Most pattern matching algorithms achieve O(n+m) where n = text length, m = pattern length.
 /// Manacher's algorithm is O(n) for palindrome detection.
+/// Suffix array construction is O(n log² n), pattern search is O(m log n).
 ///
 /// ## Space Complexity
 ///
 /// Typically O(m) for pattern preprocessing, O(n) for full text analysis.
+/// Suffix arrays require O(n) space for sorted suffix indices and auxiliary arrays.
 ///
 /// ## Use Cases
 ///
@@ -41,6 +46,7 @@ pub const aho_corasick = @import("string/aho_corasick.zig");
 pub const z_algorithm = @import("string/z_algorithm.zig");
 pub const glob_match = @import("string/glob_match.zig");
 pub const manacher = @import("string/manacher.zig");
+pub const suffix_array = @import("string/suffix_array.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -59,6 +65,13 @@ pub const longestPalindromeLength = manacher.longestPalindromeLength;
 pub const countPalindromes = manacher.countPalindromes;
 pub const allPalindromes = manacher.allPalindromes;
 pub const PalindromeResult = manacher.PalindromeResult;
+pub const buildSuffixArray = suffix_array.buildSuffixArray;
+pub const buildLCP = suffix_array.buildLCP;
+pub const suffixArraySearch = suffix_array.search;
+pub const longestRepeatedSubstring = suffix_array.longestRepeatedSubstring;
+pub const countDistinctSubstrings = suffix_array.countDistinctSubstrings;
+pub const SuffixArrayResult = suffix_array.SuffixArrayResult;
+pub const LCPResult = suffix_array.LCPResult;
 
 test {
     @import("std").testing.refAllDecls(@This());
