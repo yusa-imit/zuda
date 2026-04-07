@@ -237,6 +237,13 @@ pub const algorithms = struct {
         pub const strandSortBy = @import("algorithms/sorting/strandsort.zig").strandSortBy;
         pub const countStrands = @import("algorithms/sorting/strandsort.zig").countStrands;
         pub const getAllStrands = @import("algorithms/sorting/strandsort.zig").getAllStrands;
+        pub const bogoSort = @import("algorithms/sorting/bogosort.zig").bogoSort;
+        pub const bogoSortAsc = @import("algorithms/sorting/bogosort.zig").bogoSortAsc;
+        pub const bogoSortDesc = @import("algorithms/sorting/bogosort.zig").bogoSortDesc;
+        pub const bogoSortBy = @import("algorithms/sorting/bogosort.zig").bogoSortBy;
+        pub const bogoSortDeterministic = @import("algorithms/sorting/bogosort.zig").bogoSortDeterministic;
+        pub const bogoSortBounded = @import("algorithms/sorting/bogosort.zig").bogoSortBounded;
+        pub const countBogoSortIterations = @import("algorithms/sorting/bogosort.zig").countBogoSortIterations;
     };
 
     /// Searching algorithms
