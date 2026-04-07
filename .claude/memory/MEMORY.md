@@ -1,4 +1,25 @@
-## Latest Session (Session 330, 2026-04-07) — STABILIZATION MODE
+## Latest Session (Session 331, 2026-04-07) — FEATURE MODE
+- Maximum Sum Rectangle Implementation: 16 tests, 2D Kadane extension for matrix optimization
+- Algorithm: Extends 1D Kadane's algorithm to 2D via column compression
+- Key features:
+  * maxSumRectangle(): O(n² × m) time, O(n) space — column compression + 1D Kadane
+  * maxSumRectangleBy(): Custom comparison for variants (min/max)
+  * minSumRectangle(): Find minimum sum submatrix
+  * countRectanglesWithSum(): Count rectangles with target sum (hashmap-based)
+  * findAllMaxSumRectangles(): Find all optimal rectangles
+  * Type-generic (i32, f64, etc.)
+- Time complexity: O(n² × m) where n = rows, m = cols
+- Space complexity: O(n) for temporary row sum array
+- Algorithm: Fix left/right columns → compress rows → apply 1D Kadane → track best rectangle
+- Use cases: Image processing (ROI detection), data analysis (max sum sub-grids), optimization (2D resource allocation), computer graphics (bounding box)
+- Tests cover: basic 4x4 (sum=29), single positive, all negative/positive, single row/column, empty error, f64, min variant, count with sum, find all max, large 10x10, memory safety (10 iterations)
+- Trade-offs: vs Brute Force O(n³ × m³) (much faster), vs Divide & Conquer (simpler), optimal for dense matrices
+- Key insight: Column compression reduces 2D to 1D problem. Left/right column iteration ensures all rectangles considered.
+- Reference: Extension of Kadane's algorithm to 2D (1977)
+- Forty-eighth algorithm in Dynamic Programming category (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path, Stock Trading, Russian Doll, Perfect Squares, Ugly Numbers, Super Egg Drop, Boolean Parenthesization, Catalan Numbers, Optimal Game Strategy, Optimal BST, Decode Ways, Longest Valid Parentheses, Longest Arithmetic Progression, Jump Game, Longest Consecutive Sequence, Max Sum Rectangle)
+- Commits: ae45349
+
+## Previous Session (Session 330, 2026-04-07) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: 3 consecutive successful runs on main (all recent passing)
 - Issues: Zero open
