@@ -271,6 +271,13 @@ pub const algorithms = struct {
         pub const PushRelabel = @import("algorithms/graph/push_relabel.zig").PushRelabel;
         pub const HopcroftKarp = @import("algorithms/graph/hopcroft_karp.zig").HopcroftKarp;
         pub const Hungarian = @import("algorithms/graph/hungarian.zig").Hungarian;
+
+        // Eulerian path/circuit algorithms
+        pub const hasEulerianPath = @import("algorithms/graph/eulerian.zig").hasEulerianPath;
+        pub const findEulerianPath = @import("algorithms/graph/eulerian.zig").findEulerianPath;
+        pub const isValidEulerianPath = @import("algorithms/graph/eulerian.zig").isValidEulerianPath;
+        pub const EulerianType = @import("algorithms/graph/eulerian.zig").EulerianType;
+        pub const GraphType = @import("algorithms/graph/eulerian.zig").GraphType;
     };
 
     /// String algorithms
