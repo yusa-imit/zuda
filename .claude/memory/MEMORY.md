@@ -1,6 +1,25 @@
-## Latest Session (Session 331, 2026-04-07) — FEATURE MODE
-- Maximum Sum Rectangle Implementation: 16 tests, 2D Kadane extension for matrix optimization
-- Algorithm: Extends 1D Kadane's algorithm to 2D via column compression
+## Latest Session (Session 332, 2026-04-07) — FEATURE MODE
+- Suffix Array Implementation: 17 tests, comprehensive string indexing structure
+- Algorithm: Sorted array of all suffixes with LCP (Longest Common Prefix) array
+- Key features:
+  * buildSuffixArray(): O(n log² n) using prefix doubling + counting sort
+  * buildLCP(): O(n) using Kasai's algorithm
+  * search(): O(m log n) pattern search via binary search
+  * longestRepeatedSubstring(): Find longest repeated substring in O(n)
+  * countDistinctSubstrings(): Count unique substrings in O(n)
+  * Type-generic (u8, i32, any comparable type)
+  * Rank array (inverse suffix array) for LCP construction
+- Time complexity: O(n log² n) construction, O(m log n) search, O(n) LCP/analysis
+- Space complexity: O(n) for suffix array, rank array, LCP array
+- Algorithm: Prefix doubling sorts suffixes by first k chars, then 2k, 4k... until all unique. Counting sort for stability. Kasai's algorithm computes LCP in linear time by exploiting suffix ordering.
+- Use cases: Pattern matching (all occurrences), longest repeated substring, data compression (BWT construction), bioinformatics (DNA sequence analysis), distinct substrings, suffix tree alternative (space-efficient)
+- Tests cover: basic construction (banana → [5,3,1,0,4,2], mississippi), edge cases (single char, repeated chars, empty error), LCP validation (banana, aaaa → [0,3,2,1]), pattern search (multiple/single/none, overlapping "aa" in "aaaa" → [0,1,2]), longest repeated ("banana" → "ana" len 3), distinct substrings ("abab" → 7, "abcd" → 10), integer type (i32 array), large text, memory safety (10 iterations)
+- Trade-offs: vs Suffix Tree (O(n) construction but complex, more space), vs Naive search O(nm) (much faster for multiple queries), vs KMP/Boyer-Moore (better for many patterns or substring problems), DC3/Skew O(n) (simpler to implement, competitive in practice)
+- Key insight: Space-efficient alternative to suffix trees. Prefix doubling elegantly leverages previous round's rankings. Kasai's LCP algorithm uses height decrease property (adjacent suffixes in text have LCP at most h-1). Binary search on sorted suffixes enables fast pattern matching.
+- Reference: Manber & Myers (1990) "Suffix arrays: A new method for on-line string searches", Kasai et al. (2001) "Linear-Time Longest-Common-Prefix Computation"
+- Eighth algorithm in String Algorithms category (KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-Algorithm, Glob Match, Manacher, Suffix Array)
+- Commits: b204e56
+
 - Key features:
   * maxSumRectangle(): O(n² × m) time, O(n) space — column compression + 1D Kadane
   * maxSumRectangleBy(): Custom comparison for variants (min/max)
