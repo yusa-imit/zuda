@@ -2,18 +2,52 @@
 
 ## Current Status
 - **Version**: 2.0.0 (current — released 2026-03-26)
-- **Phase**: v2.0.0 POST-RELEASE — Dynamic Programming Algorithms Expansion
+- **Phase**: v2.0.0 POST-RELEASE — String Algorithms Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-04-06 Session 303)
+- **Last CI Status**: ✅ GREEN (verified 2026-04-07 Session 337)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
-- **Current Focus**: Expanding dynamic programming algorithm category
-- **Next Priority**: Additional DP algorithms (Matrix variants, path counting problems)
-- **Test Count**: 7464 test blocks passing (+12 Longest Consecutive Sequence from Session 303, all passing, exit code 0)
-  - Breakdown: containers + linalg + stats + algorithms (47 DP algorithms) + internal
+- **Current Focus**: Expanding string algorithms category
+- **Next Priority**: Additional string algorithms (Trie, compression, similarity metrics)
+- **Test Count**: 7476 test blocks passing (+12 Anagram algorithms from Session 337, all passing, exit code 0)
+  - Breakdown: containers + linalg + stats + algorithms (47 DP + 10 string) + internal
+  - String algorithms: 10 total (KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-Algorithm, Glob Match, Manacher, Suffix Array, Longest Common Prefix, Anagrams)
   - DP algorithms: 47 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path, Stock Trading, Russian Doll, Perfect Squares, Ugly Numbers, Super Egg Drop, Boolean Parenthesization, Catalan Numbers, Optimal Game Strategy, Optimal BST, Decode Ways, Longest Valid Parentheses, Longest Arithmetic Progression, Jump Game, Longest Consecutive Sequence)
 - **System Status**: STABLE — All tests passing (exit code 0)
 
-## Recent Progress (Session 2026-04-06 - Session 303)
+## Recent Progress (Session 2026-04-07 - Session 337)
+**FEATURE MODE:**
+
+### Anagram Detection Algorithms (Session 337, commit cd67571) ✅
+- ✅ **Algorithm**: Comprehensive anagram detection and manipulation with frequency-based and sorting approaches
+- ✅ **Functions**:
+  - areAnagrams(): O(n) frequency matching for two strings
+  - areAnagramsSorted(): O(n log n) sorting-based comparison
+  - findAllAnagrams(): O(n) sliding window for substring anagram search
+  - groupAnagrams(): O(n×m log m) hash-based grouping by canonical form
+  - countAnagramPairs(): O(n²×m) pairwise anagram counting
+  - areAnagramsIgnoreCaseAndSpaces(): O(n) case/space-insensitive matching
+  - getCanonicalForm(): O(n log n) sorted string as signature
+- ✅ **Features**:
+  - Character frequency counting (ASCII, O(1) space for fixed 256)
+  - Sliding window technique for efficient substring search
+  - Hash-based grouping with canonical form (sorted string)
+  - Case-insensitive and space-ignoring variants for phrase anagrams
+  - Type-generic string operations
+- ✅ **Time complexity**: O(n) frequency, O(n log n) sorted, O(n×m log m) grouping
+- ✅ **Space complexity**: O(1) for frequency arrays, O(n) for sorting, O(n×m) for grouping
+- ✅ **Use cases**: Word games (Scrabble), spell checkers, text analysis, data deduplication, cryptography (transposition ciphers)
+- ✅ **Tests**: 12/12 passing (100%)
+  - Basic examples (listen/silent, anagram/nagaram)
+  - Edge cases (empty, single char, different lengths)
+  - Sliding window anagram search (cbaebabacd→abc finds 2)
+  - Grouping by canonical form (eat/tea/ate grouped)
+  - Case/space-insensitive (Astronomer/Moon starer)
+  - Large inputs (1000 chars)
+  - Memory safety (10 iterations)
+- ✅ **Implementation**: src/algorithms/string/anagrams.zig (544 lines)
+- ✅ **Reference**: LeetCode #242 (Valid Anagram), #49 (Group Anagrams), #438 (Find All Anagrams in a String)
+
+## Previous Progress (Session 2026-04-06 - Session 303)
 **FEATURE MODE:**
 
 ### Longest Consecutive Sequence Algorithm (Session 303, commit f164b71) ✅
