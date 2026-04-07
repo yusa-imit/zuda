@@ -25,6 +25,10 @@
 ///   - Character frequency matching, sorting-based comparison
 ///   - Sliding window anagram search, grouping by canonical form
 ///   - Case-insensitive and space-ignoring variants
+/// - **Trie (Prefix Tree)**: O(m) insert/search/delete where m = word length
+///   - Efficient string storage and prefix matching
+///   - Autocomplete, dictionary operations, spell checking
+///   - Word frequency counting, longest common prefix
 ///
 /// ## Time Complexity
 ///
@@ -56,6 +60,7 @@ pub const manacher = @import("string/manacher.zig");
 pub const suffix_array = @import("string/suffix_array.zig");
 pub const longest_common_prefix = @import("string/longest_common_prefix.zig");
 pub const anagrams = @import("string/anagrams.zig");
+pub const trie = @import("string/trie.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -95,6 +100,8 @@ pub const groupAnagrams = anagrams.groupAnagrams;
 pub const countAnagramPairs = anagrams.countAnagramPairs;
 pub const areAnagramsIgnoreCaseAndSpaces = anagrams.areAnagramsIgnoreCaseAndSpaces;
 pub const getCanonicalForm = anagrams.getCanonicalForm;
+pub const Trie = trie.Trie;
+pub const TrieNode = trie.TrieNode;
 
 test {
     @import("std").testing.refAllDecls(@This());
