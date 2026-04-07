@@ -230,6 +230,13 @@ pub const algorithms = struct {
         pub const pancakeSortCountFlips = @import("algorithms/sorting/pancakesort.zig").pancakeSortCountFlips;
         pub const pancakeSortSequence = @import("algorithms/sorting/pancakesort.zig").pancakeSortSequence;
         pub const maxFlipsBound = @import("algorithms/sorting/pancakesort.zig").maxFlipsBound;
+        pub const strandSort = @import("algorithms/sorting/strandsort.zig").strandSort;
+        pub const strandSortAlloc = @import("algorithms/sorting/strandsort.zig").strandSortAlloc;
+        pub const strandSortAsc = @import("algorithms/sorting/strandsort.zig").strandSortAsc;
+        pub const strandSortDesc = @import("algorithms/sorting/strandsort.zig").strandSortDesc;
+        pub const strandSortBy = @import("algorithms/sorting/strandsort.zig").strandSortBy;
+        pub const countStrands = @import("algorithms/sorting/strandsort.zig").countStrands;
+        pub const getAllStrands = @import("algorithms/sorting/strandsort.zig").getAllStrands;
     };
 
     /// Searching algorithms
