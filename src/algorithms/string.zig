@@ -33,6 +33,10 @@
 ///   - Replaces consecutive identical elements with count + element
 ///   - Good for data with long runs (graphics, fax, simple images)
 ///   - Binary and text variants, compression ratio analysis
+/// - **LZW (Lempel-Ziv-Welch)**: O(n) dictionary-based compression
+///   - Adaptive dictionary building during encoding/decoding
+///   - Used in GIF, TIFF, PDF formats
+///   - Handles patterns and repetitions efficiently
 ///
 /// ## Time Complexity
 ///
@@ -66,6 +70,7 @@ pub const longest_common_prefix = @import("string/longest_common_prefix.zig");
 pub const anagrams = @import("string/anagrams.zig");
 pub const trie = @import("string/trie.zig");
 pub const run_length_encoding = @import("string/run_length_encoding.zig");
+pub const lzw = @import("string/lzw.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -115,6 +120,13 @@ pub const rleCompressionRatio = run_length_encoding.compressionRatio;
 pub const rleWouldCompress = run_length_encoding.wouldCompress;
 pub const rleCountRuns = run_length_encoding.countRuns;
 pub const rleAvgRunLength = run_length_encoding.avgRunLength;
+pub const lzwEncode = lzw.encode;
+pub const lzwDecode = lzw.decode;
+pub const lzwCompressionRatio = lzw.compressionRatio;
+pub const lzwWouldCompress = lzw.wouldCompress;
+pub const lzwDictionaryUtilization = lzw.dictionaryUtilization;
+pub const CompressionResult = lzw.CompressionResult;
+pub const DecompressionResult = lzw.DecompressionResult;
 
 test {
     @import("std").testing.refAllDecls(@This());
