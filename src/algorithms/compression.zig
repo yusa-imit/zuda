@@ -31,6 +31,15 @@
 /// - **Cons**: Slower than RLE, sensitive to window size
 /// - **Foundation**: Base for gzip, PNG, DEFLATE algorithm
 ///
+/// ### LZSS (Lempel-Ziv-Storer-Szymanski)
+/// **Use Case**: Improved LZ77 with flag bits for efficiency
+/// - **Best For**: General-purpose compression, embedded systems (ARJ, LHA)
+/// - **Time**: O(n × w) encode, O(m) decode where w = window size, m = output
+/// - **Space**: O(w) for window, typically 40-60% of input for text
+/// - **Pros**: Better than LZ77 (no overhead for literals), simple decode
+/// - **Cons**: Slightly more complex encoding (flag bit management)
+/// - **Note**: Uses 1-bit flags to distinguish literals from (offset, length) references
+///
 /// ### Burrows-Wheeler Transform (BWT)
 /// **Use Case**: Pre-processing for better compression
 /// - **Best For**: Text data (used in bzip2)
@@ -75,6 +84,12 @@
 /// - General-purpose compression needed
 /// - Data has repeated sequences (not just runs)
 /// - Compatible with gzip/PNG/DEFLATE
+///
+/// Choose LZSS when:
+/// - Better compression than LZ77 needed
+/// - Embedded systems (simple decode, low memory)
+/// - Game assets or ROM compression
+/// - Compatible with ARJ/LHA formats
 ///
 /// Choose BWT when:
 /// - Maximum compression ratio needed
@@ -131,6 +146,7 @@
 /// - **RLE**: O(n) - fastest, suitable for streaming
 /// - **Delta**: O(n) - fast, minimal overhead
 /// - **LZ77**: O(n × w) - moderate, adjustable window size
+/// - **LZSS**: O(n × w) encode, O(m) decode - better than LZ77, fast decode
 /// - **BWT**: O(n² log n) - slowest, use for offline compression
 /// - **Huffman**: O(n log k) encode, O(m) decode - fast, widely used
 /// - **Arithmetic**: O(n × k) - moderate, k = alphabet size (256 for bytes)
@@ -140,6 +156,7 @@
 /// - **RLE**: O(k) where k = runs (best case: O(1) for uniform data)
 /// - **Delta**: O(n) - same as input
 /// - **LZ77**: O(n) output + O(w) window
+/// - **LZSS**: O(w) window, typically 40-60% output for text
 /// - **BWT**: O(n²) naive, O(n) with optimized implementation
 /// - **Huffman**: O(k) tree + codebook where k = alphabet size
 /// - **Arithmetic**: O(k) frequency table + O(n) output (k = 256 for bytes)
@@ -147,6 +164,7 @@
 pub const rle = @import("compression/rle.zig");
 pub const delta = @import("compression/delta.zig");
 pub const lz77 = @import("compression/lz77.zig");
+pub const lzss = @import("compression/lzss.zig");
 pub const bwt = @import("compression/bwt.zig");
 pub const huffman = @import("compression/huffman.zig");
 pub const arithmetic = @import("compression/arithmetic.zig");
