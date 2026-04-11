@@ -67,6 +67,15 @@
 /// - **Cons**: More complex, requires high-precision arithmetic
 /// - **Note**: Achieves compression closer to theoretical entropy limit
 ///
+/// ### LZ4
+/// **Use Case**: Fast compression/decompression for real-time systems
+/// - **Best For**: Databases (RocksDB, MongoDB), filesystems (ZFS, Btrfs), network protocols
+/// - **Time**: O(n) compression, O(m) decompression (m = output length)
+/// - **Space**: O(hash_table + output)
+/// - **Pros**: Very fast decompression (~2000 MB/s), simple algorithm, streaming friendly
+/// - **Cons**: Lower compression ratio than Deflate/LZMA
+/// - **Note**: Focuses on speed over compression ratio, widely used in production systems
+///
 /// ## Algorithm Selection Guide
 ///
 /// ```
@@ -107,6 +116,13 @@
 /// - Need better compression than Huffman
 /// - Building image/video codecs (JPEG 2000, H.264)
 /// - Fractional bits per symbol needed
+///
+/// Choose LZ4 when:
+/// - Speed is critical (real-time compression/decompression)
+/// - Working with databases or filesystems
+/// - Need fast network protocol compression
+/// - Moderate compression ratio acceptable
+/// - Streaming data or large-scale systems
 /// ```
 ///
 /// ## Example: Compression Pipeline
@@ -150,6 +166,7 @@
 /// - **BWT**: O(n² log n) - slowest, use for offline compression
 /// - **Huffman**: O(n log k) encode, O(m) decode - fast, widely used
 /// - **Arithmetic**: O(n × k) - moderate, k = alphabet size (256 for bytes)
+/// - **LZ4**: O(n) encode/decode - fastest, production-ready for real-time systems
 ///
 /// ## Memory Usage
 ///
@@ -160,6 +177,7 @@
 /// - **BWT**: O(n²) naive, O(n) with optimized implementation
 /// - **Huffman**: O(k) tree + codebook where k = alphabet size
 /// - **Arithmetic**: O(k) frequency table + O(n) output (k = 256 for bytes)
+/// - **LZ4**: O(hash_table) + O(output) - moderate memory, fast processing
 
 pub const rle = @import("compression/rle.zig");
 pub const delta = @import("compression/delta.zig");
@@ -168,6 +186,7 @@ pub const lzss = @import("compression/lzss.zig");
 pub const bwt = @import("compression/bwt.zig");
 pub const huffman = @import("compression/huffman.zig");
 pub const arithmetic = @import("compression/arithmetic.zig");
+pub const lz4 = @import("compression/lz4.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
