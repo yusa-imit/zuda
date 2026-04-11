@@ -40,6 +40,15 @@
 /// - **Cons**: Computationally expensive, needs follow-up compression
 /// - **Note**: Not compression itself, but enables better compression
 ///
+/// ### Huffman Coding
+/// **Use Case**: Optimal prefix-free entropy encoding
+/// - **Best For**: General compression (ZIP/GZIP, JPEG, PNG, MP3)
+/// - **Time**: O(n log k) encode, O(m) decode where n = data length, k = alphabet size, m = encoded bits
+/// - **Space**: O(k) for tree and codebook
+/// - **Pros**: Simple, fast, optimal for symbol-wise encoding
+/// - **Cons**: Uses whole bits (less optimal than arithmetic for skewed data)
+/// - **Note**: Foundation for DEFLATE (LZ77 + Huffman), used in ZIP, GZIP, PNG
+///
 /// ### Arithmetic Coding
 /// **Use Case**: Statistical entropy-based compression
 /// - **Best For**: Highly skewed probability distributions (JPEG 2000, H.264/H.265)
@@ -71,6 +80,12 @@
 /// - Maximum compression ratio needed
 /// - Can afford preprocessing cost
 /// - Planning to use RLE or MTF afterward (like bzip2)
+///
+/// Choose Huffman Coding when:
+/// - Need optimal prefix-free encoding
+/// - General-purpose compression (ZIP, GZIP, PNG)
+/// - Simple and fast implementation required
+/// - Working with standard file formats
 ///
 /// Choose Arithmetic Coding when:
 /// - Working with highly skewed probability distributions
@@ -117,6 +132,7 @@
 /// - **Delta**: O(n) - fast, minimal overhead
 /// - **LZ77**: O(n × w) - moderate, adjustable window size
 /// - **BWT**: O(n² log n) - slowest, use for offline compression
+/// - **Huffman**: O(n log k) encode, O(m) decode - fast, widely used
 /// - **Arithmetic**: O(n × k) - moderate, k = alphabet size (256 for bytes)
 ///
 /// ## Memory Usage
@@ -125,12 +141,14 @@
 /// - **Delta**: O(n) - same as input
 /// - **LZ77**: O(n) output + O(w) window
 /// - **BWT**: O(n²) naive, O(n) with optimized implementation
+/// - **Huffman**: O(k) tree + codebook where k = alphabet size
 /// - **Arithmetic**: O(k) frequency table + O(n) output (k = 256 for bytes)
 
 pub const rle = @import("compression/rle.zig");
 pub const delta = @import("compression/delta.zig");
 pub const lz77 = @import("compression/lz77.zig");
 pub const bwt = @import("compression/bwt.zig");
+pub const huffman = @import("compression/huffman.zig");
 pub const arithmetic = @import("compression/arithmetic.zig");
 
 test {
