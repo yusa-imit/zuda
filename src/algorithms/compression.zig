@@ -85,6 +85,15 @@
 /// - **Cons**: Lower compression ratio than Deflate (~1.5-2x vs 2-3x)
 /// - **Note**: Used in Google's infrastructure, Protocol Buffers compression
 ///
+/// ### DEFLATE
+/// **Use Case**: Combining LZ77 and Huffman for optimal compression
+/// - **Best For**: ZIP, GZIP, PNG, DEFLATE formats (RFC 1951)
+/// - **Time**: O(n log n) with lazy matching or O(n) with greedy
+/// - **Space**: O(w) where w = sliding window (32KB default)
+/// - **Pros**: Industry standard, excellent compression ratio (2-4x), widely supported
+/// - **Cons**: More complex than LZ4/Snappy, slower compression than fast algorithms
+/// - **Note**: Foundation for gzip/zip formats, used in HTTP content encoding, PNG images
+///
 /// ## Algorithm Selection Guide
 ///
 /// ```
@@ -139,6 +148,13 @@
 /// - Apache Kafka or Hadoop integration
 /// - Extremely fast decompression priority
 /// - Simple format without entropy coding
+///
+/// Choose DEFLATE when:
+/// - ZIP/GZIP/PNG format compatibility needed
+/// - Maximum compression ratio is important
+/// - Can accept slower compression than LZ4/Snappy
+/// - Industry-standard format required
+/// - Web (gzip) or image (PNG) compression
 /// ```
 ///
 /// ## Example: Compression Pipeline
@@ -184,6 +200,7 @@
 /// - **Arithmetic**: O(n × k) - moderate, k = alphabet size (256 for bytes)
 /// - **LZ4**: O(n) encode/decode - fastest, production-ready for real-time systems
 /// - **Snappy**: O(n) encode (~250 MB/s), O(m) decode (~500 MB/s) - very fast Google compression
+/// - **DEFLATE**: O(n log n) with lazy matching or O(n) greedy, O(m) decode - industry standard ZIP/GZIP
 ///
 /// ## Memory Usage
 ///
@@ -196,6 +213,7 @@
 /// - **Arithmetic**: O(k) frequency table + O(n) output (k = 256 for bytes)
 /// - **LZ4**: O(hash_table) + O(output) - moderate memory, fast processing
 /// - **Snappy**: O(hash_table) + O(output) - similar to LZ4, simple format
+/// - **DEFLATE**: O(w) for sliding window (32KB default) + O(output) - similar to LZ77 with Huffman overhead
 
 pub const rle = @import("compression/rle.zig");
 pub const delta = @import("compression/delta.zig");
@@ -206,6 +224,7 @@ pub const huffman = @import("compression/huffman.zig");
 pub const arithmetic = @import("compression/arithmetic.zig");
 pub const lz4 = @import("compression/lz4.zig");
 pub const snappy = @import("compression/snappy.zig");
+pub const deflate = @import("compression/deflate.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
