@@ -76,6 +76,15 @@
 /// - **Cons**: Lower compression ratio than Deflate/LZMA
 /// - **Note**: Focuses on speed over compression ratio, widely used in production systems
 ///
+/// ### Snappy
+/// **Use Case**: Very fast compression for Google's production systems
+/// - **Best For**: Google BigTable, LevelDB, RocksDB, Apache Kafka, Hadoop
+/// - **Time**: O(n) compression (~250 MB/s), O(m) decompression (~500 MB/s)
+/// - **Space**: O(hash_table + output)
+/// - **Pros**: Extremely fast decompression, simple format, no entropy coding
+/// - **Cons**: Lower compression ratio than Deflate (~1.5-2x vs 2-3x)
+/// - **Note**: Used in Google's infrastructure, Protocol Buffers compression
+///
 /// ## Algorithm Selection Guide
 ///
 /// ```
@@ -123,6 +132,13 @@
 /// - Need fast network protocol compression
 /// - Moderate compression ratio acceptable
 /// - Streaming data or large-scale systems
+///
+/// Choose Snappy when:
+/// - Google-compatible compression needed
+/// - Working with BigTable, LevelDB, RocksDB
+/// - Apache Kafka or Hadoop integration
+/// - Extremely fast decompression priority
+/// - Simple format without entropy coding
 /// ```
 ///
 /// ## Example: Compression Pipeline
@@ -167,6 +183,7 @@
 /// - **Huffman**: O(n log k) encode, O(m) decode - fast, widely used
 /// - **Arithmetic**: O(n × k) - moderate, k = alphabet size (256 for bytes)
 /// - **LZ4**: O(n) encode/decode - fastest, production-ready for real-time systems
+/// - **Snappy**: O(n) encode (~250 MB/s), O(m) decode (~500 MB/s) - very fast Google compression
 ///
 /// ## Memory Usage
 ///
@@ -178,6 +195,7 @@
 /// - **Huffman**: O(k) tree + codebook where k = alphabet size
 /// - **Arithmetic**: O(k) frequency table + O(n) output (k = 256 for bytes)
 /// - **LZ4**: O(hash_table) + O(output) - moderate memory, fast processing
+/// - **Snappy**: O(hash_table) + O(output) - similar to LZ4, simple format
 
 pub const rle = @import("compression/rle.zig");
 pub const delta = @import("compression/delta.zig");
@@ -187,6 +205,7 @@ pub const bwt = @import("compression/bwt.zig");
 pub const huffman = @import("compression/huffman.zig");
 pub const arithmetic = @import("compression/arithmetic.zig");
 pub const lz4 = @import("compression/lz4.zig");
+pub const snappy = @import("compression/snappy.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
