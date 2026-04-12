@@ -455,6 +455,9 @@ pub const algorithms = struct {
     /// Compression algorithms (lossless data compression)
     pub const compression = @import("algorithms/compression.zig");
 
+    /// Combinatorics algorithms (counting, generation, partitioning)
+    pub const combinatorics = @import("algorithms/combinatorics.zig");
+
     /// Parallel algorithms (multi-threaded data processing)
     pub const parallel = @import("algorithms/parallel.zig");
 
