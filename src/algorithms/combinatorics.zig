@@ -64,6 +64,12 @@
 /// - **Space**: O(1)
 /// - **Applications**: Combinatorial probability, hatcheck problem
 ///
+/// ### Integer Compositions
+/// **Use Case**: Ordered partitions, sequence analysis
+/// - **Time**: O(C(n-1, k-1)) for k-compositions, O(2^(n-1)) for all
+/// - **Space**: O(C(n-1, k-1) × k) for generation
+/// - **Applications**: Resource allocation (ordered), dynamic programming, probability theory
+///
 /// ## Example
 ///
 /// ```zig
@@ -86,10 +92,20 @@
 /// const part_count = try combinatorics.partitions.countPartitions(u32, 5, 2); // 2
 /// const bell5 = try combinatorics.partitions.bellNumber(u32, 5); // 52
 /// const derang3 = try combinatorics.partitions.derangements(u32, 3); // 2
+///
+/// // Compositions
+/// const comp_count = try combinatorics.compositions.countCompositions(u32, 5, 2); // 4
+/// const all_comps = try combinatorics.compositions.countAllCompositions(u32, 4); // 8
+/// const k_comps = try combinatorics.compositions.generateKCompositions(u32, allocator, 5, 2);
+/// defer {
+///     for (k_comps.items) |c| allocator.free(c);
+///     k_comps.deinit();
+/// }
 /// ```
 
 pub const basics = @import("combinatorics/basics.zig");
 pub const partitions = @import("combinatorics/partitions.zig");
+pub const compositions = @import("combinatorics/compositions.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
