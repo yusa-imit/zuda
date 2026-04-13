@@ -46,6 +46,24 @@
 /// - **Space**: O(C(n, k))
 /// - **Algorithm**: Recursive generation
 ///
+/// ### Integer Partitions
+/// **Use Case**: Partitioning numbers, dynamic programming
+/// - **Time**: O(n×k) for counting, O(p(n)) for generation
+/// - **Space**: O(k) for counting, O(p(n)) for generation
+/// - **Applications**: Number theory, partition function, subset sum
+///
+/// ### Bell Numbers
+/// **Use Case**: Counting set partitions
+/// - **Time**: O(n²)
+/// - **Space**: O(n)
+/// - **Applications**: Set theory, equivalence relations
+///
+/// ### Derangements
+/// **Use Case**: Permutations with no fixed points
+/// - **Time**: O(n)
+/// - **Space**: O(1)
+/// - **Applications**: Combinatorial probability, hatcheck problem
+///
 /// ## Example
 ///
 /// ```zig
@@ -63,9 +81,15 @@
 ///     for (perms.items) |perm| allocator.free(perm);
 ///     perms.deinit();
 /// }
+///
+/// // Partitions
+/// const part_count = try combinatorics.partitions.countPartitions(u32, 5, 2); // 2
+/// const bell5 = try combinatorics.partitions.bellNumber(u32, 5); // 52
+/// const derang3 = try combinatorics.partitions.derangements(u32, 3); // 2
 /// ```
 
 pub const basics = @import("combinatorics/basics.zig");
+pub const partitions = @import("combinatorics/partitions.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
