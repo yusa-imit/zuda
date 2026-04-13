@@ -101,11 +101,18 @@
 ///     for (k_comps.items) |c| allocator.free(c);
 ///     k_comps.deinit();
 /// }
+///
+/// // Stirling Numbers
+/// const S_4_2 = try combinatorics.stirling.stirlingFirst(u64, 4, 2, allocator); // 11
+/// const s_4_2 = try combinatorics.stirling.stirlingSecond(u64, 4, 2, allocator); // 7
+/// const row = try combinatorics.stirling.generateStirlingSecondRow(u64, 4, allocator);
+/// defer allocator.free(row);
 /// ```
 
 pub const basics = @import("combinatorics/basics.zig");
 pub const partitions = @import("combinatorics/partitions.zig");
 pub const compositions = @import("combinatorics/compositions.zig");
+pub const stirling = @import("combinatorics/stirling.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
