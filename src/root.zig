@@ -703,6 +703,9 @@ pub const stats = struct {
         pub const StudentT = @import("stats/distributions/student_t.zig").StudentT;
         pub const FDistribution = @import("stats/distributions/f_distribution.zig").FDistribution;
     };
+
+    /// Random number generation — PCG64, Xoshiro256**, shuffle, choice, multinomial
+    pub const random = @import("stats/random.zig");
 };
 
 /// Signal processing and frequency domain analysis
@@ -773,6 +776,7 @@ test {
     _ = @import("stats/descriptive.zig");
     _ = @import("stats/hypothesis.zig");
     _ = @import("stats/correlation.zig");
+    _ = @import("stats/random.zig");
     _ = @import("stats/distributions/uniform.zig");
     _ = @import("stats/distributions/normal.zig");
     _ = @import("stats/distributions/exponential.zig");
