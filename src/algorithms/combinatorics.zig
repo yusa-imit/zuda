@@ -70,6 +70,13 @@
 /// - **Space**: O(C(n-1, k-1) × k) for generation
 /// - **Applications**: Resource allocation (ordered), dynamic programming, probability theory
 ///
+/// ### Integer Sequences
+/// **Use Case**: Fundamental sequences in combinatorics and number theory
+/// - **Time**: O(n) for Fibonacci/Lucas/Pell, O(1) for closed-form (triangular, pentagonal, etc.)
+/// - **Space**: O(1) for single values, O(n) for sequence generation
+/// - **Sequences**: Fibonacci, Lucas, Triangular, Pentagonal, Square, Tetrahedral, Pell, Polygonal
+/// - **Applications**: Recurrence relations, number theory, combinatorial identities, golden ratio approximations
+///
 /// ## Example
 ///
 /// ```zig
@@ -107,12 +114,23 @@
 /// const s_4_2 = try combinatorics.stirling.stirlingSecond(u64, 4, 2, allocator); // 7
 /// const row = try combinatorics.stirling.generateStirlingSecondRow(u64, 4, allocator);
 /// defer allocator.free(row);
+///
+/// // Integer Sequences
+/// const fib10 = combinatorics.sequences.fibonacci(u64, 10); // 55
+/// const lucas7 = combinatorics.sequences.lucas(u64, 7); // 29
+/// const tri5 = combinatorics.sequences.triangular(u64, 5); // 15
+/// const pent4 = combinatorics.sequences.pentagonal(u64, 4); // 22
+/// const pell5 = combinatorics.sequences.pell(u64, 5); // 29
+/// const hex3 = combinatorics.sequences.polygonal(u64, 6, 3); // 15 (hexagonal)
+/// const fib_seq = try combinatorics.sequences.generateFibonacci(u64, allocator, 10);
+/// defer fib_seq.deinit();
 /// ```
 
 pub const basics = @import("combinatorics/basics.zig");
 pub const partitions = @import("combinatorics/partitions.zig");
 pub const compositions = @import("combinatorics/compositions.zig");
 pub const stirling = @import("combinatorics/stirling.zig");
+pub const sequences = @import("combinatorics/sequences.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
