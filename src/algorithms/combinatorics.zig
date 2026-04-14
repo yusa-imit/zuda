@@ -148,6 +148,7 @@ pub const compositions = @import("combinatorics/compositions.zig");
 pub const stirling = @import("combinatorics/stirling.zig");
 pub const sequences = @import("combinatorics/sequences.zig");
 pub const permutations = @import("combinatorics/permutations.zig");
+pub const catalan = @import("combinatorics/catalan.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
