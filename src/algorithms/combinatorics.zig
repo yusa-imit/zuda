@@ -77,6 +77,13 @@
 /// - **Sequences**: Fibonacci, Lucas, Triangular, Pentagonal, Square, Tetrahedral, Pell, Polygonal
 /// - **Applications**: Recurrence relations, number theory, combinatorial identities, golden ratio approximations
 ///
+/// ### Lexicographic Permutation Operations
+/// **Use Case**: Efficient permutation enumeration, algorithm competitions
+/// - **Time**: O(n) for next/prev, O(n²) for k-th permutation and rank
+/// - **Space**: O(1) for next/prev, O(n) for k-th permutation and rank
+/// - **Operations**: nextPermutation, prevPermutation, kthPermutation, permutationRank
+/// - **Applications**: Permutation generation, combinatorial search, testing, optimization
+///
 /// ## Example
 ///
 /// ```zig
@@ -124,6 +131,15 @@
 /// const hex3 = combinatorics.sequences.polygonal(u64, 6, 3); // 15 (hexagonal)
 /// const fib_seq = try combinatorics.sequences.generateFibonacci(u64, allocator, 10);
 /// defer fib_seq.deinit();
+///
+/// // Lexicographic Permutations
+/// var perm = [_]u8{0, 1, 2};
+/// while (combinatorics.permutations.nextPermutation(u8, &perm)) {
+///     // Process perm
+/// }
+/// const kth = try combinatorics.permutations.kthPermutation(u32, allocator, 5, 42);
+/// defer allocator.free(kth);
+/// const rank = try combinatorics.permutations.permutationRank(u32, allocator, &[_]u32{2, 0, 1});
 /// ```
 
 pub const basics = @import("combinatorics/basics.zig");
@@ -131,6 +147,7 @@ pub const partitions = @import("combinatorics/partitions.zig");
 pub const compositions = @import("combinatorics/compositions.zig");
 pub const stirling = @import("combinatorics/stirling.zig");
 pub const sequences = @import("combinatorics/sequences.zig");
+pub const permutations = @import("combinatorics/permutations.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
