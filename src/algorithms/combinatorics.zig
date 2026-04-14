@@ -84,6 +84,13 @@
 /// - **Operations**: nextPermutation, prevPermutation, kthPermutation, permutationRank
 /// - **Applications**: Permutation generation, combinatorial search, testing, optimization
 ///
+/// ### Young Tableaux
+/// **Use Case**: Representation theory, symmetric functions, algebraic combinatorics
+/// - **Time**: O(n) for hook length formula, O(n²) for Robinson-Schensted, O(SYT(λ) × n) for generation
+/// - **Space**: O(n) for tableau storage and operations
+/// - **Operations**: countStandardTableaux (hook formula), isStandard (validation), robinsonSchenstedP (permutation bijection)
+/// - **Applications**: Symmetric group representations, Schur functions, Robinson-Schensted correspondence, plactic monoid
+///
 /// ## Example
 ///
 /// ```zig
@@ -140,6 +147,14 @@
 /// const kth = try combinatorics.permutations.kthPermutation(u32, allocator, 5, 42);
 /// defer allocator.free(kth);
 /// const rank = try combinatorics.permutations.permutationRank(u32, allocator, &[_]u32{2, 0, 1});
+///
+/// // Young Tableaux
+/// const shape = [_]usize{3, 2, 1}; // partition λ = (3,2,1)
+/// const syt_count = try combinatorics.young_tableaux.countStandardTableaux(u64, &shape); // 16
+/// const perm = [_]u32{3, 1, 4, 2};
+/// const tab = try combinatorics.young_tableaux.robinsonSchenstedP(allocator, &perm);
+/// defer tab.deinit();
+/// const is_std = try tab.isStandard(allocator); // true
 /// ```
 
 pub const basics = @import("combinatorics/basics.zig");
@@ -149,6 +164,7 @@ pub const stirling = @import("combinatorics/stirling.zig");
 pub const sequences = @import("combinatorics/sequences.zig");
 pub const permutations = @import("combinatorics/permutations.zig");
 pub const catalan = @import("combinatorics/catalan.zig");
+pub const young_tableaux = @import("combinatorics/young_tableaux.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
