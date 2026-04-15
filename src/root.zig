@@ -294,6 +294,18 @@ pub const algorithms = struct {
         pub const ZAlgorithm = @import("algorithms/string/z_algorithm.zig").ZAlgorithm;
         pub const globMatch = @import("algorithms/string/glob_match.zig").match;
         pub const globMatchCaseInsensitive = @import("algorithms/string/glob_match.zig").matchCaseInsensitive;
+        pub const soundex = @import("algorithms/string/soundex.zig").soundex;
+        pub const soundexMatch = @import("algorithms/string/soundex.zig").soundexMatch;
+        pub const soundexBatch = @import("algorithms/string/soundex.zig").soundexBatch;
+        pub const freeSoundexBatch = @import("algorithms/string/soundex.zig").freeBatch;
+        pub const jaro = @import("algorithms/string/jaro_winkler.zig").jaro;
+        pub const jaroWinkler = @import("algorithms/string/jaro_winkler.zig").jaroWinkler;
+        pub const jaroWinklerScaled = @import("algorithms/string/jaro_winkler.zig").jaroWinklerScaled;
+        pub const isSimilar = @import("algorithms/string/jaro_winkler.zig").isSimilar;
+        pub const findMostSimilar = @import("algorithms/string/jaro_winkler.zig").findMostSimilar;
+        pub const findAllSimilar = @import("algorithms/string/jaro_winkler.zig").findAllSimilar;
+        pub const similarityMatrix = @import("algorithms/string/jaro_winkler.zig").similarityMatrix;
+        pub const freeSimilarityMatrix = @import("algorithms/string/jaro_winkler.zig").freeSimilarityMatrix;
     };
 
     /// Mathematical algorithms
