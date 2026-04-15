@@ -306,6 +306,12 @@ pub const algorithms = struct {
         pub const findAllSimilar = @import("algorithms/string/jaro_winkler.zig").findAllSimilar;
         pub const similarityMatrix = @import("algorithms/string/jaro_winkler.zig").similarityMatrix;
         pub const freeSimilarityMatrix = @import("algorithms/string/jaro_winkler.zig").freeSimilarityMatrix;
+        pub const damerauLevenshteinDistance = @import("algorithms/string/damerau_levenshtein.zig").distance;
+        pub const damerauLevenshteinNormalized = @import("algorithms/string/damerau_levenshtein.zig").normalizedDistance;
+        pub const damerauLevenshteinSimilarity = @import("algorithms/string/damerau_levenshtein.zig").similarity;
+        pub const damerauLevenshteinIsSimilar = @import("algorithms/string/damerau_levenshtein.zig").isSimilar;
+        pub const damerauLevenshteinFindMostSimilar = @import("algorithms/string/damerau_levenshtein.zig").findMostSimilar;
+        pub const damerauLevenshteinFindAllSimilar = @import("algorithms/string/damerau_levenshtein.zig").findAllSimilar;
     };
 
     /// Mathematical algorithms
