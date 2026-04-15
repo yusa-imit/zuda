@@ -37,6 +37,10 @@
 ///   - Adaptive dictionary building during encoding/decoding
 ///   - Used in GIF, TIFF, PDF formats
 ///   - Handles patterns and repetitions efficiently
+/// - **Soundex**: O(n) phonetic encoding for name matching
+///   - Fixed 4-character output based on pronunciation
+///   - Developed by Russell and Odell (1918)
+///   - Used in genealogy, record linkage, fuzzy name matching
 ///
 /// ## Time Complexity
 ///
@@ -71,6 +75,7 @@ pub const anagrams = @import("string/anagrams.zig");
 pub const trie = @import("string/trie.zig");
 pub const run_length_encoding = @import("string/run_length_encoding.zig");
 pub const lzw = @import("string/lzw.zig");
+pub const soundex = @import("string/soundex.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -127,6 +132,10 @@ pub const lzwWouldCompress = lzw.wouldCompress;
 pub const lzwDictionaryUtilization = lzw.dictionaryUtilization;
 pub const CompressionResult = lzw.CompressionResult;
 pub const DecompressionResult = lzw.DecompressionResult;
+pub const soundexEncode = soundex.soundex;
+pub const soundexMatch = soundex.soundexMatch;
+pub const soundexBatch = soundex.soundexBatch;
+pub const soundexFreeBatch = soundex.freeBatch;
 
 test {
     @import("std").testing.refAllDecls(@This());
