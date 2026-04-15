@@ -16,14 +16,25 @@
 
 pub const parallel_sort = @import("parallel/parallel_sort.zig");
 pub const map_reduce = @import("parallel/map_reduce.zig");
+pub const prefix_sum = @import("parallel/prefix_sum.zig");
 
 // Re-export commonly used functions
 pub const parallelMergeSort = parallel_sort.parallelMergeSort;
 pub const parallelQuickSort = parallel_sort.parallelQuickSort;
-pub const parallelPrefixSum = parallel_sort.parallelPrefixSum;
-pub const parallelReduce = parallel_sort.parallelReduce;
 pub const parallelMap = parallel_sort.parallelMap;
 pub const parallelFilter = parallel_sort.parallelFilter;
+
+// Prefix sum operations (from dedicated module)
+pub const inclusiveScan = prefix_sum.inclusiveScan;
+pub const exclusiveScan = prefix_sum.exclusiveScan;
+pub const parallelScan = prefix_sum.parallelScan;
+pub const scanInPlace = prefix_sum.scanInPlace;
+pub const segmentedScan = prefix_sum.segmentedScan;
+pub const reduce = prefix_sum.reduce;
+
+// Legacy compatibility - use exclusiveScan instead
+pub const parallelPrefixSum = prefix_sum.exclusiveScan;
+pub const parallelReduce = prefix_sum.reduce;
 
 pub const mapReduce = map_reduce.mapReduce;
 pub const MapReduceResult = map_reduce.MapReduceResult;
