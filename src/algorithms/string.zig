@@ -42,6 +42,14 @@
 ///   - Developed by Russell and Odell (1918)
 ///   - Used in genealogy, record linkage, fuzzy name matching
 ///
+/// ## Sequence Alignment
+///
+/// - **Smith-Waterman**: O(n*m) local sequence alignment
+///   - Finds most similar region between two sequences
+///   - Used in bioinformatics for DNA/protein alignment
+///   - Dynamic programming with gap penalties
+///   - Space-optimized scoring variant available
+///
 /// ## Time Complexity
 ///
 /// Most pattern matching algorithms achieve O(n+m) where n = text length, m = pattern length.
@@ -76,6 +84,7 @@ pub const trie = @import("string/trie.zig");
 pub const run_length_encoding = @import("string/run_length_encoding.zig");
 pub const lzw = @import("string/lzw.zig");
 pub const soundex = @import("string/soundex.zig");
+pub const smith_waterman = @import("string/smith_waterman.zig");
 
 // Re-export common functions
 pub const kmpSearch = kmp.search;
@@ -136,6 +145,12 @@ pub const soundexEncode = soundex.soundex;
 pub const soundexMatch = soundex.soundexMatch;
 pub const soundexBatch = soundex.soundexBatch;
 pub const soundexFreeBatch = soundex.freeBatch;
+pub const smithWatermanAlign = smith_waterman.localAlign;
+pub const smithWatermanScore = smith_waterman.score;
+pub const smithWatermanSimilarity = smith_waterman.similarity;
+pub const smithWatermanHasSimilarRegion = smith_waterman.hasSimilarRegion;
+pub const SmithWatermanAlignment = smith_waterman.Alignment;
+pub const SmithWatermanScoringMatrix = smith_waterman.ScoringMatrix;
 
 test {
     @import("std").testing.refAllDecls(@This());
