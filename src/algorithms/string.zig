@@ -41,6 +41,25 @@
 ///   - Fixed 4-character output based on pronunciation
 ///   - Developed by Russell and Odell (1918)
 ///   - Used in genealogy, record linkage, fuzzy name matching
+/// - **Metaphone**: O(n) improved phonetic encoding
+///   - Variable-length output based on English pronunciation rules
+///   - More accurate than Soundex for English names
+///   - Handles consonant clusters and vowel patterns
+/// - **Double Metaphone**: O(n) advanced phonetic encoding
+///   - Primary and alternative encodings for non-English names
+///   - Handles Slavic, Germanic, Celtic, Greek, French, Italian, Spanish, Chinese
+///   - More accurate than Metaphone for international names
+///
+/// ## String Similarity
+///
+/// - **Jaro-Winkler**: O(n+m) fuzzy string similarity metric
+///   - Range [0, 1] where 1 = identical, 0 = no similarity
+///   - Prefix-weighted for better performance on typos
+///   - Used in record linkage, duplicate detection, spell checking
+/// - **Damerau-Levenshtein**: O(n*m) edit distance with transpositions
+///   - Extends Levenshtein with adjacent character swaps
+///   - Covers 80%+ of human spelling errors
+///   - Normalized similarity variant available
 ///
 /// ## Sequence Alignment
 ///
@@ -84,6 +103,10 @@ pub const trie = @import("string/trie.zig");
 pub const run_length_encoding = @import("string/run_length_encoding.zig");
 pub const lzw = @import("string/lzw.zig");
 pub const soundex = @import("string/soundex.zig");
+pub const jaro_winkler = @import("string/jaro_winkler.zig");
+pub const damerau_levenshtein = @import("string/damerau_levenshtein.zig");
+pub const metaphone = @import("string/metaphone.zig");
+pub const double_metaphone = @import("string/double_metaphone.zig");
 pub const smith_waterman = @import("string/smith_waterman.zig");
 
 // Re-export common functions
@@ -145,6 +168,29 @@ pub const soundexEncode = soundex.soundex;
 pub const soundexMatch = soundex.soundexMatch;
 pub const soundexBatch = soundex.soundexBatch;
 pub const soundexFreeBatch = soundex.freeBatch;
+pub const jaro = jaro_winkler.jaro;
+pub const jaroWinkler = jaro_winkler.jaroWinkler;
+pub const jaroWinklerScaled = jaro_winkler.jaroWinklerScaled;
+pub const jaroIsSimilar = jaro_winkler.isSimilar;
+pub const jaroFindMostSimilar = jaro_winkler.findMostSimilar;
+pub const jaroFindAllSimilar = jaro_winkler.findAllSimilar;
+pub const jaroSimilarityMatrix = jaro_winkler.similarityMatrix;
+pub const jaroFreeSimilarityMatrix = jaro_winkler.freeSimilarityMatrix;
+pub const damerauLevenshteinDistance = damerau_levenshtein.distance;
+pub const damerauLevenshteinNormalized = damerau_levenshtein.normalizedDistance;
+pub const damerauLevenshteinSimilarity = damerau_levenshtein.similarity;
+pub const damerauLevenshteinIsSimilar = damerau_levenshtein.isSimilar;
+pub const damerauLevenshteinFindMostSimilar = damerau_levenshtein.findMostSimilar;
+pub const damerauLevenshteinFindAllSimilar = damerau_levenshtein.findAllSimilar;
+pub const metaphoneEncode = metaphone.metaphone;
+pub const metaphoneMatch = metaphone.metaphoneMatch;
+pub const metaphoneBatch = metaphone.metaphoneBatch;
+pub const metaphoneFreeBatch = metaphone.freeBatch;
+pub const doubleMetaphoneEncode = double_metaphone.doubleMetaphone;
+pub const doubleMetaphoneMatch = double_metaphone.doubleMetaphoneMatch;
+pub const doubleMetaphoneBatch = double_metaphone.doubleMetaphoneBatch;
+pub const doubleMetaphoneDeinitBatch = double_metaphone.deinitBatch;
+pub const DoubleMetaphoneResult = double_metaphone.DoubleMetaphoneResult;
 pub const smithWatermanAlign = smith_waterman.localAlign;
 pub const smithWatermanScore = smith_waterman.score;
 pub const smithWatermanSimilarity = smith_waterman.similarity;
