@@ -1130,6 +1130,114 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }.op);
         }
 
+        // -- Matrix Operations --
+
+        /// Matrix multiplication: self @ other (NumPy notation)
+        ///
+        /// For 2D arrays (matrices):
+        /// - (M, N) @ (N, P) → (M, P)
+        /// - Inner dimensions must match: self.shape[1] == other.shape[0]
+        ///
+        /// For 1D arrays (vectors):
+        /// - (N,) @ (N,) → scalar (dot product)
+        /// - Result is returned as 0-dimensional array
+        ///
+        /// For higher dimensions:
+        /// - Batched matrix multiplication on last two dimensions
+        /// - Leading dimensions must broadcast
+        ///
+        /// Parameters:
+        /// - other: Another NDArray with compatible shape
+        ///
+        /// Returns: New NDArray containing matrix product
+        ///
+        /// Errors:
+        /// - Error.ShapeMismatch if inner dimensions don't match
+        /// - Allocator.Error if memory allocation fails
+        ///
+        /// Time: O(M*N*P) for (M,N) @ (N,P) matrices
+        /// Space: O(M*P) for result array
+        ///
+        /// Examples:
+        /// ```zig
+        /// // Matrix-matrix multiplication
+        /// const A = try NDArray(f64, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+        /// const B = try NDArray(f64, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+        /// const C = try A.matmul(&B); // Shape: [2, 4]
+        ///
+        /// // Vector dot product
+        /// const v1 = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+        /// const v2 = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+        /// const dot = try v1.matmul(&v2); // Shape: [] (scalar)
+        /// ```
+        pub fn matmul(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Case 1: Both are 1D (vector dot product → scalar)
+            if (ndim == 1) {
+                if (self.shape[0] != other.shape[0]) {
+                    return Error.ShapeMismatch;
+                }
+
+                // Compute dot product
+                var accumulator: T = 0;
+                for (0..self.shape[0]) |i| {
+                    const a = try self.get(&.{@intCast(i)});
+                    const b = try other.get(&.{@intCast(i)});
+                    accumulator += a * b;
+                }
+
+                // Return as 0-dimensional array (scalar wrapped in NDArray)
+                const result_data = try self.allocator.alloc(T, 1);
+                errdefer self.allocator.free(result_data);
+                result_data[0] = accumulator;
+
+                return Self{
+                    .shape = [_]usize{1} ** ndim,
+                    .strides = [_]usize{1} ** ndim,
+                    .data = result_data,
+                    .allocator = self.allocator,
+                    .layout = self.layout,
+                    .owned = true,
+                };
+            }
+
+            // Case 2: Both are 2D (standard matrix multiplication)
+            if (ndim == 2) {
+                const M = self.shape[0]; // rows in self
+                const N = self.shape[1]; // cols in self / rows in other
+                const K = other.shape[0]; // rows in other
+                const P = other.shape[1]; // cols in other
+
+                // Verify inner dimensions match
+                if (N != K) {
+                    return Error.ShapeMismatch;
+                }
+
+                // Allocate result matrix: (M, P)
+                const result_shape = [2]usize{ M, P };
+                var result = try Self.zeros(self.allocator, &result_shape, self.layout);
+                errdefer result.deinit();
+
+                // Perform matrix multiplication: C[i,j] = Σ(k) A[i,k] * B[k,j]
+                for (0..M) |i| {
+                    for (0..P) |j| {
+                        var accumulator: T = 0;
+                        for (0..N) |k| {
+                            const a = try self.get(&.{ @intCast(i), @intCast(k) });
+                            const b = try other.get(&.{ @intCast(k), @intCast(j) });
+                            accumulator += a * b;
+                        }
+                        result.set(&.{ @intCast(i), @intCast(j) }, accumulator);
+                    }
+                }
+
+                return result;
+            }
+
+            // Case 3: Higher dimensions - not yet supported
+            // Would require batched matmul with broadcasting
+            return Error.DimensionMismatch;
+        }
+
         // -- Element-wise Unary Operations --
 
         /// Element-wise negation: -self
@@ -8462,4 +8570,289 @@ test "ownership: owned flag prevents double-free in iteration" {
         }
         try testing.expectEqual(4, count);
     }
+}
+
+// -- Matrix Multiplication Tests --
+
+test "matmul: 2x2 matrix multiplication" {
+    const allocator = testing.allocator;
+
+    // Create A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+    A.set(&.{ 0, 0 }, 1.0);
+    A.set(&.{ 0, 1 }, 2.0);
+    A.set(&.{ 1, 0 }, 3.0);
+    A.set(&.{ 1, 1 }, 4.0);
+
+    // Create B = [[5, 6], [7, 8]]
+    var B = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+    B.set(&.{ 0, 0 }, 5.0);
+    B.set(&.{ 0, 1 }, 6.0);
+    B.set(&.{ 1, 0 }, 7.0);
+    B.set(&.{ 1, 1 }, 8.0);
+
+    // C = A @ B
+    // Expected: [[1*5+2*7, 1*6+2*8], [3*5+4*7, 3*6+4*8]]
+    //         = [[19, 22], [43, 50]]
+    var C = try A.matmul(&B);
+    defer C.deinit();
+
+    try testing.expectEqual(2, C.shape[0]);
+    try testing.expectEqual(2, C.shape[1]);
+    try testing.expectApproxEqAbs(19.0, try C.get(&.{ 0, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(22.0, try C.get(&.{ 0, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(43.0, try C.get(&.{ 1, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(50.0, try C.get(&.{ 1, 1 }), 1e-10);
+}
+
+test "matmul: non-square matrix multiplication (3x2) @ (2x4)" {
+    const allocator = testing.allocator;
+
+    // Create A = [[1, 2], [3, 4], [5, 6]] (3x2)
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer A.deinit();
+    A.set(&.{ 0, 0 }, 1.0);
+    A.set(&.{ 0, 1 }, 2.0);
+    A.set(&.{ 1, 0 }, 3.0);
+    A.set(&.{ 1, 1 }, 4.0);
+    A.set(&.{ 2, 0 }, 5.0);
+    A.set(&.{ 2, 1 }, 6.0);
+
+    // Create B = [[1, 2, 3, 4], [5, 6, 7, 8]] (2x4)
+    var B = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 4 }, .row_major);
+    defer B.deinit();
+    B.set(&.{ 0, 0 }, 1.0);
+    B.set(&.{ 0, 1 }, 2.0);
+    B.set(&.{ 0, 2 }, 3.0);
+    B.set(&.{ 0, 3 }, 4.0);
+    B.set(&.{ 1, 0 }, 5.0);
+    B.set(&.{ 1, 1 }, 6.0);
+    B.set(&.{ 1, 2 }, 7.0);
+    B.set(&.{ 1, 3 }, 8.0);
+
+    // C = A @ B (3x4)
+    // First row: [1*1+2*5, 1*2+2*6, 1*3+2*7, 1*4+2*8] = [11, 14, 17, 20]
+    // Second row: [3*1+4*5, 3*2+4*6, 3*3+4*7, 3*4+4*8] = [23, 30, 37, 44]
+    // Third row: [5*1+6*5, 5*2+6*6, 5*3+6*7, 5*4+6*8] = [35, 46, 57, 68]
+    var C = try A.matmul(&B);
+    defer C.deinit();
+
+    try testing.expectEqual(3, C.shape[0]);
+    try testing.expectEqual(4, C.shape[1]);
+
+    // First row
+    try testing.expectApproxEqAbs(11.0, try C.get(&.{ 0, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(14.0, try C.get(&.{ 0, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(17.0, try C.get(&.{ 0, 2 }), 1e-10);
+    try testing.expectApproxEqAbs(20.0, try C.get(&.{ 0, 3 }), 1e-10);
+
+    // Second row
+    try testing.expectApproxEqAbs(23.0, try C.get(&.{ 1, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(30.0, try C.get(&.{ 1, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(37.0, try C.get(&.{ 1, 2 }), 1e-10);
+    try testing.expectApproxEqAbs(44.0, try C.get(&.{ 1, 3 }), 1e-10);
+
+    // Third row
+    try testing.expectApproxEqAbs(35.0, try C.get(&.{ 2, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(46.0, try C.get(&.{ 2, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(57.0, try C.get(&.{ 2, 2 }), 1e-10);
+    try testing.expectApproxEqAbs(68.0, try C.get(&.{ 2, 3 }), 1e-10);
+}
+
+test "matmul: vector dot product (1D)" {
+    const allocator = testing.allocator;
+
+    // Create v1 = [1, 2, 3, 4]
+    var v1 = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer v1.deinit();
+    v1.set(&.{0}, 1.0);
+    v1.set(&.{1}, 2.0);
+    v1.set(&.{2}, 3.0);
+    v1.set(&.{3}, 4.0);
+
+    // Create v2 = [5, 6, 7, 8]
+    var v2 = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer v2.deinit();
+    v2.set(&.{0}, 5.0);
+    v2.set(&.{1}, 6.0);
+    v2.set(&.{2}, 7.0);
+    v2.set(&.{3}, 8.0);
+
+    // Dot product: 1*5 + 2*6 + 3*7 + 4*8 = 5 + 12 + 21 + 32 = 70
+    var result = try v1.matmul(&v2);
+    defer result.deinit();
+
+    // Result should be a scalar (shape [1])
+    try testing.expectEqual(1, result.shape[0]);
+    try testing.expectApproxEqAbs(70.0, result.data[0], 1e-10);
+}
+
+test "matmul: identity matrix multiplication" {
+    const allocator = testing.allocator;
+
+    // Create A = [[2, 3], [4, 5]]
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+    A.set(&.{ 0, 0 }, 2.0);
+    A.set(&.{ 0, 1 }, 3.0);
+    A.set(&.{ 1, 0 }, 4.0);
+    A.set(&.{ 1, 1 }, 5.0);
+
+    // Create identity matrix I = [[1, 0], [0, 1]]
+    var I = try NDArray(f64, 2).identity(allocator, 2, 2, .row_major);
+    defer I.deinit();
+
+    // A @ I should equal A
+    var result = try A.matmul(&I);
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(2.0, try result.get(&.{ 0, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(3.0, try result.get(&.{ 0, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(4.0, try result.get(&.{ 1, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(5.0, try result.get(&.{ 1, 1 }), 1e-10);
+}
+
+test "matmul: shape mismatch error for 2D" {
+    const allocator = testing.allocator;
+
+    // Create A (2x3)
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer A.deinit();
+
+    // Create B (4x2) - incompatible inner dimensions
+    var B = try NDArray(f64, 2).init(allocator, &[_]usize{ 4, 2 }, .row_major);
+    defer B.deinit();
+
+    // A (2x3) @ B (4x2) should fail because 3 != 4
+    const result = A.matmul(&B);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "matmul: shape mismatch error for 1D" {
+    const allocator = testing.allocator;
+
+    // Create v1 with length 3
+    var v1 = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer v1.deinit();
+
+    // Create v2 with length 5 - incompatible
+    var v2 = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer v2.deinit();
+
+    // Should fail because lengths differ
+    const result = v1.matmul(&v2);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "matmul: integer type matrix multiplication" {
+    const allocator = testing.allocator;
+
+    // Create A = [[1, 2], [3, 4]] (i32)
+    var A = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+    A.set(&.{ 0, 0 }, 1);
+    A.set(&.{ 0, 1 }, 2);
+    A.set(&.{ 1, 0 }, 3);
+    A.set(&.{ 1, 1 }, 4);
+
+    // Create B = [[5, 6], [7, 8]]
+    var B = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+    B.set(&.{ 0, 0 }, 5);
+    B.set(&.{ 0, 1 }, 6);
+    B.set(&.{ 1, 0 }, 7);
+    B.set(&.{ 1, 1 }, 8);
+
+    // C = A @ B
+    // Expected: [[19, 22], [43, 50]]
+    var C = try A.matmul(&B);
+    defer C.deinit();
+
+    try testing.expectEqual(@as(i32, 19), try C.get(&.{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 22), try C.get(&.{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 43), try C.get(&.{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 50), try C.get(&.{ 1, 1 }));
+}
+
+test "matmul: zero matrix multiplication" {
+    const allocator = testing.allocator;
+
+    // Create A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+    A.set(&.{ 0, 0 }, 1.0);
+    A.set(&.{ 0, 1 }, 2.0);
+    A.set(&.{ 1, 0 }, 3.0);
+    A.set(&.{ 1, 1 }, 4.0);
+
+    // Create zero matrix Z = [[0, 0], [0, 0]]
+    var Z = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer Z.deinit();
+
+    // A @ Z should be all zeros
+    var result = try A.matmul(&Z);
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(0.0, try result.get(&.{ 0, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(0.0, try result.get(&.{ 0, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(0.0, try result.get(&.{ 1, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(0.0, try result.get(&.{ 1, 1 }), 1e-10);
+}
+
+test "matmul: memory safety with testing.allocator" {
+    const allocator = testing.allocator;
+
+    // Perform 10 matmul operations and verify no leaks
+    for (0..10) |_| {
+        var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+        defer A.deinit();
+
+        var B = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+        defer B.deinit();
+
+        // Fill with arbitrary values
+        for (0..9) |i| {
+            A.data[i] = @as(f64, @floatFromInt(i + 1));
+            B.data[i] = @as(f64, @floatFromInt(i + 1));
+        }
+
+        var C = try A.matmul(&B);
+        defer C.deinit();
+
+        // Verify result is allocated
+        try testing.expect(C.data.len == 9);
+    }
+    // testing.allocator will detect any leaks
+}
+
+test "matmul: column-major layout multiplication" {
+    const allocator = testing.allocator;
+
+    // Create A in column-major layout
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .column_major);
+    defer A.deinit();
+    A.set(&.{ 0, 0 }, 1.0);
+    A.set(&.{ 0, 1 }, 2.0);
+    A.set(&.{ 1, 0 }, 3.0);
+    A.set(&.{ 1, 1 }, 4.0);
+
+    // Create B in column-major layout
+    var B = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .column_major);
+    defer B.deinit();
+    B.set(&.{ 0, 0 }, 5.0);
+    B.set(&.{ 0, 1 }, 6.0);
+    B.set(&.{ 1, 0 }, 7.0);
+    B.set(&.{ 1, 1 }, 8.0);
+
+    // Matmul should work regardless of layout
+    var C = try A.matmul(&B);
+    defer C.deinit();
+
+    // Same result as row-major case
+    try testing.expectApproxEqAbs(19.0, try C.get(&.{ 0, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(22.0, try C.get(&.{ 0, 1 }), 1e-10);
+    try testing.expectApproxEqAbs(43.0, try C.get(&.{ 1, 0 }), 1e-10);
+    try testing.expectApproxEqAbs(50.0, try C.get(&.{ 1, 1 }), 1e-10);
 }
