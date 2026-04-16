@@ -312,6 +312,10 @@ pub const algorithms = struct {
         pub const damerauLevenshteinIsSimilar = @import("algorithms/string/damerau_levenshtein.zig").isSimilar;
         pub const damerauLevenshteinFindMostSimilar = @import("algorithms/string/damerau_levenshtein.zig").findMostSimilar;
         pub const damerauLevenshteinFindAllSimilar = @import("algorithms/string/damerau_levenshtein.zig").findAllSimilar;
+        pub const metaphone = @import("algorithms/string/metaphone.zig").metaphone;
+        pub const metaphoneMatch = @import("algorithms/string/metaphone.zig").metaphoneMatch;
+        pub const metaphoneBatch = @import("algorithms/string/metaphone.zig").metaphoneBatch;
+        pub const freeMetaphoneBatch = @import("algorithms/string/metaphone.zig").freeBatch;
     };
 
     /// Mathematical algorithms
