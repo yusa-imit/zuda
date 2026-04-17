@@ -1959,6 +1959,122 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             };
         }
 
+        /// Element-wise sign extraction: returns -1 for negative, 0 for zero, +1 for positive
+        ///
+        /// Returns: New NDArray with sign values (-1, 0, or 1)
+        ///
+        /// Use cases:
+        /// - Gradient sign extraction in optimization
+        /// - Sign pattern analysis in signal processing
+        /// - Direction indicators in numerical methods
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn sign(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and extract sign of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = if (val > 0) @as(T, 1) else if (val < 0) @as(T, -1) else @as(T, 0);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Element-wise clip (clamp) values to range [min_val, max_val]
+        ///
+        /// Returns: New NDArray with clipped values
+        ///
+        /// Use cases:
+        /// - Gradient clipping in neural network training
+        /// - Value range enforcement in data preprocessing
+        /// - Outlier removal in statistical analysis
+        /// - Saturation arithmetic in signal processing
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn clip(self: *const Self, min_val: T, max_val: T) (Error || std.mem.Allocator.Error)!Self {
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and clip each element to [min_val, max_val]
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = if (val < min_val) min_val else if (val > max_val) max_val else val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Conditional element selection: where(condition, x, y) returns x[i] if condition[i] else y[i]
+        ///
+        /// All arrays must have the same shape.
+        ///
+        /// Returns: New NDArray with selected values
+        ///
+        /// Use cases:
+        /// - Conditional masking in data filtering
+        /// - Piecewise function evaluation
+        /// - NumPy-style np.where() equivalent
+        /// - Threshold-based data transformation
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn where(condition: *const NDArray(bool, ndim), x: *const Self, y: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Shape validation: all arrays must match
+            if (!std.mem.eql(usize, &condition.shape, &x.shape) or !std.mem.eql(usize, &x.shape, &y.shape)) {
+                return Error.ShapeMismatch;
+            }
+
+            // Allocate new buffer for result
+            const total = x.count();
+            const result_data = try x.allocator.alloc(T, total);
+            errdefer x.allocator.free(result_data);
+
+            // Traverse arrays and select elements based on condition
+            var cond_iter = condition.iterator();
+            var x_iter = x.iterator();
+            var y_iter = y.iterator();
+            var idx: usize = 0;
+
+            while (cond_iter.next()) |cond_val| {
+                const x_val = x_iter.next() orelse unreachable; // shapes match, safe
+                const y_val = y_iter.next() orelse unreachable;
+                result_data[idx] = if (cond_val) x_val else y_val;
+                idx += 1;
+            }
+
+            return Self{
+                .shape = x.shape,
+                .strides = x.strides,
+                .data = result_data,
+                .allocator = x.allocator,
+                .layout = x.layout,
+                .owned = true,
+            };
+        }
+
         /// Element-wise base-2 logarithm - returns array with log2 of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
@@ -6445,6 +6561,332 @@ test "ndarray: trunc 2D array with memory safety" {
         try testing.expect(result.shape[0] == 2);
         try testing.expect(result.shape[1] == 3);
     }
+}
+
+test "ndarray: sign positive values" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 3.5;
+    a.data[1] = 0.0;
+    a.data[2] = -2.7;
+    a.data[3] = 100.0;
+    a.data[4] = -0.001;
+
+    var result = try a.sign();
+    defer result.deinit();
+
+    try testing.expectEqual(@as(f64, 1), result.data[0]);
+    try testing.expectEqual(@as(f64, 0), result.data[1]);
+    try testing.expectEqual(@as(f64, -1), result.data[2]);
+    try testing.expectEqual(@as(f64, 1), result.data[3]);
+    try testing.expectEqual(@as(f64, -1), result.data[4]);
+}
+
+test "ndarray: sign integer type" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 5;
+    a.data[1] = 0;
+    a.data[2] = -10;
+    a.data[3] = 1;
+    a.data[4] = -1;
+    a.data[5] = 0;
+
+    var result = try a.sign();
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 0), result.data[1]);
+    try testing.expectEqual(@as(i32, -1), result.data[2]);
+    try testing.expectEqual(@as(i32, 1), result.data[3]);
+    try testing.expectEqual(@as(i32, -1), result.data[4]);
+    try testing.expectEqual(@as(i32, 0), result.data[5]);
+}
+
+test "ndarray: sign 2D array with memory safety" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+        defer a.deinit();
+
+        a.data[0] = 1.5;
+        a.data[1] = -2.3;
+        a.data[2] = 0.0;
+        a.data[3] = -0.5;
+        a.data[4] = 3.7;
+        a.data[5] = 0.0;
+
+        var result = try a.sign();
+        defer result.deinit();
+
+        try testing.expectEqual(@as(f64, 1), result.data[0]);
+        try testing.expectEqual(@as(f64, -1), result.data[1]);
+        try testing.expectEqual(@as(f64, 0), result.data[2]);
+    }
+}
+
+test "ndarray: clip basic functionality" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{7}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = -5.0;
+    a.data[1] = -2.0;
+    a.data[2] = 0.0;
+    a.data[3] = 1.5;
+    a.data[4] = 3.0;
+    a.data[5] = 5.0;
+    a.data[6] = 10.0;
+
+    var result = try a.clip(-2.0, 3.0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(f64, -2.0), result.data[0]); // -5 clipped to -2
+    try testing.expectEqual(@as(f64, -2.0), result.data[1]); // -2 stays -2
+    try testing.expectEqual(@as(f64, 0.0), result.data[2]);  // 0 stays 0
+    try testing.expectEqual(@as(f64, 1.5), result.data[3]);  // 1.5 stays 1.5
+    try testing.expectEqual(@as(f64, 3.0), result.data[4]);  // 3 stays 3
+    try testing.expectEqual(@as(f64, 3.0), result.data[5]);  // 5 clipped to 3
+    try testing.expectEqual(@as(f64, 3.0), result.data[6]);  // 10 clipped to 3
+}
+
+test "ndarray: clip integer type" {
+    const allocator = testing.allocator;
+    var a = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = -100;
+    a.data[1] = -5;
+    a.data[2] = 0;
+    a.data[3] = 5;
+    a.data[4] = 100;
+
+    var result = try a.clip(-10, 10);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, -10), result.data[0]);
+    try testing.expectEqual(@as(i32, -5), result.data[1]);
+    try testing.expectEqual(@as(i32, 0), result.data[2]);
+    try testing.expectEqual(@as(i32, 5), result.data[3]);
+    try testing.expectEqual(@as(i32, 10), result.data[4]);
+}
+
+test "ndarray: clip 2D array with memory safety" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) - 2.5; // -2.5, -1.5, -0.5, 0.5, 1.5, 2.5
+        }
+
+        var result = try a.clip(-1.0, 1.0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(f64, -1.0), result.data[0]); // -2.5 → -1.0
+        try testing.expectEqual(@as(f64, -1.0), result.data[1]); // -1.5 → -1.0
+        try testing.expectApproxEqAbs(-0.5, result.data[2], 1e-10);
+        try testing.expectApproxEqAbs(0.5, result.data[3], 1e-10);
+        try testing.expectEqual(@as(f64, 1.0), result.data[4]); // 1.5 → 1.0
+        try testing.expectEqual(@as(f64, 1.0), result.data[5]); // 2.5 → 1.0
+    }
+}
+
+test "ndarray: where basic conditional selection" {
+    const allocator = testing.allocator;
+
+    var cond = try NDArray(bool, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer cond.deinit();
+    cond.data[0] = true;
+    cond.data[1] = false;
+    cond.data[2] = true;
+    cond.data[3] = false;
+    cond.data[4] = true;
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer x.deinit();
+    x.data[0] = 1.0;
+    x.data[1] = 2.0;
+    x.data[2] = 3.0;
+    x.data[3] = 4.0;
+    x.data[4] = 5.0;
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer y.deinit();
+    y.data[0] = 10.0;
+    y.data[1] = 20.0;
+    y.data[2] = 30.0;
+    y.data[3] = 40.0;
+    y.data[4] = 50.0;
+
+    var result = try NDArray(f64, 1).where(&cond, &x, &y);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(f64, 1.0), result.data[0]);  // true → x
+    try testing.expectEqual(@as(f64, 20.0), result.data[1]); // false → y
+    try testing.expectEqual(@as(f64, 3.0), result.data[2]);  // true → x
+    try testing.expectEqual(@as(f64, 40.0), result.data[3]); // false → y
+    try testing.expectEqual(@as(f64, 5.0), result.data[4]);  // true → x
+}
+
+test "ndarray: where threshold masking" {
+    const allocator = testing.allocator;
+
+    var data = try NDArray(f64, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer data.deinit();
+    data.data[0] = -3.0;
+    data.data[1] = -1.0;
+    data.data[2] = 0.0;
+    data.data[3] = 1.0;
+    data.data[4] = 3.0;
+    data.data[5] = 5.0;
+
+    // Create condition: data >= 0
+    var zeros = try NDArray(f64, 1).zeros(allocator, &[_]usize{6}, .row_major);
+    defer zeros.deinit();
+
+    var cond = try data.ge(&zeros);
+    defer cond.deinit();
+
+    var pos_val = try NDArray(f64, 1).full(allocator, &[_]usize{6}, 1.0, .row_major);
+    defer pos_val.deinit();
+
+    var neg_val = try NDArray(f64, 1).full(allocator, &[_]usize{6}, -1.0, .row_major);
+    defer neg_val.deinit();
+
+    var result = try NDArray(f64, 1).where(&cond, &pos_val, &neg_val);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(f64, -1.0), result.data[0]); // -3 < 0 → -1
+    try testing.expectEqual(@as(f64, -1.0), result.data[1]); // -1 < 0 → -1
+    try testing.expectEqual(@as(f64, 1.0), result.data[2]);  // 0 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[3]);  // 1 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[4]);  // 3 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[5]);  // 5 >= 0 → 1
+}
+
+test "ndarray: where 2D array with memory safety" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var cond = try NDArray(bool, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer cond.deinit();
+        cond.data[0] = true;
+        cond.data[1] = false;
+        cond.data[2] = true;
+        cond.data[3] = false;
+        cond.data[4] = true;
+        cond.data[5] = false;
+
+        var x = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer x.deinit();
+        for (x.data, 0..) |*val, idx| {
+            val.* = @as(i32, @intCast(idx));
+        }
+
+        var y = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer y.deinit();
+        for (y.data, 0..) |*val, idx| {
+            val.* = @as(i32, @intCast(idx)) * 10;
+        }
+
+        var result = try NDArray(i32, 2).where(&cond, &x, &y);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(i32, 0), result.data[0]);  // true → 0
+        try testing.expectEqual(@as(i32, 10), result.data[1]); // false → 10
+        try testing.expectEqual(@as(i32, 2), result.data[2]);  // true → 2
+    }
+}
+
+test "ndarray: where shape mismatch error" {
+    const allocator = testing.allocator;
+
+    var cond = try NDArray(bool, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer cond.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major); // different size
+    defer y.deinit();
+
+    const result = NDArray(f64, 1).where(&cond, &x, &y);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "ndarray: where all true" {
+    const allocator = testing.allocator;
+
+    var cond = try NDArray(bool, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer cond.deinit();
+    for (cond.data) |*val| {
+        val.* = true;
+    }
+
+    var x = try NDArray(u8, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer x.deinit();
+    x.data[0] = 1;
+    x.data[1] = 2;
+    x.data[2] = 3;
+    x.data[3] = 4;
+
+    var y = try NDArray(u8, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer y.deinit();
+    for (y.data) |*val| {
+        val.* = 99;
+    }
+
+    var result = try NDArray(u8, 1).where(&cond, &x, &y);
+    defer result.deinit();
+
+    // All true → should select from x
+    try testing.expectEqual(@as(u8, 1), result.data[0]);
+    try testing.expectEqual(@as(u8, 2), result.data[1]);
+    try testing.expectEqual(@as(u8, 3), result.data[2]);
+    try testing.expectEqual(@as(u8, 4), result.data[3]);
+}
+
+test "ndarray: where all false" {
+    const allocator = testing.allocator;
+
+    var cond = try NDArray(bool, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer cond.deinit();
+    for (cond.data) |*val| {
+        val.* = false;
+    }
+
+    var x = try NDArray(u8, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer x.deinit();
+    for (x.data) |*val| {
+        val.* = 1;
+    }
+
+    var y = try NDArray(u8, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer y.deinit();
+    y.data[0] = 10;
+    y.data[1] = 20;
+    y.data[2] = 30;
+    y.data[3] = 40;
+
+    var result = try NDArray(u8, 1).where(&cond, &x, &y);
+    defer result.deinit();
+
+    // All false → should select from y
+    try testing.expectEqual(@as(u8, 10), result.data[0]);
+    try testing.expectEqual(@as(u8, 20), result.data[1]);
+    try testing.expectEqual(@as(u8, 30), result.data[2]);
+    try testing.expectEqual(@as(u8, 40), result.data[3]);
 }
 
 test "ndarray: sin 1D array sine" {
