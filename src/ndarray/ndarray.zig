@@ -1727,6 +1727,108 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             };
         }
 
+        /// Element-wise hyperbolic sine - returns array with sinh of each element
+        ///
+        /// Computes sinh(x) = (e^x - e^(-x)) / 2 for each element.
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn sinh(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: sinh only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("sinh() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute hyperbolic sine of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.sinh(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Element-wise hyperbolic cosine - returns array with cosh of each element
+        ///
+        /// Computes cosh(x) = (e^x + e^(-x)) / 2 for each element.
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn cosh(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: cosh only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("cosh() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute hyperbolic cosine of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.cosh(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Element-wise hyperbolic tangent - returns array with tanh of each element
+        ///
+        /// Computes tanh(x) = sinh(x) / cosh(x) = (e^x - e^(-x)) / (e^x + e^(-x)) for each element.
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn tanh(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: tanh only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("tanh() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute hyperbolic tangent of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = std.math.tanh(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
         /// Element-wise base-2 logarithm - returns array with log2 of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
@@ -6271,6 +6373,142 @@ test "ndarray: atan2 2D array two-argument arctangent" {
     try testing.expectApproxEqAbs(3.0 * pi / 4.0, result.data[1], 1e-10);  // atan2(1, -1) = 3π/4
     try testing.expectApproxEqAbs(-3.0 * pi / 4.0, result.data[2], 1e-10); // atan2(-1, -1) = -3π/4
     try testing.expectApproxEqAbs(-pi / 4.0, result.data[3], 1e-10);       // atan2(-1, 1) = -π/4
+}
+
+test "ndarray: sinh 1D array hyperbolic sine" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 0.0;
+    a.data[1] = 1.0;
+    a.data[2] = -1.0;
+    a.data[3] = 2.0;
+    a.data[4] = -2.0;
+
+    var result = try a.sinh();
+    defer result.deinit();
+
+    // sinh(0) = 0, sinh(1) ≈ 1.1752, sinh(-1) ≈ -1.1752
+    // sinh(2) ≈ 3.6269, sinh(-2) ≈ -3.6269
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.1752011936438014, result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-1.1752011936438014, result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(3.626860407847019, result.data[3], 1e-10);
+    try testing.expectApproxEqAbs(-3.626860407847019, result.data[4], 1e-10);
+}
+
+test "ndarray: cosh 1D array hyperbolic cosine" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 0.0;
+    a.data[1] = 1.0;
+    a.data[2] = -1.0;
+    a.data[3] = 2.0;
+    a.data[4] = -2.0;
+
+    var result = try a.cosh();
+    defer result.deinit();
+
+    // cosh(0) = 1, cosh(±1) ≈ 1.5431, cosh(±2) ≈ 3.7622
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.5430806348152437, result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(1.5430806348152437, result.data[2], 1e-10);  // cosh is even
+    try testing.expectApproxEqAbs(3.7621956910836314, result.data[3], 1e-10);
+    try testing.expectApproxEqAbs(3.7621956910836314, result.data[4], 1e-10);  // cosh is even
+}
+
+test "ndarray: tanh 1D array hyperbolic tangent" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 0.0;
+    a.data[1] = 1.0;
+    a.data[2] = -1.0;
+    a.data[3] = 2.0;
+    a.data[4] = -2.0;
+
+    var result = try a.tanh();
+    defer result.deinit();
+
+    // tanh(0) = 0, tanh(1) ≈ 0.7616, tanh(-1) ≈ -0.7616
+    // tanh(2) ≈ 0.9640, tanh(-2) ≈ -0.9640
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.7615941559557649, result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-0.7615941559557649, result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(0.9640275800758169, result.data[3], 1e-10);
+    try testing.expectApproxEqAbs(-0.9640275800758169, result.data[4], 1e-10);
+}
+
+test "ndarray: sinh 2D array hyperbolic sine with memory safety" {
+    const allocator = testing.allocator;
+
+    // Test memory safety with multiple iterations
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) * 0.5;
+        }
+
+        var result = try a.sinh();
+        defer result.deinit();
+
+        try testing.expect(result.shape[0] == 2);
+        try testing.expect(result.shape[1] == 3);
+    }
+}
+
+test "ndarray: cosh 2D array hyperbolic cosine with memory safety" {
+    const allocator = testing.allocator;
+
+    // Test memory safety with multiple iterations
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) * 0.5;
+        }
+
+        var result = try a.cosh();
+        defer result.deinit();
+
+        try testing.expect(result.shape[0] == 2);
+        try testing.expect(result.shape[1] == 3);
+    }
+}
+
+test "ndarray: tanh 2D array hyperbolic tangent with memory safety" {
+    const allocator = testing.allocator;
+
+    // Test memory safety with multiple iterations
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) * 0.5 - 1.5;  // Range -1.5 to 1.5
+        }
+
+        var result = try a.tanh();
+        defer result.deinit();
+
+        try testing.expect(result.shape[0] == 2);
+        try testing.expect(result.shape[1] == 3);
+
+        // Verify tanh is bounded: -1 < tanh(x) < 1
+        for (result.data) |val| {
+            try testing.expect(val > -1.0 and val < 1.0);
+        }
+    }
 }
 
 test "ndarray: log2 1D array base-2 logarithm" {
