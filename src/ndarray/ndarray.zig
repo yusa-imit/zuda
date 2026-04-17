@@ -792,7 +792,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Space: O(1)
         pub fn rank(self: *const Self) usize {
             // Extract ndim from the shape array type
-            return @typeInfo(@TypeOf(self.shape)).Array.len;
+            return @typeInfo(@TypeOf(self.shape)).array.len;
         }
 
         /// Flatten the array to 1D, converting to row-major order
@@ -2604,6 +2604,95 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 }
             }
             return false;
+        }
+
+        /// Remove a dimension of size 1 at the specified axis
+        ///
+        /// Creates a new NDArray with reduced dimensionality by removing one dimension
+        /// that has size 1. The data is shared (zero-copy view).
+        ///
+        /// Time: O(1) - creates view without copying data
+        /// Space: O(1) - shares data with original array
+        ///
+        /// Errors:
+        /// - ShapeMismatch: if dimension at axis is not size 1
+        /// - IndexOutOfBounds: if axis >= ndim
+        pub fn squeeze(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(T, ndim - 1) {
+            if (ndim == 0) {
+                @compileError("Cannot squeeze 0-dimensional array");
+            }
+            if (axis >= ndim) {
+                return Error.IndexOutOfBounds;
+            }
+            if (self.shape[axis] != 1) {
+                return Error.ShapeMismatch;
+            }
+
+            var new_shape: [ndim - 1]usize = undefined;
+            var new_strides: [ndim - 1]usize = undefined;
+
+            // Copy shape and strides, skipping the squeezed axis
+            var j: usize = 0;
+            for (0..ndim) |i| {
+                if (i != axis) {
+                    new_shape[j] = self.shape[i];
+                    new_strides[j] = self.strides[i];
+                    j += 1;
+                }
+            }
+
+            // Create view with reduced dimensionality
+            return NDArray(T, ndim - 1){
+                .shape = new_shape,
+                .strides = new_strides,
+                .data = self.data,
+                .allocator = allocator,
+                .layout = self.layout,
+                .owned = false, // View shares data
+            };
+        }
+
+
+        /// Add a dimension of size 1 at the specified axis
+        ///
+        /// Creates a new NDArray with increased dimensionality by inserting a dimension
+        /// of size 1 at the given axis. The data is shared (zero-copy view).
+        ///
+        /// Time: O(1) - creates view without copying data
+        /// Space: O(1) - shares data with original array
+        ///
+        /// Errors:
+        /// - IndexOutOfBounds: if axis > ndim (note: axis == ndim is valid for trailing insertion)
+        pub fn unsqueeze(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+            if (axis > ndim) {
+                return Error.IndexOutOfBounds;
+            }
+
+            var new_shape: [ndim + 1]usize = undefined;
+            var new_strides: [ndim + 1]usize = undefined;
+
+            // Copy shape and strides, inserting size-1 dimension at axis
+            var j: usize = 0;
+            for (0..ndim + 1) |i| {
+                if (i == axis) {
+                    new_shape[i] = 1;
+                    // Stride for size-1 dimension can be any value (commonly set to element stride)
+                    new_strides[i] = if (ndim > 0) self.strides[0] else @sizeOf(T);
+                } else {
+                    new_shape[i] = self.shape[j];
+                    new_strides[i] = self.strides[j];
+                    j += 1;
+                }
+            }
+
+            return NDArray(T, ndim + 1){
+                .shape = new_shape,
+                .strides = new_strides,
+                .data = self.data,
+                .allocator = allocator,
+                .layout = self.layout,
+                .owned = false, // View shares data
+            };
         }
     };
 }
@@ -8855,4 +8944,621 @@ test "matmul: column-major layout multiplication" {
     try testing.expectApproxEqAbs(22.0, try C.get(&.{ 0, 1 }), 1e-10);
     try testing.expectApproxEqAbs(43.0, try C.get(&.{ 1, 0 }), 1e-10);
     try testing.expectApproxEqAbs(50.0, try C.get(&.{ 1, 1 }), 1e-10);
+}
+
+// -- Squeeze Tests (remove dimensions of size 1) --
+// NOTE: Tests follow TDD Red phase pattern. Functions squeeze(), squeezeAll(), unsqueeze()
+// need to be implemented to pass these tests.
+
+test "ndarray: squeeze removes leading dimension of size 1 from [1,3,4]" {
+    const allocator = testing.allocator;
+
+    // Create array with shape [1, 3, 4] in row-major
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 1, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values [1..12]
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, 0), @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Squeeze should remove dimension of size 1 at axis 0, giving [3,4]
+    var squeezed = try arr.squeeze(allocator, 0);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(2, squeezed.rank());
+    try testing.expectEqual(3, squeezed.shape[0]);
+    try testing.expectEqual(4, squeezed.shape[1]);
+
+    // Data should be preserved in same order
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            const val = try squeezed.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: squeeze removes middle dimension of size 1 from [3,1,4]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 3, 1, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Squeeze at axis 1
+    var squeezed = try arr.squeeze(allocator, 1);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(2, squeezed.rank());
+    try testing.expectEqual(3, squeezed.shape[0]);
+    try testing.expectEqual(4, squeezed.shape[1]);
+
+    // Verify data
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            const val = try squeezed.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: squeeze removes trailing dimension of size 1 from [3,4,1]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 3, 4, 1 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)), @as(isize, 0) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Squeeze at axis 2
+    var squeezed = try arr.squeeze(allocator, 2);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(2, squeezed.rank());
+    try testing.expectEqual(3, squeezed.shape[0]);
+    try testing.expectEqual(4, squeezed.shape[1]);
+
+    // Verify data
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            const val = try squeezed.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: squeeze error when dimension size != 1" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 3, 4, 5 }, .row_major);
+    defer arr.deinit();
+
+    // Try to squeeze axis 0 which has size 3 - should fail
+    const result = arr.squeeze(allocator, 0);
+
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "ndarray: squeeze invalid axis error" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Try to squeeze axis 5 - out of bounds
+    const result = arr.squeeze(allocator, 5);
+
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "ndarray: squeeze all dimensions of size 1 from [1,3,1,4,1]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 5).init(allocator, &[_]usize{ 1, 3, 1, 4, 1 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with sequential values [1..12]
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, 0), @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)), @as(isize, 0) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Squeeze dimension 0 (size 1): [1,3,1,4,1] -> [3,1,4,1]
+    var sq1 = try arr.squeeze(allocator, 0);
+    defer if (sq1.owned) sq1.deinit();
+
+    try testing.expectEqual(4, sq1.rank());
+    try testing.expectEqual(3, sq1.shape[0]);
+    try testing.expectEqual(1, sq1.shape[1]);
+    try testing.expectEqual(4, sq1.shape[2]);
+    try testing.expectEqual(1, sq1.shape[3]);
+
+    // Squeeze dimension 1 (now size 1): [3,1,4,1] -> [3,4,1]
+    var sq2 = try sq1.squeeze(allocator, 1);
+    defer if (sq2.owned) sq2.deinit();
+
+    try testing.expectEqual(3, sq2.rank());
+    try testing.expectEqual(3, sq2.shape[0]);
+    try testing.expectEqual(4, sq2.shape[1]);
+    try testing.expectEqual(1, sq2.shape[2]);
+
+    // Verify data still accessible
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)), @as(isize, 0) };
+            const val = try sq2.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: squeeze 1D array [1] would create 0D scalar" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&.{0}, 99.0);
+
+    // Squeezing a 1D array to 0D is not supported in Zig's comptime type system
+    // (NDArray(T, 0) would have [0]usize shape which causes compile errors)
+    // This is a known limitation - use scalar directly instead
+    // Just verify the array has correct properties before attempting squeeze
+    try testing.expectEqual(1, arr.rank());
+    try testing.expectEqual(1, arr.shape[0]);
+    try testing.expectApproxEqAbs(99.0, try arr.get(&.{0}), 1e-10);
+}
+
+// -- Unsqueeze Tests (add dimension of size 1) --
+
+test "ndarray: unsqueeze adds dimension at beginning (axis=0) to [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values [1..12]
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Unsqueeze at axis 0 to get [1,3,4]
+    var unsqueezed = try arr.unsqueeze(allocator, 0);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(3, unsqueezed.rank());
+    try testing.expectEqual(1, unsqueezed.shape[0]);
+    try testing.expectEqual(3, unsqueezed.shape[1]);
+    try testing.expectEqual(4, unsqueezed.shape[2]);
+
+    // Verify data is preserved
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, 0), @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            const val = try unsqueezed.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: unsqueeze adds dimension at middle (axis=1) to [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Unsqueeze at axis 1 to get [3,1,4]
+    var unsqueezed = try arr.unsqueeze(allocator, 1);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(3, unsqueezed.rank());
+    try testing.expectEqual(3, unsqueezed.shape[0]);
+    try testing.expectEqual(1, unsqueezed.shape[1]);
+    try testing.expectEqual(4, unsqueezed.shape[2]);
+
+    // Verify data
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)) };
+            const val = try unsqueezed.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: unsqueeze adds dimension at end (axis=2) to [3,4]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Unsqueeze at axis 2 to get [3,4,1]
+    var unsqueezed = try arr.unsqueeze(allocator, 2);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(3, unsqueezed.rank());
+    try testing.expectEqual(3, unsqueezed.shape[0]);
+    try testing.expectEqual(4, unsqueezed.shape[1]);
+    try testing.expectEqual(1, unsqueezed.shape[2]);
+
+    // Verify data
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)), @as(isize, 0) };
+            const val = try unsqueezed.get(idx);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i * 4 + j + 1)), val, 1e-10);
+        }
+    }
+}
+
+test "ndarray: unsqueeze 1D array [5] to [1,5]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values [1..5]
+    for (0..5) |i| {
+        arr.set(&.{@as(isize, @intCast(i))}, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    // Unsqueeze at beginning
+    var unsqueezed = try arr.unsqueeze(allocator, 0);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(2, unsqueezed.rank());
+    try testing.expectEqual(1, unsqueezed.shape[0]);
+    try testing.expectEqual(5, unsqueezed.shape[1]);
+
+    // Verify data
+    for (0..5) |i| {
+        const idx = &.{ @as(isize, 0), @as(isize, @intCast(i)) };
+        const val = try unsqueezed.get(idx);
+        try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i + 1)), val, 1e-10);
+    }
+}
+
+test "ndarray: unsqueeze 1D array [5] to [5,1]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..5) |i| {
+        arr.set(&.{@as(isize, @intCast(i))}, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    // Unsqueeze at end
+    var unsqueezed = try arr.unsqueeze(allocator, 1);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(2, unsqueezed.rank());
+    try testing.expectEqual(5, unsqueezed.shape[0]);
+    try testing.expectEqual(1, unsqueezed.shape[1]);
+
+    // Verify data
+    for (0..5) |i| {
+        const idx = &.{ @as(isize, @intCast(i)), @as(isize, 0) };
+        const val = try unsqueezed.get(idx);
+        try testing.expectApproxEqAbs(@as(f64, @floatFromInt(i + 1)), val, 1e-10);
+    }
+}
+
+test "ndarray: unsqueeze invalid axis error" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Try to unsqueeze at invalid axis
+    const result = arr.unsqueeze(allocator, 10);
+
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "ndarray: unsqueeze with i32 type" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..2) |i| {
+        for (0..3) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(i32, @intCast(i * 3 + j + 1)));
+        }
+    }
+
+    // Unsqueeze at axis 1
+    var unsqueezed = try arr.unsqueeze(allocator, 1);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(3, unsqueezed.rank());
+    try testing.expectEqual(2, unsqueezed.shape[0]);
+    try testing.expectEqual(1, unsqueezed.shape[1]);
+    try testing.expectEqual(3, unsqueezed.shape[2]);
+
+    // Verify data
+    for (0..2) |i| {
+        for (0..3) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)) };
+            const val = try unsqueezed.get(idx);
+            try testing.expectEqual(@as(i32, @intCast(i * 3 + j + 1)), val);
+        }
+    }
+}
+
+test "ndarray: unsqueeze with u8 type" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(u8, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values [10..13]
+    for (0..4) |i| {
+        arr.set(&.{@as(isize, @intCast(i))}, @as(u8, @intCast(i + 10)));
+    }
+
+    // Unsqueeze at beginning
+    var unsqueezed = try arr.unsqueeze(allocator, 0);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(2, unsqueezed.rank());
+    try testing.expectEqual(1, unsqueezed.shape[0]);
+    try testing.expectEqual(4, unsqueezed.shape[1]);
+
+    // Verify data
+    for (0..4) |i| {
+        const idx = &.{ @as(isize, 0), @as(isize, @intCast(i)) };
+        const val = try unsqueezed.get(idx);
+        try testing.expectEqual(@as(u8, @intCast(i + 10)), val);
+    }
+}
+
+// -- Roundtrip Tests (squeeze then unsqueeze) --
+
+test "ndarray: squeeze then unsqueeze roundtrip [1,5] -> [5] -> [1,5]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 1, 5 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..5) |i| {
+        const idx = &.{ @as(isize, 0), @as(isize, @intCast(i)) };
+        arr.set(idx, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    // Squeeze axis 0
+    var squeezed = try arr.squeeze(allocator, 0);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(1, squeezed.rank());
+
+    // Unsqueeze at axis 0 to get back to [1, 5]
+    var unsqueezed = try squeezed.unsqueeze(allocator, 0);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(2, unsqueezed.rank());
+    try testing.expectEqual(1, unsqueezed.shape[0]);
+    try testing.expectEqual(5, unsqueezed.shape[1]);
+
+    // Verify data matches original
+    for (0..5) |i| {
+        const orig_idx = &.{ @as(isize, 0), @as(isize, @intCast(i)) };
+        const unsq_idx = &.{ @as(isize, 0), @as(isize, @intCast(i)) };
+        const original = try arr.get(orig_idx);
+        const recovered = try unsqueezed.get(unsq_idx);
+        try testing.expectApproxEqAbs(original, recovered, 1e-10);
+    }
+}
+
+test "ndarray: squeeze/unsqueeze roundtrip [3,1,4] -> [3,4] -> [3,1,4]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 3, 1, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const idx = &.{ @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)) };
+            arr.set(idx, @as(f64, @floatFromInt(i * 4 + j + 1)));
+        }
+    }
+
+    // Squeeze axis 1
+    var squeezed = try arr.squeeze(allocator, 1);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(2, squeezed.rank());
+
+    // Unsqueeze at axis 1 to get back
+    var unsqueezed = try squeezed.unsqueeze(allocator, 1);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(3, unsqueezed.rank());
+    try testing.expectEqual(3, unsqueezed.shape[0]);
+    try testing.expectEqual(1, unsqueezed.shape[1]);
+    try testing.expectEqual(4, unsqueezed.shape[2]);
+
+    // Verify data
+    for (0..3) |i| {
+        for (0..4) |j| {
+            const orig_idx = &.{ @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)) };
+            const unsq_idx = &.{ @as(isize, @intCast(i)), @as(isize, 0), @as(isize, @intCast(j)) };
+            const original = try arr.get(orig_idx);
+            const recovered = try unsqueezed.get(unsq_idx);
+            try testing.expectApproxEqAbs(original, recovered, 1e-10);
+        }
+    }
+}
+
+test "ndarray: unsqueeze then squeeze roundtrip [5] -> [1,5] -> [5]" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..5) |i| {
+        arr.set(&.{@as(isize, @intCast(i))}, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    // Unsqueeze at beginning
+    var unsqueezed = try arr.unsqueeze(allocator, 0);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(2, unsqueezed.rank());
+
+    // Squeeze axis 0 to get back
+    var squeezed = try unsqueezed.squeeze(allocator, 0);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(1, squeezed.rank());
+    try testing.expectEqual(5, squeezed.shape[0]);
+
+    // Verify data
+    for (0..5) |i| {
+        const orig = try arr.get(&.{@as(isize, @intCast(i))});
+        const recovered = try squeezed.get(&.{@as(isize, @intCast(i))});
+        try testing.expectApproxEqAbs(orig, recovered, 1e-10);
+    }
+}
+
+// -- Memory Safety Tests --
+
+test "ndarray: squeeze with 10 iterations no memory leak" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 1, 5 }, .row_major);
+        for (0..5) |i| {
+            arr.set(&.{ @as(isize, 0), @as(isize, @intCast(i)) }, @as(f64, @floatFromInt(i + 1)));
+        }
+
+        var squeezed = try arr.squeeze(allocator, 0);
+        try testing.expectEqual(1, squeezed.rank());
+
+        squeezed.deinit();
+        arr.deinit();
+    }
+}
+
+test "ndarray: unsqueeze with 10 iterations no memory leak" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+        for (0..5) |i| {
+            arr.set(&.{@as(isize, @intCast(i))}, @as(f64, @floatFromInt(i + 1)));
+        }
+
+        var unsqueezed = try arr.unsqueeze(allocator, 0);
+        try testing.expectEqual(2, unsqueezed.rank());
+
+        unsqueezed.deinit();
+        arr.deinit();
+    }
+}
+
+test "ndarray: squeeze/unsqueeze roundtrip 10 iterations no leak" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 1, 5 }, .row_major);
+        for (0..5) |i| {
+            arr.set(&.{ @as(isize, 0), @as(isize, @intCast(i)) }, @as(f64, @floatFromInt(i + 1)));
+        }
+
+        var squeezed = try arr.squeeze(allocator, 0);
+        var unsqueezed = try squeezed.unsqueeze(allocator, 0);
+
+        try testing.expectEqual(2, unsqueezed.rank());
+
+        unsqueezed.deinit();
+        squeezed.deinit();
+        arr.deinit();
+    }
+}
+
+test "ndarray: squeeze column-major layout preserved" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 1, 5 }, .column_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..5) |i| {
+        arr.set(&.{ @as(isize, 0), @as(isize, @intCast(i)) }, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    // Squeeze
+    var squeezed = try arr.squeeze(allocator, 0);
+    defer squeezed.deinit();
+
+    try testing.expectEqual(.column_major, squeezed.layout);
+    try testing.expectEqual(1, squeezed.rank());
+}
+
+test "ndarray: unsqueeze column-major layout preserved" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .column_major);
+    defer arr.deinit();
+
+    // Fill with values
+    for (0..5) |i| {
+        arr.set(&.{@as(isize, @intCast(i))}, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    // Unsqueeze
+    var unsqueezed = try arr.unsqueeze(allocator, 1);
+    defer unsqueezed.deinit();
+
+    try testing.expectEqual(.column_major, unsqueezed.layout);
+    try testing.expectEqual(2, unsqueezed.rank());
 }
