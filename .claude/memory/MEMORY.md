@@ -1,4 +1,33 @@
-## Latest Session (Session 381, 2026-04-17) — FEATURE MODE
+## Latest Session (Session 384, 2026-04-18) — FEATURE MODE
+- NDArray Conditional & Value Operations: 12 tests, fundamental data manipulation operations
+- Module: ndarray/ndarray.zig
+- Functions:
+  * sign(): Element-wise sign extraction (-1 for negative, 0 for zero, +1 for positive) - O(n) time, O(n) space
+  * clip(min, max): Clamp values to range [min_val, max_val] - O(n) time, O(n) space
+  * where(condition, x, y): Conditional element selection - O(n) time, O(n) space
+- Use cases:
+  * sign(): Gradient sign extraction in optimization, direction indicators, sign pattern analysis
+  * clip(): Gradient clipping in neural networks, outlier removal, value range enforcement, saturation arithmetic
+  * where(): Conditional masking, piecewise function evaluation, NumPy-style np.where() equivalent, threshold-based transformations
+- Tests (12 scenarios):
+  * sign: positive/negative/zero, integer types (i32), 2D arrays, memory safety (10 iterations)
+  * clip: basic functionality, integer types (i32), 2D arrays, boundary values, memory safety (10 iterations)
+  * where: basic conditional selection, threshold masking, 2D arrays, shape mismatch error, all true/all false conditions, memory safety (10 iterations)
+- Implementation notes:
+  * sign() works with all numeric types (int/float), uses comparison operators
+  * clip() implements min-max saturation, works with all numeric types
+  * where() takes NDArray(bool, ndim) as condition, validates shape equality, selects from x/y arrays
+- NDArray now has 95 public functions (was 92)
+- Total tests: 419 (was ~407, +12)
+- CI: Green (latest run successful)
+- Issues: Zero open
+- Commits: fbf8992 (sign, clip, where)
+
+## Previous Session (Session 383, 2026-04-18) — FEATURE MODE
+- NDArray Element-wise Math Operations: 3 batches of functions, 33 tests total
+- Commits: fa847de (stack), 1a93d33 (hyperbolic), 6acdaf0 (rounding)
+
+## Previous Session (Session 381, 2026-04-17) — FEATURE MODE
 - Array Concatenation Implementation: 18 tests, fundamental NDArray operation
 - Module: ndarray/ndarray.zig
 - Function: concat() — join arrays along existing axis
