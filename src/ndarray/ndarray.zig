@@ -2754,7 +2754,116 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             return result;
         }
+
+        /// Stack arrays along a new dimension
+        ///
+        /// Time: O(n × m) where n = num arrays, m = elements per array
+        /// Space: O(n × m)
+        ///
+        /// Joins a sequence of arrays along a new dimension. All input arrays must have
+        /// identical shapes. The new dimension is inserted at position `axis`.
+        ///
+        /// Examples:
+        /// - 3 arrays of shape [2, 3] stacked at axis=0 → [3, 2, 3]
+        /// - 3 arrays of shape [2, 3] stacked at axis=1 → [2, 3, 3]
+        /// - 3 arrays of shape [2, 3] stacked at axis=2 → [2, 3, 3]
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for result array
+        /// - arrays: Slice of array pointers to stack (all must have identical shapes)
+        /// - axis: Position to insert new dimension (0 to ndim inclusive)
+        /// - layout: Memory layout for result array
+        ///
+        /// Returns: NDArray(T, ndim+1) with shape [...shape[:axis], n, ...shape[axis:]]
+        /// Errors: EmptyArray, IndexOutOfBounds, ShapeMismatch
+        pub fn stack(allocator: Allocator, arrays: []const *const Self, axis: usize, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+            if (arrays.len == 0) {
+                return Error.EmptyArray;
+            }
+            if (axis > ndim) {
+                return Error.IndexOutOfBounds;
+            }
+
+            // Validate all arrays have identical shapes
+            const first = arrays[0];
+            for (arrays[1..]) |arr| {
+                for (0..ndim) |i| {
+                    if (arr.shape[i] != first.shape[i]) {
+                        return Error.ShapeMismatch;
+                    }
+                }
+            }
+
+            // Build result shape: [...shape[:axis], n, ...shape[axis:]]
+            var result_shape: [ndim + 1]usize = undefined;
+            for (0..axis) |i| {
+                result_shape[i] = first.shape[i];
+            }
+            result_shape[axis] = arrays.len;
+            for (axis..ndim) |i| {
+                result_shape[i + 1] = first.shape[i];
+            }
+
+            // Create result array
+            const ResultType = NDArray(T, ndim + 1);
+            var result = try ResultType.init(allocator, &result_shape, layout);
+            errdefer result.deinit();
+
+            // Copy each input array to the appropriate slice of result
+            for (arrays, 0..) |arr, arr_idx| {
+                try copyArrayToStack(T, ndim, &result, arr, axis, arr_idx);
+            }
+
+            return result;
+        }
     };
+}
+
+/// Helper to copy array to stacked result during stack operation
+fn copyArrayToStack(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim + 1), src: *const NDArray(T, ndim), axis: usize, stack_index: usize) !void {
+    // Iterate through all elements of source array using multi-dimensional indices
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Get value from source at current indices
+        var src_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            src_indices[i] = @as(isize, @intCast(idx));
+        }
+        const val = try src.get(&src_indices);
+
+        // Calculate destination indices with new dimension inserted at axis
+        var dest_indices: [ndim + 1]isize = undefined;
+        for (0..axis) |i| {
+            dest_indices[i] = @as(isize, @intCast(indices[i]));
+        }
+        dest_indices[axis] = @as(isize, @intCast(stack_index));
+        for (axis..ndim) |i| {
+            dest_indices[i + 1] = @as(isize, @intCast(indices[i]));
+        }
+
+        // Set value in destination
+        dest.set(&dest_indices, val);
+
+        // Increment multi-dimensional index (row-major order: rightmost varies fastest)
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= src.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
 }
 
 /// Helper to copy array segment during concatenation
@@ -9962,6 +10071,363 @@ test "ndarray: concat() validates result with validate()" {
     defer b.deinit();
 
     var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try result.validate();
+}
+
+// ============================================================================
+// Stack Operation Tests
+// ============================================================================
+
+test "ndarray: stack() 2D arrays [2,3] at axis 0 → [3,2,3]" {
+    const allocator = testing.allocator;
+
+    // Create 3 arrays of shape [2, 3]
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+    var c = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 13, 14, 15, 16, 17, 18 }, .row_major);
+    defer c.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b, &c }, 0, .row_major);
+    defer result.deinit();
+
+    // Check shape: [3, 2, 3]
+    try testing.expectEqual(3, result.shape[0]);
+    try testing.expectEqual(2, result.shape[1]);
+    try testing.expectEqual(3, result.shape[2]);
+    try testing.expectEqual(18, result.count());
+}
+
+test "ndarray: stack() 2D arrays [2,3] at axis 1 → [2,3,3]" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+    var c = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 13, 14, 15, 16, 17, 18 }, .row_major);
+    defer c.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b, &c }, 1, .row_major);
+    defer result.deinit();
+
+    // Check shape: [2, 3, 3]
+    try testing.expectEqual(2, result.shape[0]);
+    try testing.expectEqual(3, result.shape[1]);
+    try testing.expectEqual(3, result.shape[2]);
+    try testing.expectEqual(18, result.count());
+}
+
+test "ndarray: stack() 2D arrays [2,3] at axis 2 → [2,3,3]" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+    var c = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 13, 14, 15, 16, 17, 18 }, .row_major);
+    defer c.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b, &c }, 2, .row_major);
+    defer result.deinit();
+
+    // Check shape: [2, 3, 3]
+    try testing.expectEqual(2, result.shape[0]);
+    try testing.expectEqual(3, result.shape[1]);
+    try testing.expectEqual(3, result.shape[2]);
+    try testing.expectEqual(18, result.count());
+}
+
+test "ndarray: stack() 1D vectors [4] at axis 0 → [2,4]" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 1).stack(allocator, &[_]*const NDArray(f64, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    // Check shape: [2, 4]
+    try testing.expectEqual(2, result.shape[0]);
+    try testing.expectEqual(4, result.shape[1]);
+    try testing.expectEqual(8, result.count());
+}
+
+test "ndarray: stack() 1D vectors [4] at axis 1 → [4,2]" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 1).stack(allocator, &[_]*const NDArray(f64, 1){ &a, &b }, 1, .row_major);
+    defer result.deinit();
+
+    // Check shape: [4, 2]
+    try testing.expectEqual(4, result.shape[0]);
+    try testing.expectEqual(2, result.shape[1]);
+    try testing.expectEqual(8, result.count());
+}
+
+test "ndarray: stack() single array [2,3] at axis 0 → [1,2,3]" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){&a}, 0, .row_major);
+    defer result.deinit();
+
+    // Check shape: [1, 2, 3]
+    try testing.expectEqual(1, result.shape[0]);
+    try testing.expectEqual(2, result.shape[1]);
+    try testing.expectEqual(3, result.shape[2]);
+    try testing.expectEqual(6, result.count());
+}
+
+test "ndarray: stack() empty array list returns EmptyArray error" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+
+    const result = NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){}, 0, .row_major);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "ndarray: stack() axis > ndim returns IndexOutOfBounds error" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+
+    const result = NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 3, .row_major);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "ndarray: stack() mismatched shapes returns ShapeMismatch error" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    // Shape [2, 4] instead of [2, 3]
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{ 7, 8, 9, 10, 11, 12, 13, 14 }, .row_major);
+    defer b.deinit();
+
+    const result = NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "ndarray: stack() single element arrays [1] at axis 0 → [2,1]" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{1}, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{2}, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 1).stack(allocator, &[_]*const NDArray(f64, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(2, result.shape[0]);
+    try testing.expectEqual(1, result.shape[1]);
+}
+
+test "ndarray: stack() large array count (10 arrays)" {
+    const allocator = testing.allocator;
+
+    var arrays: [10]*const NDArray(f64, 1) = undefined;
+    var allocated: [10]NDArray(f64, 1) = undefined;
+
+    // Create 10 arrays
+    for (0..10) |i| {
+        allocated[i] = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ @as(f64, @floatFromInt(i * 3 + 1)), @as(f64, @floatFromInt(i * 3 + 2)), @as(f64, @floatFromInt(i * 3 + 3)) }, .row_major);
+        arrays[i] = &allocated[i];
+    }
+    defer {
+        for (&allocated) |*arr| {
+            arr.deinit();
+        }
+    }
+
+    var result = try NDArray(f64, 1).stack(allocator, arrays[0..], 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(10, result.shape[0]);
+    try testing.expectEqual(3, result.shape[1]);
+    try testing.expectEqual(30, result.count());
+}
+
+test "ndarray: stack() data correctness - axis 0" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    // Verify first array's data at result[0, :, :]
+    try testing.expectEqual(@as(f64, 1), try result.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try result.get(&[_]isize{ 0, 0, 1 }));
+    try testing.expectEqual(@as(f64, 3), try result.get(&[_]isize{ 0, 1, 0 }));
+    try testing.expectEqual(@as(f64, 4), try result.get(&[_]isize{ 0, 1, 1 }));
+
+    // Verify second array's data at result[1, :, :]
+    try testing.expectEqual(@as(f64, 5), try result.get(&[_]isize{ 1, 0, 0 }));
+    try testing.expectEqual(@as(f64, 6), try result.get(&[_]isize{ 1, 0, 1 }));
+    try testing.expectEqual(@as(f64, 7), try result.get(&[_]isize{ 1, 1, 0 }));
+    try testing.expectEqual(@as(f64, 8), try result.get(&[_]isize{ 1, 1, 1 }));
+}
+
+test "ndarray: stack() data correctness - axis 1" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 1, .row_major);
+    defer result.deinit();
+
+    // Verify first array's data at result[:, 0, :]
+    try testing.expectEqual(@as(f64, 1), try result.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try result.get(&[_]isize{ 0, 0, 1 }));
+    try testing.expectEqual(@as(f64, 3), try result.get(&[_]isize{ 1, 0, 0 }));
+    try testing.expectEqual(@as(f64, 4), try result.get(&[_]isize{ 1, 0, 1 }));
+
+    // Verify second array's data at result[:, 1, :]
+    try testing.expectEqual(@as(f64, 5), try result.get(&[_]isize{ 0, 1, 0 }));
+    try testing.expectEqual(@as(f64, 6), try result.get(&[_]isize{ 0, 1, 1 }));
+    try testing.expectEqual(@as(f64, 7), try result.get(&[_]isize{ 1, 1, 0 }));
+    try testing.expectEqual(@as(f64, 8), try result.get(&[_]isize{ 1, 1, 1 }));
+}
+
+test "ndarray: stack() data correctness - axis 2" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 2, .row_major);
+    defer result.deinit();
+
+    // Verify first array's data at result[:, :, 0]
+    try testing.expectEqual(@as(f64, 1), try result.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try result.get(&[_]isize{ 0, 1, 0 }));
+    try testing.expectEqual(@as(f64, 3), try result.get(&[_]isize{ 1, 0, 0 }));
+    try testing.expectEqual(@as(f64, 4), try result.get(&[_]isize{ 1, 1, 0 }));
+
+    // Verify second array's data at result[:, :, 1]
+    try testing.expectEqual(@as(f64, 5), try result.get(&[_]isize{ 0, 0, 1 }));
+    try testing.expectEqual(@as(f64, 6), try result.get(&[_]isize{ 0, 1, 1 }));
+    try testing.expectEqual(@as(f64, 7), try result.get(&[_]isize{ 1, 0, 1 }));
+    try testing.expectEqual(@as(f64, 8), try result.get(&[_]isize{ 1, 1, 1 }));
+}
+
+test "ndarray: stack() type variant - i32 arrays" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &[_]i32{ 10, 20, 30 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &[_]i32{ 40, 50, 60 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(i32, 1).stack(allocator, &[_]*const NDArray(i32, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 10), try result.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 40), try result.get(&[_]isize{ 1, 0 }));
+}
+
+test "ndarray: stack() type variant - u8 arrays" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{3}, &[_]u8{ 65, 66, 67 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{3}, &[_]u8{ 68, 69, 70 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(u8, 1).stack(allocator, &[_]*const NDArray(u8, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(u8, 65), try result.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(u8, 68), try result.get(&[_]isize{ 1, 0 }));
+}
+
+test "ndarray: stack() row-major layout preserved" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(.row_major, result.layout);
+    // Verify strides are consistent with row-major layout [2,2,3]
+    try testing.expectEqual(6, result.strides[0]); // 2 * 3
+    try testing.expectEqual(3, result.strides[1]); // 3
+    try testing.expectEqual(1, result.strides[2]); // 1
+}
+
+test "ndarray: stack() column-major layout preserved" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .column_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .column_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .column_major);
+    defer result.deinit();
+
+    try testing.expectEqual(.column_major, result.layout);
+}
+
+test "ndarray: stack() memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+        defer a.deinit();
+        var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+        defer b.deinit();
+
+        var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+        defer result.deinit();
+
+        try testing.expectEqual(2, result.shape[0]);
+        try testing.expectEqual(2, result.shape[1]);
+        try testing.expectEqual(2, result.shape[2]);
+    }
+}
+
+test "ndarray: stack() validates result with validate()" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
     defer result.deinit();
 
     try result.validate();
