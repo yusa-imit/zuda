@@ -2694,7 +2694,114 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .owned = false, // View shares data
             };
         }
+
+        /// Concatenate multiple arrays along an existing axis
+        ///
+        /// Joins a sequence of arrays along the specified axis. All arrays must have
+        /// the same shape except along the concatenation axis.
+        ///
+        /// Time: O(n) where n = total elements in result
+        /// Space: O(n) - allocates new array
+        ///
+        /// Errors:
+        /// - IndexOutOfBounds: if axis >= ndim
+        /// - ShapeMismatch: if arrays have incompatible shapes
+        /// - EmptyArray: if arrays slice is empty
+        ///
+        /// Example:
+        /// ```zig
+        /// var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{1,2,3,4,5,6}, .row_major);
+        /// var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{7,8,9,10,11,12}, .row_major);
+        /// var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){&a, &b}, 0, .row_major);
+        /// // result shape: [4, 3] (concatenated along axis 0)
+        /// ```
+        pub fn concat(allocator: Allocator, arrays: []const *const Self, axis: usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+            if (arrays.len == 0) {
+                return Error.EmptyArray;
+            }
+            if (axis >= ndim) {
+                return Error.IndexOutOfBounds;
+            }
+
+            // Validate all arrays have compatible shapes
+            const first = arrays[0];
+            var total_concat_size: usize = first.shape[axis];
+
+            for (arrays[1..]) |arr| {
+                // Check all dimensions except concat axis match
+                for (0..ndim) |i| {
+                    if (i != axis and arr.shape[i] != first.shape[i]) {
+                        return Error.ShapeMismatch;
+                    }
+                }
+                total_concat_size += arr.shape[axis];
+            }
+
+            // Build result shape
+            var result_shape: [ndim]usize = first.shape;
+            result_shape[axis] = total_concat_size;
+
+            // Create result array
+            var result = try Self.init(allocator, &result_shape, layout);
+            errdefer result.deinit();
+
+            // Element-by-element copy with proper indexing
+            var concat_offset: usize = 0;
+            for (arrays) |arr| {
+                try copyArraySegment(T, ndim, &result, arr, axis, concat_offset);
+                concat_offset += arr.shape[axis];
+            }
+
+            return result;
+        }
     };
+}
+
+/// Helper to copy array segment during concatenation
+fn copyArraySegment(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), axis: usize, offset: usize) !void {
+    // Iterate through all elements of source array using multi-dimensional indices
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Get value from source at current indices
+        var src_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            src_indices[i] = @as(isize, @intCast(idx));
+        }
+        const val = try src.get(&src_indices);
+
+        // Calculate destination indices (same except shifted along concat axis)
+        var dest_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            if (i == axis) {
+                dest_indices[i] = @as(isize, @intCast(idx + offset));
+            } else {
+                dest_indices[i] = @as(isize, @intCast(idx));
+            }
+        }
+
+        // Set value in destination
+        dest.set(&dest_indices, val);
+
+        // Increment multi-dimensional index (row-major order: rightmost varies fastest)
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= src.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
 }
 
 // ============================================================================
@@ -9561,4 +9668,301 @@ test "ndarray: unsqueeze column-major layout preserved" {
 
     try testing.expectEqual(.column_major, unsqueezed.layout);
     try testing.expectEqual(2, unsqueezed.rank());
+}
+
+// -- concat() Concatenation Tests (20 tests) --
+
+test "ndarray: concat() 1D arrays simple case" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 4, 5 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 1).concat(allocator, &[_]*const NDArray(f64, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(5, result.count());
+    try testing.expectEqual(5, result.shape[0]);
+    try testing.expectEqual(1.0, try result.get(&.{0}));
+    try testing.expectEqual(2.0, try result.get(&.{1}));
+    try testing.expectEqual(3.0, try result.get(&.{2}));
+    try testing.expectEqual(4.0, try result.get(&.{3}));
+    try testing.expectEqual(5.0, try result.get(&.{4}));
+}
+
+test "ndarray: concat() 2D arrays along axis 0 (rows)" {
+    const allocator = testing.allocator;
+
+    // [2, 3] arrays
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(12, result.count());
+    try testing.expectEqual(4, result.shape[0]); // 2 + 2 rows
+    try testing.expectEqual(3, result.shape[1]);
+
+    // Verify values
+    try testing.expectEqual(1.0, try result.get(&.{ 0, 0 }));
+    try testing.expectEqual(6.0, try result.get(&.{ 1, 2 }));
+    try testing.expectEqual(7.0, try result.get(&.{ 2, 0 }));
+    try testing.expectEqual(12.0, try result.get(&.{ 3, 2 }));
+}
+
+test "ndarray: concat() 2D arrays along axis 1 (columns)" {
+    const allocator = testing.allocator;
+
+    // [2, 3] arrays
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 7, 8, 9, 10 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 1, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(10, result.count());
+    try testing.expectEqual(2, result.shape[0]);
+    try testing.expectEqual(5, result.shape[1]); // 3 + 2 columns
+
+    // Verify first row: [1, 2, 3, 7, 8]
+    try testing.expectEqual(1.0, try result.get(&.{ 0, 0 }));
+    try testing.expectEqual(3.0, try result.get(&.{ 0, 2 }));
+    try testing.expectEqual(7.0, try result.get(&.{ 0, 3 }));
+    try testing.expectEqual(8.0, try result.get(&.{ 0, 4 }));
+}
+
+test "ndarray: concat() three arrays" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 3, 4, 5 }, .row_major);
+    defer b.deinit();
+    var c = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{6}, .row_major);
+    defer c.deinit();
+
+    var result = try NDArray(f64, 1).concat(allocator, &[_]*const NDArray(f64, 1){ &a, &b, &c }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(6, result.count());
+    try testing.expectEqual(1.0, try result.get(&.{0}));
+    try testing.expectEqual(4.0, try result.get(&.{3}));
+    try testing.expectEqual(6.0, try result.get(&.{5}));
+}
+
+test "ndarray: concat() 3D arrays" {
+    const allocator = testing.allocator;
+
+    // [2, 2, 2] arrays
+    var a = try NDArray(f64, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 3).fromSlice(allocator, &[_]usize{ 1, 2, 2 }, &[_]f64{ 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 3).concat(allocator, &[_]*const NDArray(f64, 3){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(12, result.count());
+    try testing.expectEqual(3, result.shape[0]); // 2 + 1
+    try testing.expectEqual(2, result.shape[1]);
+    try testing.expectEqual(2, result.shape[2]);
+}
+
+test "ndarray: concat() empty arrays slice returns error" {
+    const allocator = testing.allocator;
+    const arrays: []const *const NDArray(f64, 1) = &[_]*const NDArray(f64, 1){};
+
+    const result = NDArray(f64, 1).concat(allocator, arrays, 0, .row_major);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "ndarray: concat() axis out of bounds" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a.deinit();
+
+    const result = NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){&a}, 2, .row_major);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "ndarray: concat() shape mismatch error" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &[_]f64{ 7, 8, 9, 10, 11, 12, 13, 14 }, .row_major);
+    defer b.deinit();
+
+    // Trying to concat along axis 0, but axis 1 sizes differ (3 vs 4)
+    const result = NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "ndarray: concat() single array (identity)" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a.deinit();
+
+    var result = try NDArray(f64, 1).concat(allocator, &[_]*const NDArray(f64, 1){&a}, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(3, result.count());
+    try testing.expectEqual(1.0, try result.get(&.{0}));
+    try testing.expectEqual(3.0, try result.get(&.{2}));
+}
+
+test "ndarray: concat() with i32 type" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &[_]i32{ 10, 20 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &[_]i32{ 30, 40 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(i32, 1).concat(allocator, &[_]*const NDArray(i32, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(4, result.count());
+    try testing.expectEqual(@as(i32, 10), try result.get(&.{0}));
+    try testing.expectEqual(@as(i32, 40), try result.get(&.{3}));
+}
+
+test "ndarray: concat() column-major layout" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .column_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .column_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .column_major);
+    defer result.deinit();
+
+    try testing.expectEqual(.column_major, result.layout);
+    try testing.expectEqual(4, result.shape[0]); // 2 + 2
+    try testing.expectEqual(2, result.shape[1]);
+}
+
+test "ndarray: concat() preserves data correctness for large arrays" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 1).arange(allocator, 0, 50, 1, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 1).arange(allocator, 50, 100, 1, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 1).concat(allocator, &[_]*const NDArray(f64, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(100, result.count());
+    try testing.expectEqual(0.0, try result.get(&.{0}));
+    try testing.expectEqual(49.0, try result.get(&.{49}));
+    try testing.expectEqual(50.0, try result.get(&.{50}));
+    try testing.expectEqual(99.0, try result.get(&.{99}));
+}
+
+test "ndarray: concat() 2D different sizes along concat axis" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 3 }, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 4, 5, 6, 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(4, result.shape[0]); // 1 + 3
+    try testing.expectEqual(3, result.shape[1]);
+    try testing.expectEqual(12, result.count());
+}
+
+test "ndarray: concat() u8 type (byte arrays)" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{3}, &[_]u8{ 65, 66, 67 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{2}, &[_]u8{ 68, 69 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(u8, 1).concat(allocator, &[_]*const NDArray(u8, 1){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(5, result.count());
+    try testing.expectEqual(@as(u8, 65), try result.get(&.{0}));
+    try testing.expectEqual(@as(u8, 69), try result.get(&.{4}));
+}
+
+test "ndarray: concat() memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 4, 5 }, .row_major);
+        defer a.deinit();
+        var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 6, 7, 8, 9, 10 }, .row_major);
+        defer b.deinit();
+
+        var result = try NDArray(f64, 1).concat(allocator, &[_]*const NDArray(f64, 1){ &a, &b }, 0, .row_major);
+        defer result.deinit();
+
+        try testing.expectEqual(10, result.count());
+    }
+}
+
+test "ndarray: concat() axis 2 for 3D arrays" {
+    const allocator = testing.allocator;
+
+    // [2, 2, 2] and [2, 2, 1]
+    var a = try NDArray(f64, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 3).fromSlice(allocator, &[_]usize{ 2, 2, 1 }, &[_]f64{ 9, 10, 11, 12 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 3).concat(allocator, &[_]*const NDArray(f64, 3){ &a, &b }, 2, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(2, result.shape[0]);
+    try testing.expectEqual(2, result.shape[1]);
+    try testing.expectEqual(3, result.shape[2]); // 2 + 1
+    try testing.expectEqual(12, result.count());
+}
+
+test "ndarray: concat() result has correct strides" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 3 }, &[_]f64{ 7, 8, 9 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    // Row-major strides for [3, 3] should be [3, 1]
+    try testing.expectEqual(3, result.strides[0]);
+    try testing.expectEqual(1, result.strides[1]);
+}
+
+test "ndarray: concat() validates result with validate()" {
+    const allocator = testing.allocator;
+
+    var a = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer a.deinit();
+    var b = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer b.deinit();
+
+    var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try result.validate();
 }
