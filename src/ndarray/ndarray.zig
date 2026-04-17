@@ -1467,6 +1467,136 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             };
         }
 
+        // -- Rounding Functions (floating-point types) --
+
+        /// Element-wise floor - rounds each element down to nearest integer
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn floor(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: floor only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("floor() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute floor of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = @floor(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Element-wise ceil - rounds each element up to nearest integer
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn ceil(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: ceil only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("ceil() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute ceil of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = @ceil(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Element-wise round - rounds each element to nearest integer (half away from zero)
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn round(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: round only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("round() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute round of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = @round(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
+        /// Element-wise trunc - truncates each element toward zero (removes fractional part)
+        ///
+        /// Time: O(n) | Space: O(n) for result allocation
+        pub fn trunc(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            // Compile-time check: trunc only works on float types
+            if (@typeInfo(T) != .float) {
+                @compileError("trunc() is only defined for floating-point types");
+            }
+
+            // Allocate new buffer for result
+            const total = self.count();
+            const result_data = try self.allocator.alloc(T, total);
+            errdefer self.allocator.free(result_data);
+
+            // Traverse array and compute trunc of each element
+            var iter = self.iterator();
+            var idx: usize = 0;
+            while (iter.next()) |val| {
+                result_data[idx] = @trunc(val);
+                idx += 1;
+            }
+
+            return Self{
+                .shape = self.shape,
+                .strides = self.strides,
+                .data = result_data,
+                .allocator = self.allocator,
+                .layout = self.layout,
+                .owned = true,
+            };
+        }
+
         // -- Trigonometric Functions (floating-point types) --
 
         /// Element-wise sine: sin(x) for each element
@@ -6159,6 +6289,162 @@ test "ndarray: pow with fractional exponent" {
     try testing.expectEqual(2.0, result.data[0]); // 4^0.5 = 2
     try testing.expectEqual(3.0, result.data[1]); // 9^0.5 = 3
     try testing.expectEqual(4.0, result.data[2]); // 16^0.5 = 4
+}
+
+test "ndarray: floor 1D array rounding down" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 2.3;
+    a.data[1] = 2.7;
+    a.data[2] = -2.3;
+    a.data[3] = -2.7;
+    a.data[4] = 5.0;
+    a.data[5] = 0.0;
+
+    var result = try a.floor();
+    defer result.deinit();
+
+    try testing.expectEqual(2.0, result.data[0]);  // floor(2.3) = 2
+    try testing.expectEqual(2.0, result.data[1]);  // floor(2.7) = 2
+    try testing.expectEqual(-3.0, result.data[2]); // floor(-2.3) = -3
+    try testing.expectEqual(-3.0, result.data[3]); // floor(-2.7) = -3
+    try testing.expectEqual(5.0, result.data[4]);  // floor(5.0) = 5
+    try testing.expectEqual(0.0, result.data[5]);  // floor(0.0) = 0
+}
+
+test "ndarray: ceil 1D array rounding up" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 2.3;
+    a.data[1] = 2.7;
+    a.data[2] = -2.3;
+    a.data[3] = -2.7;
+    a.data[4] = 5.0;
+    a.data[5] = 0.0;
+
+    var result = try a.ceil();
+    defer result.deinit();
+
+    try testing.expectEqual(3.0, result.data[0]);  // ceil(2.3) = 3
+    try testing.expectEqual(3.0, result.data[1]);  // ceil(2.7) = 3
+    try testing.expectEqual(-2.0, result.data[2]); // ceil(-2.3) = -2
+    try testing.expectEqual(-2.0, result.data[3]); // ceil(-2.7) = -2
+    try testing.expectEqual(5.0, result.data[4]);  // ceil(5.0) = 5
+    try testing.expectEqual(0.0, result.data[5]);  // ceil(0.0) = 0
+}
+
+test "ndarray: round 1D array rounding to nearest" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{8}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 2.3;
+    a.data[1] = 2.7;
+    a.data[2] = -2.3;
+    a.data[3] = -2.7;
+    a.data[4] = 2.5;   // round half away from zero: rounds to 3
+    a.data[5] = 3.5;   // round half away from zero: rounds to 4
+    a.data[6] = 5.0;
+    a.data[7] = 0.0;
+
+    var result = try a.round();
+    defer result.deinit();
+
+    try testing.expectEqual(2.0, result.data[0]);  // round(2.3) = 2
+    try testing.expectEqual(3.0, result.data[1]);  // round(2.7) = 3
+    try testing.expectEqual(-2.0, result.data[2]); // round(-2.3) = -2
+    try testing.expectEqual(-3.0, result.data[3]); // round(-2.7) = -3
+    try testing.expectEqual(3.0, result.data[4]);  // round(2.5) = 3 (away from zero)
+    try testing.expectEqual(4.0, result.data[5]);  // round(3.5) = 4 (away from zero)
+    try testing.expectEqual(5.0, result.data[6]);  // round(5.0) = 5
+    try testing.expectEqual(0.0, result.data[7]);  // round(0.0) = 0
+}
+
+test "ndarray: trunc 1D array truncating toward zero" {
+    const allocator = testing.allocator;
+    var a = try NDArray(f64, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer a.deinit();
+
+    a.data[0] = 2.3;
+    a.data[1] = 2.7;
+    a.data[2] = -2.3;
+    a.data[3] = -2.7;
+    a.data[4] = 5.0;
+    a.data[5] = 0.0;
+
+    var result = try a.trunc();
+    defer result.deinit();
+
+    try testing.expectEqual(2.0, result.data[0]);  // trunc(2.3) = 2
+    try testing.expectEqual(2.0, result.data[1]);  // trunc(2.7) = 2
+    try testing.expectEqual(-2.0, result.data[2]); // trunc(-2.3) = -2
+    try testing.expectEqual(-2.0, result.data[3]); // trunc(-2.7) = -2
+    try testing.expectEqual(5.0, result.data[4]);  // trunc(5.0) = 5
+    try testing.expectEqual(0.0, result.data[5]);  // trunc(0.0) = 0
+}
+
+test "ndarray: floor 2D array with memory safety" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) + 0.7;
+        }
+
+        var result = try a.floor();
+        defer result.deinit();
+
+        try testing.expect(result.shape[0] == 2);
+        try testing.expect(result.shape[1] == 3);
+    }
+}
+
+test "ndarray: ceil 2D array with memory safety" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) + 0.3;
+        }
+
+        var result = try a.ceil();
+        defer result.deinit();
+
+        try testing.expect(result.shape[0] == 2);
+        try testing.expect(result.shape[1] == 3);
+    }
+}
+
+test "ndarray: trunc 2D array with memory safety" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+        defer a.deinit();
+
+        for (a.data, 0..) |*val, idx| {
+            val.* = @as(f64, @floatFromInt(idx)) + 0.5 - 1.5;
+        }
+
+        var result = try a.trunc();
+        defer result.deinit();
+
+        try testing.expect(result.shape[0] == 2);
+        try testing.expect(result.shape[1] == 3);
+    }
 }
 
 test "ndarray: sin 1D array sine" {
