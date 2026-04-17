@@ -1,4 +1,48 @@
-## Latest Session (Session 376, 2026-04-17) — FEATURE MODE
+## Latest Session (Session 381, 2026-04-17) — FEATURE MODE
+- Array Concatenation Implementation: 18 tests, fundamental NDArray operation
+- Module: ndarray/ndarray.zig
+- Function: concat() — join arrays along existing axis
+- Features:
+  * concat(allocator, arrays, axis, layout): Concatenate multiple arrays - O(n) time, O(n) space
+  * Compatible shape validation (all dimensions except concat axis must match)
+  * Works with any axis (0 to ndim-1)
+  * Type-generic: works with all numeric types (f64, i32, u8)
+  * Layout support: both row-major and column-major
+  * Error handling: EmptyArray, IndexOutOfBounds, ShapeMismatch
+- Algorithm: Element-by-element copy with proper multi-dimensional indexing
+  * Helper function computeIndices() maps flat index to multi-dimensional indices
+  * Iterate through source elements, map to destination with offset along concat axis
+  * Handles arbitrary dimensions and layouts correctly
+- Use cases: Data preprocessing (combining batches), model inference (feature concatenation), tensor building
+- Tests (18 scenarios):
+  * 1D/2D/3D concatenation
+  * Axis 0 (rows), axis 1 (columns), axis 2 (depth)
+  * Multiple arrays (2-3 arrays)
+  * Shape mismatch detection
+  * Empty array error, axis bounds
+  * Type variants (f64, i32, u8)
+  * Layout preservation (row-major, column-major)
+  * Large arrays (100 elements)
+  * Stride verification
+  * validate() integration
+  * Memory safety (10 iterations)
+- Implementation notes:
+  * Initial memcpy optimization removed - element-wise copy ensures correctness for all axes
+  * copyArraySegment() helper uses multi-dimensional index iteration
+  * Debugging: fixed axis=ndim-1 memcpy bug that broke axis 1 concatenation
+- NDArray tests: 361/361 passing (18 new concat tests)
+- Phase 6 progress: matmul ✓, squeeze/unsqueeze ✓, concat ✓, next: stack or split
+- Commits: 827a19f (concat)
+
+## Previous Session (Session 380, 2026-04-17) — STABILIZATION MODE
+
+## Previous Session (Session 379, 2026-04-17) — FEATURE MODE
+
+## Previous Session (Session 378, 2026-04-17) — FEATURE MODE
+
+## Previous Session (Session 377, 2026-04-17) — FEATURE MODE
+
+## Previous Session (Session 376, 2026-04-17) — FEATURE MODE
 - Smith-Waterman Local Sequence Alignment Implementation: 18 tests, bioinformatics algorithm
 - Module: algorithms/string/smith_waterman.zig
 - Functions:
