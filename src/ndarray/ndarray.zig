@@ -2255,6 +2255,38 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
         };
 
+        /// Parse string value to target type
+        ///
+        /// Helper function for CSV parsing. Converts string to numeric type.
+        ///
+        /// Parameters:
+        /// - comptime Type: Target type (i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool)
+        /// - str: String to parse
+        ///
+        /// Returns: Parsed value of Type
+        ///
+        /// Errors:
+        /// - error.InvalidFormat if string cannot be parsed as Type
+        fn parseValue(comptime Type: type, str: []const u8) !Type {
+            if (str.len == 0) return error.InvalidFormat;
+
+            const type_info = @typeInfo(Type);
+            if (type_info == .int) {
+                return std.fmt.parseInt(Type, str, 10) catch return error.InvalidFormat;
+            } else if (type_info == .float) {
+                return std.fmt.parseFloat(Type, str) catch return error.InvalidFormat;
+            } else if (type_info == .bool) {
+                if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1")) {
+                    return true;
+                } else if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0")) {
+                    return false;
+                }
+                return error.InvalidFormat;
+            } else {
+                @compileError("Unsupported type for CSV parsing");
+            }
+        }
+
         /// Save NDArray to binary file
         ///
         /// Binary format:
@@ -2405,6 +2437,162 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .layout = layout,
                             .owned = true,
             };
+        }
+
+        /// Save NDArray to CSV file (2D arrays only)
+        ///
+        /// Writes array elements as comma-separated values with one row per line.
+        /// Only works for 2D arrays. Use delimiter parameter to customize separator.
+        ///
+        /// Parameters:
+        /// - path: File path to write CSV
+        /// - delimiter: Character to separate values (default: ',')
+        ///
+        /// Errors:
+        /// - error.DimensionMismatch if ndim != 2
+        /// - File system errors
+        ///
+        /// Time: O(rows × cols) | Space: O(1) streaming write
+        pub fn toCSV(self: *const Self, path: []const u8, delimiter: u8) !void {
+            // Only 2D arrays can be saved as CSV
+            if (ndim != 2) {
+                return error.DimensionMismatch;
+            }
+
+            const file = try std.fs.cwd().createFile(path, .{});
+            defer file.close();
+
+            const rows = self.shape[0];
+            const cols = self.shape[1];
+
+            var buf: [4096]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&buf);
+            const writer = fbs.writer();
+
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    const val = try self.get(&[_]isize{ @intCast(r), @intCast(c) });
+
+                    // Format value based on type
+                    const type_info = @typeInfo(T);
+                    if (type_info == .int) {
+                        try writer.print("{d}", .{val});
+                    } else if (type_info == .float) {
+                        try writer.print("{d:.10}", .{val});
+                    } else {
+                        try writer.print("{any}", .{val});
+                    }
+
+                    // Add delimiter between columns (but not after last column)
+                    if (c < cols - 1) {
+                        try writer.writeByte(delimiter);
+                    }
+                }
+                try writer.writeByte('\n');
+
+                // Flush buffer when it gets reasonably full
+                if (fbs.pos > 3000) {
+                    _ = try file.write(fbs.getWritten());
+                    fbs.reset();
+                }
+            }
+
+            // Flush remaining data
+            if (fbs.pos > 0) {
+                _ = try file.write(fbs.getWritten());
+            }
+        }
+
+        /// Load 2D NDArray from CSV file
+        ///
+        /// Reads comma-separated values from file and creates a 2D array.
+        /// Automatically detects number of rows and columns.
+        /// Supports custom delimiters (default: ',').
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for data
+        /// - path: File path to read CSV
+        /// - delimiter: Character separating values (default: ',')
+        ///
+        /// Returns: 2D NDArray with parsed data
+        ///
+        /// Errors:
+        /// - error.DimensionMismatch if ndim != 2
+        /// - error.InvalidFormat if parsing fails
+        /// - error.EmptyArray if file is empty
+        ///
+        /// Time: O(rows × cols) | Space: O(rows × cols)
+        pub fn fromCSV(allocator: std.mem.Allocator, path: []const u8, delimiter: u8) !Self {
+            // Only 2D arrays can be loaded from CSV
+            if (ndim != 2) {
+                return error.DimensionMismatch;
+            }
+
+            const file = try std.fs.cwd().openFile(path, .{});
+            defer file.close();
+
+            // Read entire file into memory
+            const max_size = 100 * 1024 * 1024; // 100 MB limit
+            const contents = try file.readToEndAlloc(allocator, max_size);
+            defer allocator.free(contents);
+
+            if (contents.len == 0) {
+                return error.EmptyArray;
+            }
+
+            // First pass: count rows and columns
+            var row_count: usize = 0;
+            var col_count: usize = 0;
+            var first_row_cols: usize = 0;
+            var in_first_row = true;
+            var current_row_cols: usize = 0;
+
+            var lines = std.mem.splitScalar(u8, contents, '\n');
+            while (lines.next()) |line| {
+                if (line.len == 0) continue; // Skip empty lines
+                row_count += 1;
+
+                var values = std.mem.splitScalar(u8, line, delimiter);
+                current_row_cols = 0;
+                while (values.next()) |_| {
+                    current_row_cols += 1;
+                }
+
+                if (in_first_row) {
+                    first_row_cols = current_row_cols;
+                    col_count = first_row_cols;
+                    in_first_row = false;
+                } else if (current_row_cols != first_row_cols) {
+                    return error.InvalidFormat; // Ragged array
+                }
+            }
+
+            if (row_count == 0 or col_count == 0) {
+                return error.EmptyArray;
+            }
+
+            // Allocate array
+            var result = try Self.init(allocator, &[_]usize{ row_count, col_count }, .row_major);
+            errdefer result.deinit();
+
+            // Second pass: parse values
+            var r: usize = 0;
+            lines = std.mem.splitScalar(u8, contents, '\n');
+            while (lines.next()) |line| {
+                if (line.len == 0) continue;
+
+                var c: usize = 0;
+                var values = std.mem.splitScalar(u8, line, delimiter);
+                while (values.next()) |value_str| {
+                    const trimmed = std.mem.trim(u8, value_str, " \t\r");
+                    const parsed = parseValue(T, trimmed) catch return error.InvalidFormat;
+                    result.set(&[_]isize{ @intCast(r), @intCast(c) }, parsed);
+                    c += 1;
+                }
+                r += 1;
+            }
+
+            return result;
         }
 
         // -- Indexing and Slicing Functions --
@@ -4556,9 +4744,9 @@ test "ndarray: get() retrieves single element from 2D array [2,3]" {
 
     // Row-major [2,3]: [1,2,3 | 4,5,6]
     // Get [0,0] = 1.0, [0,2] = 3.0, [1,1] = 5.0
-    try testing.expectEqual(1.0, arr.get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(3.0, arr.get(&[_]isize{ 0, 2 }));
-    try testing.expectEqual(5.0, arr.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(1.0, arr.get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(3.0, arr.get(&[_]isize{ @intCast(0), @intCast(2) }));
+    try testing.expectEqual(5.0, arr.get(&[_]isize{ @intCast(1), @intCast(1) }));
 }
 
 test "ndarray: get() supports negative indexing (-1 = last element)" {
@@ -4627,10 +4815,10 @@ test "ndarray: set() persists changes across multiple operations" {
     arr.set(&[_]isize{ 1, 0 }, 30.0);
     arr.set(&[_]isize{ 1, 1 }, 40.0);
 
-    try testing.expectEqual(10.0, arr.get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(20.0, arr.get(&[_]isize{ 0, 1 }));
-    try testing.expectEqual(30.0, arr.get(&[_]isize{ 1, 0 }));
-    try testing.expectEqual(40.0, arr.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(10.0, arr.get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(20.0, arr.get(&[_]isize{ @intCast(0), @intCast(1) }));
+    try testing.expectEqual(30.0, arr.get(&[_]isize{ @intCast(1), @intCast(0) }));
+    try testing.expectEqual(40.0, arr.get(&[_]isize{ @intCast(1), @intCast(1) }));
 }
 
 test "ndarray: get() rejects out-of-bounds positive indices" {
@@ -4640,7 +4828,7 @@ test "ndarray: get() rejects out-of-bounds positive indices" {
 
     // Shape [2,3] allows indices [0-1, 0-2]
     // [2,0] is out of bounds (row index too high)
-    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{ 2, 0 }));
+    try testing.expectError(error.IndexOutOfBounds, arr.get(&[_]isize{ @intCast(2), @intCast(0) }));
 }
 
 test "ndarray: get() rejects out-of-bounds negative indices" {
@@ -4789,10 +4977,10 @@ test "ndarray: slice() extracts rectangular subregion [3,4] → [2,2]" {
     try testing.expectEqual(@as(usize, 2), sliced.shape[0]);
     try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
     // Contents: [[6,7], [10,11]]
-    try testing.expectEqual(6.0, sliced.get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(7.0, sliced.get(&[_]isize{ 0, 1 }));
-    try testing.expectEqual(10.0, sliced.get(&[_]isize{ 1, 0 }));
-    try testing.expectEqual(11.0, sliced.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(6.0, sliced.get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(7.0, sliced.get(&[_]isize{ @intCast(0), @intCast(1) }));
+    try testing.expectEqual(10.0, sliced.get(&[_]isize{ @intCast(1), @intCast(0) }));
+    try testing.expectEqual(11.0, sliced.get(&[_]isize{ @intCast(1), @intCast(1) }));
 }
 
 test "ndarray: slice() with null bounds means unbounded dimension" {
@@ -4832,7 +5020,7 @@ test "ndarray: slice() returns view sharing underlying data (non-owning)" {
     arr.set(&[_]isize{ 1, 0 }, 999.0);
 
     // Slice should reflect the change (shares data)
-    try testing.expectEqual(999.0, sliced.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(999.0, sliced.get(&[_]isize{ @intCast(0), @intCast(0) }));
 }
 
 test "ndarray: slice() of 3D array extracts sub-tensor [2,3,4] → [1,3,4]" {
@@ -4872,10 +5060,10 @@ test "ndarray: slice() with negative indices works correctly" {
     try testing.expectEqual(@as(usize, 2), sliced.shape[0]);
     try testing.expectEqual(@as(usize, 2), sliced.shape[1]);
     // Should contain [[7,8], [11,12]]
-    try testing.expectEqual(7.0, sliced.get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(8.0, sliced.get(&[_]isize{ 0, 1 }));
-    try testing.expectEqual(11.0, sliced.get(&[_]isize{ 1, 0 }));
-    try testing.expectEqual(12.0, sliced.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(7.0, sliced.get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(8.0, sliced.get(&[_]isize{ @intCast(0), @intCast(1) }));
+    try testing.expectEqual(11.0, sliced.get(&[_]isize{ @intCast(1), @intCast(0) }));
+    try testing.expectEqual(12.0, sliced.get(&[_]isize{ @intCast(1), @intCast(1) }));
 }
 
 test "ndarray: slice() rejects out-of-bounds ranges" {
@@ -4923,13 +5111,13 @@ test "ndarray: negative 2D indexing wraps correctly" {
     arr.set(&[_]isize{ -1, -1 }, 42.0);
 
     // Verify via positive index
-    try testing.expectEqual(42.0, arr.get(&[_]isize{ 2, 3 }));
+    try testing.expectEqual(42.0, arr.get(&[_]isize{ @intCast(2), @intCast(3) }));
 
     // Set [-2, -3] (second-to-last row, third-to-last col)
     arr.set(&[_]isize{ -2, -3 }, 88.0);
 
     // Verify via positive index
-    try testing.expectEqual(88.0, arr.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(88.0, arr.get(&[_]isize{ @intCast(1), @intCast(1) }));
 }
 
 test "ndarray: slicing with negative bounds extracts tail regions" {
@@ -11439,8 +11627,8 @@ test "ndarray: stack() type variant - i32 arrays" {
     var result = try NDArray(i32, 1).stack(allocator, &[_]*const NDArray(i32, 1){ &a, &b }, 0, .row_major);
     defer result.deinit();
 
-    try testing.expectEqual(@as(i32, 10), try result.get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(i32, 40), try result.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 10), try result.get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(i32, 40), try result.get(&[_]isize{ @intCast(1), @intCast(0) }));
 }
 
 test "ndarray: stack() type variant - u8 arrays" {
@@ -11454,8 +11642,8 @@ test "ndarray: stack() type variant - u8 arrays" {
     var result = try NDArray(u8, 1).stack(allocator, &[_]*const NDArray(u8, 1){ &a, &b }, 0, .row_major);
     defer result.deinit();
 
-    try testing.expectEqual(@as(u8, 65), try result.get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(u8, 68), try result.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(u8, 65), try result.get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(u8, 68), try result.get(&[_]isize{ @intCast(1), @intCast(0) }));
 }
 
 test "ndarray: stack() row-major layout preserved" {
@@ -11547,16 +11735,16 @@ test "ndarray: split() basic 2D along axis=0" {
     try testing.expectEqual(@as(usize, 4), parts[0].shape[1]);
 
     // Verify first part contains rows 0-1
-    try testing.expectEqual(@as(f64, 0), try parts[0].get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(f64, 4), try parts[0].get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 0), try parts[0].get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(f64, 4), try parts[0].get(&[_]isize{ @intCast(1), @intCast(0) }));
 
     // Verify second part contains rows 2-3
-    try testing.expectEqual(@as(f64, 8), try parts[1].get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(f64, 12), try parts[1].get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 8), try parts[1].get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(f64, 12), try parts[1].get(&[_]isize{ @intCast(1), @intCast(0) }));
 
     // Verify third part contains rows 4-5
-    try testing.expectEqual(@as(f64, 16), try parts[2].get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(f64, 20), try parts[2].get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 16), try parts[2].get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(f64, 20), try parts[2].get(&[_]isize{ @intCast(1), @intCast(0) }));
 }
 
 test "ndarray: split() basic 2D along axis=1" {
@@ -11581,12 +11769,12 @@ test "ndarray: split() basic 2D along axis=1" {
     try testing.expectEqual(@as(usize, 3), parts[0].shape[1]);
 
     // Verify first part contains columns 0-2
-    try testing.expectEqual(@as(f64, 0), try parts[0].get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(f64, 2), try parts[0].get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(f64, 0), try parts[0].get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(f64, 2), try parts[0].get(&[_]isize{ @intCast(0), @intCast(2) }));
 
     // Verify second part contains columns 3-5
-    try testing.expectEqual(@as(f64, 3), try parts[1].get(&[_]isize{ 0, 0 }));
-    try testing.expectEqual(@as(f64, 5), try parts[1].get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(f64, 3), try parts[1].get(&[_]isize{ @intCast(0), @intCast(0) }));
+    try testing.expectEqual(@as(f64, 5), try parts[1].get(&[_]isize{ @intCast(0), @intCast(2) }));
 }
 
 test "ndarray: split() 1D array into 4 parts" {
@@ -11852,7 +12040,7 @@ test "ndarray: split() large array stress test" {
     // Verify first and last elements of each part
     for (0..10) |part_idx| {
         const expected_first = @as(f64, @floatFromInt(part_idx * 10 * 50));
-        try testing.expectEqual(expected_first, try parts[part_idx].get(&[_]isize{ 0, 0 }));
+        try testing.expectEqual(expected_first, try parts[part_idx].get(&[_]isize{ @intCast(0), @intCast(0) }));
     }
 }
 
@@ -11881,5 +12069,498 @@ test "ndarray: split() then concat roundtrip" {
         const orig_val = try original.get(&[_]isize{@intCast(i)});
         const recon_val = try reconstructed.get(&[_]isize{@intCast(i)});
         try testing.expectEqual(orig_val, recon_val);
+    }
+}
+
+// -- CSV I/O Tests --
+
+test "ndarray: toCSV() and fromCSV() basic roundtrip f64" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_basic.csv";
+
+    // Create 3x4 matrix
+    var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer original.deinit();
+
+    // Fill with test data
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 1.5);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 2.7);
+    original.set(&[_]isize{ @intCast(0), @intCast(2) }, -3.2);
+    original.set(&[_]isize{ @intCast(0), @intCast(3) }, 4.9);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 5.1);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, -6.8);
+    original.set(&[_]isize{ @intCast(1), @intCast(2) }, 7.3);
+    original.set(&[_]isize{ @intCast(1), @intCast(3) }, 8.0);
+    original.set(&[_]isize{ @intCast(2), @intCast(0) }, -9.4);
+    original.set(&[_]isize{ @intCast(2), @intCast(1) }, 10.6);
+    original.set(&[_]isize{ @intCast(2), @intCast(2) }, 11.2);
+    original.set(&[_]isize{ @intCast(2), @intCast(3) }, -12.7);
+
+    // Save to CSV
+    try original.toCSV(path, ',');
+
+    // Load back
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 3), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 4), loaded.shape[1]);
+
+    // Verify data (with tolerance for float precision)
+    for (0..3) |r| {
+        for (0..4) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
+        }
+    }
+
+    // Cleanup
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() and fromCSV() integer types i32" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_i32.csv";
+
+    var original = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, -100);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 42);
+    original.set(&[_]isize{ @intCast(0), @intCast(2) }, 999);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 0);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, -50);
+    original.set(&[_]isize{ @intCast(1), @intCast(2) }, 123);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 3), loaded.shape[1]);
+
+    for (0..2) |r| {
+        for (0..3) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectEqual(orig_val, loaded_val);
+        }
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() and fromCSV() u8 type" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_u8.csv";
+
+    var original = try NDArray(u8, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 10);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 20);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 30);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, 40);
+    original.set(&[_]isize{ @intCast(2), @intCast(0) }, 50);
+    original.set(&[_]isize{ @intCast(2), @intCast(1) }, 255);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(u8, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    for (0..3) |r| {
+        for (0..2) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectEqual(orig_val, loaded_val);
+        }
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() custom delimiter semicolon" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_semicolon.csv";
+
+    var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 1.1);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 2.2);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 3.3);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, 4.4);
+
+    // Use semicolon as delimiter
+    try original.toCSV(path, ';');
+
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ';');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 2), loaded.shape[1]);
+
+    for (0..2) |r| {
+        for (0..2) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
+        }
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() custom delimiter tab" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_tab.csv";
+
+    var original = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 10);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 20);
+    original.set(&[_]isize{ @intCast(0), @intCast(2) }, 30);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 40);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, 50);
+    original.set(&[_]isize{ @intCast(1), @intCast(2) }, 60);
+
+    // Use tab as delimiter
+    try original.toCSV(path, '\t');
+
+    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, '\t');
+    defer loaded.deinit();
+
+    for (0..2) |r| {
+        for (0..3) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectEqual(orig_val, loaded_val);
+        }
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() single row" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_single_row.csv";
+
+    var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 1, 5 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 1.0);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 2.0);
+    original.set(&[_]isize{ @intCast(0), @intCast(2) }, 3.0);
+    original.set(&[_]isize{ @intCast(0), @intCast(3) }, 4.0);
+    original.set(&[_]isize{ @intCast(0), @intCast(4) }, 5.0);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 1), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 5), loaded.shape[1]);
+
+    for (0..5) |c| {
+        const orig_val = try original.get(&[_]isize{ @intCast(0), @intCast(c) });
+        const loaded_val = try loaded.get(&[_]isize{ @intCast(0), @intCast(c) });
+        try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() single column" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_single_col.csv";
+
+    var original = try NDArray(i32, 2).init(allocator, &[_]usize{ 4, 1 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 10);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 20);
+    original.set(&[_]isize{ @intCast(2), @intCast(0) }, 30);
+    original.set(&[_]isize{ @intCast(3), @intCast(0) }, 40);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 4), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 1), loaded.shape[1]);
+
+    for (0..4) |r| {
+        const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(0) });
+        const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(0) });
+        try testing.expectEqual(orig_val, loaded_val);
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() 1x1 matrix" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_1x1.csv";
+
+    var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 1, 1 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 42.0);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 1), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 1), loaded.shape[1]);
+
+    const orig_val = try original.get(&[_]isize{ @intCast(0), @intCast(0) });
+    const loaded_val = try loaded.get(&[_]isize{ @intCast(0), @intCast(0) });
+    try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() large array (100 rows)" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_large.csv";
+
+    var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 100, 10 }, .row_major);
+    defer original.deinit();
+
+    // Fill with sequential data
+    for (0..100) |r| {
+        for (0..10) |c| {
+            const val: f64 = @floatFromInt(r * 10 + c);
+            original.set(&[_]isize{ @intCast(r), @intCast(c) }, val);
+        }
+    }
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 100), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 10), loaded.shape[1]);
+
+    // Spot check a few values
+    try testing.expectApproxEqAbs(0.0, try loaded.get(&[_]isize{ @intCast(0), @intCast(0) }), 1e-9);
+    try testing.expectApproxEqAbs(99.0, try loaded.get(&[_]isize{ @intCast(9), @intCast(9) }), 1e-9);
+    try testing.expectApproxEqAbs(505.0, try loaded.get(&[_]isize{ @intCast(50), @intCast(5) }), 1e-9);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: fromCSV() handles whitespace trimming" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_whitespace.csv";
+
+    // Create CSV with extra whitespace
+    const csv_content = "  1.5  ,  2.7  ,  3.2  \n  4.1  ,  5.9  ,  6.3  \n";
+    {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+        _ = try file.write(csv_content);
+    }
+
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
+    try testing.expectEqual(@as(usize, 3), loaded.shape[1]);
+
+    try testing.expectApproxEqAbs(1.5, try loaded.get(&[_]isize{ @intCast(0), @intCast(0) }), 1e-9);
+    try testing.expectApproxEqAbs(2.7, try loaded.get(&[_]isize{ @intCast(0), @intCast(1) }), 1e-9);
+    try testing.expectApproxEqAbs(6.3, try loaded.get(&[_]isize{ @intCast(1), @intCast(2) }), 1e-9);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: fromCSV() error on empty file" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_empty.csv";
+
+    {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+        // Write nothing
+    }
+
+    const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
+    try testing.expectError(error.EmptyArray, result);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: fromCSV() error on ragged array (unequal columns)" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_ragged.csv";
+
+    const csv_content = "1,2,3\n4,5\n6,7,8\n";
+    {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+        _ = try file.write(csv_content);
+    }
+
+    const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
+    try testing.expectError(error.InvalidFormat, result);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: fromCSV() error on invalid number format" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_invalid.csv";
+
+    const csv_content = "1.5,abc,3.2\n4.1,5.9,6.3\n";
+    {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+        _ = try file.write(csv_content);
+    }
+
+    const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
+    try testing.expectError(error.InvalidFormat, result);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: toCSV() error on 1D array" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_1d.csv";
+
+    var arr = try NDArray(f64, 1).arange(allocator, 0, 10, 1, .row_major);
+    defer arr.deinit();
+
+    const result = arr.toCSV(path, ',');
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "ndarray: toCSV() error on 3D array" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_3d.csv";
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer arr.deinit();
+
+    const result = arr.toCSV(path, ',');
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "ndarray: fromCSV() error on 1D type" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_type_1d.csv";
+
+    const csv_content = "1,2,3\n4,5,6\n";
+    {
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+        _ = try file.write(csv_content);
+    }
+
+    const result = NDArray(f64, 1).fromCSV(allocator, path, ',');
+    try testing.expectError(error.DimensionMismatch, result);
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: CSV roundtrip with negative values" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_negative.csv";
+
+    var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, -1.5);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 2.7);
+    original.set(&[_]isize{ @intCast(0), @intCast(2) }, -3.2);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 4.9);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, -5.1);
+    original.set(&[_]isize{ @intCast(1), @intCast(2) }, 6.8);
+    original.set(&[_]isize{ @intCast(2), @intCast(0) }, -7.3);
+    original.set(&[_]isize{ @intCast(2), @intCast(1) }, -8.0);
+    original.set(&[_]isize{ @intCast(2), @intCast(2) }, 9.4);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    for (0..3) |r| {
+        for (0..3) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
+        }
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: CSV roundtrip with zeros" {
+    const allocator = testing.allocator;
+    const path = "/tmp/test_ndarray_csv_zeros.csv";
+
+    var original = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer original.deinit();
+
+    original.set(&[_]isize{ @intCast(0), @intCast(0) }, 0);
+    original.set(&[_]isize{ @intCast(0), @intCast(1) }, 0);
+    original.set(&[_]isize{ @intCast(0), @intCast(2) }, 1);
+    original.set(&[_]isize{ @intCast(1), @intCast(0) }, 0);
+    original.set(&[_]isize{ @intCast(1), @intCast(1) }, 2);
+    original.set(&[_]isize{ @intCast(1), @intCast(2) }, 0);
+
+    try original.toCSV(path, ',');
+
+    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, ',');
+    defer loaded.deinit();
+
+    for (0..2) |r| {
+        for (0..3) |c| {
+            const orig_val = try original.get(&[_]isize{ @intCast(r), @intCast(c) });
+            const loaded_val = try loaded.get(&[_]isize{ @intCast(r), @intCast(c) });
+            try testing.expectEqual(orig_val, loaded_val);
+        }
+    }
+
+    std.fs.cwd().deleteFile(path) catch {};
+}
+
+test "ndarray: CSV roundtrip memory safety with allocator" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const path = "/tmp/test_ndarray_csv_memory.csv";
+
+        var original = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, 5 }, .row_major);
+        defer original.deinit();
+
+        for (0..5) |r| {
+            for (0..5) |c| {
+                const val: f64 = @floatFromInt(r * 5 + c);
+                original.set(&[_]isize{ @intCast(r), @intCast(c) }, val);
+            }
+        }
+
+        try original.toCSV(path, ',');
+
+        var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+        defer loaded.deinit();
+
+        try testing.expectEqual(@as(usize, 5), loaded.shape[0]);
+        try testing.expectEqual(@as(usize, 5), loaded.shape[1]);
+
+        std.fs.cwd().deleteFile(path) catch {};
     }
 }
