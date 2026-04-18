@@ -252,3 +252,4 @@
 {"timestamp":"2026-04-16T15:05:57Z","action":"feature","module":"smith_waterman","task":"Implement Smith-Waterman local sequence alignment algorithm","tests":18,"project":"zuda"}
 {"timestamp":"2026-04-17T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write squeeze/unsqueeze tests for NDArray dimension manipulation","project":"zuda"}
 {"timestamp":"2026-04-17T11:18:55Z","action":"feature","task":"Implement concat() operation for NDArray","project":"zuda","module":"ndarray/ndarray.zig","tests":18,"status":"complete"}
+{"timestamp":"2026-04-18T00:00:00Z","action":"feature","task":"Implement split() operation for NDArray","project":"zuda","session":386,"files":["src/ndarray/ndarray.zig"],"tests_added":20,"functions_added":1}
