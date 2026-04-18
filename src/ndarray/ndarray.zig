@@ -3164,7 +3164,131 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             return result;
         }
+
+        /// Split an array into multiple sub-arrays along an axis
+        ///
+        /// Divides the array into N equal sections along the specified axis.
+        /// The dimension along the axis must be evenly divisible by N.
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for result arrays
+        /// - axis: Dimension along which to split (must be < ndim)
+        /// - n_sections: Number of equal sections to split into
+        ///
+        /// Returns: Slice of N NDArray objects with equal shapes
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if axis >= ndim
+        /// - error.ShapeMismatch if shape[axis] not divisible by n_sections
+        /// - error.ZeroDimension if n_sections == 0
+        /// - error.OutOfMemory if allocation fails
+        ///
+        /// Time: O(prod(shape)) — copies all elements
+        /// Space: O(prod(shape)) — creates N new arrays
+        ///
+        /// Example:
+        /// ```zig
+        /// // Split [6, 4] array along axis=0 into 3 parts → 3×[2, 4] arrays
+        /// var arr = try NDArray(f64, 2).init(allocator, &[_]usize{6, 4}, .row_major);
+        /// defer arr.deinit();
+        /// const parts = try arr.split(allocator, 0, 3);
+        /// defer allocator.free(parts);
+        /// for (parts) |*part| part.deinit();
+        /// // parts[0].shape = [2, 4], parts[1].shape = [2, 4], parts[2].shape = [2, 4]
+        /// ```
+        pub fn split(self: *const Self, allocator: Allocator, axis: usize, n_sections: usize) (Error || std.mem.Allocator.Error)![]Self {
+            if (axis >= ndim) {
+                return Error.IndexOutOfBounds;
+            }
+            if (n_sections == 0) {
+                return Error.ZeroDimension;
+            }
+
+            const axis_size = self.shape[axis];
+            if (axis_size % n_sections != 0) {
+                return Error.ShapeMismatch;
+            }
+
+            const section_size = axis_size / n_sections;
+
+            // Calculate shape of each section
+            var section_shape = self.shape;
+            section_shape[axis] = section_size;
+
+            // Allocate result array
+            const result = try allocator.alloc(Self, n_sections);
+            errdefer allocator.free(result);
+
+            // Initialize each section
+            var initialized: usize = 0;
+            errdefer {
+                for (0..initialized) |i| {
+                    result[i].deinit();
+                }
+            }
+
+            for (0..n_sections) |section_idx| {
+                // Create new array for this section
+                result[section_idx] = try Self.init(allocator, &section_shape, self.layout);
+                initialized += 1;
+                errdefer result[section_idx].deinit();
+
+                // Copy data from source to this section
+                try copySplitSection(T, ndim, &result[section_idx], self, axis, section_idx * section_size);
+            }
+
+            return result;
+        }
     };
+}
+
+/// Helper to copy a section of array during split operation
+fn copySplitSection(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), axis: usize, axis_offset: usize) !void {
+    // Iterate through all elements of destination array using multi-dimensional indices
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Calculate source indices (shifted along split axis by offset)
+        var src_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            if (i == axis) {
+                src_indices[i] = @as(isize, @intCast(idx + axis_offset));
+            } else {
+                src_indices[i] = @as(isize, @intCast(idx));
+            }
+        }
+
+        // Get value from source
+        const val = try src.get(&src_indices);
+
+        // Calculate destination indices (same as iteration indices)
+        var dest_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            dest_indices[i] = @as(isize, @intCast(idx));
+        }
+
+        // Set value in destination
+        dest.set(&dest_indices, val);
+
+        // Increment multi-dimensional index (row-major order: rightmost varies fastest)
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= dest.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
 }
 
 /// Helper to copy array to stacked result during stack operation
@@ -11397,4 +11521,365 @@ test "ndarray: stack() validates result with validate()" {
     defer result.deinit();
 
     try result.validate();
+}
+
+// -- split() Tests (20 tests) --
+
+test "ndarray: split() basic 2D along axis=0" {
+    const allocator = testing.allocator;
+
+    // Create [6, 4] array with values 0..23
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 6, 4 }, .row_major);
+    defer arr.deinit();
+    for (0..6) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 4 + j)));
+        }
+    }
+
+    // Split into 3 sections along axis=0 → 3×[2, 4] arrays
+    const parts = try arr.split(allocator, 0, 3);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 3), parts.len);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[0]);
+    try testing.expectEqual(@as(usize, 4), parts[0].shape[1]);
+
+    // Verify first part contains rows 0-1
+    try testing.expectEqual(@as(f64, 0), try parts[0].get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 4), try parts[0].get(&[_]isize{ 1, 0 }));
+
+    // Verify second part contains rows 2-3
+    try testing.expectEqual(@as(f64, 8), try parts[1].get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 12), try parts[1].get(&[_]isize{ 1, 0 }));
+
+    // Verify third part contains rows 4-5
+    try testing.expectEqual(@as(f64, 16), try parts[2].get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 20), try parts[2].get(&[_]isize{ 1, 0 }));
+}
+
+test "ndarray: split() basic 2D along axis=1" {
+    const allocator = testing.allocator;
+
+    // Create [3, 6] array
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 6 }, .row_major);
+    defer arr.deinit();
+    for (0..3) |i| {
+        for (0..6) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 6 + j)));
+        }
+    }
+
+    // Split into 2 sections along axis=1 → 2×[3, 3] arrays
+    const parts = try arr.split(allocator, 1, 2);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 2), parts.len);
+    try testing.expectEqual(@as(usize, 3), parts[0].shape[0]);
+    try testing.expectEqual(@as(usize, 3), parts[0].shape[1]);
+
+    // Verify first part contains columns 0-2
+    try testing.expectEqual(@as(f64, 0), try parts[0].get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try parts[0].get(&[_]isize{ 0, 2 }));
+
+    // Verify second part contains columns 3-5
+    try testing.expectEqual(@as(f64, 3), try parts[1].get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 5), try parts[1].get(&[_]isize{ 0, 2 }));
+}
+
+test "ndarray: split() 1D array into 4 parts" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 4);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 4), parts.len);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[0]);
+
+    // Verify each part
+    try testing.expectEqual(@as(f64, 1), try parts[0].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 2), try parts[0].get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 3), try parts[1].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 4), try parts[1].get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 5), try parts[2].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 6), try parts[2].get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 7), try parts[3].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 8), try parts[3].get(&[_]isize{1}));
+}
+
+test "ndarray: split() into 2 parts (half)" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{6}, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 2);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 2), parts.len);
+    try testing.expectEqual(@as(usize, 3), parts[0].shape[0]);
+    try testing.expectEqual(@as(f64, 1), try parts[0].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 4), try parts[1].get(&[_]isize{0}));
+}
+
+test "ndarray: split() single section returns whole array" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 1);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 1), parts.len);
+    try testing.expectEqual(@as(usize, 4), parts[0].shape[0]);
+    try testing.expectEqual(@as(f64, 1), try parts[0].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 4), try parts[0].get(&[_]isize{3}));
+}
+
+test "ndarray: split() error on invalid axis" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.IndexOutOfBounds, arr.split(allocator, 2, 2));
+}
+
+test "ndarray: split() error when not evenly divisible" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{7}, &[_]f64{ 1, 2, 3, 4, 5, 6, 7 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.ShapeMismatch, arr.split(allocator, 0, 3));
+}
+
+test "ndarray: split() error on zero sections" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.ZeroDimension, arr.split(allocator, 0, 0));
+}
+
+test "ndarray: split() 3D array along axis=0" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 4, 3, 2 }, .row_major);
+    defer arr.deinit();
+    for (0..4) |i| {
+        for (0..3) |j| {
+            for (0..2) |k| {
+                arr.set(&[_]isize{ @intCast(i), @intCast(j), @intCast(k) }, @as(f64, @floatFromInt(i * 6 + j * 2 + k)));
+            }
+        }
+    }
+
+    const parts = try arr.split(allocator, 0, 2);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 2), parts.len);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[0]);
+    try testing.expectEqual(@as(usize, 3), parts[0].shape[1]);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[2]);
+}
+
+test "ndarray: split() 3D array along axis=1" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 6, 2 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 1, 3);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 3), parts.len);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[0]);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[1]);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[2]);
+}
+
+test "ndarray: split() 3D array along axis=2" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 8 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 2, 4);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 4), parts.len);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[0]);
+    try testing.expectEqual(@as(usize, 3), parts[0].shape[1]);
+    try testing.expectEqual(@as(usize, 2), parts[0].shape[2]);
+}
+
+test "ndarray: split() preserves data correctly" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{9}, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 3);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    // Verify all elements are preserved
+    try testing.expectEqual(@as(f64, 1), try parts[0].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 2), try parts[0].get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 3), try parts[0].get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 4), try parts[1].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 5), try parts[1].get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 6), try parts[1].get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 7), try parts[2].get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 8), try parts[2].get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 9), try parts[2].get(&[_]isize{2}));
+}
+
+test "ndarray: split() with column-major layout" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 4, 3 }, .column_major);
+    defer arr.deinit();
+    for (0..4) |i| {
+        for (0..3) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 3 + j)));
+        }
+    }
+
+    const parts = try arr.split(allocator, 0, 2);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 2), parts.len);
+    try testing.expectEqual(Layout.column_major, parts[0].layout);
+    try testing.expectEqual(Layout.column_major, parts[1].layout);
+}
+
+test "ndarray: split() i32 type" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{6}, &[_]i32{ 10, 20, 30, 40, 50, 60 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 3);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 3), parts.len);
+    try testing.expectEqual(@as(i32, 10), try parts[0].get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 30), try parts[1].get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 50), try parts[2].get(&[_]isize{0}));
+}
+
+test "ndarray: split() u8 type" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{8}, &[_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 4);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 4), parts.len);
+    try testing.expectEqual(@as(u8, 1), try parts[0].get(&[_]isize{0}));
+    try testing.expectEqual(@as(u8, 3), try parts[1].get(&[_]isize{0}));
+}
+
+test "ndarray: split() memory safety with allocator" {
+    const allocator = testing.allocator;
+
+    // Run 10 iterations to check for memory leaks
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 6, 4 }, .row_major);
+        defer arr.deinit();
+
+        const parts = try arr.split(allocator, 0, 3);
+        defer allocator.free(parts);
+        defer for (parts) |*part| part.deinit();
+    }
+}
+
+test "ndarray: split() validates each part" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 6, 4 }, .row_major);
+    defer arr.deinit();
+
+    const parts = try arr.split(allocator, 0, 3);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    // Validate each part
+    for (parts) |*part| {
+        try part.validate();
+    }
+}
+
+test "ndarray: split() large array stress test" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 100, 50 }, .row_major);
+    defer arr.deinit();
+    for (0..100) |i| {
+        for (0..50) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 50 + j)));
+        }
+    }
+
+    const parts = try arr.split(allocator, 0, 10);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    try testing.expectEqual(@as(usize, 10), parts.len);
+    try testing.expectEqual(@as(usize, 10), parts[0].shape[0]);
+    try testing.expectEqual(@as(usize, 50), parts[0].shape[1]);
+
+    // Verify first and last elements of each part
+    for (0..10) |part_idx| {
+        const expected_first = @as(f64, @floatFromInt(part_idx * 10 * 50));
+        try testing.expectEqual(expected_first, try parts[part_idx].get(&[_]isize{ 0, 0 }));
+    }
+}
+
+test "ndarray: split() then concat roundtrip" {
+    const allocator = testing.allocator;
+
+    var original = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{12}, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer original.deinit();
+
+    // Split into 4 parts
+    const parts = try original.split(allocator, 0, 4);
+    defer allocator.free(parts);
+    defer for (parts) |*part| part.deinit();
+
+    // Concat back together
+    var parts_ptrs: [4]*const NDArray(f64, 1) = undefined;
+    for (parts, 0..) |*part, i| {
+        parts_ptrs[i] = part;
+    }
+    var reconstructed = try NDArray(f64, 1).concat(allocator, &parts_ptrs, 0, .row_major);
+    defer reconstructed.deinit();
+
+    // Verify it matches original
+    try testing.expectEqual(@as(usize, 12), reconstructed.shape[0]);
+    for (0..12) |i| {
+        const orig_val = try original.get(&[_]isize{@intCast(i)});
+        const recon_val = try reconstructed.get(&[_]isize{@intCast(i)});
+        try testing.expectEqual(orig_val, recon_val);
+    }
 }
