@@ -1,4 +1,39 @@
-## Latest Session (Session 385, 2026-04-18) — STABILIZATION MODE
+## Latest Session (Session 389, 2026-04-19) — FEATURE MODE
+- BLAS Triangular Operations Implementation: 20 tests, completes Phase 7 BLAS Level 2-3 requirements
+- Module: linalg/blas.zig
+- Functions (4 new):
+  * trmv(): Triangular matrix-vector multiply - O(n²) time, O(n) space
+  * trsv(): Triangular solve with vector - O(n²) time, O(1) space
+  * trmm(): Triangular matrix-matrix multiply - O(m×n×k) time, O(m×n) space
+  * trsm(): Triangular solve with matrix - O(m×n×k) time, O(1) space
+- Features:
+  * Character parameters: uplo (U/L), trans (N/T), diag (N/U), side (L/R)
+  * Case insensitive parameter handling
+  * In-place operations for efficiency
+  * Unit diagonal support (diagonal values ignored when diag='U')
+  * Dimension validation with error.DimensionMismatch
+- Algorithm:
+  * trmv: Triangular portion iteration with accumulation
+  * trsv: Forward (lower) / back (upper) substitution
+  * trmm: Triple nested loops with temporary buffer
+  * trsm: Alpha scaling followed by column/row-wise solve
+- Use cases: Linear system solving (LU, Cholesky), matrix transformations, blocked algorithms, numerical analysis
+- Tests (20 scenarios):
+  * trmv (5): upper/lower triangular, unit diagonal, transpose, error handling
+  * trsv (5): upper/lower solve, identity, unit diagonal, error handling
+  * trmm (5): left/right multiply, scalar multiplier, unit diagonal, error handling
+  * trsm (5): left/right solve, alpha scaling, identity, error handling
+  * Roundtrip verification (multiply then solve returns original)
+  * Mathematical properties (identity, transpose, unit diagonal)
+- BLAS Tests: 160 → 180 (+20)
+- Total tests: 8766 → 8786 (+20)
+- CI: Pending (just pushed)
+- Issues: Zero open
+- Phase 7 progress: BLAS Level 1-3 ✓ COMPLETE (all triangular operations implemented)
+- Next: Phase 7 decompositions (LU, QR, SVD, Cholesky) or Phase 8
+- Commits: 560de71 (blas_triangular)
+
+## Previous Session (Session 385, 2026-04-18) — STABILIZATION MODE
 - Stabilization audit: ALL systems green ✅
 - CI Status: Green, all recent runs successful on main
 - Issues: Zero open
