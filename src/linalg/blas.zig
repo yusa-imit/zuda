@@ -2124,6 +2124,959 @@ test "gemm: column vector (mx1) times row vector (1xn) produces outer product" {
     try testing.expectApproxEqAbs(15.0, C.data[5], 1e-10);
 }
 
+// ============================================================================
+// BLAS Level 2 — Triangular Matrix Operations
+// ============================================================================
+
+/// Triangular matrix-vector multiply: x = A*x or x = A^T*x
+///
+/// Performs matrix-vector multiplication with a triangular matrix A.
+/// The matrix can be upper or lower triangular, with or without unit diagonal.
+///
+/// Parameters:
+/// - uplo: 'U' for upper triangular, 'L' for lower triangular
+/// - trans: 'N' for no transpose (x = A*x), 'T' for transpose (x = A^T*x)
+/// - diag: 'N' for non-unit diagonal, 'U' for unit diagonal (diagonal = 1)
+/// - A: Triangular matrix (2D NDArray, square)
+/// - x: Vector (1D NDArray) — modified in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if A is not square or if A.shape[0] != x.shape[0]
+///
+/// Time: O(n²) where n = dimension of A
+/// Space: O(1) (modifies x in-place)
+///
+/// Example:
+/// ```zig
+/// // Upper triangular: A = [[1, 2, 3], [0, 4, 5], [0, 0, 6]]
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{3, 3},
+///     &[_]f64{1, 2, 3, 0, 4, 5, 0, 0, 6}, .row_major);
+/// defer A.deinit();
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{1, 1, 1}, .row_major);
+/// defer x.deinit();
+/// try trmv(f64, 'U', 'N', 'N', A, &x);  // x = [1+2+3, 4+5, 6] = [6, 9, 6]
+/// ```
+pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+    // Validate square matrix
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    // Validate dimensions
+    if (A.shape[0] != x.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = A.shape[0];
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    // Create temporary array to store result
+    var temp = try std.mem.Allocator.alloc(x.allocator, T, n);
+    defer x.allocator.free(temp);
+    @memset(temp, 0);
+
+    if (!is_trans) {
+        // x = A*x
+        if (is_upper) {
+            // Upper triangular
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = 0;
+                // Start from diagonal (or after if unit)
+                const start = if (is_unit) i + 1 else i;
+                for (start..n) |j| {
+                    sum += A.data[i * n + j] * x.data[j];
+                }
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        } else {
+            // Lower triangular
+            for (0..n) |i| {
+                var sum: T = 0;
+                // Start from beginning to diagonal (or before if unit)
+                const end = if (is_unit) i else i + 1;
+                for (0..end) |j| {
+                    sum += A.data[i * n + j] * x.data[j];
+                }
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        }
+    } else {
+        // x = A^T*x
+        if (is_upper) {
+            // Upper triangular transpose (acts like lower)
+            for (0..n) |i| {
+                var sum: T = 0;
+                const end = if (is_unit) i else i + 1;
+                for (0..end) |j| {
+                    sum += A.data[j * n + i] * x.data[j]; // A^T[i,j] = A[j,i]
+                }
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        } else {
+            // Lower triangular transpose (acts like upper)
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = 0;
+                const start = if (is_unit) i + 1 else i;
+                for (start..n) |j| {
+                    sum += A.data[j * n + i] * x.data[j]; // A^T[i,j] = A[j,i]
+                }
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        }
+    }
+
+    // Copy result back to x
+    @memcpy(x.data, temp);
+}
+
+/// Triangular solve: x = A^(-1)*x or x = A^(-T)*x
+///
+/// Solves the triangular system A*x = b or A^T*x = b where A is triangular.
+/// The solution is stored in x (in-place).
+///
+/// Parameters:
+/// - uplo: 'U' for upper triangular, 'L' for lower triangular
+/// - trans: 'N' for no transpose (A*x = b), 'T' for transpose (A^T*x = b)
+/// - diag: 'N' for non-unit diagonal, 'U' for unit diagonal (diagonal = 1)
+/// - A: Triangular matrix (2D NDArray, square)
+/// - x: Right-hand side vector (1D NDArray) — modified to solution in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if A is not square or if A.shape[0] != x.shape[0]
+///
+/// Time: O(n²) where n = dimension of A
+/// Space: O(1) (modifies x in-place)
+///
+/// Example:
+/// ```zig
+/// // Upper triangular: A = [[2, 1], [0, 3]]
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2},
+///     &[_]f64{2, 1, 0, 3}, .row_major);
+/// defer A.deinit();
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{2}, &[_]f64{5, 6}, .row_major);
+/// defer x.deinit();
+/// try trsv(f64, 'U', 'N', 'N', A, &x);  // Solve A*x = [5, 6]
+/// ```
+pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+    // Validate square matrix
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    // Validate dimensions
+    if (A.shape[0] != x.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = A.shape[0];
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    if (!is_trans) {
+        // Solve A*x = b
+        if (is_upper) {
+            // Upper triangular: back substitution
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = x.data[i];
+                for (i + 1..n) |j| {
+                    sum -= A.data[i * n + j] * x.data[j];
+                }
+                if (!is_unit) {
+                    x.data[i] = sum / A.data[i * n + i];
+                } else {
+                    x.data[i] = sum;
+                }
+            }
+        } else {
+            // Lower triangular: forward substitution
+            for (0..n) |i| {
+                var sum: T = x.data[i];
+                for (0..i) |j| {
+                    sum -= A.data[i * n + j] * x.data[j];
+                }
+                if (!is_unit) {
+                    x.data[i] = sum / A.data[i * n + i];
+                } else {
+                    x.data[i] = sum;
+                }
+            }
+        }
+    } else {
+        // Solve A^T*x = b
+        if (is_upper) {
+            // Upper triangular transpose: forward substitution
+            for (0..n) |i| {
+                var sum: T = x.data[i];
+                for (0..i) |j| {
+                    sum -= A.data[j * n + i] * x.data[j]; // A^T[i,j] = A[j,i]
+                }
+                if (!is_unit) {
+                    x.data[i] = sum / A.data[i * n + i];
+                } else {
+                    x.data[i] = sum;
+                }
+            }
+        } else {
+            // Lower triangular transpose: back substitution
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = x.data[i];
+                for (i + 1..n) |j| {
+                    sum -= A.data[j * n + i] * x.data[j]; // A^T[i,j] = A[j,i]
+                }
+                if (!is_unit) {
+                    x.data[i] = sum / A.data[i * n + i];
+                } else {
+                    x.data[i] = sum;
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// BLAS Level 3 — Triangular Matrix-Matrix Operations
+// ============================================================================
+
+/// Triangular matrix-matrix multiply: B = α*A*B or B = α*B*A
+///
+/// Performs matrix-matrix multiplication with a triangular matrix A.
+///
+/// Parameters:
+/// - side: 'L' for left (B = α*A*B), 'R' for right (B = α*B*A)
+/// - uplo: 'U' for upper triangular, 'L' for lower triangular
+/// - trans: 'N' for no transpose, 'T' for transpose
+/// - diag: 'N' for non-unit diagonal, 'U' for unit diagonal
+/// - alpha: Scalar multiplier
+/// - A: Triangular matrix (2D NDArray, square)
+/// - B: Matrix (2D NDArray) — modified in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if dimensions don't match
+///
+/// Time: O(m*n*k) where B is m×n, A is k×k
+/// Space: O(m*n) for temporary storage
+///
+/// Example:
+/// ```zig
+/// // A = [[2, 1], [0, 3]] (upper triangular)
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2},
+///     &[_]f64{2, 1, 0, 3}, .row_major);
+/// defer A.deinit();
+/// var B = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2},
+///     &[_]f64{1, 2, 3, 4}, .row_major);
+/// defer B.deinit();
+/// try trmm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);  // B = A*B
+/// ```
+pub fn trmm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    // Validate square matrix A
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    const is_left = (side == 'L' or side == 'l');
+    const m = B.shape[0];
+    const n = B.shape[1];
+    const k = A.shape[0];
+
+    // Validate dimensions
+    if (is_left) {
+        if (k != m) return error.DimensionMismatch;
+    } else {
+        if (k != n) return error.DimensionMismatch;
+    }
+
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    // Allocate temporary matrix for result
+    var temp = try B.allocator.alloc(T, m * n);
+    defer B.allocator.free(temp);
+
+    if (is_left) {
+        // B = α*A*B (A is m×m, B is m×n)
+        for (0..m) |i| {
+            for (0..n) |j| {
+                var sum: T = 0;
+                if (!is_trans) {
+                    // A*B
+                    if (is_upper) {
+                        const start = if (is_unit) i + 1 else i;
+                        for (start..m) |p| {
+                            sum += A.data[i * k + p] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const end = if (is_unit) i else i + 1;
+                        for (0..end) |p| {
+                            sum += A.data[i * k + p] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                } else {
+                    // A^T*B
+                    if (is_upper) {
+                        const end = if (is_unit) i else i + 1;
+                        for (0..end) |p| {
+                            sum += A.data[p * k + i] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const start = if (is_unit) i + 1 else i;
+                        for (start..m) |p| {
+                            sum += A.data[p * k + i] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                }
+                temp[i * n + j] = alpha * sum;
+            }
+        }
+    } else {
+        // B = α*B*A (B is m×n, A is n×n)
+        for (0..m) |i| {
+            for (0..n) |j| {
+                var sum: T = 0;
+                if (!is_trans) {
+                    // B*A
+                    if (is_upper) {
+                        const end = if (is_unit) j else j + 1;
+                        for (0..end) |p| {
+                            sum += B.data[i * n + p] * A.data[p * k + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const start = if (is_unit) j + 1 else j;
+                        for (start..n) |p| {
+                            sum += B.data[i * n + p] * A.data[p * k + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                } else {
+                    // B*A^T
+                    if (is_upper) {
+                        const start = if (is_unit) j + 1 else j;
+                        for (start..n) |p| {
+                            sum += B.data[i * n + p] * A.data[j * k + p];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const end = if (is_unit) j else j + 1;
+                        for (0..end) |p| {
+                            sum += B.data[i * n + p] * A.data[j * k + p];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                }
+                temp[i * n + j] = alpha * sum;
+            }
+        }
+    }
+
+    // Copy result back to B
+    @memcpy(B.data, temp);
+}
+
+/// Triangular solve with multiple right-hand sides: B = α*A^(-1)*B or B = α*B*A^(-1)
+///
+/// Solves the triangular system A*X = α*B or X*A = α*B where A is triangular.
+/// The solution is stored in B (in-place).
+///
+/// Parameters:
+/// - side: 'L' for left (A*X = α*B), 'R' for right (X*A = α*B)
+/// - uplo: 'U' for upper triangular, 'L' for lower triangular
+/// - trans: 'N' for no transpose, 'T' for transpose
+/// - diag: 'N' for non-unit diagonal, 'U' for unit diagonal
+/// - alpha: Scalar multiplier for B
+/// - A: Triangular matrix (2D NDArray, square)
+/// - B: Right-hand side matrix (2D NDArray) — modified to solution in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if dimensions don't match
+///
+/// Time: O(m*n*k) where B is m×n, A is k×k
+/// Space: O(1) (modifies B in-place after scaling)
+///
+/// Example:
+/// ```zig
+/// // A = [[2, 1], [0, 3]] (upper triangular)
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2},
+///     &[_]f64{2, 1, 0, 3}, .row_major);
+/// defer A.deinit();
+/// var B = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2},
+///     &[_]f64{5, 7, 6, 9}, .row_major);
+/// defer B.deinit();
+/// try trsm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);  // Solve A*X = B
+/// ```
+pub fn trsm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    // Validate square matrix A
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    const is_left = (side == 'L' or side == 'l');
+    const m = B.shape[0];
+    const n = B.shape[1];
+    const k = A.shape[0];
+
+    // Validate dimensions
+    if (is_left) {
+        if (k != m) return error.DimensionMismatch;
+    } else {
+        if (k != n) return error.DimensionMismatch;
+    }
+
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    // First scale B by alpha
+    for (0..m * n) |idx| {
+        B.data[idx] = alpha * B.data[idx];
+    }
+
+    if (is_left) {
+        // Solve A*X = α*B (A is m×m, B is m×n)
+        if (!is_trans) {
+            if (is_upper) {
+                // Upper triangular: back substitution
+                var i: usize = m;
+                while (i > 0) {
+                    i -= 1;
+                    for (0..n) |j| {
+                        var sum: T = B.data[i * n + j];
+                        for (i + 1..m) |p| {
+                            sum -= A.data[i * k + p] * B.data[p * n + j];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[i * k + i];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            } else {
+                // Lower triangular: forward substitution
+                for (0..m) |i| {
+                    for (0..n) |j| {
+                        var sum: T = B.data[i * n + j];
+                        for (0..i) |p| {
+                            sum -= A.data[i * k + p] * B.data[p * n + j];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[i * k + i];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Solve A^T*X = α*B
+            if (is_upper) {
+                // Upper transpose: forward substitution
+                for (0..m) |i| {
+                    for (0..n) |j| {
+                        var sum: T = B.data[i * n + j];
+                        for (0..i) |p| {
+                            sum -= A.data[p * k + i] * B.data[p * n + j];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[i * k + i];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            } else {
+                // Lower transpose: back substitution
+                var i: usize = m;
+                while (i > 0) {
+                    i -= 1;
+                    for (0..n) |j| {
+                        var sum: T = B.data[i * n + j];
+                        for (i + 1..m) |p| {
+                            sum -= A.data[p * k + i] * B.data[p * n + j];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[i * k + i];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Solve X*A = α*B (B is m×n, A is n×n)
+        if (!is_trans) {
+            if (is_upper) {
+                // Upper triangular: forward substitution by columns
+                for (0..n) |j| {
+                    for (0..m) |i| {
+                        var sum: T = B.data[i * n + j];
+                        for (0..j) |p| {
+                            sum -= B.data[i * n + p] * A.data[p * k + j];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[j * k + j];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            } else {
+                // Lower triangular: back substitution by columns
+                var j: usize = n;
+                while (j > 0) {
+                    j -= 1;
+                    for (0..m) |i| {
+                        var sum: T = B.data[i * n + j];
+                        for (j + 1..n) |p| {
+                            sum -= B.data[i * n + p] * A.data[p * k + j];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[j * k + j];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Solve X*A^T = α*B
+            if (is_upper) {
+                // Upper transpose: back substitution by columns
+                var j: usize = n;
+                while (j > 0) {
+                    j -= 1;
+                    for (0..m) |i| {
+                        var sum: T = B.data[i * n + j];
+                        for (j + 1..n) |p| {
+                            sum -= B.data[i * n + p] * A.data[j * k + p];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[j * k + j];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            } else {
+                // Lower transpose: forward substitution by columns
+                for (0..n) |j| {
+                    for (0..m) |i| {
+                        var sum: T = B.data[i * n + j];
+                        for (0..j) |p| {
+                            sum -= B.data[i * n + p] * A.data[j * k + p];
+                        }
+                        if (!is_unit) {
+                            B.data[i * n + j] = sum / A.data[j * k + j];
+                        } else {
+                            B.data[i * n + j] = sum;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Triangular Operations Tests
+// ============================================================================
+
+test "trmv: upper triangular matrix-vector multiply" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1, 0], [0, 3, 1], [0, 0, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 1, 0, 0, 3, 1, 0, 0, 4 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [2*1 + 1*2 + 0*3, 0*1 + 3*2 + 1*3, 0*1 + 0*2 + 4*3] = [4, 9, 12]
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(4.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, x.data[2], 1e-10);
+}
+
+test "trmv: lower triangular matrix-vector multiply" {
+    const allocator = testing.allocator;
+
+    // Lower triangular: A = [[2, 0, 0], [1, 3, 0], [2, 1, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 1, 3, 0, 2, 1, 4 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [2*1, 1*1 + 3*2, 2*1 + 1*2 + 4*3] = [2, 7, 16]
+    try trmv(f64, 'L', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(16.0, x.data[2], 1e-10);
+}
+
+test "trmv: upper triangular with unit diagonal" {
+    const allocator = testing.allocator;
+
+    // Unit upper triangular: A = [[1, 2], [0, 1]] (diagonals ignored)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 2, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // With unit diagonal: A*x = [1*3 + 2*4, 0*3 + 1*4] = [11, 4]
+    try trmv(f64, 'U', 'N', 'U', A, &x);
+
+    try testing.expectApproxEqAbs(11.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+}
+
+test "trmv: transpose operation" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    // A^T*x = [[2, 0], [1, 3]] * [1, 2] = [2*1 + 0*2, 1*1 + 3*2] = [2, 7]
+    try trmv(f64, 'U', 'T', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, x.data[1], 1e-10);
+}
+
+test "trsv: upper triangular solve" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [5, 6]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 6 }, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // x[1] = 6/3 = 2
+    // x[0] = (5 - 1*2)/2 = 3/2 = 1.5
+    try testing.expectApproxEqAbs(1.5, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-10);
+}
+
+test "trsv: lower triangular solve" {
+    const allocator = testing.allocator;
+
+    // Lower triangular: A = [[2, 0], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [4, 7]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 4, 7 }, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'L', 'N', 'N', A, &x);
+
+    // x[0] = 4/2 = 2
+    // x[1] = (7 - 1*2)/3 = 5/3 ≈ 1.6667
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0 / 3.0, x.data[1], 1e-10);
+}
+
+test "trsv: identity matrix solve" {
+    const allocator = testing.allocator;
+
+    // Identity: A = [[1, 0], [0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be unchanged
+    try testing.expectApproxEqAbs(3.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+}
+
+test "trsv: unit diagonal solve" {
+    const allocator = testing.allocator;
+
+    // Unit upper triangular: A = [[1, 2], [0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 2, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [5, 3]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 3 }, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'U', A, &x);
+
+    // With unit diagonal: x[1] = 3, x[0] = 5 - 2*3 = -1
+    try testing.expectApproxEqAbs(-1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+}
+
+test "trmm: left upper triangular multiply" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B = A*B = [[2*1+1*3, 2*2+1*4], [0*1+3*3, 0*2+3*4]] = [[5, 8], [9, 12]]
+    try trmm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(12.0, B.data[3], 1e-10);
+}
+
+test "trmm: right lower triangular multiply" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Lower triangular: A = [[2, 0], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = B*A = [[1*2+2*1, 1*0+2*3], [3*2+4*1, 3*0+4*3]] = [[4, 6], [10, 12]]
+    try trmm(f64, 'R', 'L', 'N', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(12.0, B.data[3], 1e-10);
+}
+
+test "trmm: with scalar multiplier" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B = 2*A*B = 2*[[5, 8], [9, 12]] = [[10, 16], [18, 24]]
+    try trmm(f64, 'L', 'U', 'N', 'N', 2.0, A, &B);
+
+    try testing.expectApproxEqAbs(10.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(16.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(18.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(24.0, B.data[3], 1e-10);
+}
+
+test "trmm: unit diagonal" {
+    const allocator = testing.allocator;
+
+    // Unit upper triangular: A = [[1, 2], [0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 2, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // With unit diagonal: B = [[1*1+2*3, 1*2+2*4], [0*1+1*3, 0*2+1*4]] = [[7, 10], [3, 4]]
+    try trmm(f64, 'L', 'U', 'N', 'U', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(7.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[3], 1e-10);
+}
+
+test "trsm: left upper triangular solve" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*X = B where B = [[5, 8], [9, 12]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 8, 9, 12 }, .row_major);
+    defer B.deinit();
+
+    try trsm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    // Expected: X = [[1, 2], [3, 4]] (from trmm test in reverse)
+    try testing.expectApproxEqAbs(1.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[3], 1e-10);
+}
+
+test "trsm: right lower triangular solve" {
+    const allocator = testing.allocator;
+
+    // Lower triangular: A = [[2, 0], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve X*A = B where B = [[4, 6], [10, 12]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 4, 6, 10, 12 }, .row_major);
+    defer B.deinit();
+
+    try trsm(f64, 'R', 'L', 'N', 'N', 1.0, A, &B);
+
+    // Expected: X = [[1, 2], [3, 4]] (from trmm right test in reverse)
+    try testing.expectApproxEqAbs(1.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[3], 1e-10);
+}
+
+test "trsm: with alpha scalar" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*X = 2*B where B = [[5, 8], [9, 12]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 8, 9, 12 }, .row_major);
+    defer B.deinit();
+
+    try trsm(f64, 'L', 'U', 'N', 'N', 2.0, A, &B);
+
+    // Expected: X = [[2, 4], [6, 8]] (2 * [[1, 2], [3, 4]])
+    try testing.expectApproxEqAbs(2.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[3], 1e-10);
+}
+
+test "trsm: identity matrix" {
+    const allocator = testing.allocator;
+
+    // Identity: A = [[1, 0], [0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer B.deinit();
+
+    try trsm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    // Solution should be unchanged
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(7.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[3], 1e-10);
+}
+
+test "trmv: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trmv(f64, 'U', 'N', 'N', A, &x));
+}
+
+test "trsv: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trsv(f64, 'U', 'N', 'N', A, &x));
+}
+
+test "trmm: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trmm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B));
+}
+
+test "trsm: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trsm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B));
+}
+
 /// Compute trace of a square matrix
 ///
 /// The trace is the sum of diagonal elements: trace(A) = Σ A[i,i]
