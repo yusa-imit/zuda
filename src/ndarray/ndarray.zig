@@ -3199,6 +3199,147 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Find unique elements in the array.
+        ///
+        /// Returns a 1D array containing the unique elements in sorted order.
+        /// For multi-dimensional arrays, the array is flattened first.
+        ///
+        /// Time: O(n log n) where n = total number of elements
+        /// Space: O(n) for temporary sorting buffer
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{3, 1, 2, 1, 3}, .row_major);
+        /// const uniq = try arr.unique(allocator);
+        /// defer uniq.deinit();
+        /// // uniq.data = {1, 2, 3}
+        /// ```
+        pub fn unique(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            const total = self.count();
+            if (total == 0) {
+                return NDArray(T, 1).init(allocator, &[_]usize{0}, .row_major);
+            }
+
+            // Flatten and copy all elements to a temporary buffer
+            const temp = try allocator.alloc(T, total);
+            defer allocator.free(temp);
+
+            var idx: usize = 0;
+            var iter = self.iterator();
+            while (iter.next()) |val| : (idx += 1) {
+                temp[idx] = val;
+            }
+
+            // Sort the temporary buffer
+            std.sort.heap(T, temp, {}, struct {
+                fn lessThan(_: void, a: T, b: T) bool {
+                    return a < b;
+                }
+            }.lessThan);
+
+            // Count unique elements
+            var unique_count: usize = 1;
+            for (1..total) |i| {
+                if (temp[i] != temp[i - 1]) {
+                    unique_count += 1;
+                }
+            }
+
+            // Create result array
+            var result = try NDArray(T, 1).init(allocator, &[_]usize{unique_count}, .row_major);
+            errdefer result.deinit();
+
+            // Fill with unique elements
+            result.data[0] = temp[0];
+            var result_idx: usize = 1;
+            for (1..total) |i| {
+                if (temp[i] != temp[i - 1]) {
+                    result.data[result_idx] = temp[i];
+                    result_idx += 1;
+                }
+            }
+
+            return result;
+        }
+
+        /// Find unique elements and their counts.
+        ///
+        /// Returns a tuple of (unique_values, counts) where:
+        /// - unique_values: 1D array of unique elements in sorted order
+        /// - counts: 1D array of occurrence counts for each unique value
+        ///
+        /// Time: O(n log n) where n = total number of elements
+        /// Space: O(n) for temporary buffers
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{3, 1, 2, 1, 3, 3}, .row_major);
+        /// const result = try arr.uniqueWithCounts(allocator);
+        /// defer result.values.deinit();
+        /// defer result.counts.deinit();
+        /// // result.values.data = {1, 2, 3}
+        /// // result.counts.data = {2, 1, 3}
+        /// ```
+        pub fn uniqueWithCounts(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!struct {
+            values: NDArray(T, 1),
+            counts: NDArray(usize, 1),
+        } {
+            const total = self.count();
+            if (total == 0) {
+                return .{
+                    .values = try NDArray(T, 1).init(allocator, &[_]usize{0}, .row_major),
+                    .counts = try NDArray(usize, 1).init(allocator, &[_]usize{0}, .row_major),
+                };
+            }
+
+            // Flatten and copy all elements
+            const temp = try allocator.alloc(T, total);
+            defer allocator.free(temp);
+
+            var idx: usize = 0;
+            var iter = self.iterator();
+            while (iter.next()) |val| : (idx += 1) {
+                temp[idx] = val;
+            }
+
+            // Sort
+            std.sort.heap(T, temp, {}, struct {
+                fn lessThan(_: void, a: T, b: T) bool {
+                    return a < b;
+                }
+            }.lessThan);
+
+            // Count unique elements and their frequencies
+            var unique_count: usize = 1;
+            for (1..total) |i| {
+                if (temp[i] != temp[i - 1]) {
+                    unique_count += 1;
+                }
+            }
+
+            // Create result arrays
+            var values = try NDArray(T, 1).init(allocator, &[_]usize{unique_count}, .row_major);
+            errdefer values.deinit();
+            var counts = try NDArray(usize, 1).init(allocator, &[_]usize{unique_count}, .row_major);
+            errdefer counts.deinit();
+
+            // Fill with unique elements and counts
+            values.data[0] = temp[0];
+            counts.data[0] = 1;
+            var result_idx: usize = 0;
+            for (1..total) |i| {
+                if (temp[i] != temp[i - 1]) {
+                    result_idx += 1;
+                    values.data[result_idx] = temp[i];
+                    counts.data[result_idx] = 1;
+                } else {
+                    counts.data[result_idx] += 1;
+                }
+            }
+
+            return .{ .values = values, .counts = counts };
+        }
+
 
         // -- Iterator Protocol --
 
@@ -14666,4 +14807,342 @@ test "ndarray: tile() single element array" {
             try testing.expectEqual(@as(f64, 42), try tiled.get(&[_]isize{ @intCast(i), @intCast(j) }));
         }
     }
+}
+
+// -- unique() Tests --
+
+test "unique: basic 1D array with duplicates" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 3, 1, 2, 1, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    // Should return [1, 2, 3] in sorted order
+    try testing.expectEqual(@as(usize, 3), uniq.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try uniq.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try uniq.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try uniq.get(&[_]isize{2}));
+}
+
+test "unique: already sorted array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    // Should return same array (all unique)
+    try testing.expectEqual(@as(usize, 5), uniq.shape[0]);
+    for (0..5) |i| {
+        try testing.expectEqual(data[i], try uniq.get(&[_]isize{@intCast(i)}));
+    }
+}
+
+test "unique: all identical elements" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 7, 7, 7, 7, 7 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    // Should return single element
+    try testing.expectEqual(@as(usize, 1), uniq.shape[0]);
+    try testing.expectEqual(@as(i32, 7), try uniq.get(&[_]isize{0}));
+}
+
+test "unique: single element array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{42};
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    try testing.expectEqual(@as(usize, 1), uniq.shape[0]);
+    try testing.expectEqual(@as(i32, 42), try uniq.get(&[_]isize{0}));
+}
+
+test "unique: negative numbers" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ -3, 1, -3, 2, -1, 1 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    // Should return [-3, -1, 1, 2] in sorted order
+    try testing.expectEqual(@as(usize, 4), uniq.shape[0]);
+    try testing.expectEqual(@as(i32, -3), try uniq.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, -1), try uniq.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 1), try uniq.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 2), try uniq.get(&[_]isize{3}));
+}
+
+test "unique: 2D array (flattened)" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 2, 3, 1, 3 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    // Should flatten and return [1, 2, 3]
+    try testing.expectEqual(@as(usize, 3), uniq.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try uniq.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try uniq.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try uniq.get(&[_]isize{2}));
+}
+
+test "unique: floating point values" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 3.14, 2.71, 3.14, 1.41, 2.71 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    // Should return [1.41, 2.71, 3.14]
+    try testing.expectEqual(@as(usize, 3), uniq.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 1.41), try uniq.get(&[_]isize{0}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.71), try uniq.get(&[_]isize{1}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.14), try uniq.get(&[_]isize{2}), 1e-9);
+}
+
+test "unique: u8 type" {
+    const allocator = testing.allocator;
+
+    const data = [_]u8{ 100, 50, 100, 25, 50, 75 };
+    var arr = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var uniq = try arr.unique(allocator);
+    defer uniq.deinit();
+
+    try testing.expectEqual(@as(usize, 4), uniq.shape[0]);
+    try testing.expectEqual(@as(u8, 25), try uniq.get(&[_]isize{0}));
+    try testing.expectEqual(@as(u8, 50), try uniq.get(&[_]isize{1}));
+    try testing.expectEqual(@as(u8, 75), try uniq.get(&[_]isize{2}));
+    try testing.expectEqual(@as(u8, 100), try uniq.get(&[_]isize{3}));
+}
+
+test "unique: memory safety" {
+    const allocator = testing.allocator;
+
+    // Run multiple times to catch memory leaks
+    for (0..10) |_| {
+        const data = [_]i32{ 5, 3, 5, 1, 3, 5, 1 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+        defer arr.deinit();
+
+        var uniq = try arr.unique(allocator);
+        defer uniq.deinit();
+
+        try testing.expectEqual(@as(usize, 3), uniq.shape[0]);
+    }
+}
+
+// -- uniqueWithCounts() Tests --
+
+test "uniqueWithCounts: basic 1D array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 3, 1, 2, 1, 3, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    // Values: [1, 2, 3]
+    // Counts: [2, 1, 3]
+    try testing.expectEqual(@as(usize, 3), result.values.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.counts.shape[0]);
+
+    try testing.expectEqual(@as(i32, 1), try result.values.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try result.values.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try result.values.get(&[_]isize{2}));
+
+    try testing.expectEqual(@as(usize, 2), try result.counts.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 1), try result.counts.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 3), try result.counts.get(&[_]isize{2}));
+}
+
+test "uniqueWithCounts: all identical elements" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 5, 5, 5, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.values.shape[0]);
+    try testing.expectEqual(@as(i32, 5), try result.values.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 4), try result.counts.get(&[_]isize{0}));
+}
+
+test "uniqueWithCounts: all unique elements" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.values.shape[0]);
+    // All counts should be 1
+    for (0..4) |i| {
+        try testing.expectEqual(@as(usize, 1), try result.counts.get(&[_]isize{@intCast(i)}));
+    }
+}
+
+test "uniqueWithCounts: single element" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{42};
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.values.shape[0]);
+    try testing.expectEqual(@as(i32, 42), try result.values.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 1), try result.counts.get(&[_]isize{0}));
+}
+
+test "uniqueWithCounts: 2D array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 2, 3, 1, 3, 3, 1 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    // Values: [1, 2, 3]
+    // Counts: [3, 2, 3]
+    try testing.expectEqual(@as(usize, 3), result.values.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try result.values.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try result.values.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try result.values.get(&[_]isize{2}));
+
+    try testing.expectEqual(@as(usize, 3), try result.counts.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try result.counts.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 3), try result.counts.get(&[_]isize{2}));
+}
+
+test "uniqueWithCounts: f64 type" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.5, 2.5, 1.5, 2.5, 1.5 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.values.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 1.5), try result.values.get(&[_]isize{0}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.5), try result.values.get(&[_]isize{1}), 1e-9);
+
+    try testing.expectEqual(@as(usize, 3), try result.counts.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try result.counts.get(&[_]isize{1}));
+}
+
+test "uniqueWithCounts: negative numbers" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ -5, -5, 0, -5, 0, 10, 10 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    // Values: [-5, 0, 10]
+    // Counts: [3, 2, 2]
+    try testing.expectEqual(@as(usize, 3), result.values.shape[0]);
+    try testing.expectEqual(@as(i32, -5), try result.values.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 0), try result.values.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 10), try result.values.get(&[_]isize{2}));
+
+    try testing.expectEqual(@as(usize, 3), try result.counts.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try result.counts.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 2), try result.counts.get(&[_]isize{2}));
+}
+
+test "uniqueWithCounts: memory safety" {
+    const allocator = testing.allocator;
+
+    // Run multiple times to catch memory leaks
+    for (0..10) |_| {
+        const data = [_]i32{ 7, 3, 7, 3, 7, 7, 3 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+        defer arr.deinit();
+
+        var result = try arr.uniqueWithCounts(allocator);
+        defer result.values.deinit();
+        defer result.counts.deinit();
+
+        try testing.expectEqual(@as(usize, 2), result.values.shape[0]);
+        try testing.expectEqual(@as(usize, 2), result.counts.shape[0]);
+    }
+}
+
+test "uniqueWithCounts: large array" {
+    const allocator = testing.allocator;
+
+    // Create array with pattern: [0,1,2,0,1,2,0,1,2,...] for 300 elements
+    var data: [300]i32 = undefined;
+    for (0..300) |i| {
+        data[i] = @intCast(i % 3);
+    }
+
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.uniqueWithCounts(allocator);
+    defer result.values.deinit();
+    defer result.counts.deinit();
+
+    // Should have 3 unique values: [0, 1, 2]
+    // Each appears 100 times
+    try testing.expectEqual(@as(usize, 3), result.values.shape[0]);
+    try testing.expectEqual(@as(i32, 0), try result.values.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 1), try result.values.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 2), try result.values.get(&[_]isize{2}));
+
+    try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{2}));
 }
