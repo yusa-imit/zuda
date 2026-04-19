@@ -3510,6 +3510,238 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             return result;
         }
+
+        /// Repeat elements of array along specified axis.
+        ///
+        /// Time: O(prod(shape) × repeats)
+        /// Space: O(prod(shape) × repeats)
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(f64, 1).fromSlice(allocator, &.{3}, &.{1, 2, 3}, .row_major);
+        /// defer arr.deinit();
+        /// const repeated = try arr.repeat(allocator, 2, 0);
+        /// defer repeated.deinit();
+        /// // repeated.data = [1, 1, 2, 2, 3, 3]
+        /// ```
+        pub fn repeat(
+            self: *const Self,
+            allocator: Allocator,
+            repeats: usize,
+            axis: usize,
+        ) (Error || std.mem.Allocator.Error)!Self {
+            if (repeats == 0) {
+                return Error.ZeroDimension;
+            }
+
+            if (axis >= ndim) {
+                return Error.IndexOutOfBounds;
+            }
+
+            // Calculate new shape
+            var new_shape: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                if (i == axis) {
+                    new_shape[i] = self.shape[i] * repeats;
+                } else {
+                    new_shape[i] = self.shape[i];
+                }
+            }
+
+            var result = try Self.init(allocator, &new_shape, self.layout);
+            errdefer result.deinit();
+
+            // Iterate through source array
+            var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+            var done = false;
+
+            while (!done) {
+                var src_indices: [ndim]isize = undefined;
+                for (indices, 0..) |idx, i| {
+                    src_indices[i] = @as(isize, @intCast(idx));
+                }
+                const val = try self.get(&src_indices);
+
+                // Repeat this element along the specified axis
+                for (0..repeats) |rep| {
+                    var dest_indices: [ndim]isize = undefined;
+                    for (indices, 0..) |idx, i| {
+                        if (i == axis) {
+                            dest_indices[i] = @as(isize, @intCast(idx * repeats + rep));
+                        } else {
+                            dest_indices[i] = @as(isize, @intCast(idx));
+                        }
+                    }
+                    result.set(&dest_indices, val);
+                }
+
+                // Increment multi-dimensional index
+                var carry: usize = 1;
+                var dim: usize = ndim;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    indices[dim] += carry;
+                    if (indices[dim] >= self.shape[dim]) {
+                        indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
+
+        /// Repeat elements of array after flattening.
+        /// Returns a 1D array with each element repeated the specified number of times.
+        ///
+        /// Time: O(prod(shape) × repeats)
+        /// Space: O(prod(shape) × repeats)
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(f64, 2).fromSlice(allocator, &.{2, 2}, &.{1, 2, 3, 4}, .row_major);
+        /// defer arr.deinit();
+        /// const repeated = try arr.repeatFlat(allocator, 2);
+        /// defer repeated.deinit();
+        /// // repeated.data = [1, 1, 2, 2, 3, 3, 4, 4] (1D)
+        /// ```
+        pub fn repeatFlat(
+            self: *const Self,
+            allocator: Allocator,
+            repeats: usize,
+        ) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            if (repeats == 0) {
+                return Error.ZeroDimension;
+            }
+
+            const total_size = self.count();
+            const result_size = total_size * repeats;
+            var result = try NDArray(T, 1).init(allocator, &.{result_size}, self.layout);
+            errdefer result.deinit();
+
+            var flat_idx: usize = 0;
+            var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+            var done = false;
+
+            while (!done) {
+                var src_indices: [ndim]isize = undefined;
+                for (indices, 0..) |idx, i| {
+                    src_indices[i] = @as(isize, @intCast(idx));
+                }
+                const val = try self.get(&src_indices);
+
+                // Repeat this element `repeats` times
+                for (0..repeats) |rep| {
+                    const out_idx: isize = @intCast(flat_idx * repeats + rep);
+                    result.set(&.{out_idx}, val);
+                }
+                flat_idx += 1;
+
+                // Increment multi-dimensional index
+                var carry: usize = 1;
+                var dim: usize = ndim;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    indices[dim] += carry;
+                    if (indices[dim] >= self.shape[dim]) {
+                        indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
+
+        /// Construct array by repeating the input array.
+        /// The reps parameter specifies the number of repetitions along each axis.
+        ///
+        /// Time: O(prod(shape) × prod(reps))
+        /// Space: O(prod(shape) × prod(reps))
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(f64, 2).fromSlice(allocator, &.{2, 2}, &.{1, 2, 3, 4}, .row_major);
+        /// defer arr.deinit();
+        /// const tiled = try arr.tile(allocator, &.{2, 3});
+        /// defer tiled.deinit();
+        /// // Tiles array 2 times vertically, 3 times horizontally
+        /// // Result shape: [4, 6]
+        /// ```
+        pub fn tile(
+            self: *const Self,
+            allocator: Allocator,
+            reps: []const usize,
+        ) (Error || std.mem.Allocator.Error)!Self {
+            if (reps.len != ndim) {
+                return Error.ShapeMismatch;
+            }
+
+            // Check for zero repetitions
+            for (reps) |r| {
+                if (r == 0) {
+                    return Error.ZeroDimension;
+                }
+            }
+
+            // Calculate output shape
+            var out_shape: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                out_shape[i] = self.shape[i] * reps[i];
+            }
+
+            var result = try Self.init(allocator, &out_shape, self.layout);
+            errdefer result.deinit();
+
+            // Iterate through all output positions
+            var out_indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+            var done = false;
+
+            while (!done) {
+                // Map output position to source position (using modulo)
+                var src_indices: [ndim]isize = undefined;
+                for (out_indices, 0..) |out_idx, i| {
+                    src_indices[i] = @as(isize, @intCast(out_idx % self.shape[i]));
+                }
+
+                const val = try self.get(&src_indices);
+
+                var out_indices_signed: [ndim]isize = undefined;
+                for (out_indices, 0..) |idx, i| {
+                    out_indices_signed[i] = @as(isize, @intCast(idx));
+                }
+                result.set(&out_indices_signed, val);
+
+                // Increment output index
+                var carry: usize = 1;
+                var dim: usize = ndim;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    out_indices[dim] += carry;
+                    if (out_indices[dim] >= out_shape[dim]) {
+                        out_indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
     };
 }
 
@@ -13343,5 +13575,389 @@ test "ndarray: CSV roundtrip memory safety with allocator" {
         try testing.expectEqual(@as(usize, 5), loaded.shape[1]);
 
         std.fs.cwd().deleteFile(path) catch {};
+    }
+}
+
+// ============================================================================
+// repeat() and tile() tests
+// ============================================================================
+
+test "ndarray: repeat() 1D with axis=0" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeat(allocator, 2, 0);
+    defer repeated.deinit();
+
+    try testing.expectEqual(@as(usize, 6), repeated.shape[0]);
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{5}));
+}
+
+test "ndarray: repeat() 2D with axis=0" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeat(allocator, 2, 0);
+    defer repeated.deinit();
+
+    try testing.expectEqual(@as(usize, 4), repeated.shape[0]);
+    try testing.expectEqual(@as(usize, 3), repeated.shape[1]);
+
+    // First row repeated
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{ 1, 2 }));
+
+    // Second row repeated
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{ 2, 0 }));
+    try testing.expectEqual(@as(f64, 5), try repeated.get(&[_]isize{ 2, 1 }));
+    try testing.expectEqual(@as(f64, 6), try repeated.get(&[_]isize{ 2, 2 }));
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{ 3, 0 }));
+    try testing.expectEqual(@as(f64, 5), try repeated.get(&[_]isize{ 3, 1 }));
+    try testing.expectEqual(@as(f64, 6), try repeated.get(&[_]isize{ 3, 2 }));
+}
+
+test "ndarray: repeat() 2D with axis=1" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeat(allocator, 3, 1);
+    defer repeated.deinit();
+
+    try testing.expectEqual(@as(usize, 2), repeated.shape[0]);
+    try testing.expectEqual(@as(usize, 6), repeated.shape[1]);
+
+    // First row: [1, 1, 1, 2, 2, 2]
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 0, 3 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 0, 4 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 0, 5 }));
+
+    // Second row: [3, 3, 3, 4, 4, 4]
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{ 1, 2 }));
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{ 1, 3 }));
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{ 1, 4 }));
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{ 1, 5 }));
+}
+
+test "ndarray: repeatFlat() flattens then repeats" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeatFlat(allocator, 2);
+    defer repeated.deinit();
+
+    try testing.expectEqual(@as(usize, 8), repeated.shape[0]);
+    // [1, 1, 2, 2, 3, 3, 4, 4]
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 3), try repeated.get(&[_]isize{5}));
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{6}));
+    try testing.expectEqual(@as(f64, 4), try repeated.get(&[_]isize{7}));
+}
+
+test "ndarray: repeat() single element" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{1}, &[_]i32{42}, .row_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeat(allocator, 5, 0);
+    defer repeated.deinit();
+
+    try testing.expectEqual(@as(usize, 5), repeated.shape[0]);
+    for (0..5) |i| {
+        try testing.expectEqual(@as(i32, 42), try repeated.get(&[_]isize{@intCast(i)}));
+    }
+}
+
+test "ndarray: repeat() 3D with axis=2" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeat(allocator, 2, 2);
+    defer repeated.deinit();
+
+    try testing.expectEqual(@as(usize, 2), repeated.shape[0]);
+    try testing.expectEqual(@as(usize, 2), repeated.shape[1]);
+    try testing.expectEqual(@as(usize, 4), repeated.shape[2]);
+
+    // Check a few elements
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(f64, 1), try repeated.get(&[_]isize{ 0, 0, 1 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 0, 0, 2 }));
+    try testing.expectEqual(@as(f64, 2), try repeated.get(&[_]isize{ 0, 0, 3 }));
+}
+
+test "ndarray: repeat() error - zero repeats" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.ZeroDimension, arr.repeat(allocator, 0, 0));
+}
+
+test "ndarray: repeat() error - invalid axis" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.IndexOutOfBounds, arr.repeat(allocator, 2, 2));
+}
+
+test "ndarray: repeat() type variants" {
+    const allocator = testing.allocator;
+
+    // i32
+    var arr_i32 = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &[_]i32{ 10, 20 }, .row_major);
+    defer arr_i32.deinit();
+    var repeated_i32 = try arr_i32.repeat(allocator, 2, 0);
+    defer repeated_i32.deinit();
+    try testing.expectEqual(@as(usize, 4), repeated_i32.shape[0]);
+
+    // u8
+    var arr_u8 = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{2}, &[_]u8{ 1, 2 }, .row_major);
+    defer arr_u8.deinit();
+    var repeated_u8 = try arr_u8.repeat(allocator, 3, 0);
+    defer repeated_u8.deinit();
+    try testing.expectEqual(@as(usize, 6), repeated_u8.shape[0]);
+}
+
+test "ndarray: repeat() column-major layout" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .column_major);
+    defer arr.deinit();
+
+    var repeated = try arr.repeat(allocator, 2, 0);
+    defer repeated.deinit();
+
+    try testing.expectEqual(Layout.column_major, repeated.layout);
+    try testing.expectEqual(@as(usize, 4), repeated.shape[0]);
+    try testing.expectEqual(@as(usize, 2), repeated.shape[1]);
+}
+
+test "ndarray: repeat() memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+        defer arr.deinit();
+
+        var repeated = try arr.repeat(allocator, 2, 0);
+        defer repeated.deinit();
+
+        try repeated.validate();
+    }
+}
+
+test "ndarray: tile() 1D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{3});
+    defer tiled.deinit();
+
+    try testing.expectEqual(@as(usize, 9), tiled.shape[0]);
+    // [1, 2, 3, 1, 2, 3, 1, 2, 3]
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 3), try tiled.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 3), try tiled.get(&[_]isize{5}));
+}
+
+test "ndarray: tile() 2D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{ 2, 3 });
+    defer tiled.deinit();
+
+    try testing.expectEqual(@as(usize, 4), tiled.shape[0]);
+    try testing.expectEqual(@as(usize, 6), tiled.shape[1]);
+
+    // First tile
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(f64, 3), try tiled.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 4), try tiled.get(&[_]isize{ 1, 1 }));
+
+    // Horizontally tiled
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{ 0, 3 }));
+
+    // Vertically tiled
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{ 2, 0 }));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{ 2, 1 }));
+}
+
+test "ndarray: tile() single repetition" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{ 1, 1 });
+    defer tiled.deinit();
+
+    try testing.expectEqual(@as(usize, 2), tiled.shape[0]);
+    try testing.expectEqual(@as(usize, 2), tiled.shape[1]);
+
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(f64, 3), try tiled.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(f64, 4), try tiled.get(&[_]isize{ 1, 1 }));
+}
+
+test "ndarray: tile() 3D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{ 1, 2, 1 });
+    defer tiled.deinit();
+
+    try testing.expectEqual(@as(usize, 2), tiled.shape[0]);
+    try testing.expectEqual(@as(usize, 4), tiled.shape[1]);
+    try testing.expectEqual(@as(usize, 2), tiled.shape[2]);
+
+    // Original elements
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{ 0, 0, 1 }));
+
+    // Tiled in axis=1
+    try testing.expectEqual(@as(f64, 1), try tiled.get(&[_]isize{ 0, 2, 0 }));
+    try testing.expectEqual(@as(f64, 2), try tiled.get(&[_]isize{ 0, 2, 1 }));
+}
+
+test "ndarray: tile() error - zero reps" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.ZeroDimension, arr.tile(allocator, &[_]usize{ 2, 0 }));
+}
+
+test "ndarray: tile() error - shape mismatch" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(error.ShapeMismatch, arr.tile(allocator, &[_]usize{2}));
+}
+
+test "ndarray: tile() type variants" {
+    const allocator = testing.allocator;
+
+    // i32
+    var arr_i32 = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]i32{ 1, 2, 3, 4 }, .row_major);
+    defer arr_i32.deinit();
+    var tiled_i32 = try arr_i32.tile(allocator, &[_]usize{ 2, 1 });
+    defer tiled_i32.deinit();
+    try testing.expectEqual(@as(usize, 4), tiled_i32.shape[0]);
+
+    // u8
+    var arr_u8 = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{2}, &[_]u8{ 5, 6 }, .row_major);
+    defer arr_u8.deinit();
+    var tiled_u8 = try arr_u8.tile(allocator, &[_]usize{3});
+    defer tiled_u8.deinit();
+    try testing.expectEqual(@as(usize, 6), tiled_u8.shape[0]);
+}
+
+test "ndarray: tile() column-major layout" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .column_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{ 2, 2 });
+    defer tiled.deinit();
+
+    try testing.expectEqual(Layout.column_major, tiled.layout);
+    try testing.expectEqual(@as(usize, 4), tiled.shape[0]);
+    try testing.expectEqual(@as(usize, 4), tiled.shape[1]);
+}
+
+test "ndarray: tile() large array" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 10, 10 }, &([_]f64{1.0} ** 100), .row_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{ 2, 3 });
+    defer tiled.deinit();
+
+    try testing.expectEqual(@as(usize, 20), tiled.shape[0]);
+    try testing.expectEqual(@as(usize, 30), tiled.shape[1]);
+    try tiled.validate();
+}
+
+test "ndarray: tile() memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+        defer arr.deinit();
+
+        var tiled = try arr.tile(allocator, &[_]usize{ 2, 2 });
+        defer tiled.deinit();
+
+        try tiled.validate();
+    }
+}
+
+test "ndarray: tile() single element array" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{42}, .row_major);
+    defer arr.deinit();
+
+    var tiled = try arr.tile(allocator, &[_]usize{ 3, 4 });
+    defer tiled.deinit();
+
+    try testing.expectEqual(@as(usize, 3), tiled.shape[0]);
+    try testing.expectEqual(@as(usize, 4), tiled.shape[1]);
+
+    // All elements should be 42
+    for (0..3) |i| {
+        for (0..4) |j| {
+            try testing.expectEqual(@as(f64, 42), try tiled.get(&[_]isize{ @intCast(i), @intCast(j) }));
+        }
     }
 }
