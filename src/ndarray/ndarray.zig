@@ -2991,6 +2991,214 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        // -- Sorting Operations --
+
+        /// Sort elements along a specified axis
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        /// - axis: The axis along which to sort (0 to ndim-1)
+        ///
+        /// Returns: New NDArray with same shape containing sorted values
+        ///
+        /// Sorts each 1-D slice along the specified axis in ascending order.
+        /// Uses standard library sort with O(n log n) comparison-based sorting.
+        ///
+        /// Example (2D, axis=0): [[3,1],[2,4]] → [[2,1],[3,4]] (sort columns)
+        /// Example (2D, axis=1): [[3,1],[2,4]] → [[1,3],[2,4]] (sort rows)
+        ///
+        /// Time: O(m × n log n) where m = number of slices, n = slice length
+        /// Space: O(prod(shape)) for result array
+        pub fn sort(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Create result array with same shape and layout
+            var result = try Self.init(allocator, self.shape[0..], self.layout);
+            errdefer result.deinit();
+
+            // Copy data first
+            @memcpy(result.data, self.data);
+
+            // Sort along the specified axis
+            const axis_len = self.shape[axis];
+            if (axis_len <= 1) {
+                return result; // Already sorted if axis length is 0 or 1
+            }
+
+            // Calculate number of slices to sort
+            var num_slices: usize = 1;
+            for (0..ndim) |d| {
+                if (d != axis) {
+                    num_slices *= self.shape[d];
+                }
+            }
+
+            // Create buffer for extracting slices
+            const slice_buf = try allocator.alloc(T, axis_len);
+            defer allocator.free(slice_buf);
+
+            // For each slice perpendicular to the axis
+            for (0..num_slices) |slice_idx| {
+                // Calculate multi-dimensional index for this slice
+                var multi_idx: [ndim]usize = undefined;
+                var remaining = slice_idx;
+
+                var dim_idx: usize = 0;
+                for (0..ndim) |d| {
+                    if (d == axis) continue;
+
+                    var divisor: usize = 1;
+                    var idx_after = dim_idx + 1;
+                    for (0..ndim) |dd| {
+                        if (dd == axis) continue;
+                        if (idx_after > 0) {
+                            idx_after -= 1;
+                            continue;
+                        }
+                        divisor *= self.shape[dd];
+                    }
+
+                    multi_idx[d] = remaining / divisor;
+                    remaining = remaining % divisor;
+                    dim_idx += 1;
+                }
+
+                // Extract slice along axis
+                for (0..axis_len) |i| {
+                    multi_idx[axis] = i;
+                    var offset: usize = 0;
+                    for (0..ndim) |d| {
+                        offset += multi_idx[d] * result.strides[d];
+                    }
+                    slice_buf[i] = result.data[offset];
+                }
+
+                // Sort the slice
+                std.sort.heap(T, slice_buf, {}, comptime std.sort.asc(T));
+
+                // Write sorted values back
+                for (0..axis_len) |i| {
+                    multi_idx[axis] = i;
+                    var offset: usize = 0;
+                    for (0..ndim) |d| {
+                        offset += multi_idx[d] * result.strides[d];
+                    }
+                    result.data[offset] = slice_buf[i];
+                }
+            }
+
+            return result;
+        }
+
+        /// Return indices that would sort the array along a specified axis
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        /// - axis: The axis along which to compute indices (0 to ndim-1)
+        ///
+        /// Returns: New NDArray of usize with same shape containing sort indices
+        ///
+        /// Returns the indices that would sort each 1-D slice along the axis.
+        /// These indices can be used to reorder the original array to sorted order.
+        ///
+        /// Example (1D): [30, 10, 20] → [1, 2, 0]  (indices that sort the array)
+        /// Example (2D, axis=0): [[3,1],[2,4]] → [[1,0],[0,1]] (column sort indices)
+        ///
+        /// Time: O(m × n log n) where m = number of slices, n = slice length
+        /// Space: O(prod(shape)) for result array
+        pub fn argsort(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(usize, ndim) {
+            if (axis >= ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Create result array for indices
+            var result = try NDArray(usize, ndim).init(allocator, self.shape[0..], self.layout);
+            errdefer result.deinit();
+
+            const axis_len = self.shape[axis];
+            if (axis_len == 0) {
+                return result; // Empty array
+            }
+
+            // Calculate number of slices to sort
+            var num_slices: usize = 1;
+            for (0..ndim) |d| {
+                if (d != axis) {
+                    num_slices *= self.shape[d];
+                }
+            }
+
+            // Create buffers for sorting
+            const IndexValue = struct {
+                index: usize,
+                value: T,
+            };
+
+            const slice_buf = try allocator.alloc(IndexValue, axis_len);
+            defer allocator.free(slice_buf);
+
+            // For each slice perpendicular to the axis
+            for (0..num_slices) |slice_idx| {
+                // Calculate multi-dimensional index for this slice
+                var multi_idx: [ndim]usize = undefined;
+                var remaining = slice_idx;
+
+                var dim_idx: usize = 0;
+                for (0..ndim) |d| {
+                    if (d == axis) continue;
+
+                    var divisor: usize = 1;
+                    var idx_after = dim_idx + 1;
+                    for (0..ndim) |dd| {
+                        if (dd == axis) continue;
+                        if (idx_after > 0) {
+                            idx_after -= 1;
+                            continue;
+                        }
+                        divisor *= self.shape[dd];
+                    }
+
+                    multi_idx[d] = remaining / divisor;
+                    remaining = remaining % divisor;
+                    dim_idx += 1;
+                }
+
+                // Extract slice with indices
+                for (0..axis_len) |i| {
+                    multi_idx[axis] = i;
+                    var offset: usize = 0;
+                    for (0..ndim) |d| {
+                        offset += multi_idx[d] * self.strides[d];
+                    }
+                    slice_buf[i] = .{
+                        .index = i,
+                        .value = self.data[offset],
+                    };
+                }
+
+                // Sort by value
+                std.sort.heap(IndexValue, slice_buf, {}, struct {
+                    fn lessThan(_: void, a: IndexValue, b: IndexValue) bool {
+                        return a.value < b.value;
+                    }
+                }.lessThan);
+
+                // Write indices back
+                for (0..axis_len) |i| {
+                    multi_idx[axis] = i;
+                    var offset: usize = 0;
+                    for (0..ndim) |d| {
+                        offset += multi_idx[d] * result.strides[d];
+                    }
+                    result.data[offset] = slice_buf[i].index;
+                }
+            }
+
+            return result;
+        }
+
 
         // -- Iterator Protocol --
 
@@ -9935,6 +10143,504 @@ test "ndarray: save and load large array" {
 // 2. Dimensions are compatible when equal OR one is 1
 // 3. Prepend 1s to shorter-rank shapes to match ranks
 // 4. Result shape is max of each dimension pair
+
+// -- Sorting Operations Tests --
+
+test "sort: basic 1D array ascending i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [30, 10, 50, 20, 40]
+    arr.data[0] = 30;
+    arr.data[1] = 10;
+    arr.data[2] = 50;
+    arr.data[3] = 20;
+    arr.data[4] = 40;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    // Expected: [10, 20, 30, 40, 50]
+    try testing.expectEqual(@as(i32, 10), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 20), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 30), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 40), sorted.data[3]);
+    try testing.expectEqual(@as(i32, 50), sorted.data[4]);
+
+    // Original should be unchanged
+    try testing.expectEqual(@as(i32, 30), arr.data[0]);
+}
+
+test "sort: 1D already sorted array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 1;
+    arr.data[1] = 2;
+    arr.data[2] = 3;
+    arr.data[3] = 4;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 4), sorted.data[3]);
+}
+
+test "sort: 1D reverse sorted array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 4;
+    arr.data[1] = 3;
+    arr.data[2] = 2;
+    arr.data[3] = 1;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 4), sorted.data[3]);
+}
+
+test "sort: 1D with duplicates i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 4;
+    arr.data[3] = 1;
+    arr.data[4] = 5;
+    arr.data[5] = 2;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 1), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[3]);
+    try testing.expectEqual(@as(i32, 4), sorted.data[4]);
+    try testing.expectEqual(@as(i32, 5), sorted.data[5]);
+}
+
+test "sort: 1D with negative values i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = -10;
+    arr.data[1] = 5;
+    arr.data[2] = -3;
+    arr.data[3] = 0;
+    arr.data[4] = -20;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    try testing.expectEqual(@as(i32, -20), sorted.data[0]);
+    try testing.expectEqual(@as(i32, -10), sorted.data[1]);
+    try testing.expectEqual(@as(i32, -3), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 0), sorted.data[3]);
+    try testing.expectEqual(@as(i32, 5), sorted.data[4]);
+}
+
+test "sort: 1D single element i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 42;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    try testing.expectEqual(@as(i32, 42), sorted.data[0]);
+}
+
+test "sort: 2D along axis 0 (columns) i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer arr.deinit();
+
+    // [[3, 1],
+    //  [1, 3],
+    //  [2, 2]]
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 1;
+    arr.data[3] = 3;
+    arr.data[4] = 2;
+    arr.data[5] = 2;
+
+    var sorted = try arr.sort(allocator, 0);
+    defer sorted.deinit();
+
+    // Expected (sort each column):
+    // [[1, 1],
+    //  [2, 2],
+    //  [3, 3]]
+    try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 1), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[3]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[4]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[5]);
+}
+
+test "sort: 2D along axis 1 (rows) i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // [[3, 1, 2],
+    //  [6, 4, 5]]
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 2;
+    arr.data[3] = 6;
+    arr.data[4] = 4;
+    arr.data[5] = 5;
+
+    var sorted = try arr.sort(allocator, 1);
+    defer sorted.deinit();
+
+    // Expected (sort each row):
+    // [[1, 2, 3],
+    //  [4, 5, 6]]
+    try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 4), sorted.data[3]);
+    try testing.expectEqual(@as(i32, 5), sorted.data[4]);
+    try testing.expectEqual(@as(i32, 6), sorted.data[5]);
+}
+
+test "sort: 2D with f64 type" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 3.5;
+    arr.data[1] = 1.2;
+    arr.data[2] = 2.8;
+    arr.data[3] = 6.1;
+    arr.data[4] = 4.0;
+    arr.data[5] = 5.9;
+
+    var sorted = try arr.sort(allocator, 1);
+    defer sorted.deinit();
+
+    try testing.expectApproxEqAbs(1.2, sorted.data[0], 1e-9);
+    try testing.expectApproxEqAbs(2.8, sorted.data[1], 1e-9);
+    try testing.expectApproxEqAbs(3.5, sorted.data[2], 1e-9);
+}
+
+test "sort: invalid axis error" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    const result = arr.sort(allocator, 2); // axis 2 doesn't exist
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "argsort: basic 1D array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    // Set to [30, 10, 50, 20, 40]
+    arr.data[0] = 30;
+    arr.data[1] = 10;
+    arr.data[2] = 50;
+    arr.data[3] = 20;
+    arr.data[4] = 40;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    // Expected indices: [1, 3, 0, 4, 2]
+    // (sorted values: [10, 20, 30, 40, 50])
+    try testing.expectEqual(@as(usize, 1), indices.data[0]);
+    try testing.expectEqual(@as(usize, 3), indices.data[1]);
+    try testing.expectEqual(@as(usize, 0), indices.data[2]);
+    try testing.expectEqual(@as(usize, 4), indices.data[3]);
+    try testing.expectEqual(@as(usize, 2), indices.data[4]);
+}
+
+test "argsort: 1D already sorted array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 1;
+    arr.data[1] = 2;
+    arr.data[2] = 3;
+    arr.data[3] = 4;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    // Expected: [0, 1, 2, 3] (identity)
+    try testing.expectEqual(@as(usize, 0), indices.data[0]);
+    try testing.expectEqual(@as(usize, 1), indices.data[1]);
+    try testing.expectEqual(@as(usize, 2), indices.data[2]);
+    try testing.expectEqual(@as(usize, 3), indices.data[3]);
+}
+
+test "argsort: 1D reverse sorted array i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 4;
+    arr.data[1] = 3;
+    arr.data[2] = 2;
+    arr.data[3] = 1;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    // Expected: [3, 2, 1, 0] (reverse)
+    try testing.expectEqual(@as(usize, 3), indices.data[0]);
+    try testing.expectEqual(@as(usize, 2), indices.data[1]);
+    try testing.expectEqual(@as(usize, 1), indices.data[2]);
+    try testing.expectEqual(@as(usize, 0), indices.data[3]);
+}
+
+test "argsort: 1D with duplicates stable ordering i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 2;
+    arr.data[3] = 1;
+    arr.data[4] = 2;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    // Expected: indices pointing to values [1, 1, 2, 2, 3]
+    // First two should be indices of the two 1s: [1, 3]
+    // Next two should be indices of the two 2s: [2, 4]
+    // Last should be index of 3: [0]
+    try testing.expectEqual(@as(usize, 1), indices.data[0]);
+    try testing.expectEqual(@as(usize, 3), indices.data[1]);
+    try testing.expectEqual(@as(usize, 2), indices.data[2]);
+    try testing.expectEqual(@as(usize, 4), indices.data[3]);
+    try testing.expectEqual(@as(usize, 0), indices.data[4]);
+}
+
+test "argsort: 1D single element i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 42;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 0), indices.data[0]);
+}
+
+test "argsort: 2D along axis 0 (columns) i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer arr.deinit();
+
+    // [[3, 1],
+    //  [1, 3],
+    //  [2, 2]]
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 1;
+    arr.data[3] = 3;
+    arr.data[4] = 2;
+    arr.data[5] = 2;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    // Column 0: [3, 1, 2] → indices [1, 2, 0]
+    // Column 1: [1, 3, 2] → indices [0, 2, 1]
+    try testing.expectEqual(@as(usize, 1), indices.data[0]); // col 0, row 0
+    try testing.expectEqual(@as(usize, 0), indices.data[1]); // col 1, row 0
+    try testing.expectEqual(@as(usize, 2), indices.data[2]); // col 0, row 1
+    try testing.expectEqual(@as(usize, 2), indices.data[3]); // col 1, row 1
+    try testing.expectEqual(@as(usize, 0), indices.data[4]); // col 0, row 2
+    try testing.expectEqual(@as(usize, 1), indices.data[5]); // col 1, row 2
+}
+
+test "argsort: 2D along axis 1 (rows) i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    // [[3, 1, 2],
+    //  [6, 4, 5]]
+    arr.data[0] = 3;
+    arr.data[1] = 1;
+    arr.data[2] = 2;
+    arr.data[3] = 6;
+    arr.data[4] = 4;
+    arr.data[5] = 5;
+
+    var indices = try arr.argsort(allocator, 1);
+    defer indices.deinit();
+
+    // Row 0: [3, 1, 2] → indices [1, 2, 0]
+    // Row 1: [6, 4, 5] → indices [1, 2, 0]
+    try testing.expectEqual(@as(usize, 1), indices.data[0]);
+    try testing.expectEqual(@as(usize, 2), indices.data[1]);
+    try testing.expectEqual(@as(usize, 0), indices.data[2]);
+    try testing.expectEqual(@as(usize, 1), indices.data[3]);
+    try testing.expectEqual(@as(usize, 2), indices.data[4]);
+    try testing.expectEqual(@as(usize, 0), indices.data[5]);
+}
+
+test "argsort: invalid axis error" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    const result = arr.argsort(allocator, 2); // axis 2 doesn't exist
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "sort: memory safety with 10 iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+        defer arr.deinit();
+
+        arr.data[0] = 5;
+        arr.data[1] = 2;
+        arr.data[2] = 8;
+        arr.data[3] = 1;
+        arr.data[4] = 9;
+
+        var sorted = try arr.sort(allocator, 0);
+        defer sorted.deinit();
+
+        try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+        try testing.expectEqual(@as(i32, 9), sorted.data[4]);
+    }
+}
+
+test "argsort: memory safety with 10 iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+        defer arr.deinit();
+
+        arr.data[0] = 5;
+        arr.data[1] = 2;
+        arr.data[2] = 8;
+        arr.data[3] = 1;
+        arr.data[4] = 9;
+
+        var indices = try arr.argsort(allocator, 0);
+        defer indices.deinit();
+
+        try testing.expectEqual(@as(usize, 3), indices.data[0]); // index of 1
+        try testing.expectEqual(@as(usize, 4), indices.data[4]); // index of 9
+    }
+}
+
+test "sort: 3D array along different axes" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer arr.deinit();
+
+    // [[[4, 1],
+    //   [3, 2]],
+    //  [[8, 5],
+    //   [7, 6]]]
+    arr.data[0] = 4;
+    arr.data[1] = 1;
+    arr.data[2] = 3;
+    arr.data[3] = 2;
+    arr.data[4] = 8;
+    arr.data[5] = 5;
+    arr.data[6] = 7;
+    arr.data[7] = 6;
+
+    // Sort along axis 2 (innermost - sort pairs)
+    var sorted = try arr.sort(allocator, 2);
+    defer sorted.deinit();
+
+    // Expected: [[[1, 4], [2, 3]], [[5, 8], [6, 7]]]
+    try testing.expectEqual(@as(i32, 1), sorted.data[0]);
+    try testing.expectEqual(@as(i32, 4), sorted.data[1]);
+    try testing.expectEqual(@as(i32, 2), sorted.data[2]);
+    try testing.expectEqual(@as(i32, 3), sorted.data[3]);
+    try testing.expectEqual(@as(i32, 5), sorted.data[4]);
+    try testing.expectEqual(@as(i32, 8), sorted.data[5]);
+    try testing.expectEqual(@as(i32, 6), sorted.data[6]);
+    try testing.expectEqual(@as(i32, 7), sorted.data[7]);
+}
+
+test "argsort: verify indices produce sorted array" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    arr.data[0] = 30;
+    arr.data[1] = 10;
+    arr.data[2] = 50;
+    arr.data[3] = 20;
+    arr.data[4] = 40;
+
+    var indices = try arr.argsort(allocator, 0);
+    defer indices.deinit();
+
+    // Use indices to verify they produce sorted order
+    const idx0 = indices.data[0];
+    const idx1 = indices.data[1];
+    const idx2 = indices.data[2];
+    const idx3 = indices.data[3];
+    const idx4 = indices.data[4];
+
+    try testing.expect(arr.data[idx0] <= arr.data[idx1]);
+    try testing.expect(arr.data[idx1] <= arr.data[idx2]);
+    try testing.expect(arr.data[idx2] <= arr.data[idx3]);
+    try testing.expect(arr.data[idx3] <= arr.data[idx4]);
+}
 
 // -- broadcastShapes Helper Function Tests --
 
