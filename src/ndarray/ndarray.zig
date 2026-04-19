@@ -3427,7 +3427,436 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             return result;
         }
+
+        /// Padding modes for array extension
+        pub const PadMode = enum {
+            /// Pad with constant value
+            constant,
+            /// Extend edge values
+            edge,
+            /// Mirror reflection without repeating edge values (a b c d | c b a)
+            reflect,
+            /// Mirror reflection with edge values repeated (a b c d | d c b a)
+            symmetric,
+            /// Circular wrapping (a b c d | a b c d)
+            wrap,
+        };
+
+        /// Pad array along each axis
+        ///
+        /// Extends array dimensions by adding values along each axis according to the padding mode.
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for result array
+        /// - pad_width: Array of [before, after] padding amounts for each axis
+        /// - mode: Padding strategy (constant, edge, reflect, symmetric, wrap)
+        /// - constant_value: Value used when mode = .constant
+        ///
+        /// Returns: New padded array with shape = original_shape + sum(pad_width)
+        ///
+        /// Errors:
+        /// - error.ZeroDimension if pad_width length ≠ ndim
+        /// - error.CapacityExceeded if padded size exceeds usize.max
+        /// - error.OutOfMemory if allocation fails
+        ///
+        /// Time: O(prod(padded_shape))
+        /// Space: O(prod(padded_shape))
+        ///
+        /// Example:
+        /// ```zig
+        /// var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{1, 2, 3}, .row_major);
+        /// defer arr.deinit();
+        /// var padded = try arr.pad(allocator, &[_][2]usize{.{1, 1}}, .constant, 0);
+        /// defer padded.deinit();
+        /// // padded.data = [0, 1, 2, 3, 0]
+        /// ```
+        pub fn pad(
+            self: *const Self,
+            allocator: Allocator,
+            pad_width: []const [2]usize,
+            mode: PadMode,
+            constant_value: T,
+        ) (Error || std.mem.Allocator.Error)!Self {
+            if (pad_width.len != ndim) {
+                return Error.ZeroDimension;
+            }
+
+            // Calculate padded shape
+            var padded_shape: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                const before = pad_width[i][0];
+                const after = pad_width[i][1];
+                padded_shape[i] = self.shape[i] + before + after;
+                if (padded_shape[i] == 0) {
+                    return Error.ZeroDimension;
+                }
+            }
+
+            // Create result array
+            var result = try Self.init(allocator, &padded_shape, self.layout);
+            errdefer result.deinit();
+
+            // Copy original data to center of padded array
+            try copyToPaddedCenter(T, ndim, &result, self, pad_width);
+
+            // Fill padding regions based on mode
+            switch (mode) {
+                .constant => try fillConstantPadding(T, ndim, &result, self, pad_width, constant_value),
+                .edge => try fillEdgePadding(T, ndim, &result, self, pad_width),
+                .reflect => try fillReflectPadding(T, ndim, &result, self, pad_width),
+                .symmetric => try fillSymmetricPadding(T, ndim, &result, self, pad_width),
+                .wrap => try fillWrapPadding(T, ndim, &result, self, pad_width),
+            }
+
+            return result;
+        }
     };
+}
+
+/// Helper to copy original array data to center of padded array
+fn copyToPaddedCenter(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Get value from source
+        var src_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            src_indices[i] = @as(isize, @intCast(idx));
+        }
+        const val = try src.get(&src_indices);
+
+        // Calculate destination indices (shifted by pad_before on each axis)
+        var dest_indices: [ndim]isize = undefined;
+        for (indices, 0..) |idx, i| {
+            dest_indices[i] = @as(isize, @intCast(idx + pad_width[i][0]));
+        }
+
+        // Set value in destination
+        dest.set(&dest_indices, val);
+
+        // Increment multi-dimensional index
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= src.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
+}
+
+/// Fill padding regions with constant value
+fn fillConstantPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize, constant_value: T) !void {
+    _ = src;
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Check if this position is in a padding region
+        var is_padding = false;
+        for (0..ndim) |i| {
+            const pad_before = pad_width[i][0];
+            const pad_after = pad_width[i][1];
+            const original_size = dest.shape[i] - pad_before - pad_after;
+            if (indices[i] < pad_before or indices[i] >= pad_before + original_size) {
+                is_padding = true;
+                break;
+            }
+        }
+
+        if (is_padding) {
+            var dest_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                dest_indices[i] = @as(isize, @intCast(idx));
+            }
+            dest.set(&dest_indices, constant_value);
+        }
+
+        // Increment multi-dimensional index
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= dest.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
+}
+
+/// Fill padding regions by extending edge values
+fn fillEdgePadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Check if this position is in a padding region
+        var is_padding = false;
+        for (0..ndim) |i| {
+            const pad_before = pad_width[i][0];
+            const pad_after = pad_width[i][1];
+            const original_size = dest.shape[i] - pad_before - pad_after;
+            if (indices[i] < pad_before or indices[i] >= pad_before + original_size) {
+                is_padding = true;
+                break;
+            }
+        }
+
+        if (is_padding) {
+            // Map padded index to nearest edge value
+            var src_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                const pad_before = pad_width[i][0];
+                const original_size = src.shape[i];
+                if (idx < pad_before) {
+                    src_indices[i] = 0;
+                } else if (idx >= pad_before + original_size) {
+                    src_indices[i] = @as(isize, @intCast(original_size - 1));
+                } else {
+                    src_indices[i] = @as(isize, @intCast(idx - pad_before));
+                }
+            }
+            const val = try src.get(&src_indices);
+
+            var dest_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                dest_indices[i] = @as(isize, @intCast(idx));
+            }
+            dest.set(&dest_indices, val);
+        }
+
+        // Increment multi-dimensional index
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= dest.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
+}
+
+/// Fill padding regions with reflected values (without repeating edge)
+fn fillReflectPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Check if this position is in a padding region
+        var is_padding = false;
+        for (0..ndim) |i| {
+            const pad_before = pad_width[i][0];
+            const pad_after = pad_width[i][1];
+            const original_size = dest.shape[i] - pad_before - pad_after;
+            if (indices[i] < pad_before or indices[i] >= pad_before + original_size) {
+                is_padding = true;
+                break;
+            }
+        }
+
+        if (is_padding) {
+            // Map padded index to reflected value
+            var src_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                const pad_before = pad_width[i][0];
+                const original_size = src.shape[i];
+                if (idx < pad_before) {
+                    // Reflect before: distance = pad_before - idx
+                    const distance = pad_before - idx;
+                    src_indices[i] = @as(isize, @intCast(distance));
+                } else if (idx >= pad_before + original_size) {
+                    // Reflect after: distance = idx - (pad_before + original_size) + 1
+                    const distance = idx - (pad_before + original_size) + 1;
+                    src_indices[i] = @as(isize, @intCast(original_size - 1 - distance));
+                } else {
+                    src_indices[i] = @as(isize, @intCast(idx - pad_before));
+                }
+            }
+            const val = try src.get(&src_indices);
+
+            var dest_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                dest_indices[i] = @as(isize, @intCast(idx));
+            }
+            dest.set(&dest_indices, val);
+        }
+
+        // Increment multi-dimensional index
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= dest.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
+}
+
+/// Fill padding regions with symmetric reflection (with repeating edge)
+fn fillSymmetricPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Check if this position is in a padding region
+        var is_padding = false;
+        for (0..ndim) |i| {
+            const pad_before = pad_width[i][0];
+            const pad_after = pad_width[i][1];
+            const original_size = dest.shape[i] - pad_before - pad_after;
+            if (indices[i] < pad_before or indices[i] >= pad_before + original_size) {
+                is_padding = true;
+                break;
+            }
+        }
+
+        if (is_padding) {
+            // Map padded index to symmetric reflected value
+            var src_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                const pad_before = pad_width[i][0];
+                const original_size = src.shape[i];
+                if (idx < pad_before) {
+                    // Symmetric reflection before: distance = pad_before - idx - 1
+                    const distance = pad_before - idx - 1;
+                    src_indices[i] = @as(isize, @intCast(distance));
+                } else if (idx >= pad_before + original_size) {
+                    // Symmetric reflection after: distance = idx - (pad_before + original_size)
+                    const distance = idx - (pad_before + original_size);
+                    src_indices[i] = @as(isize, @intCast(original_size - 1 - distance));
+                } else {
+                    src_indices[i] = @as(isize, @intCast(idx - pad_before));
+                }
+            }
+            const val = try src.get(&src_indices);
+
+            var dest_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                dest_indices[i] = @as(isize, @intCast(idx));
+            }
+            dest.set(&dest_indices, val);
+        }
+
+        // Increment multi-dimensional index
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= dest.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
+}
+
+/// Fill padding regions with wrapped values (circular)
+fn fillWrapPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Check if this position is in a padding region
+        var is_padding = false;
+        for (0..ndim) |i| {
+            const pad_before = pad_width[i][0];
+            const pad_after = pad_width[i][1];
+            const original_size = dest.shape[i] - pad_before - pad_after;
+            if (indices[i] < pad_before or indices[i] >= pad_before + original_size) {
+                is_padding = true;
+                break;
+            }
+        }
+
+        if (is_padding) {
+            // Map padded index to wrapped value
+            var src_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                const pad_before = pad_width[i][0];
+                const original_size = src.shape[i];
+                if (idx < pad_before) {
+                    // Wrap before
+                    const distance = pad_before - idx;
+                    const wrapped = original_size - (distance % original_size);
+                    src_indices[i] = @as(isize, @intCast(if (wrapped == original_size) 0 else wrapped));
+                } else if (idx >= pad_before + original_size) {
+                    // Wrap after
+                    const distance = idx - (pad_before + original_size);
+                    src_indices[i] = @as(isize, @intCast(distance % original_size));
+                } else {
+                    src_indices[i] = @as(isize, @intCast(idx - pad_before));
+                }
+            }
+            const val = try src.get(&src_indices);
+
+            var dest_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                dest_indices[i] = @as(isize, @intCast(idx));
+            }
+            dest.set(&dest_indices, val);
+        }
+
+        // Increment multi-dimensional index
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            indices[dim] += carry;
+            if (indices[dim] >= dest.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
 }
 
 /// Helper to copy a section of array during split operation
@@ -12070,6 +12499,358 @@ test "ndarray: split() then concat roundtrip" {
         const recon_val = try reconstructed.get(&[_]isize{@intCast(i)});
         try testing.expectEqual(orig_val, recon_val);
     }
+}
+
+// -- pad() Tests (20 tests) --
+
+test "ndarray: pad() constant mode 1D zero padding" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 1, 1 }}, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 5), padded.shape[0]);
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{4}));
+}
+
+test "ndarray: pad() constant mode 2D zero padding" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{ .{ 1, 1 }, .{ 1, 1 } }, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 4), padded.shape[0]);
+    try testing.expectEqual(@as(usize, 5), padded.shape[1]);
+
+    // Check corners are zero
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{ 0, 4 }));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{ 3, 0 }));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{ 3, 4 }));
+
+    // Check center values preserved
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(f64, 6), try padded.get(&[_]isize{ 2, 3 }));
+}
+
+test "ndarray: pad() constant mode 3D padding" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{ .{ 1, 1 }, .{ 1, 1 }, .{ 1, 1 } }, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 4), padded.shape[0]);
+    try testing.expectEqual(@as(usize, 4), padded.shape[1]);
+    try testing.expectEqual(@as(usize, 4), padded.shape[2]);
+
+    // Check padding is zero
+    try testing.expectEqual(@as(i32, 0), try padded.get(&[_]isize{ 0, 0, 0 }));
+    // Check center value preserved
+    try testing.expectEqual(@as(i32, 1), try padded.get(&[_]isize{ 1, 1, 1 }));
+}
+
+test "ndarray: pad() constant mode with non-zero value" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .constant, 99);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 7), padded.shape[0]);
+    try testing.expectEqual(@as(f64, 99), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 99), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 99), try padded.get(&[_]isize{5}));
+    try testing.expectEqual(@as(f64, 99), try padded.get(&[_]isize{6}));
+}
+
+test "ndarray: pad() edge mode 1D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 10, 20, 30 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .edge, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 7), padded.shape[0]);
+    // Edge values extended
+    try testing.expectEqual(@as(f64, 10), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 10), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 10), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 20), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 30), try padded.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 30), try padded.get(&[_]isize{5}));
+    try testing.expectEqual(@as(f64, 30), try padded.get(&[_]isize{6}));
+}
+
+test "ndarray: pad() edge mode 2D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{ .{ 1, 1 }, .{ 1, 1 } }, .edge, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 4), padded.shape[0]);
+    try testing.expectEqual(@as(usize, 4), padded.shape[1]);
+
+    // Corners extend edge values
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{ 0, 0 })); // top-left corner = [0,0]
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{ 0, 3 })); // top-right corner = [0,1]
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{ 3, 0 })); // bottom-left = [1,0]
+    try testing.expectEqual(@as(f64, 4), try padded.get(&[_]isize{ 3, 3 })); // bottom-right = [1,1]
+}
+
+test "ndarray: pad() reflect mode 1D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .reflect, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 8), padded.shape[0]);
+    // Reflect: [3, 2] | 1, 2, 3, 4 | [3, 2]
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 4), try padded.get(&[_]isize{5}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{6}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{7}));
+}
+
+test "ndarray: pad() symmetric mode 1D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .symmetric, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 8), padded.shape[0]);
+    // Symmetric: [2, 1] | 1, 2, 3, 4 | [4, 3]
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 4), try padded.get(&[_]isize{5}));
+    try testing.expectEqual(@as(f64, 4), try padded.get(&[_]isize{6}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{7}));
+}
+
+test "ndarray: pad() wrap mode 1D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .wrap, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 8), padded.shape[0]);
+    // Wrap: [3, 4] | 1, 2, 3, 4 | [1, 2]
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 4), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{4}));
+    try testing.expectEqual(@as(f64, 4), try padded.get(&[_]isize{5}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{6}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{7}));
+}
+
+test "ndarray: pad() asymmetric padding 1D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 1, 3 }}, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 7), padded.shape[0]);
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{6}));
+}
+
+test "ndarray: pad() asymmetric padding 2D" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]i32{ 1, 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{ .{ 1, 2 }, .{ 2, 1 } }, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 5), padded.shape[0]); // 2 + 1 + 2
+    try testing.expectEqual(@as(usize, 5), padded.shape[1]); // 2 + 2 + 1
+
+    // Original data at [1,2]
+    try testing.expectEqual(@as(i32, 1), try padded.get(&[_]isize{ 1, 2 }));
+}
+
+test "ndarray: pad() no padding (identity)" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 0, 0 }}, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 3), padded.shape[0]);
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 2), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 3), try padded.get(&[_]isize{2}));
+}
+
+test "ndarray: pad() single element array" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{42}, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 5), padded.shape[0]);
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(f64, 42), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(f64, 0), try padded.get(&[_]isize{4}));
+}
+
+test "ndarray: pad() type variant u8" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{2}, &[_]u8{ 5, 10 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 1, 1 }}, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 4), padded.shape[0]);
+    try testing.expectEqual(@as(u8, 0), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(u8, 5), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(u8, 10), try padded.get(&[_]isize{2}));
+    try testing.expectEqual(@as(u8, 0), try padded.get(&[_]isize{3}));
+}
+
+test "ndarray: pad() type variant i32" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &[_]i32{ -5, 0, 5 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 1, 1 }}, .constant, -99);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 5), padded.shape[0]);
+    try testing.expectEqual(@as(i32, -99), try padded.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, -5), try padded.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 5), try padded.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, -99), try padded.get(&[_]isize{4}));
+}
+
+test "ndarray: pad() memory safety with allocator" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 10, 10 }, .row_major);
+        defer arr.deinit();
+
+        for (0..10) |i| {
+            for (0..10) |j| {
+                arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+            }
+        }
+
+        var padded = try arr.pad(allocator, &[_][2]usize{ .{ 2, 2 }, .{ 2, 2 } }, .constant, 0);
+        defer padded.deinit();
+
+        try testing.expectEqual(@as(usize, 14), padded.shape[0]);
+        try testing.expectEqual(@as(usize, 14), padded.shape[1]);
+    }
+}
+
+test "ndarray: pad() column-major layout preservation" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .column_major);
+    defer arr.deinit();
+    arr.set(&[_]isize{ 0, 0 }, 1);
+    arr.set(&[_]isize{ 0, 1 }, 2);
+    arr.set(&[_]isize{ 1, 0 }, 3);
+    arr.set(&[_]isize{ 1, 1 }, 4);
+
+    var padded = try arr.pad(allocator, &[_][2]usize{ .{ 1, 1 }, .{ 1, 1 } }, .constant, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(Layout.column_major, padded.layout);
+    try testing.expectEqual(@as(f64, 1), try padded.get(&[_]isize{ 1, 1 }));
+}
+
+test "ndarray: pad() large array stress test" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 50, 50 }, .row_major);
+    defer arr.deinit();
+
+    for (0..50) |i| {
+        for (0..50) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 50 + j)));
+        }
+    }
+
+    var padded = try arr.pad(allocator, &[_][2]usize{ .{ 5, 5 }, .{ 5, 5 } }, .edge, 0);
+    defer padded.deinit();
+
+    try testing.expectEqual(@as(usize, 60), padded.shape[0]);
+    try testing.expectEqual(@as(usize, 60), padded.shape[1]);
+
+    // Verify center preserved
+    const center_val = try arr.get(&[_]isize{ 25, 25 });
+    const padded_center_val = try padded.get(&[_]isize{ 30, 30 });
+    try testing.expectEqual(center_val, padded_center_val);
+}
+
+test "ndarray: pad() validate() passes after padding" {
+    const allocator = testing.allocator;
+
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    var padded = try arr.pad(allocator, &[_][2]usize{.{ 2, 2 }}, .constant, 0);
+    defer padded.deinit();
+
+    try padded.validate();
 }
 
 // -- CSV I/O Tests --
