@@ -3883,6 +3883,138 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Take elements along an axis using an index array (fancy indexing).
+        ///
+        /// Returns a new array with elements selected by the indices array along the specified axis.
+        /// The output shape replaces `shape[axis]` with `indices.size()`.
+        ///
+        /// Parameters:
+        /// - `allocator`: Memory allocator for the new array
+        /// - `axis`: Axis along which to take elements (must be < ndim)
+        /// - `indices`: 1D array of indices to select (values must be < shape[axis])
+        ///
+        /// Time: O(prod(shape) × indices.size() / shape[axis])
+        /// Space: O(prod(new_shape)) for the output array
+        ///
+        /// Example:
+        /// ```
+        /// arr = [[1, 2], [3, 4], [5, 6]]  // shape [3, 2]
+        /// indices = [0, 2]
+        /// take(arr, 0, indices) => [[1, 2], [5, 6]]  // shape [2, 2]
+        /// ```
+        pub fn take(self: *const Self, allocator: Allocator, axis: usize, indices: *const NDArray(usize, 1)) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+            const indices_len = indices.count();
+            if (indices_len == 0) return Error.ZeroDimension;
+
+            // Validate all indices are within bounds
+            var indices_iter = indices.iterator();
+            while (indices_iter.next()) |idx| {
+                if (idx >= self.shape[axis]) return Error.IndexOutOfBounds;
+            }
+
+            // Calculate new shape
+            var new_shape: [ndim]usize = self.shape;
+            new_shape[axis] = indices_len;
+
+            var result = try Self.init(allocator, &new_shape, self.layout);
+            errdefer result.deinit();
+
+            // Multi-dimensional index iteration
+            var multi_idx: [ndim]usize = undefined;
+            @memset(&multi_idx, 0);
+
+            const total = result.count();
+            var elem_count: usize = 0;
+
+            // Iterate over the output positions
+            while (elem_count < total) : (elem_count += 1) {
+                // Calculate the current position in the output array
+                var temp = elem_count;
+                for (0..ndim) |d| {
+                    var divisor: usize = 1;
+                    for (d + 1..ndim) |dd| {
+                        divisor *= new_shape[dd];
+                    }
+                    multi_idx[d] = temp / divisor;
+                    temp %= divisor;
+                }
+
+                // Map the index along `axis` through the indices array
+                var source_idx = multi_idx;
+                const take_idx = multi_idx[axis];
+                source_idx[axis] = indices.data[take_idx];
+
+                // Calculate offset in source and destination
+                var src_offset: usize = 0;
+                var dst_offset: usize = 0;
+                for (0..ndim) |d| {
+                    src_offset += source_idx[d] * self.strides[d];
+                    dst_offset += multi_idx[d] * result.strides[d];
+                }
+
+                result.data[dst_offset] = self.data[src_offset];
+            }
+
+            return result;
+        }
+
+        /// Put values into the array at specified flat indices.
+        ///
+        /// Modifies the array in-place by placing values from the `values` array
+        /// at positions specified by the `indices` array (using flat/linear indexing).
+        /// This is equivalent to NumPy's `put()` function.
+        ///
+        /// Parameters:
+        /// - `indices`: 1D array of flat indices where values should be placed
+        /// - `values`: 1D array of values to place (must have same length as indices)
+        ///
+        /// Time: O(indices.size() × ndim) for index to offset conversion
+        /// Space: O(1) in-place modification
+        ///
+        /// Example:
+        /// ```
+        /// arr = [[1, 2], [3, 4]]  // flat: [1, 2, 3, 4]
+        /// indices = [0, 3]
+        /// values = [9, 10]
+        /// put(arr, indices, values) => arr = [[9, 2], [3, 10]]
+        /// ```
+        pub fn put(self: *Self, indices: *const NDArray(usize, 1), values: *const NDArray(T, 1)) Error!void {
+            const indices_len = indices.count();
+            const values_len = values.count();
+            if (indices_len != values_len) return Error.ShapeMismatch;
+            if (indices_len == 0) return; // No-op for empty indices
+
+            const total = self.count();
+
+            // Iterate over indices and values
+            for (0..indices_len) |i| {
+                const flat_idx = indices.data[i];
+                if (flat_idx >= total) return Error.IndexOutOfBounds;
+
+                // Convert flat index to multi-dimensional index
+                var multi_idx: [ndim]usize = undefined;
+                var temp = flat_idx;
+
+                for (0..ndim) |d| {
+                    var divisor: usize = 1;
+                    for (d + 1..ndim) |dd| {
+                        divisor *= self.shape[dd];
+                    }
+                    multi_idx[d] = temp / divisor;
+                    temp %= divisor;
+                }
+
+                // Calculate offset using strides
+                var offset: usize = 0;
+                for (0..ndim) |d| {
+                    offset += multi_idx[d] * self.strides[d];
+                }
+
+                self.data[offset] = values.data[i];
+            }
+        }
+
 
         // -- Iterator Protocol --
 
@@ -16492,5 +16624,373 @@ test "delete: memory safety" {
         defer result.deinit();
 
         try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    }
+}
+
+// -- take() tests --
+
+test "take: 1D array basic" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 0, 2, 4 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{3}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    var result = try arr.take(allocator, 0, &indices);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(i32, 10), result.data[0]);
+    try testing.expectEqual(@as(i32, 30), result.data[1]);
+    try testing.expectEqual(@as(i32, 50), result.data[2]);
+}
+
+test "take: 2D array along axis 0" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 0, 2 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    var result = try arr.take(allocator, 0, &indices);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    // Row 0: [1, 2, 3]
+    try testing.expectEqual(@as(f64, 1), result.data[0]);
+    try testing.expectEqual(@as(f64, 2), result.data[1]);
+    try testing.expectEqual(@as(f64, 3), result.data[2]);
+    // Row 2: [7, 8, 9]
+    try testing.expectEqual(@as(f64, 7), result.data[3]);
+    try testing.expectEqual(@as(f64, 8), result.data[4]);
+    try testing.expectEqual(@as(f64, 9), result.data[5]);
+}
+
+test "take: 2D array along axis 1" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 0, 2 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    var result = try arr.take(allocator, 1, &indices);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    // Columns 0 and 2: [[1, 3], [4, 6], [7, 9]]
+    try testing.expectEqual(@as(f64, 1), result.data[0]);
+    try testing.expectEqual(@as(f64, 3), result.data[1]);
+    try testing.expectEqual(@as(f64, 4), result.data[2]);
+    try testing.expectEqual(@as(f64, 6), result.data[3]);
+    try testing.expectEqual(@as(f64, 7), result.data[4]);
+    try testing.expectEqual(@as(f64, 9), result.data[5]);
+}
+
+test "take: single element" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{2};
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{1}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    var result = try arr.take(allocator, 0, &indices);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(i32, 3), result.data[0]);
+}
+
+test "take: repeated indices" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 10, 20, 30 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 1, 1, 0, 2 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{4}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    var result = try arr.take(allocator, 0, &indices);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(@as(i32, 20), result.data[0]);
+    try testing.expectEqual(@as(i32, 20), result.data[1]);
+    try testing.expectEqual(@as(i32, 10), result.data[2]);
+    try testing.expectEqual(@as(i32, 30), result.data[3]);
+}
+
+test "take: invalid axis" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{0};
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{1}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const result = arr.take(allocator, 1, &indices);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "take: index out of bounds" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 0, 5 }; // Index 5 is out of bounds
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const result = arr.take(allocator, 0, &indices);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "take: 3D array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{1};
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{1}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    var result = try arr.take(allocator, 0, &indices);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.shape[2]);
+    // Second slice: [[5, 6], [7, 8]]
+    try testing.expectEqual(@as(i32, 5), result.data[0]);
+    try testing.expectEqual(@as(i32, 6), result.data[1]);
+    try testing.expectEqual(@as(i32, 7), result.data[2]);
+    try testing.expectEqual(@as(i32, 8), result.data[3]);
+}
+
+test "take: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 2, 3, 4, 5 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+        defer arr.deinit();
+
+        const indices_data = [_]usize{ 0, 2, 4 };
+        var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{3}, &indices_data, .row_major);
+        defer indices.deinit();
+
+        var result = try arr.take(allocator, 0, &indices);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    }
+}
+
+// -- put() tests --
+
+test "put: 1D array basic" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 0, 4 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]i32{ 99, 88 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &values_data, .row_major);
+    defer values.deinit();
+
+    try arr.put(&indices, &values);
+
+    try testing.expectEqual(@as(i32, 99), arr.data[0]);
+    try testing.expectEqual(@as(i32, 2), arr.data[1]);
+    try testing.expectEqual(@as(i32, 3), arr.data[2]);
+    try testing.expectEqual(@as(i32, 4), arr.data[3]);
+    try testing.expectEqual(@as(i32, 88), arr.data[4]);
+}
+
+test "put: 2D array with flat indices" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    // Flat indices: 0=[0,0], 1=[0,1], 2=[0,2], 3=[1,0], 4=[1,1], 5=[1,2]
+    const indices_data = [_]usize{ 0, 5 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]f64{ 10, 60 };
+    var values = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &values_data, .row_major);
+    defer values.deinit();
+
+    try arr.put(&indices, &values);
+
+    try testing.expectEqual(@as(f64, 10), arr.data[0]); // [0, 0]
+    try testing.expectEqual(@as(f64, 2), arr.data[1]);
+    try testing.expectEqual(@as(f64, 3), arr.data[2]);
+    try testing.expectEqual(@as(f64, 4), arr.data[3]);
+    try testing.expectEqual(@as(f64, 5), arr.data[4]);
+    try testing.expectEqual(@as(f64, 60), arr.data[5]); // [1, 2]
+}
+
+test "put: single value" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{1};
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{1}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]i32{42};
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{1}, &values_data, .row_major);
+    defer values.deinit();
+
+    try arr.put(&indices, &values);
+
+    try testing.expectEqual(@as(i32, 1), arr.data[0]);
+    try testing.expectEqual(@as(i32, 42), arr.data[1]);
+    try testing.expectEqual(@as(i32, 3), arr.data[2]);
+}
+
+test "put: repeated indices" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    // Last write wins for repeated indices
+    const indices_data = [_]usize{ 0, 0 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]i32{ 10, 20 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &values_data, .row_major);
+    defer values.deinit();
+
+    try arr.put(&indices, &values);
+
+    try testing.expectEqual(@as(i32, 20), arr.data[0]); // Last value wins
+    try testing.expectEqual(@as(i32, 2), arr.data[1]);
+    try testing.expectEqual(@as(i32, 3), arr.data[2]);
+}
+
+test "put: shape mismatch" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{ 0, 1 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]i32{42}; // Mismatch: 2 indices, 1 value
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{1}, &values_data, .row_major);
+    defer values.deinit();
+
+    const result = arr.put(&indices, &values);
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "put: index out of bounds" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const indices_data = [_]usize{10}; // Out of bounds
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{1}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]i32{42};
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{1}, &values_data, .row_major);
+    defer values.deinit();
+
+    const result = arr.put(&indices, &values);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "put: 3D array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    // Flat index 0 = [0,0,0], flat index 7 = [1,1,1]
+    const indices_data = [_]usize{ 0, 7 };
+    var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+    defer indices.deinit();
+
+    const values_data = [_]i32{ 100, 800 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &values_data, .row_major);
+    defer values.deinit();
+
+    try arr.put(&indices, &values);
+
+    try testing.expectEqual(@as(i32, 100), arr.data[0]);
+    try testing.expectEqual(@as(i32, 2), arr.data[1]);
+    try testing.expectEqual(@as(i32, 3), arr.data[2]);
+    try testing.expectEqual(@as(i32, 4), arr.data[3]);
+    try testing.expectEqual(@as(i32, 5), arr.data[4]);
+    try testing.expectEqual(@as(i32, 6), arr.data[5]);
+    try testing.expectEqual(@as(i32, 7), arr.data[6]);
+    try testing.expectEqual(@as(i32, 800), arr.data[7]);
+}
+
+test "put: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 2, 3, 4, 5 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+        defer arr.deinit();
+
+        const indices_data = [_]usize{ 0, 2 };
+        var indices = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{2}, &indices_data, .row_major);
+        defer indices.deinit();
+
+        const values_data = [_]i32{ 10, 30 };
+        var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &values_data, .row_major);
+        defer values.deinit();
+
+        try arr.put(&indices, &values);
     }
 }
