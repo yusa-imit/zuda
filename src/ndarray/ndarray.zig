@@ -657,6 +657,253 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return Self.eye(allocator, rows, cols, 0, layout);
         }
 
+        /// Create diagonal matrix from 1D array or extract diagonal from 2D array
+        ///
+        /// Two modes:
+        /// 1. If called on 1D array (ndim == 1): constructs 2D diagonal matrix
+        /// 2. If called on 2D array (ndim == 2): extracts diagonal as 1D array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator (for mode 1 or mode 2 with copy)
+        /// - k: Diagonal offset (0=main, >0 above main, <0 below main)
+        /// - layout: Row-major or column-major (for mode 1 only)
+        ///
+        /// Returns:
+        /// - Mode 1: 2D NDArray with input on k-th diagonal, zeros elsewhere
+        /// - Mode 2: 1D NDArray with extracted diagonal elements
+        ///
+        /// Errors:
+        /// - error.ShapeMismatch if ndim > 2
+        ///
+        /// Time: O(n) where n = length of diagonal
+        /// Space: O(n²) for mode 1, O(n) for mode 2
+        pub fn diag(self: *const Self, allocator: Allocator, k: isize, layout: Layout) (Error || std.mem.Allocator.Error)!if (ndim == 1) NDArray(T, 2) else NDArray(T, 1) {
+            if (ndim == 1) {
+                // Mode 1: construct diagonal matrix from 1D array
+                const n = self.shape[0];
+                const offset_abs: usize = @abs(k);
+                const size = n + offset_abs;
+
+                var mat = try NDArray(T, 2).zeros(allocator, &[_]usize{ size, size }, layout);
+                errdefer mat.deinit();
+
+                // Place elements on k-th diagonal
+                for (0..n) |i| {
+                    const row = if (k >= 0) i else i + offset_abs;
+                    const col = if (k >= 0) i + offset_abs else i;
+                    const val = self.data[i * self.strides[0]];
+
+                    if (layout == .row_major) {
+                        mat.data[row * size + col] = val;
+                    } else {
+                        mat.data[row + col * size] = val;
+                    }
+                }
+
+                return mat;
+            } else if (ndim == 2) {
+                // Mode 2: extract diagonal from 2D array
+                const rows = self.shape[0];
+                const cols = self.shape[1];
+
+                // Calculate diagonal length
+                const diag_len = blk: {
+                    if (k >= 0) {
+                        const k_abs: usize = @intCast(k);
+                        if (k_abs >= cols) break :blk 0;
+                        break :blk @min(rows, cols - k_abs);
+                    } else {
+                        const k_abs: usize = @intCast(-k);
+                        if (k_abs >= rows) break :blk 0;
+                        break :blk @min(rows - k_abs, cols);
+                    }
+                };
+
+                var arr = try NDArray(T, 1).init(allocator, &[_]usize{diag_len}, .row_major);
+                errdefer arr.deinit();
+
+                // Extract diagonal elements
+                for (0..diag_len) |i| {
+                    const row = if (k >= 0) i else i + @abs(k);
+                    const col = if (k >= 0) i + @abs(k) else i;
+
+                    const offset = if (self.layout == .row_major)
+                        row * self.strides[0] + col * self.strides[1]
+                    else
+                        row * self.strides[0] + col * self.strides[1];
+
+                    arr.data[i] = self.data[offset];
+                }
+
+                return arr;
+            } else {
+                return error.ShapeMismatch;
+            }
+        }
+
+        /// Extract diagonal from 2D array as 1D array
+        ///
+        /// This is a convenience wrapper for diag() that only works on 2D arrays.
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - offset: Diagonal offset (0=main, >0 above main, <0 below main)
+        ///
+        /// Returns: 1D NDArray with diagonal elements
+        ///
+        /// Errors:
+        /// - error.ShapeMismatch if ndim != 2
+        ///
+        /// Time: O(n) where n = diagonal length
+        /// Space: O(n)
+        pub fn diagonal(self: *const Self, allocator: Allocator, offset: isize) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            if (ndim != 2) return error.ShapeMismatch;
+            return self.diag(allocator, offset, .row_major);
+        }
+
+        /// Extract upper triangular matrix (zero out below k-th diagonal)
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - k: Diagonal offset (0=main, >0 keep more, <0 keep less)
+        ///
+        /// Returns: 2D NDArray with upper triangle preserved, lower set to zero
+        ///
+        /// Errors:
+        /// - error.ShapeMismatch if ndim != 2
+        ///
+        /// Time: O(rows * cols)
+        /// Space: O(rows * cols)
+        pub fn triu(self: *const Self, allocator: Allocator, k: isize) (Error || std.mem.Allocator.Error)!Self {
+            if (ndim != 2) return error.ShapeMismatch;
+
+            const rows = self.shape[0];
+            const cols = self.shape[1];
+
+            var result = try Self.init(allocator, &self.shape, self.layout);
+            errdefer result.deinit();
+
+            for (0..rows) |i| {
+                for (0..cols) |j| {
+                    const j_signed: isize = @intCast(j);
+                    const i_signed: isize = @intCast(i);
+
+                    const src_offset = if (self.layout == .row_major)
+                        i * self.strides[0] + j * self.strides[1]
+                    else
+                        i * self.strides[0] + j * self.strides[1];
+
+                    const dst_offset = if (result.layout == .row_major)
+                        i * cols + j
+                    else
+                        i + j * rows;
+
+                    // Keep if j >= i + k (above or on k-th diagonal)
+                    result.data[dst_offset] = if (j_signed >= i_signed + k)
+                        self.data[src_offset]
+                    else
+                        0;
+                }
+            }
+
+            return result;
+        }
+
+        /// Extract lower triangular matrix (zero out above k-th diagonal)
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - k: Diagonal offset (0=main, >0 keep more, <0 keep less)
+        ///
+        /// Returns: 2D NDArray with lower triangle preserved, upper set to zero
+        ///
+        /// Errors:
+        /// - error.ShapeMismatch if ndim != 2
+        ///
+        /// Time: O(rows * cols)
+        /// Space: O(rows * cols)
+        pub fn tril(self: *const Self, allocator: Allocator, k: isize) (Error || std.mem.Allocator.Error)!Self {
+            if (ndim != 2) return error.ShapeMismatch;
+
+            const rows = self.shape[0];
+            const cols = self.shape[1];
+
+            var result = try Self.init(allocator, &self.shape, self.layout);
+            errdefer result.deinit();
+
+            for (0..rows) |i| {
+                for (0..cols) |j| {
+                    const j_signed: isize = @intCast(j);
+                    const i_signed: isize = @intCast(i);
+
+                    const src_offset = if (self.layout == .row_major)
+                        i * self.strides[0] + j * self.strides[1]
+                    else
+                        i * self.strides[0] + j * self.strides[1];
+
+                    const dst_offset = if (result.layout == .row_major)
+                        i * cols + j
+                    else
+                        i + j * rows;
+
+                    // Keep if j <= i + k (below or on k-th diagonal)
+                    result.data[dst_offset] = if (j_signed <= i_signed + k)
+                        self.data[src_offset]
+                    else
+                        0;
+                }
+            }
+
+            return result;
+        }
+
+        /// Compute the trace (sum of diagonal elements) of a 2D array
+        ///
+        /// Parameters:
+        /// - offset: Diagonal offset (0=main, >0 above main, <0 below main)
+        ///
+        /// Returns: Sum of elements on the k-th diagonal
+        ///
+        /// Errors:
+        /// - error.ShapeMismatch if ndim != 2
+        ///
+        /// Time: O(n) where n = diagonal length
+        /// Space: O(1)
+        pub fn trace(self: *const Self, offset: isize) Error!T {
+            if (ndim != 2) return error.ShapeMismatch;
+
+            const rows = self.shape[0];
+            const cols = self.shape[1];
+
+            // Calculate diagonal length
+            const diag_len = blk: {
+                if (offset >= 0) {
+                    const k_abs: usize = @intCast(offset);
+                    if (k_abs >= cols) break :blk 0;
+                    break :blk @min(rows, cols - k_abs);
+                } else {
+                    const k_abs: usize = @intCast(-offset);
+                    if (k_abs >= rows) break :blk 0;
+                    break :blk @min(rows - k_abs, cols);
+                }
+            };
+
+            var result: T = 0;
+            for (0..diag_len) |i| {
+                const row = if (offset >= 0) i else i + @abs(offset);
+                const col = if (offset >= 0) i + @abs(offset) else i;
+
+                const idx = if (self.layout == .row_major)
+                    row * self.strides[0] + col * self.strides[1]
+                else
+                    row * self.strides[0] + col * self.strides[1];
+
+                result += self.data[idx];
+            }
+
+            return result;
+        }
+
         /// Reshape the array to a new shape without modifying data order
         ///
         /// Creates a new array view with different dimensions but same data elements.
@@ -6482,6 +6729,366 @@ test "ndarray: identity() works with different types and layouts" {
     try testing.expectEqual(@as(i32, 1), arr.data[5]);
     try testing.expectEqual(@as(i32, 1), arr.data[10]);
     try testing.expectEqual(@as(i32, 1), arr.data[15]);
+}
+
+// -- Diagonal Operations Tests (24 tests) --
+
+test "ndarray: diag() constructs diagonal matrix from 1D array (main diagonal)" {
+    const allocator = testing.allocator;
+    var vec = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer vec.deinit();
+
+    var mat = try vec.diag(allocator, 0, .row_major);
+    defer mat.deinit();
+
+    // Type is NDArray(f64, 2), so ndim is guaranteed to be 2 at compile time
+    try testing.expectEqual(@as(usize, 3), mat.shape[0]);
+    try testing.expectEqual(@as(usize, 3), mat.shape[1]);
+
+    // Check diagonal elements
+    try testing.expectEqual(@as(f64, 1), mat.data[0]); // [0,0]
+    try testing.expectEqual(@as(f64, 2), mat.data[4]); // [1,1]
+    try testing.expectEqual(@as(f64, 3), mat.data[8]); // [2,2]
+
+    // Check off-diagonal zeros
+    try testing.expectEqual(@as(f64, 0), mat.data[1]); // [0,1]
+    try testing.expectEqual(@as(f64, 0), mat.data[3]); // [1,0]
+}
+
+test "ndarray: diag() constructs diagonal matrix with positive offset k=1" {
+    const allocator = testing.allocator;
+    var vec = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 6 }, .row_major);
+    defer vec.deinit();
+
+    var mat = try vec.diag(allocator, 1, .row_major);
+    defer mat.deinit();
+
+    try testing.expectEqual(@as(usize, 3), mat.shape[0]);
+    try testing.expectEqual(@as(usize, 3), mat.shape[1]);
+
+    // Elements should be on diagonal above main (k=1)
+    try testing.expectEqual(@as(f64, 5), mat.data[1]); // [0,1]
+    try testing.expectEqual(@as(f64, 6), mat.data[5]); // [1,2]
+    try testing.expectEqual(@as(f64, 0), mat.data[0]); // [0,0]
+}
+
+test "ndarray: diag() constructs diagonal matrix with negative offset k=-1" {
+    const allocator = testing.allocator;
+    var vec = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 7, 8 }, .row_major);
+    defer vec.deinit();
+
+    var mat = try vec.diag(allocator, -1, .row_major);
+    defer mat.deinit();
+
+    try testing.expectEqual(@as(usize, 3), mat.shape[0]);
+    try testing.expectEqual(@as(usize, 3), mat.shape[1]);
+
+    // Elements should be on diagonal below main (k=-1)
+    try testing.expectEqual(@as(f64, 7), mat.data[3]); // [1,0]
+    try testing.expectEqual(@as(f64, 8), mat.data[7]); // [2,1]
+    try testing.expectEqual(@as(f64, 0), mat.data[0]); // [0,0]
+}
+
+test "ndarray: diag() extracts main diagonal from 2D array" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var diag_arr = try mat.diag(allocator, 0, .row_major);
+    defer diag_arr.deinit();
+
+    // Type is NDArray(f64, 1), so ndim is guaranteed to be 1 at compile time
+    try testing.expectEqual(@as(usize, 3), diag_arr.shape[0]);
+    try testing.expectEqual(@as(f64, 1), diag_arr.data[0]);
+    try testing.expectEqual(@as(f64, 5), diag_arr.data[1]);
+    try testing.expectEqual(@as(f64, 9), diag_arr.data[2]);
+}
+
+test "ndarray: diag() extracts upper diagonal k=1 from 2D array" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var diag_arr = try mat.diag(allocator, 1, .row_major);
+    defer diag_arr.deinit();
+
+    try testing.expectEqual(@as(usize, 2), diag_arr.shape[0]);
+    try testing.expectEqual(@as(f64, 2), diag_arr.data[0]); // [0,1]
+    try testing.expectEqual(@as(f64, 6), diag_arr.data[1]); // [1,2]
+}
+
+test "ndarray: diag() extracts lower diagonal k=-1 from 2D array" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var diag_arr = try mat.diag(allocator, -1, .row_major);
+    defer diag_arr.deinit();
+
+    try testing.expectEqual(@as(usize, 2), diag_arr.shape[0]);
+    try testing.expectEqual(@as(f64, 4), diag_arr.data[0]); // [1,0]
+    try testing.expectEqual(@as(f64, 8), diag_arr.data[1]); // [2,1]
+}
+
+test "ndarray: diag() handles non-square matrix (3x4)" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer mat.deinit();
+
+    var diag_arr = try mat.diag(allocator, 0, .row_major);
+    defer diag_arr.deinit();
+
+    try testing.expectEqual(@as(usize, 3), diag_arr.shape[0]);
+    try testing.expectEqual(@as(i32, 1), diag_arr.data[0]);
+    try testing.expectEqual(@as(i32, 6), diag_arr.data[1]);
+    try testing.expectEqual(@as(i32, 11), diag_arr.data[2]);
+}
+
+test "ndarray: diagonal() extracts main diagonal" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer mat.deinit();
+
+    var diag_arr = try mat.diagonal(allocator, 0);
+    defer diag_arr.deinit();
+
+    try testing.expectEqual(@as(usize, 2), diag_arr.shape[0]);
+    try testing.expectEqual(@as(f64, 1), diag_arr.data[0]);
+    try testing.expectEqual(@as(f64, 4), diag_arr.data[1]);
+}
+
+test "ndarray: triu() creates upper triangular matrix (main diagonal)" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var upper = try mat.triu(allocator, 0);
+    defer upper.deinit();
+
+    // Upper triangle: [1,2,3 | 0,5,6 | 0,0,9]
+    try testing.expectEqual(@as(f64, 1), upper.data[0]); // [0,0]
+    try testing.expectEqual(@as(f64, 2), upper.data[1]); // [0,1]
+    try testing.expectEqual(@as(f64, 3), upper.data[2]); // [0,2]
+    try testing.expectEqual(@as(f64, 0), upper.data[3]); // [1,0] - zeroed
+    try testing.expectEqual(@as(f64, 5), upper.data[4]); // [1,1]
+    try testing.expectEqual(@as(f64, 6), upper.data[5]); // [1,2]
+    try testing.expectEqual(@as(f64, 0), upper.data[6]); // [2,0] - zeroed
+    try testing.expectEqual(@as(f64, 0), upper.data[7]); // [2,1] - zeroed
+    try testing.expectEqual(@as(f64, 9), upper.data[8]); // [2,2]
+}
+
+test "ndarray: triu() with k=1 keeps diagonal above main" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var upper = try mat.triu(allocator, 1);
+    defer upper.deinit();
+
+    // k=1: zero main diagonal and below
+    try testing.expectEqual(@as(f64, 0), upper.data[0]); // [0,0] - zeroed
+    try testing.expectEqual(@as(f64, 2), upper.data[1]); // [0,1]
+    try testing.expectEqual(@as(f64, 3), upper.data[2]); // [0,2]
+    try testing.expectEqual(@as(f64, 0), upper.data[4]); // [1,1] - zeroed
+    try testing.expectEqual(@as(f64, 6), upper.data[5]); // [1,2]
+}
+
+test "ndarray: triu() with k=-1 keeps diagonal below main" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var upper = try mat.triu(allocator, -1);
+    defer upper.deinit();
+
+    // k=-1: keep one diagonal below main
+    try testing.expectEqual(@as(f64, 1), upper.data[0]); // [0,0]
+    try testing.expectEqual(@as(f64, 4), upper.data[3]); // [1,0] - kept
+    try testing.expectEqual(@as(f64, 5), upper.data[4]); // [1,1]
+    try testing.expectEqual(@as(f64, 0), upper.data[6]); // [2,0] - zeroed
+    try testing.expectEqual(@as(f64, 8), upper.data[7]); // [2,1] - kept
+}
+
+test "ndarray: tril() creates lower triangular matrix (main diagonal)" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var lower = try mat.tril(allocator, 0);
+    defer lower.deinit();
+
+    // Lower triangle: [1,0,0 | 4,5,0 | 7,8,9]
+    try testing.expectEqual(@as(f64, 1), lower.data[0]); // [0,0]
+    try testing.expectEqual(@as(f64, 0), lower.data[1]); // [0,1] - zeroed
+    try testing.expectEqual(@as(f64, 0), lower.data[2]); // [0,2] - zeroed
+    try testing.expectEqual(@as(f64, 4), lower.data[3]); // [1,0]
+    try testing.expectEqual(@as(f64, 5), lower.data[4]); // [1,1]
+    try testing.expectEqual(@as(f64, 0), lower.data[5]); // [1,2] - zeroed
+    try testing.expectEqual(@as(f64, 7), lower.data[6]); // [2,0]
+    try testing.expectEqual(@as(f64, 8), lower.data[7]); // [2,1]
+    try testing.expectEqual(@as(f64, 9), lower.data[8]); // [2,2]
+}
+
+test "ndarray: tril() with k=1 keeps diagonal above main" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var lower = try mat.tril(allocator, 1);
+    defer lower.deinit();
+
+    // k=1: keep one diagonal above main
+    try testing.expectEqual(@as(f64, 1), lower.data[0]); // [0,0]
+    try testing.expectEqual(@as(f64, 2), lower.data[1]); // [0,1] - kept
+    try testing.expectEqual(@as(f64, 0), lower.data[2]); // [0,2] - zeroed
+    try testing.expectEqual(@as(f64, 4), lower.data[3]); // [1,0]
+    try testing.expectEqual(@as(f64, 5), lower.data[4]); // [1,1]
+    try testing.expectEqual(@as(f64, 6), lower.data[5]); // [1,2] - kept
+}
+
+test "ndarray: tril() with k=-1 zeroes main diagonal" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    var lower = try mat.tril(allocator, -1);
+    defer lower.deinit();
+
+    // k=-1: zero main diagonal and above
+    try testing.expectEqual(@as(f64, 0), lower.data[0]); // [0,0] - zeroed
+    try testing.expectEqual(@as(f64, 4), lower.data[3]); // [1,0]
+    try testing.expectEqual(@as(f64, 0), lower.data[4]); // [1,1] - zeroed
+    try testing.expectEqual(@as(f64, 7), lower.data[6]); // [2,0]
+    try testing.expectEqual(@as(f64, 8), lower.data[7]); // [2,1]
+    try testing.expectEqual(@as(f64, 0), lower.data[8]); // [2,2] - zeroed
+}
+
+test "ndarray: trace() computes sum of main diagonal" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    const tr = try mat.trace(0);
+    try testing.expectEqual(@as(f64, 15), tr); // 1 + 5 + 9 = 15
+}
+
+test "ndarray: trace() with offset k=1" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    const tr = try mat.trace(1);
+    try testing.expectEqual(@as(f64, 8), tr); // 2 + 6 = 8
+}
+
+test "ndarray: trace() with offset k=-1" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer mat.deinit();
+
+    const tr = try mat.trace(-1);
+    try testing.expectEqual(@as(f64, 12), tr); // 4 + 8 = 12
+}
+
+test "ndarray: trace() on non-square matrix (2x3)" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]i32{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer mat.deinit();
+
+    const tr = try mat.trace(0);
+    try testing.expectEqual(@as(i32, 6), tr); // 1 + 5 = 6 (only 2 diagonal elements)
+}
+
+test "ndarray: diagonal operations with column-major layout" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .column_major);
+    defer mat.deinit();
+
+    var upper = try mat.triu(allocator, 0);
+    defer upper.deinit();
+
+    // Column-major: data = [1,3,2,4] means [[1,2],[3,4]] in row-major view
+    // Upper triangle preserves [1,2,0,4]
+    const tr = try mat.trace(0);
+    try testing.expectEqual(@as(f64, 5), tr); // 1 + 4 = 5
+}
+
+test "ndarray: diagonal operations with integer types" {
+    const allocator = testing.allocator;
+    var mat = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]i32{ 10, 20, 30, 40 }, .row_major);
+    defer mat.deinit();
+
+    const tr = try mat.trace(0);
+    try testing.expectEqual(@as(i32, 50), tr); // 10 + 40 = 50
+
+    var vec = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &[_]i32{ 5, 6 }, .row_major);
+    defer vec.deinit();
+
+    var diag_mat = try vec.diag(allocator, 0, .row_major);
+    defer diag_mat.deinit();
+
+    try testing.expectEqual(@as(i32, 5), diag_mat.data[0]);
+    try testing.expectEqual(@as(i32, 6), diag_mat.data[3]);
+}
+
+test "ndarray: diagonal operations memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, .row_major);
+        defer mat.deinit();
+
+        var diag_arr = try mat.diagonal(allocator, 0);
+        defer diag_arr.deinit();
+
+        var upper = try mat.triu(allocator, 1);
+        defer upper.deinit();
+
+        var lower = try mat.tril(allocator, -1);
+        defer lower.deinit();
+
+        const tr = try mat.trace(0);
+        try testing.expectEqual(@as(f64, 34), tr); // 1+6+11+16=34
+
+        var vec = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+        defer vec.deinit();
+
+        var diag_mat = try vec.diag(allocator, 0, .row_major);
+        defer diag_mat.deinit();
+    }
+}
+
+test "ndarray: triu/tril preserve original matrix data" {
+    const allocator = testing.allocator;
+    const orig_data = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    var mat = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &orig_data, .row_major);
+    defer mat.deinit();
+
+    var upper = try mat.triu(allocator, 0);
+    defer upper.deinit();
+
+    // Original should be unchanged
+    try testing.expectEqual(@as(f64, 1), mat.data[0]);
+    try testing.expectEqual(@as(f64, 4), mat.data[3]);
+    try testing.expectEqual(@as(f64, 9), mat.data[8]);
+}
+
+test "ndarray: diag roundtrip 1D→2D→1D preserves values" {
+    const allocator = testing.allocator;
+    const original = [_]f64{ 10, 20, 30 };
+    var vec = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &original, .row_major);
+    defer vec.deinit();
+
+    var mat = try vec.diag(allocator, 0, .row_major);
+    defer mat.deinit();
+
+    var extracted = try mat.diagonal(allocator, 0);
+    defer extracted.deinit();
+
+    try testing.expectEqual(@as(usize, 3), extracted.shape[0]);
+    try testing.expectEqual(@as(f64, 10), extracted.data[0]);
+    try testing.expectEqual(@as(f64, 20), extracted.data[1]);
+    try testing.expectEqual(@as(f64, 30), extracted.data[2]);
 }
 
 // -- Indexing Tests (get/set) (7 tests) --
