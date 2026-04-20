@@ -26,6 +26,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
 
 /// Memory layout order for N-dimensional array
 pub const Layout = enum {
@@ -436,19 +437,19 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var num_elements: usize = 0;
             if (step > 0) {
                 if (start < stop) {
-                    const diff = if (@typeInfo(T) == .float)
+                    const range_diff = if (@typeInfo(T) == .float)
                         (stop - start) / step
                     else
                         @as(f64, @floatFromInt(stop - start)) / @as(f64, @floatFromInt(step));
-                    num_elements = @as(usize, @intFromFloat(@ceil(diff)));
+                    num_elements = @as(usize, @intFromFloat(@ceil(range_diff)));
                 }
             } else {
                 if (start > stop) {
-                    const diff = if (@typeInfo(T) == .float)
+                    const range_diff = if (@typeInfo(T) == .float)
                         (start - stop) / (-step)
                     else
                         @as(f64, @floatFromInt(start - stop)) / @as(f64, @floatFromInt(-step));
-                    num_elements = @as(usize, @intFromFloat(@ceil(diff)));
+                    num_elements = @as(usize, @intFromFloat(@ceil(range_diff)));
                 }
             }
 
@@ -3338,6 +3339,440 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
 
             return .{ .values = values, .counts = counts };
+        }
+
+        /// Reverse the order of elements along a given axis.
+        ///
+        /// Creates a new array with elements reversed along the specified axis.
+        /// Similar to NumPy's flip().
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - axis: Axis along which to flip
+        ///
+        /// Returns: New array with reversed axis
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3}, .row_major);
+        /// const flipped = try arr.flip(allocator, 0);
+        /// defer flipped.deinit();
+        /// // flipped.data = {3, 2, 1}
+        /// ```
+        pub fn flip(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+
+            var result = try Self.init(allocator, &self.shape, self.layout);
+            errdefer result.deinit();
+
+            // Calculate total iterations (excluding axis dimension)
+            const total_iters = blk: {
+                var total: usize = 1;
+                for (0..ndim) |d| {
+                    if (d != axis) total *= self.shape[d];
+                }
+                break :blk total;
+            };
+
+            for (0..total_iters) |iter_idx| {
+                // Convert iteration index to multi-dimensional index (skip axis)
+                var temp_idx = iter_idx;
+                var multi_idx: [ndim]usize = undefined;
+                for (0..ndim) |d| {
+                    if (d != axis) {
+                        multi_idx[d] = temp_idx % self.shape[d];
+                        temp_idx /= self.shape[d];
+                    }
+                }
+
+                // Copy elements along axis in reverse
+                for (0..self.shape[axis]) |i| {
+                    multi_idx[axis] = i;
+                    var src_idx: [ndim]isize = undefined;
+                    for (0..ndim) |d| src_idx[d] = @intCast(multi_idx[d]);
+
+                    multi_idx[axis] = self.shape[axis] - 1 - i;
+                    var dst_idx: [ndim]isize = undefined;
+                    for (0..ndim) |d| dst_idx[d] = @intCast(multi_idx[d]);
+
+                    const val = try self.get(&src_idx);
+                    result.set(&dst_idx, val);
+                }
+            }
+
+            return result;
+        }
+
+        /// Rotate array by 90 degrees in the plane specified by axes.
+        ///
+        /// Rotates the array k times by 90 degrees counterclockwise.
+        /// Similar to NumPy's rot90().
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - k: Number of 90-degree rotations (can be negative)
+        /// - axes: Two axes defining the rotation plane [axis0, axis1]
+        ///
+        /// Returns: New rotated array
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 2).fromSlice(allocator, &[_]i32{1, 2, 3, 4}, .row_major);
+        /// arr.shape = [2, 2];  // [[1, 2], [3, 4]]
+        /// const rotated = try arr.rot90(allocator, 1, [2]usize{0, 1});
+        /// // rotated = [[2, 4], [1, 3]]
+        /// ```
+        pub fn rot90(self: *const Self, allocator: Allocator, k: i32, axes: [2]usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axes[0] >= ndim or axes[1] >= ndim) return Error.IndexOutOfBounds;
+            if (axes[0] == axes[1]) return Error.ShapeMismatch;
+
+            // Normalize k to 0..3
+            const normalized_k = @mod(k, 4);
+            if (normalized_k == 0) {
+                // No rotation, return copy
+                var result = try Self.init(allocator, &self.shape, self.layout);
+                errdefer result.deinit();
+                @memcpy(result.data, self.data);
+                return result;
+            }
+
+            // For k rotations: shape[axes[0]] and shape[axes[1]] swap if k is odd
+            var new_shape = self.shape;
+            if (normalized_k == 1 or normalized_k == 3) {
+                const temp = new_shape[axes[0]];
+                new_shape[axes[0]] = new_shape[axes[1]];
+                new_shape[axes[1]] = temp;
+            }
+
+            var result = try Self.init(allocator, &new_shape, self.layout);
+            errdefer result.deinit();
+
+            // Calculate total iterations (excluding rotation axes)
+            const total_iters = blk: {
+                var total: usize = 1;
+                for (0..ndim) |d| {
+                    if (d != axes[0] and d != axes[1]) total *= self.shape[d];
+                }
+                break :blk total;
+            };
+
+            for (0..total_iters) |iter_idx| {
+                // Build multi-dimensional index for non-rotation dimensions
+                var temp_idx = iter_idx;
+                var base_idx: [ndim]usize = undefined;
+                for (0..ndim) |d| {
+                    if (d != axes[0] and d != axes[1]) {
+                        base_idx[d] = temp_idx % self.shape[d];
+                        temp_idx /= self.shape[d];
+                    }
+                }
+
+                // Iterate over rotation plane
+                for (0..self.shape[axes[0]]) |i| {
+                    for (0..self.shape[axes[1]]) |j| {
+                        base_idx[axes[0]] = i;
+                        base_idx[axes[1]] = j;
+
+                        var src_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| src_idx[d] = @intCast(base_idx[d]);
+                        const val = try self.get(&src_idx);
+
+                        // Calculate destination indices based on rotation
+                        var dst_i: usize = undefined;
+                        var dst_j: usize = undefined;
+                        switch (normalized_k) {
+                            1 => { // 90 degrees counterclockwise
+                                dst_i = self.shape[axes[1]] - 1 - j;
+                                dst_j = i;
+                            },
+                            2 => { // 180 degrees
+                                dst_i = self.shape[axes[0]] - 1 - i;
+                                dst_j = self.shape[axes[1]] - 1 - j;
+                            },
+                            3 => { // 270 degrees counterclockwise (90 clockwise)
+                                dst_i = j;
+                                dst_j = self.shape[axes[0]] - 1 - i;
+                            },
+                            else => unreachable,
+                        }
+
+                        base_idx[axes[0]] = dst_i;
+                        base_idx[axes[1]] = dst_j;
+                        var dst_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| dst_idx[d] = @intCast(base_idx[d]);
+                        result.set(&dst_idx, val);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        /// Roll array elements along a given axis.
+        ///
+        /// Elements that roll beyond the last position are re-introduced at the first.
+        /// Similar to NumPy's roll().
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - shift: Number of positions to shift (positive = right, negative = left)
+        /// - axis: Axis along which to roll
+        ///
+        /// Returns: New rolled array
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3, 4, 5}, .row_major);
+        /// const rolled = try arr.roll(allocator, 2, 0);
+        /// defer rolled.deinit();
+        /// // rolled.data = {4, 5, 1, 2, 3}
+        /// ```
+        pub fn roll(self: *const Self, allocator: Allocator, shift: i32, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+
+            var result = try Self.init(allocator, &self.shape, self.layout);
+            errdefer result.deinit();
+
+            const axis_len: i32 = @intCast(self.shape[axis]);
+            // Normalize shift to 0..axis_len-1
+            const normalized_shift = @mod(shift, axis_len);
+
+            // Calculate total iterations (excluding axis dimension)
+            const total_iters = blk: {
+                var total: usize = 1;
+                for (0..ndim) |d| {
+                    if (d != axis) total *= self.shape[d];
+                }
+                break :blk total;
+            };
+
+            for (0..total_iters) |iter_idx| {
+                // Convert iteration index to multi-dimensional index (skip axis)
+                var temp_idx = iter_idx;
+                var multi_idx: [ndim]usize = undefined;
+                for (0..ndim) |d| {
+                    if (d != axis) {
+                        multi_idx[d] = temp_idx % self.shape[d];
+                        temp_idx /= self.shape[d];
+                    }
+                }
+
+                // Roll elements along axis
+                for (0..self.shape[axis]) |i| {
+                    multi_idx[axis] = i;
+                    var src_idx: [ndim]isize = undefined;
+                    for (0..ndim) |d| src_idx[d] = @intCast(multi_idx[d]);
+                    const val = try self.get(&src_idx);
+
+                    const new_pos = @mod(@as(i32, @intCast(i)) + normalized_shift, axis_len);
+                    multi_idx[axis] = @intCast(new_pos);
+                    var dst_idx: [ndim]isize = undefined;
+                    for (0..ndim) |d| dst_idx[d] = @intCast(multi_idx[d]);
+                    result.set(&dst_idx, val);
+                }
+            }
+
+            return result;
+        }
+
+        /// Calculate the n-th discrete difference along a given axis.
+        ///
+        /// Computes differences between consecutive elements:
+        /// out[i] = arr[i+1] - arr[i]
+        ///
+        /// Time: O(n × m) where n = iterations, m = difference order
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - n: Number of times to take the difference (default 1)
+        /// - axis: Axis along which to compute differences
+        ///
+        /// Returns: Array with shape[axis] reduced by n
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 3, 6, 10}, .row_major);
+        /// const d = try arr.diff(allocator, 1, 0);
+        /// defer d.deinit();
+        /// // d.data = {2, 3, 4}
+        /// ```
+        pub fn diff(self: *const Self, allocator: Allocator, n_order: usize, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+            if (n_order == 0) {
+                // n=0 means no difference, return copy
+                var result = try Self.init(allocator, &self.shape, self.layout);
+                errdefer result.deinit();
+                @memcpy(result.data, self.data);
+                return result;
+            }
+            if (n_order >= self.shape[axis]) return Error.ShapeMismatch;
+
+            // Start with a copy of self
+            var current_arr = try Self.init(allocator, &self.shape, self.layout);
+            errdefer current_arr.deinit();
+            @memcpy(current_arr.data, self.data);
+
+            // Apply diff n_order times
+            for (0..n_order) |_| {
+                var new_shape = current_arr.shape;
+                new_shape[axis] -= 1;
+
+                var next_arr = try Self.init(allocator, &new_shape, current_arr.layout);
+                errdefer next_arr.deinit();
+
+                // Calculate total iterations (excluding axis dimension)
+                const total_iters = blk: {
+                    var total: usize = 1;
+                    for (0..ndim) |d| {
+                        if (d != axis) total *= current_arr.shape[d];
+                    }
+                    break :blk total;
+                };
+
+                for (0..total_iters) |iter_idx| {
+                    // Convert iteration index to multi-dimensional index (skip axis)
+                    var temp_idx = iter_idx;
+                    var multi_idx: [ndim]usize = undefined;
+                    for (0..ndim) |d| {
+                        if (d != axis) {
+                            multi_idx[d] = temp_idx % current_arr.shape[d];
+                            temp_idx /= current_arr.shape[d];
+                        }
+                    }
+
+                    // Compute differences along axis
+                    for (0..new_shape[axis]) |i| {
+                        multi_idx[axis] = i;
+                        var idx1: [ndim]isize = undefined;
+                        for (0..ndim) |d| idx1[d] = @intCast(multi_idx[d]);
+                        const val1 = try current_arr.get(&idx1);
+
+                        multi_idx[axis] = i + 1;
+                        var idx2: [ndim]isize = undefined;
+                        for (0..ndim) |d| idx2[d] = @intCast(multi_idx[d]);
+                        const val2 = try current_arr.get(&idx2);
+
+                        multi_idx[axis] = i;
+                        var dst_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| dst_idx[d] = @intCast(multi_idx[d]);
+                        next_arr.set(&dst_idx, val2 - val1);
+                    }
+                }
+
+                // Replace current with next
+                current_arr.deinit();
+                current_arr = next_arr;
+            }
+
+            return current_arr;
+        }
+
+        /// Calculate the gradient using finite differences.
+        ///
+        /// Computes numerical gradient along a given axis using:
+        /// - Forward difference at start: grad[0] = arr[1] - arr[0]
+        /// - Central difference in middle: grad[i] = (arr[i+1] - arr[i-1]) / 2
+        /// - Backward difference at end: grad[n-1] = arr[n-1] - arr[n-2]
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - axis: Axis along which to compute gradient
+        ///
+        /// Returns: Array with same shape as input
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(f64, 1).fromSlice(allocator, &[_]f64{1, 2, 4, 7, 11}, .row_major);
+        /// const grad = try arr.gradient(allocator, 0);
+        /// defer grad.deinit();
+        /// // grad.data = {1.0, 1.5, 2.5, 3.5, 4.0}
+        /// ```
+        pub fn gradient(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+            if (self.shape[axis] < 2) return Error.ShapeMismatch;
+
+            var result = try Self.init(allocator, &self.shape, self.layout);
+            errdefer result.deinit();
+
+            // Calculate total iterations (excluding axis dimension)
+            const total_iters = blk: {
+                var total: usize = 1;
+                for (0..ndim) |d| {
+                    if (d != axis) total *= self.shape[d];
+                }
+                break :blk total;
+            };
+
+            for (0..total_iters) |iter_idx| {
+                // Convert iteration index to multi-dimensional index (skip axis)
+                var temp_idx = iter_idx;
+                var multi_idx: [ndim]usize = undefined;
+                for (0..ndim) |d| {
+                    if (d != axis) {
+                        multi_idx[d] = temp_idx % self.shape[d];
+                        temp_idx /= self.shape[d];
+                    }
+                }
+
+                // Compute gradient along axis
+                for (0..self.shape[axis]) |i| {
+                    multi_idx[axis] = i;
+                    var idx: [ndim]isize = undefined;
+                    for (0..ndim) |d| idx[d] = @intCast(multi_idx[d]);
+
+                    const grad_val: T = if (i == 0) blk: {
+                        // Forward difference at start
+                        const curr = try self.get(&idx);
+                        multi_idx[axis] = i + 1;
+                        var next_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| next_idx[d] = @intCast(multi_idx[d]);
+                        const next = try self.get(&next_idx);
+                        break :blk next - curr;
+                    } else if (i == self.shape[axis] - 1) blk: {
+                        // Backward difference at end
+                        const curr = try self.get(&idx);
+                        multi_idx[axis] = i - 1;
+                        var prev_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| prev_idx[d] = @intCast(multi_idx[d]);
+                        const prev = try self.get(&prev_idx);
+                        break :blk curr - prev;
+                    } else blk: {
+                        // Central difference in middle
+                        multi_idx[axis] = i - 1;
+                        var prev_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| prev_idx[d] = @intCast(multi_idx[d]);
+                        const prev = try self.get(&prev_idx);
+
+                        multi_idx[axis] = i + 1;
+                        var next_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| next_idx[d] = @intCast(multi_idx[d]);
+                        const next = try self.get(&next_idx);
+
+                        const two: T = if (@typeInfo(T) == .int) 2 else 2.0;
+                        break :blk (next - prev) / two;
+                    };
+
+                    multi_idx[axis] = i;
+                    var dst_idx: [ndim]isize = undefined;
+                    for (0..ndim) |d| dst_idx[d] = @intCast(multi_idx[d]);
+                    result.set(&dst_idx, grad_val);
+                }
+            }
+
+            return result;
         }
 
 
@@ -15145,4 +15580,378 @@ test "uniqueWithCounts: large array" {
     try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{0}));
     try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{1}));
     try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{2}));
+}
+
+test "flip: 1D array" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var flipped = try arr.flip(allocator, 0);
+    defer flipped.deinit();
+
+    try testing.expectEqual(@as(i32, 5), try flipped.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 4), try flipped.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try flipped.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 2), try flipped.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, 1), try flipped.get(&[_]isize{4}));
+}
+
+test "flip: 2D array along axis 0" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var flipped = try arr.flip(allocator, 0);
+    defer flipped.deinit();
+
+    // Original: [[1,2,3], [4,5,6]]
+    // Flipped axis 0: [[4,5,6], [1,2,3]]
+    try testing.expectEqual(@as(i32, 4), try flipped.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 5), try flipped.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 6), try flipped.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(i32, 1), try flipped.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 2), try flipped.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(i32, 3), try flipped.get(&[_]isize{ 1, 2 }));
+}
+
+test "flip: 2D array along axis 1" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var flipped = try arr.flip(allocator, 1);
+    defer flipped.deinit();
+
+    // Original: [[1,2,3], [4,5,6]]
+    // Flipped axis 1: [[3,2,1], [6,5,4]]
+    try testing.expectEqual(@as(i32, 3), try flipped.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 2), try flipped.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 1), try flipped.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(i32, 6), try flipped.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 5), try flipped.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(i32, 4), try flipped.get(&[_]isize{ 1, 2 }));
+}
+
+test "flip: invalid axis error" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(NDArray(i32, 1).Error.IndexOutOfBounds, arr.flip(allocator, 1));
+}
+
+test "flip: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+        defer arr.deinit();
+
+        var flipped = try arr.flip(allocator, 0);
+        defer flipped.deinit();
+
+        try testing.expectApproxEqAbs(@as(f64, 4.0), try flipped.get(&[_]isize{0}), 1e-9);
+    }
+}
+
+test "rot90: 2D array, k=1" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var rotated = try arr.rot90(allocator, 1, [2]usize{ 0, 1 });
+    defer rotated.deinit();
+
+    // Original: [[1,2], [3,4]]
+    // Rotated 90° CCW: [[2,4], [1,3]]
+    try testing.expectEqual(@as(i32, 2), try rotated.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 4), try rotated.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 1), try rotated.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 3), try rotated.get(&[_]isize{ 1, 1 }));
+}
+
+test "rot90: 2D array, k=2" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var rotated = try arr.rot90(allocator, 2, [2]usize{ 0, 1 });
+    defer rotated.deinit();
+
+    // Original: [[1,2], [3,4]]
+    // Rotated 180°: [[4,3], [2,1]]
+    try testing.expectEqual(@as(i32, 4), try rotated.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 3), try rotated.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 2), try rotated.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 1), try rotated.get(&[_]isize{ 1, 1 }));
+}
+
+test "rot90: k=0 returns copy" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var rotated = try arr.rot90(allocator, 0, [2]usize{ 0, 1 });
+    defer rotated.deinit();
+
+    for (0..4) |i| {
+        try testing.expectEqual(arr.data[i], rotated.data[i]);
+    }
+}
+
+test "rot90: negative k" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var rotated = try arr.rot90(allocator, -1, [2]usize{ 0, 1 });
+    defer rotated.deinit();
+
+    // k=-1 is same as k=3 (270° CCW = 90° CW)
+    // Original: [[1,2], [3,4]]
+    // Rotated 90° CW: [[3,1], [4,2]]
+    try testing.expectEqual(@as(i32, 3), try rotated.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 1), try rotated.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 4), try rotated.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 2), try rotated.get(&[_]isize{ 1, 1 }));
+}
+
+test "rot90: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+        var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+        defer arr.deinit();
+
+        var rotated = try arr.rot90(allocator, 1, [2]usize{ 0, 1 });
+        defer rotated.deinit();
+
+        try testing.expectApproxEqAbs(@as(f64, 2.0), try rotated.get(&[_]isize{ 0, 0 }), 1e-9);
+    }
+}
+
+test "roll: 1D array positive shift" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    var rolled = try arr.roll(allocator, 2, 0);
+    defer rolled.deinit();
+
+    // Shift right by 2: [4, 5, 1, 2, 3]
+    try testing.expectEqual(@as(i32, 4), try rolled.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 5), try rolled.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 1), try rolled.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 2), try rolled.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, 3), try rolled.get(&[_]isize{4}));
+}
+
+test "roll: 1D array negative shift" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    var rolled = try arr.roll(allocator, -2, 0);
+    defer rolled.deinit();
+
+    // Shift left by 2: [3, 4, 5, 1, 2]
+    try testing.expectEqual(@as(i32, 3), try rolled.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 4), try rolled.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 5), try rolled.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 1), try rolled.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, 2), try rolled.get(&[_]isize{4}));
+}
+
+test "roll: 2D array along axis 0" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var rolled = try arr.roll(allocator, 1, 0);
+    defer rolled.deinit();
+
+    // Original: [[1,2,3], [4,5,6]]
+    // Rolled axis 0: [[4,5,6], [1,2,3]]
+    try testing.expectEqual(@as(i32, 4), try rolled.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 5), try rolled.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 6), try rolled.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(i32, 1), try rolled.get(&[_]isize{ 1, 0 }));
+}
+
+test "roll: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+        defer arr.deinit();
+
+        var rolled = try arr.roll(allocator, 1, 0);
+        defer rolled.deinit();
+
+        try testing.expectApproxEqAbs(@as(f64, 4.0), try rolled.get(&[_]isize{0}), 1e-9);
+    }
+}
+
+test "diff: 1D basic" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 3, 6, 10 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    var d = try arr.diff(allocator, 1, 0);
+    defer d.deinit();
+
+    // diff([1,3,6,10]) = [2,3,4]
+    try testing.expectEqual(@as(usize, 3), d.shape[0]);
+    try testing.expectEqual(@as(i32, 2), try d.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 3), try d.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 4), try d.get(&[_]isize{2}));
+}
+
+test "diff: 1D second order" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 3, 6, 10 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    var d = try arr.diff(allocator, 2, 0);
+    defer d.deinit();
+
+    // diff([1,3,6,10], n=2) = diff([2,3,4]) = [1,1]
+    try testing.expectEqual(@as(usize, 2), d.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try d.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 1), try d.get(&[_]isize{1}));
+}
+
+test "diff: 2D along axis 0" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 5, 7, 9 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var d = try arr.diff(allocator, 1, 0);
+    defer d.deinit();
+
+    // Original: [[1,2,3], [5,7,9]]
+    // diff axis 0: [[4,5,6]]
+    try testing.expectEqual(@as(usize, 1), d.shape[0]);
+    try testing.expectEqual(@as(usize, 3), d.shape[1]);
+    try testing.expectEqual(@as(i32, 4), try d.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 5), try d.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 6), try d.get(&[_]isize{ 0, 2 }));
+}
+
+test "diff: n=0 returns copy" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    var d = try arr.diff(allocator, 0, 0);
+    defer d.deinit();
+
+    try testing.expectEqual(@as(usize, 3), d.shape[0]);
+    for (0..3) |i| {
+        try testing.expectEqual(arr.data[i], d.data[i]);
+    }
+}
+
+test "diff: invalid axis error" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(NDArray(i32, 1).Error.IndexOutOfBounds, arr.diff(allocator, 1, 1));
+}
+
+test "diff: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.5, 4.5, 7.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+        defer arr.deinit();
+
+        var d = try arr.diff(allocator, 1, 0);
+        defer d.deinit();
+
+        try testing.expectApproxEqAbs(@as(f64, 1.5), try d.get(&[_]isize{0}), 1e-9);
+    }
+}
+
+test "gradient: 1D basic" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.0, 2.0, 4.0, 7.0, 11.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    var grad = try arr.gradient(allocator, 0);
+    defer grad.deinit();
+
+    // Forward: 2.0-1.0=1.0
+    // Central: (4.0-1.0)/2=1.5
+    // Central: (7.0-2.0)/2=2.5
+    // Central: (11.0-4.0)/2=3.5
+    // Backward: 11.0-7.0=4.0
+    try testing.expectApproxEqAbs(@as(f64, 1.0), try grad.get(&[_]isize{0}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.5), try grad.get(&[_]isize{1}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.5), try grad.get(&[_]isize{2}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.5), try grad.get(&[_]isize{3}), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), try grad.get(&[_]isize{4}), 1e-9);
+}
+
+test "gradient: 2D along axis 0" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 9.0, 12.0, 15.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var grad = try arr.gradient(allocator, 0);
+    defer grad.deinit();
+
+    // First row: forward difference
+    try testing.expectApproxEqAbs(@as(f64, 3.0), try grad.get(&[_]isize{ 0, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), try grad.get(&[_]isize{ 0, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), try grad.get(&[_]isize{ 0, 2 }), 1e-9);
+
+    // Middle row: central difference
+    try testing.expectApproxEqAbs(@as(f64, 4.0), try grad.get(&[_]isize{ 1, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), try grad.get(&[_]isize{ 1, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), try grad.get(&[_]isize{ 1, 2 }), 1e-9);
+
+    // Last row: backward difference
+    try testing.expectApproxEqAbs(@as(f64, 5.0), try grad.get(&[_]isize{ 2, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), try grad.get(&[_]isize{ 2, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 7.0), try grad.get(&[_]isize{ 2, 2 }), 1e-9);
+}
+
+test "gradient: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.5, 4.5, 7.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+        defer arr.deinit();
+
+        var grad = try arr.gradient(allocator, 0);
+        defer grad.deinit();
+
+        try testing.expectApproxEqAbs(@as(f64, 1.5), try grad.get(&[_]isize{0}), 1e-9);
+    }
 }
