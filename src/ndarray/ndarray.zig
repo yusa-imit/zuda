@@ -3775,6 +3775,114 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Insert values along an axis before a given index
+        ///
+        /// Creates a new array with values from `values` inserted at position `index` along `axis`.
+        /// The resulting array has shape increased by values.shape[axis] along the insertion axis.
+        ///
+        /// Time: O(n) where n = product of all dimensions
+        /// Space: O(n) for the new array
+        ///
+        /// Example:
+        /// ```
+        /// arr = [[1, 2], [3, 4]]  // shape [2, 2]
+        /// values = [[5, 6]]        // shape [1, 2]
+        /// insert(arr, 1, values, 0) => [[1, 2], [5, 6], [3, 4]]  // shape [3, 2]
+        /// ```
+        pub fn insert(self: *const Self, allocator: Allocator, axis: usize, index: usize, values: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+            if (index > self.shape[axis]) return Error.IndexOutOfBounds;
+
+            // Validate shapes match except at insertion axis
+            for (0..ndim) |d| {
+                if (d != axis and values.shape[d] != self.shape[d]) {
+                    return Error.ShapeMismatch;
+                }
+            }
+
+            // Calculate new shape
+            var new_shape: [ndim]usize = self.shape;
+            new_shape[axis] = self.shape[axis] + values.shape[axis];
+
+            var result = try Self.init(allocator, &new_shape, self.layout);
+            errdefer result.deinit();
+
+            // Copy elements before insertion point
+            if (index > 0) {
+                try copyArraySegmentInsert(T, ndim, &result, self, axis, 0, 0, index);
+            }
+
+            // Copy inserted values
+            try copyArraySegmentInsert(T, ndim, &result, values, axis, index, 0, values.shape[axis]);
+
+            // Copy elements after insertion point
+            if (index < self.shape[axis]) {
+                try copyArraySegmentInsert(T, ndim, &result, self, axis, index + values.shape[axis], index, self.shape[axis] - index);
+            }
+
+            return result;
+        }
+
+        /// Append values to the end of an array along an axis
+        ///
+        /// Creates a new array with values from `values` appended to the end along `axis`.
+        /// Equivalent to insert(self, allocator, axis, self.shape[axis], values).
+        ///
+        /// Time: O(n) where n = product of all dimensions
+        /// Space: O(n) for the new array
+        ///
+        /// Example:
+        /// ```
+        /// arr = [[1, 2], [3, 4]]  // shape [2, 2]
+        /// values = [[5, 6]]        // shape [1, 2]
+        /// append(arr, values, 0) => [[1, 2], [3, 4], [5, 6]]  // shape [3, 2]
+        /// ```
+        pub fn append(self: *const Self, allocator: Allocator, axis: usize, values: *const Self) (Error || std.mem.Allocator.Error)!Self {
+            return self.insert(allocator, axis, self.shape[axis], values);
+        }
+
+        /// Delete a sub-array along an axis
+        ///
+        /// Removes elements from `start_idx` to `end_idx` (exclusive) along `axis`.
+        /// The resulting array has shape decreased by (end_idx - start_idx) along the deletion axis.
+        ///
+        /// Time: O(n) where n = product of all dimensions
+        /// Space: O(n) for the new array
+        ///
+        /// Example:
+        /// ```
+        /// arr = [[1, 2], [3, 4], [5, 6]]  // shape [3, 2]
+        /// delete(arr, 0, 1, 2) => [[1, 2], [5, 6]]  // shape [2, 2] (removed index 1)
+        /// ```
+        pub fn delete(self: *const Self, allocator: Allocator, axis: usize, start_idx: usize, end_idx: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+            if (start_idx >= end_idx) return Error.IndexOutOfBounds;
+            if (end_idx > self.shape[axis]) return Error.IndexOutOfBounds;
+
+            const delete_count = end_idx - start_idx;
+
+            // Calculate new shape
+            var new_shape: [ndim]usize = self.shape;
+            new_shape[axis] = self.shape[axis] - delete_count;
+
+            if (new_shape[axis] == 0) return Error.ZeroDimension;
+
+            var result = try Self.init(allocator, &new_shape, self.layout);
+            errdefer result.deinit();
+
+            // Copy elements before deletion point
+            if (start_idx > 0) {
+                try copyArraySegmentInsert(T, ndim, &result, self, axis, 0, 0, start_idx);
+            }
+
+            // Copy elements after deletion point
+            if (end_idx < self.shape[axis]) {
+                try copyArraySegmentInsert(T, ndim, &result, self, axis, start_idx, end_idx, self.shape[axis] - end_idx);
+            }
+
+            return result;
+        }
+
 
         // -- Iterator Protocol --
 
@@ -5005,6 +5113,70 @@ fn copyArraySegment(comptime T: type, comptime ndim: usize, dest: *NDArray(T, nd
             dim -= 1;
             indices[dim] += carry;
             if (indices[dim] >= src.shape[dim]) {
+                indices[dim] = 0;
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+        }
+
+        if (carry == 1) {
+            done = true;
+        }
+    }
+}
+
+/// Helper to copy a slice of array segment along an axis
+/// Used by insert(), append(), delete()
+///
+/// dest: destination array to copy into
+/// src: source array to copy from
+/// axis: axis along which to slice
+/// dest_offset: starting index in destination along axis
+/// src_offset: starting index in source along axis
+/// count: number of elements to copy along axis
+fn copyArraySegmentInsert(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), axis: usize, dest_offset: usize, src_offset: usize, count: usize) !void {
+    // Iterate through all elements in the slice
+    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+
+    var done = false;
+    while (!done) {
+        // Skip if not in the source slice range along axis
+        if (indices[axis] < count) {
+            // Calculate source indices
+            var src_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                if (i == axis) {
+                    src_indices[i] = @as(isize, @intCast(src_offset + idx));
+                } else {
+                    src_indices[i] = @as(isize, @intCast(idx));
+                }
+            }
+
+            // Calculate destination indices
+            var dest_indices: [ndim]isize = undefined;
+            for (indices, 0..) |idx, i| {
+                if (i == axis) {
+                    dest_indices[i] = @as(isize, @intCast(dest_offset + idx));
+                } else {
+                    dest_indices[i] = @as(isize, @intCast(idx));
+                }
+            }
+
+            // Copy value
+            const val = try src.get(&src_indices);
+            dest.set(&dest_indices, val);
+        }
+
+        // Increment multi-dimensional index (row-major order: rightmost varies fastest)
+        var carry: usize = 1;
+        var dim: usize = ndim;
+        while (dim > 0 and carry == 1) {
+            dim -= 1;
+            // For axis dimension, limit iteration to count
+            const limit = if (dim == axis) count else dest.shape[dim];
+            indices[dim] += carry;
+            if (indices[dim] >= limit) {
                 indices[dim] = 0;
                 carry = 1;
             } else {
@@ -15953,5 +16125,372 @@ test "gradient: memory safety" {
         defer grad.deinit();
 
         try testing.expectApproxEqAbs(@as(f64, 1.5), try grad.get(&[_]isize{0}), 1e-9);
+    }
+}
+
+// -- Insert Tests (7 tests) --
+
+test "insert: 1D array at beginning" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 1, 2 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.insert(allocator, 0, 0, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try result.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try result.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{4}));
+}
+
+test "insert: 1D array in middle" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 1, 2, 5, 6 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{4}, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 3, 4 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.insert(allocator, 0, 2, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 6), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try result.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try result.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{4}));
+    try testing.expectEqual(@as(i32, 6), try result.get(&[_]isize{5}));
+}
+
+test "insert: 2D array along axis 0" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]f64{ 5.0, 6.0 };
+    var values = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 2 }, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.insert(allocator, 0, 1, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), try result.get(&[_]isize{ 0, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), try result.get(&[_]isize{ 0, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), try result.get(&[_]isize{ 1, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), try result.get(&[_]isize{ 1, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), try result.get(&[_]isize{ 2, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), try result.get(&[_]isize{ 2, 1 }), 1e-9);
+}
+
+test "insert: 2D array along axis 1" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 5, 6 };
+    var values = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 1 }, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.insert(allocator, 1, 1, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 2), try result.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(i32, 3), try result.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 6), try result.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{ 1, 2 }));
+}
+
+test "insert: shape mismatch error" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 5, 6, 7 };
+    var values = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 1, 3 }, &data2, .row_major);
+    defer values.deinit();
+
+    try testing.expectError(NDArray(i32, 2).Error.ShapeMismatch, arr.insert(allocator, 0, 0, &values));
+}
+
+test "insert: invalid axis error" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 4, 5 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data2, .row_major);
+    defer values.deinit();
+
+    try testing.expectError(NDArray(i32, 1).Error.IndexOutOfBounds, arr.insert(allocator, 1, 0, &values));
+}
+
+test "insert: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data1 = [_]i32{ 1, 2, 3 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+        defer arr.deinit();
+
+        const data2 = [_]i32{ 4, 5 };
+        var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data2, .row_major);
+        defer values.deinit();
+
+        var result = try arr.insert(allocator, 0, 1, &values);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    }
+}
+
+// -- Append Tests (5 tests) --
+
+test "append: 1D array" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 4, 5 };
+    var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.append(allocator, 0, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 5), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try result.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 3), try result.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{3}));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{4}));
+}
+
+test "append: 2D array along axis 0" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]f64{ 5.0, 6.0 };
+    var values = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 2 }, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.append(allocator, 0, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), try result.get(&[_]isize{ 0, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), try result.get(&[_]isize{ 0, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), try result.get(&[_]isize{ 1, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), try result.get(&[_]isize{ 1, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), try result.get(&[_]isize{ 2, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), try result.get(&[_]isize{ 2, 1 }), 1e-9);
+}
+
+test "append: 2D array along axis 1" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]i32{ 5, 6 };
+    var values = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 1 }, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.append(allocator, 1, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 2), try result.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(i32, 3), try result.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(i32, 6), try result.get(&[_]isize{ 1, 2 }));
+}
+
+test "append: u8 type" {
+    const allocator = testing.allocator;
+
+    const data1 = [_]u8{ 1, 2, 3 };
+    var arr = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{3}, &data1, .row_major);
+    defer arr.deinit();
+
+    const data2 = [_]u8{ 4, 5, 6 };
+    var values = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{3}, &data2, .row_major);
+    defer values.deinit();
+
+    var result = try arr.append(allocator, 0, &values);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 6), result.shape[0]);
+    try testing.expectEqual(@as(u8, 4), try result.get(&[_]isize{3}));
+}
+
+test "append: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data1 = [_]i32{ 1, 2 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data1, .row_major);
+        defer arr.deinit();
+
+        const data2 = [_]i32{ 3, 4 };
+        var values = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &data2, .row_major);
+        defer values.deinit();
+
+        var result = try arr.append(allocator, 0, &values);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    }
+}
+
+// -- Delete Tests (8 tests) --
+
+test "delete: 1D array single element" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.delete(allocator, 0, 2, 3);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 2), try result.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{2}));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{3}));
+}
+
+test "delete: 1D array multiple elements" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{6}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.delete(allocator, 0, 1, 4);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{0}));
+    try testing.expectEqual(@as(i32, 5), try result.get(&[_]isize{1}));
+    try testing.expectEqual(@as(i32, 6), try result.get(&[_]isize{2}));
+}
+
+test "delete: 2D array along axis 0" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.delete(allocator, 0, 1, 2);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), try result.get(&[_]isize{ 0, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), try result.get(&[_]isize{ 0, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), try result.get(&[_]isize{ 1, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), try result.get(&[_]isize{ 1, 1 }), 1e-9);
+}
+
+test "delete: 2D array along axis 1" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.delete(allocator, 1, 1, 2);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(i32, 1), try result.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 3), try result.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 4), try result.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 6), try result.get(&[_]isize{ 1, 1 }));
+}
+
+test "delete: invalid range error" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(NDArray(i32, 1).Error.IndexOutOfBounds, arr.delete(allocator, 0, 3, 2));
+}
+
+test "delete: out of bounds error" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(NDArray(i32, 1).Error.IndexOutOfBounds, arr.delete(allocator, 0, 0, 5));
+}
+
+test "delete: zero dimension error" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    try testing.expectError(NDArray(i32, 1).Error.ZeroDimension, arr.delete(allocator, 0, 0, 3));
+}
+
+test "delete: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 2, 3, 4, 5 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+        defer arr.deinit();
+
+        var result = try arr.delete(allocator, 0, 1, 3);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.shape[0]);
     }
 }
