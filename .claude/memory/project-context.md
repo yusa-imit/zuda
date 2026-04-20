@@ -1,21 +1,64 @@
 # zuda Project Context
 
-## Current Status
-- **Version**: 2.0.0 (current — released 2026-03-26)
-- **Phase**: v2.0.0 POST-RELEASE — String Algorithms Expansion
+## Current Status (Session 400 — 2026-04-21)
+- **Version**: 2.0.1 (current)
+- **Phase**: v2.0 Scientific Computing — NDArray Operations Expansion
 - **Zig Version**: 0.15.2
-- **Last CI Status**: ✅ GREEN (verified 2026-04-11 Session 342)
+- **Last CI Status**: ✅ GREEN (5/5 consecutive passes on main, verified Session 400)
 - **Latest Milestone**: v2.0.0 ✅ — Scientific Computing Platform RELEASED (2026-03-26)
-- **Current Focus**: Expanding string algorithms category
-- **Next Priority**: Additional string algorithms (similarity metrics, phonetic encoding, advanced pattern matching)
-- **Test Count**: 8120 test blocks passing (+18 LZW from Session 342, all passing, exit code 0)
-  - Breakdown: containers + linalg + stats + algorithms (47 DP + 13 string) + internal
-  - String algorithms: 13 total (KMP, Boyer-Moore, Rabin-Karp, Aho-Corasick, Z-Algorithm, Glob Match, Manacher, Suffix Array, Longest Common Prefix, Anagrams, Trie, Run-Length Encoding, LZW)
-  - DP algorithms: 47 total (LIS, LCS, Edit Distance, Knapsack, Binary Search, Matrix Chain, Rod Cutting, Coin Change, LPS, Subset Sum, Egg Drop, Word Break, Palindrome Partition, Climbing Stairs, House Robber, Unique Paths, Longest Common Substring, Distinct Subsequences, Max Product Subarray, Max Sum Subarray, Wildcard Matching, Regex Matching, Interleaving String, Bitonic Subsequence, Partition Equal Subset Sum, Longest Palindromic Subsequence, Scramble String, Minimum Path Sum, Triangle, Burst Balloons, Maximal Square, Longest Increasing Path, Stock Trading, Russian Doll, Perfect Squares, Ugly Numbers, Super Egg Drop, Boolean Parenthesization, Catalan Numbers, Optimal Game Strategy, Optimal BST, Decode Ways, Longest Valid Parentheses, Longest Arithmetic Progression, Jump Game, Longest Consecutive Sequence)
-- **System Status**: STABLE — All tests passing (exit code 0)
+- **Current Focus**: NDArray advanced operations (fancy indexing, array manipulation, modification)
+- **Next Priority**: NDArray utilities (concat/stack, CSV I/O), then linear algebra decompositions
+- **Test Count**: 8926 test blocks passing (all passing, exit code 0)
+  - NDArray: 608 tests, 116 public functions
+  - Recent additions (Sessions 397-399): take/put (fancy indexing), insert/append/delete (modification), flip/rot90/roll/diff/gradient (manipulation)
+  - Compression: 10 modules (RLE, Delta, LZ77, LZSS, BWT, Huffman, Arithmetic, LZ4, Snappy, DEFLATE)
+  - Combinatorics: 8 modules (basics, partitions, compositions, stirling, sequences, permutations, catalan, young_tableaux)
+  - String algorithms: 19 modules (pattern matching, similarity, phonetic, compression)
+  - Sorting: 22 algorithms (including TimSort, IntroSort, Bitonic, Strand, etc.)
+- **Cross-Compilation**: ALL 6 targets passing ✅ (x86_64/aarch64 linux/macos/windows + wasm32-wasi)
+- **System Status**: STABLE — All systems green, zero open issues
 
-## Recent Progress (Session 2026-04-11 - Session 342)
-**FEATURE MODE:**
+## Recent Progress (Sessions 397-400, 2026-04-20 to 2026-04-21)
+
+### Session 400 (2026-04-21) — STABILIZATION MODE 🎉
+- **Milestone**: 400th execution cycle!
+- **Audit Results**: ALL systems green ✅
+- **CI**: 5/5 consecutive successful runs
+- **Issues**: Zero open
+- **Tests**: 8926 test blocks (100% passing)
+- **Cross-Compilation**: ALL 6 targets passed ✅
+- **Code Quality**: EXCELLENT
+  * 2777 Time O() annotations
+  * 2678 Space O() annotations
+  * 7688 testing.allocator usages
+  * 14,440+ comprehensive assertions
+  * Zero meaningless expect(true) tests
+- **No code changes needed**
+
+### Session 399 (2026-04-21) — FEATURE MODE
+- **NDArray Fancy Indexing**: take() and put() operations (17 tests, commit ae099fe)
+  * take(): Extract elements along axis using index array - O(prod(shape) × indices.count() / shape[axis])
+  * put(): In-place modification using flat indices - O(indices.count() × ndim)
+  * NumPy-style fancy indexing with repeated indices support
+  * Advanced use cases: reordering, random sampling, scatter operations
+
+### Session 398 (2026-04-20) — FEATURE MODE
+- **NDArray Array Modification**: insert(), append(), delete() operations (20 tests, commit 0ee3714)
+  * insert(): Insert values at position along axis - O(n)
+  * append(): Convenience wrapper for insertion at end
+  * delete(): Remove slice along axis - O(n)
+  * Three-segment copy algorithm for efficient modification
+
+### Session 397 (2026-04-20) — FEATURE MODE
+- **NDArray Array Manipulation**: flip(), rot90(), roll(), diff(), gradient() operations (23 tests, commit 9beb909)
+  * flip(): Reverse elements along axis
+  * rot90(): Rotate 90° k times in plane
+  * roll(): Circular shift elements
+  * diff(): n-th discrete difference
+  * gradient(): Numerical gradient via finite differences
+  * Use cases: image operations, time series analysis, numerical derivatives
+
+## Archived Progress (Session 342 and earlier)
 
 ### LZW (Lempel-Ziv-Welch) Compression (Session 342, commit 059c21c) ✅
 - ✅ **Algorithm**: Dictionary-based adaptive compression used in GIF, TIFF, PDF formats
