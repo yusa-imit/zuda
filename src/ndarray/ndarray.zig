@@ -3728,6 +3728,177 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Extract elements from an array based on a boolean condition.
+        ///
+        /// Returns a 1D array containing elements where the condition is True.
+        /// The input array is flattened before extraction. Similar to NumPy's extract().
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(k) where k = number of True elements in condition
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - condition: Boolean array with same shape as self
+        ///
+        /// Returns: 1D array of extracted elements
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3, 4}, .row_major);
+        /// const cond = try NDArray(bool, 1).fromSlice(allocator, &[_]bool{true, false, true, false}, .row_major);
+        /// const extracted = try arr.extract(allocator, &cond);
+        /// defer extracted.deinit();
+        /// // extracted.data = {1, 3}
+        /// ```
+        pub fn extract(self: *const Self, allocator: Allocator, condition: *const NDArray(bool, ndim)) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            // Verify shapes match
+            if (!std.mem.eql(usize, &self.shape, &condition.shape)) {
+                return Error.ShapeMismatch;
+            }
+
+            // First pass: count True elements
+            var true_count: usize = 0;
+            var cond_iter = condition.iterator();
+            while (cond_iter.next()) |val| {
+                if (val) true_count += 1;
+            }
+
+            // Handle edge case: no True elements
+            if (true_count == 0) {
+                const data = try allocator.alloc(T, 0);
+                return NDArray(T, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            // Create result array
+            var result = try NDArray(T, 1).init(allocator, &[_]usize{true_count}, .row_major);
+            errdefer result.deinit();
+
+            // Second pass: extract elements
+            var result_idx: usize = 0;
+            var self_iter = self.iterator();
+            cond_iter = condition.iterator();
+            while (self_iter.next()) |val| {
+                const cond_val = cond_iter.next().?;
+                if (cond_val) {
+                    result.data[result_idx] = val;
+                    result_idx += 1;
+                }
+            }
+
+            return result;
+        }
+
+        /// Return selected slices of an array along an axis.
+        ///
+        /// Returns a copy of the array with only selected slices along the specified axis,
+        /// determined by a boolean condition array. Similar to NumPy's compress().
+        ///
+        /// Time: O(n × m) where n = total elements, m = selected slices
+        /// Space: O(prod(result_shape)) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - condition: 1D boolean array (length must equal shape[axis])
+        /// - axis: Axis along which to select slices
+        ///
+        /// Returns: New array with selected slices
+        ///
+        /// Example:
+        /// ```
+        /// // 2D array [[1,2,3], [4,5,6], [7,8,9]]
+        /// const arr = try NDArray(i32, 2).fromSlice(allocator, &[_]i32{1,2,3,4,5,6,7,8,9}, &[_]usize{3, 3}, .row_major);
+        /// const cond = try NDArray(bool, 1).fromSlice(allocator, &[_]bool{true, false, true}, .row_major);
+        /// const compressed = try arr.compress(allocator, &cond, 0);
+        /// defer compressed.deinit();
+        /// // compressed = [[1,2,3], [7,8,9]] (rows 0 and 2)
+        /// ```
+        pub fn compress(self: *const Self, allocator: Allocator, condition: *const NDArray(bool, 1), axis: usize) (Error || std.mem.Allocator.Error)!Self {
+            if (axis >= ndim) return Error.IndexOutOfBounds;
+            if (condition.shape[0] != self.shape[axis]) return Error.ShapeMismatch;
+
+            // Count True elements in condition
+            var selected_count: usize = 0;
+            var cond_iter = condition.iterator();
+            while (cond_iter.next()) |val| {
+                if (val) selected_count += 1;
+            }
+
+            // Build new shape (replace axis dimension with selected count)
+            var new_shape = self.shape;
+            new_shape[axis] = selected_count;
+
+            // Handle edge case: no selected slices
+            if (selected_count == 0) {
+                // Calculate total size for empty array
+                var total_size: usize = 1;
+                for (new_shape) |dim| total_size *= dim;
+
+                const data = try allocator.alloc(T, total_size);
+                return Self{
+                    .shape = new_shape,
+                    .strides = calculateStrides(new_shape, self.layout),
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = true,
+                };
+            }
+
+            // Create result array
+            var result = try Self.init(allocator, &new_shape, self.layout);
+            errdefer result.deinit();
+
+            // Calculate total iterations (excluding axis dimension)
+            const total_iters = blk: {
+                var total: usize = 1;
+                for (0..ndim) |d| {
+                    if (d != axis) total *= self.shape[d];
+                }
+                break :blk total;
+            };
+
+            // Copy selected slices
+            for (0..total_iters) |iter_idx| {
+                // Convert iteration index to multi-dimensional index (skip axis)
+                var temp_idx = iter_idx;
+                var multi_idx: [ndim]usize = undefined;
+                for (0..ndim) |d| {
+                    if (d != axis) {
+                        multi_idx[d] = temp_idx % self.shape[d];
+                        temp_idx /= self.shape[d];
+                    }
+                }
+
+                // Copy selected elements along axis
+                var result_axis_idx: usize = 0;
+                for (0..self.shape[axis]) |src_axis_idx| {
+                    if (condition.data[src_axis_idx]) {
+                        multi_idx[axis] = src_axis_idx;
+                        var src_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| src_idx[d] = @intCast(multi_idx[d]);
+
+                        var result_multi_idx = multi_idx;
+                        result_multi_idx[axis] = result_axis_idx;
+                        var dst_idx: [ndim]isize = undefined;
+                        for (0..ndim) |d| dst_idx[d] = @intCast(result_multi_idx[d]);
+
+                        const val = try self.get(&src_idx);
+                        result.set(&dst_idx, val);
+                        result_axis_idx += 1;
+                    }
+                }
+            }
+
+            return result;
+        }
+
         /// Reverse the order of elements along a given axis.
         ///
         /// Creates a new array with elements reversed along the specified axis.
@@ -17092,6 +17263,295 @@ test "nonzero: memory safety" {
 
         var indices = try arr.nonzero(allocator);
         defer indices.deinit();
+    }
+}
+
+test "extract: basic 1D array" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true, false, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var extracted = try arr.extract(allocator, &condition);
+    defer extracted.deinit();
+
+    try testing.expectEqual(@as(usize, 3), extracted.shape[0]);
+    try testing.expectEqual(@as(i32, 1), extracted.data[0]);
+    try testing.expectEqual(@as(i32, 3), extracted.data[1]);
+    try testing.expectEqual(@as(i32, 5), extracted.data[2]);
+}
+
+test "extract: 2D array (flattens)" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true, false, true, false };
+    var condition = try NDArray(bool, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var extracted = try arr.extract(allocator, &condition);
+    defer extracted.deinit();
+
+    // Should extract elements at positions 0, 2, 4 -> values 1, 3, 5
+    try testing.expectEqual(@as(usize, 3), extracted.shape[0]);
+    try testing.expectEqual(@as(i32, 1), extracted.data[0]);
+    try testing.expectEqual(@as(i32, 3), extracted.data[1]);
+    try testing.expectEqual(@as(i32, 5), extracted.data[2]);
+}
+
+test "extract: all false condition" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ false, false, false, false };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var extracted = try arr.extract(allocator, &condition);
+    defer extracted.deinit();
+
+    try testing.expectEqual(@as(usize, 0), extracted.shape[0]);
+}
+
+test "extract: all true condition" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 10, 20, 30 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, true, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var extracted = try arr.extract(allocator, &condition);
+    defer extracted.deinit();
+
+    try testing.expectEqual(@as(usize, 3), extracted.shape[0]);
+    try testing.expectEqual(@as(i32, 10), extracted.data[0]);
+    try testing.expectEqual(@as(i32, 20), extracted.data[1]);
+    try testing.expectEqual(@as(i32, 30), extracted.data[2]);
+}
+
+test "extract: shape mismatch error" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true }; // Wrong size
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    try testing.expectError(error.ShapeMismatch, arr.extract(allocator, &condition));
+}
+
+test "extract: float type" {
+    const allocator = testing.allocator;
+    const data = [_]f64{ 1.5, 2.5, 3.5, 4.5 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ false, true, true, false };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var extracted = try arr.extract(allocator, &condition);
+    defer extracted.deinit();
+
+    try testing.expectEqual(@as(usize, 2), extracted.shape[0]);
+    try testing.expectEqual(@as(f64, 2.5), extracted.data[0]);
+    try testing.expectEqual(@as(f64, 3.5), extracted.data[1]);
+}
+
+test "extract: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+        defer arr.deinit();
+
+        const cond_data = [_]bool{ true, false, true, false, true, false };
+        var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+        defer condition.deinit();
+
+        var extracted = try arr.extract(allocator, &condition);
+        defer extracted.deinit();
+    }
+}
+
+test "compress: 1D array basic" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true, false, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var compressed = try arr.compress(allocator, &condition, 0);
+    defer compressed.deinit();
+
+    try testing.expectEqual(@as(usize, 3), compressed.shape[0]);
+    try testing.expectEqual(@as(i32, 10), compressed.data[0]);
+    try testing.expectEqual(@as(i32, 30), compressed.data[1]);
+    try testing.expectEqual(@as(i32, 50), compressed.data[2]);
+}
+
+test "compress: 2D array along axis 0 (rows)" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var compressed = try arr.compress(allocator, &condition, 0);
+    defer compressed.deinit();
+
+    // Should keep rows 0 and 2: [[1,2,3], [7,8,9]]
+    try testing.expectEqual(@as(usize, 2), compressed.shape[0]);
+    try testing.expectEqual(@as(usize, 3), compressed.shape[1]);
+    try testing.expectEqual(@as(i32, 1), try compressed.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 2), try compressed.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 3), try compressed.get(&[_]isize{ 0, 2 }));
+    try testing.expectEqual(@as(i32, 7), try compressed.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 8), try compressed.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(i32, 9), try compressed.get(&[_]isize{ 1, 2 }));
+}
+
+test "compress: 2D array along axis 1 (columns)" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ false, true, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var compressed = try arr.compress(allocator, &condition, 1);
+    defer compressed.deinit();
+
+    // Should keep columns 1 and 2: [[2,3], [5,6], [8,9]]
+    try testing.expectEqual(@as(usize, 3), compressed.shape[0]);
+    try testing.expectEqual(@as(usize, 2), compressed.shape[1]);
+    try testing.expectEqual(@as(i32, 2), try compressed.get(&[_]isize{ 0, 0 }));
+    try testing.expectEqual(@as(i32, 3), try compressed.get(&[_]isize{ 0, 1 }));
+    try testing.expectEqual(@as(i32, 5), try compressed.get(&[_]isize{ 1, 0 }));
+    try testing.expectEqual(@as(i32, 6), try compressed.get(&[_]isize{ 1, 1 }));
+    try testing.expectEqual(@as(i32, 8), try compressed.get(&[_]isize{ 2, 0 }));
+    try testing.expectEqual(@as(i32, 9), try compressed.get(&[_]isize{ 2, 1 }));
+}
+
+test "compress: all false condition" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ false, false, false, false };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var compressed = try arr.compress(allocator, &condition, 0);
+    defer compressed.deinit();
+
+    try testing.expectEqual(@as(usize, 0), compressed.shape[0]);
+}
+
+test "compress: all true condition" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, true, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var compressed = try arr.compress(allocator, &condition, 0);
+    defer compressed.deinit();
+
+    try testing.expectEqual(@as(usize, 3), compressed.shape[0]);
+    try testing.expectEqual(@as(i32, 1), compressed.data[0]);
+    try testing.expectEqual(@as(i32, 2), compressed.data[1]);
+    try testing.expectEqual(@as(i32, 3), compressed.data[2]);
+}
+
+test "compress: 3D array" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    var compressed = try arr.compress(allocator, &condition, 0);
+    defer compressed.deinit();
+
+    try testing.expectEqual(@as(usize, 1), compressed.shape[0]);
+    try testing.expectEqual(@as(usize, 2), compressed.shape[1]);
+    try testing.expectEqual(@as(usize, 2), compressed.shape[2]);
+    try testing.expectEqual(@as(i32, 1), try compressed.get(&[_]isize{ 0, 0, 0 }));
+    try testing.expectEqual(@as(i32, 2), try compressed.get(&[_]isize{ 0, 0, 1 }));
+    try testing.expectEqual(@as(i32, 3), try compressed.get(&[_]isize{ 0, 1, 0 }));
+    try testing.expectEqual(@as(i32, 4), try compressed.get(&[_]isize{ 0, 1, 1 }));
+}
+
+test "compress: invalid axis error" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true };
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    try testing.expectError(error.IndexOutOfBounds, arr.compress(allocator, &condition, 1));
+}
+
+test "compress: shape mismatch error" {
+    const allocator = testing.allocator;
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const cond_data = [_]bool{ true, false, true }; // Wrong size (3 instead of 4)
+    var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+    defer condition.deinit();
+
+    try testing.expectError(error.ShapeMismatch, arr.compress(allocator, &condition, 0));
+}
+
+test "compress: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+        var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+        defer arr.deinit();
+
+        const cond_data = [_]bool{ true, false };
+        var condition = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{cond_data.len}, &cond_data, .row_major);
+        defer condition.deinit();
+
+        var compressed = try arr.compress(allocator, &condition, 0);
+        defer compressed.deinit();
     }
 }
 
