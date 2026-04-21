@@ -5205,6 +5205,86 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Stack arrays vertically (row-wise) — convenience wrapper for stack() along axis 0
+        ///
+        /// Time: O(n × m) | Space: O(n × m)
+        pub fn vstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+            return stack(allocator, arrays, 0, layout);
+        }
+
+        /// Stack arrays horizontally (column-wise)
+        ///
+        /// For 1D arrays: concatenates along axis 0
+        /// For ndim ≥ 2: concatenates along axis 1 (columns)
+        ///
+        /// Time: O(n × m) | Space: O(n × m)
+        pub fn hstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+            if (ndim == 1) {
+                return concat(allocator, arrays, 0, layout);
+            } else {
+                return concat(allocator, arrays, 1, layout);
+            }
+        }
+
+        /// Stack arrays depth-wise (along axis 2) — convenience wrapper for stack() along axis 2
+        ///
+        /// Requires ndim ≥ 2.
+        ///
+        /// Time: O(n × m) | Space: O(n × m)
+        pub fn dstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+            comptime {
+                if (ndim < 2) {
+                    @compileError("dstack requires ndim >= 2");
+                }
+            }
+            return stack(allocator, arrays, 2, layout);
+        }
+
+        /// Stack arrays row-wise — alias for vstack()
+        ///
+        /// Time: O(n × m) | Space: O(n × m)
+        pub fn row_stack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+            return vstack(allocator, arrays, layout);
+        }
+
+        /// Stack 1D arrays as columns into a 2D array
+        ///
+        /// For 1D arrays: converts each to a column vector and stacks horizontally
+        /// For 2D arrays: same as hstack (concatenates along axis 1)
+        ///
+        /// Time: O(n × m) | Space: O(n × m)
+        pub fn column_stack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, if (ndim == 1) 2 else ndim) {
+            if (arrays.len == 0) {
+                return Error.EmptyArray;
+            }
+
+            if (ndim == 1) {
+                const n_rows = arrays[0].shape[0];
+                const n_cols = arrays.len;
+
+                for (arrays[1..]) |arr| {
+                    if (arr.shape[0] != n_rows) {
+                        return Error.ShapeMismatch;
+                    }
+                }
+
+                var result = try NDArray(T, 2).init(allocator, &[_]usize{ n_rows, n_cols }, layout);
+                errdefer result.deinit();
+
+                for (arrays, 0..) |arr, col_idx| {
+                    for (0..n_rows) |row_idx| {
+                        const val = arr.data[row_idx * arr.strides[0]];
+                        const result_offset = row_idx * result.strides[0] + col_idx * result.strides[1];
+                        result.data[result_offset] = val;
+                    }
+                }
+
+                return result;
+            } else {
+                return hstack(allocator, arrays, layout);
+            }
+        }
+
         /// Padding modes for array extension
         pub const PadMode = enum {
             /// Pad with constant value
@@ -15066,6 +15146,263 @@ test "ndarray: stack() validates result with validate()" {
     defer b.deinit();
 
     var result = try NDArray(f64, 2).stack(allocator, &[_]*const NDArray(f64, 2){ &a, &b }, 0, .row_major);
+    defer result.deinit();
+
+    try result.validate();
+}
+
+// -- Convenience Stack Functions Tests (20 tests) --
+
+test "ndarray: vstack() 1D arrays create 2D" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 1).vstack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+}
+
+test "ndarray: vstack() 2D arrays" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 2).vstack(allocator, &[_]*const NDArray(f64, 2){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(usize, 3), result.shape[2]);
+}
+
+test "ndarray: hstack() 1D arrays concatenate" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 1).hstack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 6), result.shape[0]);
+}
+
+test "ndarray: hstack() 2D arrays concatenate columns" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 2).hstack(allocator, &[_]*const NDArray(f64, 2){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 5), result.shape[1]);
+}
+
+test "ndarray: dstack() 2D arrays create 3D" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 2).dstack(allocator, &[_]*const NDArray(f64, 2){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.shape[2]);
+}
+
+test "ndarray: dstack() 3D arrays" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 3).dstack(allocator, &[_]*const NDArray(f64, 3){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.shape[2]);
+    try testing.expectEqual(@as(usize, 2), result.shape[3]);
+}
+
+test "ndarray: row_stack() is vstack alias" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 1).row_stack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+}
+
+test "ndarray: column_stack() 1D to 2D columns" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 1).column_stack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+
+    // Verify first column is a1 data
+    try testing.expectEqual(@as(f64, 1), result.data[0 * result.strides[0] + 0 * result.strides[1]]);
+    try testing.expectEqual(@as(f64, 2), result.data[1 * result.strides[0] + 0 * result.strides[1]]);
+    try testing.expectEqual(@as(f64, 3), result.data[2 * result.strides[0] + 0 * result.strides[1]]);
+}
+
+test "ndarray: column_stack() 2D is hstack" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 1 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 2).column_stack(allocator, &[_]*const NDArray(f64, 2){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+}
+
+test "ndarray: vstack() empty error" {
+    const allocator = testing.allocator;
+    const empty: []const *const NDArray(f64, 1) = &[_]*const NDArray(f64, 1){};
+    try testing.expectError(error.EmptyArray, NDArray(f64, 1).vstack(allocator, empty, .row_major));
+}
+
+test "ndarray: hstack() shape mismatch error" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer a2.deinit();
+
+    try testing.expectError(error.ShapeMismatch, NDArray(f64, 2).hstack(allocator, &[_]*const NDArray(f64, 2){ &a1, &a2 }, .row_major));
+}
+
+test "ndarray: column_stack() 1D shape mismatch error" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 4, 5, 6, 7 }, .row_major);
+    defer a2.deinit();
+
+    try testing.expectError(error.ShapeMismatch, NDArray(f64, 1).column_stack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major));
+}
+
+test "ndarray: vstack() type variant i32" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &[_]i32{ 1, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &[_]i32{ 3, 4 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(i32, 1).vstack(allocator, &[_]*const NDArray(i32, 1){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+}
+
+test "ndarray: hstack() type variant u8" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{2}, &[_]u8{ 1, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{2}, &[_]u8{ 3, 4 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(u8, 1).hstack(allocator, &[_]*const NDArray(u8, 1){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+}
+
+test "ndarray: column_stack() single array" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer a1.deinit();
+
+    var result = try NDArray(f64, 1).column_stack(allocator, &[_]*const NDArray(f64, 1){&a1}, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 1), result.shape[1]);
+}
+
+test "ndarray: vstack() column-major preserved" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .column_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .column_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 1).vstack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .column_major);
+    defer result.deinit();
+
+    try testing.expectEqual(Layout.column_major, result.layout);
+}
+
+test "ndarray: hstack() row-major preserved" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 2).hstack(allocator, &[_]*const NDArray(f64, 2){ &a1, &a2 }, .row_major);
+    defer result.deinit();
+
+    try testing.expectEqual(Layout.row_major, result.layout);
+}
+
+test "ndarray: column_stack() memory safety" {
+    const allocator = testing.allocator;
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var a1 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 4, 5 }, .row_major);
+        defer a1.deinit();
+        var a2 = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 6, 7, 8, 9, 10 }, .row_major);
+        defer a2.deinit();
+
+        var result = try NDArray(f64, 1).column_stack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 5), result.shape[0]);
+        try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    }
+}
+
+test "ndarray: vstack() validates result" {
+    const allocator = testing.allocator;
+    var a1 = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer a1.deinit();
+    var a2 = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer a2.deinit();
+
+    var result = try NDArray(f64, 1).vstack(allocator, &[_]*const NDArray(f64, 1){ &a1, &a2 }, .row_major);
     defer result.deinit();
 
     try result.validate();
