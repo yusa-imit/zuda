@@ -3593,6 +3593,141 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return .{ .values = values, .counts = counts };
         }
 
+        /// Find indices where elements should be inserted to maintain order.
+        ///
+        /// Performs binary search on a sorted 1D array to find insertion indices.
+        /// Similar to NumPy's searchsorted().
+        ///
+        /// Time: O(m * log n) where m = values.count(), n = self.count()
+        /// Space: O(m) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - values: Values to search for (1D array)
+        /// - side: 'left' (default) or 'right' for insertion side
+        ///
+        /// Returns: 1D array of insertion indices
+        ///
+        /// Example:
+        /// ```
+        /// const sorted = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 3, 5, 7}, .row_major);
+        /// const vals = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{2, 6}, .row_major);
+        /// const indices = try sorted.searchsorted(allocator, &vals, .left);
+        /// defer indices.deinit();
+        /// // indices.data = {1, 3} — insert 2 at index 1, 6 at index 3
+        /// ```
+        pub fn searchsorted(
+            self: *const Self,
+            allocator: Allocator,
+            values: *const NDArray(T, 1),
+            side: enum { left, right },
+        ) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            const n = self.count();
+            const m = values.count();
+            var result = try NDArray(usize, 1).init(allocator, &[_]usize{m}, .row_major);
+            errdefer result.deinit();
+
+            for (0..m) |i| {
+                const target = values.data[i];
+                var left: usize = 0;
+                var right: usize = n;
+
+                // Binary search
+                while (left < right) {
+                    const mid = left + (right - left) / 2;
+                    const mid_val = self.data[mid];
+
+                    const cmp_result = switch (side) {
+                        .left => target <= mid_val,
+                        .right => target < mid_val,
+                    };
+
+                    if (cmp_result) {
+                        right = mid;
+                    } else {
+                        left = mid + 1;
+                    }
+                }
+                result.data[i] = left;
+            }
+
+            return result;
+        }
+
+        /// Return the indices of non-zero elements.
+        ///
+        /// Flattens the array and returns indices where elements are non-zero.
+        /// Similar to NumPy's nonzero().
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(k) where k = number of non-zero elements
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        ///
+        /// Returns: 1D array of flat indices where elements are non-zero
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(i32, 2).fromSlice(allocator, &[_]i32{0, 1, 2, 0, 3, 0}, &[_]usize{2, 3}, .row_major);
+        /// const indices = try arr.nonzero(allocator);
+        /// defer indices.deinit();
+        /// // indices.data = {1, 2, 4} — flat indices of non-zero elements (1, 2, 3)
+        /// ```
+        pub fn nonzero(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+            // First pass: count non-zero elements
+            var nz_count: usize = 0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                // Check if value is non-zero
+                const is_nonzero = switch (@typeInfo(T)) {
+                    .int, .comptime_int => val != 0,
+                    .float, .comptime_float => val != 0.0,
+                    .bool => val,
+                    else => @compileError("nonzero only works with numeric or bool types"),
+                };
+                if (is_nonzero) nz_count += 1;
+            }
+
+            // Handle edge case: all zeros - create empty array manually
+            if (nz_count == 0) {
+                const data = try allocator.alloc(usize, 0);
+                return NDArray(usize, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            // Create result array
+            var result = try NDArray(usize, 1).init(allocator, &[_]usize{nz_count}, .row_major);
+            errdefer result.deinit();
+
+            // Second pass: collect indices
+            var idx: usize = 0;
+            var result_idx: usize = 0;
+            iter = self.iterator();
+            while (iter.next()) |val| : (idx += 1) {
+                const is_nonzero = switch (@typeInfo(T)) {
+                    .int, .comptime_int => val != 0,
+                    .float, .comptime_float => val != 0.0,
+                    .bool => val,
+                    else => unreachable,
+                };
+                if (is_nonzero) {
+                    result.data[result_idx] = idx;
+                    result_idx += 1;
+                }
+            }
+
+            return result;
+        }
+
         /// Reverse the order of elements along a given axis.
         ///
         /// Creates a new array with elements reversed along the specified axis.
@@ -16691,6 +16826,273 @@ test "uniqueWithCounts: large array" {
     try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{0}));
     try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{1}));
     try testing.expectEqual(@as(usize, 100), try result.counts.get(&[_]isize{2}));
+}
+
+test "searchsorted: basic left insertion" {
+    const allocator = testing.allocator;
+
+    // Sorted array: [1, 3, 5, 7]
+    const data = [_]i32{ 1, 3, 5, 7 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    // Values to search: [2, 6]
+    const search_data = [_]i32{ 2, 6 };
+    var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+    defer search.deinit();
+
+    var indices = try arr.searchsorted(allocator, &search, .left);
+    defer indices.deinit();
+
+    // 2 should insert at index 1 (between 1 and 3)
+    // 6 should insert at index 3 (between 5 and 7)
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 3), try indices.get(&[_]isize{1}));
+}
+
+test "searchsorted: right insertion" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 3, 3, 3, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const search_data = [_]i32{ 3 };
+    var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+    defer search.deinit();
+
+    // Left insertion: before all 3's (index 1)
+    var indices_left = try arr.searchsorted(allocator, &search, .left);
+    defer indices_left.deinit();
+    try testing.expectEqual(@as(usize, 1), try indices_left.get(&[_]isize{0}));
+
+    // Right insertion: after all 3's (index 4)
+    var indices_right = try arr.searchsorted(allocator, &search, .right);
+    defer indices_right.deinit();
+    try testing.expectEqual(@as(usize, 4), try indices_right.get(&[_]isize{0}));
+}
+
+test "searchsorted: boundary cases" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 3, 5, 7 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    // Values at boundaries
+    const search_data = [_]i32{ 0, 8 };
+    var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+    defer search.deinit();
+
+    var indices = try arr.searchsorted(allocator, &search, .left);
+    defer indices.deinit();
+
+    // 0 should insert at index 0 (before all)
+    // 8 should insert at index 4 (after all)
+    try testing.expectEqual(@as(usize, 0), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 4), try indices.get(&[_]isize{1}));
+}
+
+test "searchsorted: exact matches" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 3, 5, 7 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    // Exact match values
+    const search_data = [_]i32{ 1, 5, 7 };
+    var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+    defer search.deinit();
+
+    var indices = try arr.searchsorted(allocator, &search, .left);
+    defer indices.deinit();
+
+    // Exact matches should return their index
+    try testing.expectEqual(@as(usize, 0), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try indices.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 3), try indices.get(&[_]isize{2}));
+}
+
+test "searchsorted: single element array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const search_data = [_]i32{ 3, 5, 7 };
+    var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+    defer search.deinit();
+
+    var indices = try arr.searchsorted(allocator, &search, .left);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 0), try indices.get(&[_]isize{0})); // 3 < 5
+    try testing.expectEqual(@as(usize, 0), try indices.get(&[_]isize{1})); // 5 == 5 (left)
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{2})); // 7 > 5
+}
+
+test "searchsorted: float type" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.5, 3.2, 5.8, 7.1 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    const search_data = [_]f64{ 2.0, 6.0 };
+    var search = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+    defer search.deinit();
+
+    var indices = try arr.searchsorted(allocator, &search, .left);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 3), try indices.get(&[_]isize{1}));
+}
+
+test "searchsorted: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 3, 5, 7, 9 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+        defer arr.deinit();
+
+        const search_data = [_]i32{ 2, 4, 6 };
+        var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
+        defer search.deinit();
+
+        var indices = try arr.searchsorted(allocator, &search, .left);
+        defer indices.deinit();
+    }
+}
+
+test "nonzero: basic integer array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 0, 1, 2, 0, 3, 0 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    // Non-zero elements are 1, 2, 3 at flat indices 1, 2, 4
+    try testing.expectEqual(@as(usize, 3), indices.shape[0]);
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try indices.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 4), try indices.get(&[_]isize{2}));
+}
+
+test "nonzero: all zeros" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 0, 0, 0, 0 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 0), indices.shape[0]);
+}
+
+test "nonzero: all non-zero" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 5), indices.shape[0]);
+    for (0..5) |i| {
+        try testing.expectEqual(@as(usize, i), try indices.get(&[_]isize{@intCast(i)}));
+    }
+}
+
+test "nonzero: negative numbers" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ -1, 0, 2, 0, -3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    // Non-zero at indices 0, 2, 4
+    try testing.expectEqual(@as(usize, 3), indices.shape[0]);
+    try testing.expectEqual(@as(usize, 0), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try indices.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 4), try indices.get(&[_]isize{2}));
+}
+
+test "nonzero: float type" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 0.0, 1.5, 0.0, -2.3, 0.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    // Non-zero at indices 1, 3
+    try testing.expectEqual(@as(usize, 2), indices.shape[0]);
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 3), try indices.get(&[_]isize{1}));
+}
+
+test "nonzero: boolean type" {
+    const allocator = testing.allocator;
+
+    const data = [_]bool{ false, true, false, true, true };
+    var arr = try NDArray(bool, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    // true at indices 1, 3, 4
+    try testing.expectEqual(@as(usize, 3), indices.shape[0]);
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 3), try indices.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 4), try indices.get(&[_]isize{2}));
+}
+
+test "nonzero: 3D array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 0, 1, 2, 0, 0, 3, 0, 0, 4, 0, 0, 0 };
+    var arr = try NDArray(i32, 3).fromSlice(allocator, &[_]usize{ 2, 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var indices = try arr.nonzero(allocator);
+    defer indices.deinit();
+
+    // Non-zero at flat indices 1, 2, 5, 8
+    try testing.expectEqual(@as(usize, 4), indices.shape[0]);
+    try testing.expectEqual(@as(usize, 1), try indices.get(&[_]isize{0}));
+    try testing.expectEqual(@as(usize, 2), try indices.get(&[_]isize{1}));
+    try testing.expectEqual(@as(usize, 5), try indices.get(&[_]isize{2}));
+    try testing.expectEqual(@as(usize, 8), try indices.get(&[_]isize{3}));
+}
+
+test "nonzero: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]i32{ 0, 1, 0, 2, 0, 3, 0, 4, 0, 5 };
+        var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
+        defer arr.deinit();
+
+        var indices = try arr.nonzero(allocator);
+        defer indices.deinit();
+    }
 }
 
 test "flip: 1D array" {
