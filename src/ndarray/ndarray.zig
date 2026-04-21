@@ -228,6 +228,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         fn calculateStrides(shape: [ndim]usize, layout: Layout) [ndim]usize {
             var strides: [ndim]usize = undefined;
 
+            // Handle 0-dimensional (scalar) arrays
+            if (ndim == 0) {
+                return strides; // Empty array for scalars
+            }
+
             switch (layout) {
                 .row_major => {
                     // Row-major: stride[i] = product of all dimensions after i
@@ -4493,6 +4498,201 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
 
             return NDArray(T, ndim + 1){
+                .shape = new_shape,
+                .strides = new_strides,
+                .data = self.data,
+                .allocator = allocator,
+                .layout = self.layout,
+                .owned = false, // View shares data
+            };
+        }
+
+        /// View input as array with at least one dimension.
+        /// Scalar arrays become 1D arrays, 1D+ arrays are returned unchanged as views.
+        /// Similar to NumPy's atleast_1d().
+        ///
+        /// Time: O(1) - creates view
+        /// Space: O(1) - no data copying
+        ///
+        /// Example:
+        /// ```
+        /// // 0D scalar -> 1D with shape [1]
+        /// const scalar = try NDArray(f64, 0).fromSlice(allocator, &[_]usize{}, &[_]f64{42}, .row_major);
+        /// const arr1d = try scalar.atleast1d(allocator);
+        /// // arr1d.shape = [1], arr1d.data[0] = 42
+        /// ```
+        pub fn atleast1d(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!if (ndim == 0) NDArray(T, 1) else Self {
+            if (ndim == 0) {
+                // Scalar -> 1D with shape [1]
+                return NDArray(T, 1){
+                    .shape = [_]usize{1},
+                    .strides = [_]usize{@sizeOf(T)},
+                    .data = self.data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = false, // View shares data
+                };
+            } else {
+                // Already 1D+, return view
+                return self.createView();
+            }
+        }
+
+        /// View input as array with at least two dimensions.
+        /// 0D becomes 2D with shape [1,1], 1D becomes 2D with shape [1,N].
+        /// Similar to NumPy's atleast_2d().
+        ///
+        /// Time: O(1) - creates view
+        /// Space: O(1) - no data copying
+        ///
+        /// Example:
+        /// ```
+        /// // 1D [N] -> 2D [1, N]
+        /// const arr1d = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{1,2,3}, .row_major);
+        /// const arr2d = try arr1d.atleast2d(allocator);
+        /// // arr2d.shape = [1, 3]
+        /// ```
+        pub fn atleast2d(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!if (ndim < 2) NDArray(T, 2) else Self {
+            if (ndim == 0) {
+                // Scalar -> 2D with shape [1, 1]
+                return NDArray(T, 2){
+                    .shape = [_]usize{ 1, 1 },
+                    .strides = [_]usize{ @sizeOf(T), @sizeOf(T) },
+                    .data = self.data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = false,
+                };
+            } else if (ndim == 1) {
+                // 1D [N] -> 2D [1, N] (prepend dimension)
+                return NDArray(T, 2){
+                    .shape = [_]usize{ 1, self.shape[0] },
+                    .strides = [_]usize{ self.strides[0] * self.shape[0], self.strides[0] },
+                    .data = self.data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = false,
+                };
+            } else {
+                // Already 2D+, return view
+                return self.createView();
+            }
+        }
+
+        /// View input as array with at least three dimensions.
+        /// 0D becomes [1,1,1], 1D [N] becomes [1,N,1], 2D [M,N] becomes [M,N,1].
+        /// Similar to NumPy's atleast_3d().
+        ///
+        /// Time: O(1) - creates view
+        /// Space: O(1) - no data copying
+        ///
+        /// Example:
+        /// ```
+        /// // 2D [M,N] -> 3D [M,N,1]
+        /// const arr2d = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2,3}, &[_]f64{1,2,3,4,5,6}, .row_major);
+        /// const arr3d = try arr2d.atleast3d(allocator);
+        /// // arr3d.shape = [2, 3, 1]
+        /// ```
+        pub fn atleast3d(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!if (ndim < 3) NDArray(T, 3) else Self {
+            if (ndim == 0) {
+                // Scalar -> 3D [1, 1, 1]
+                return NDArray(T, 3){
+                    .shape = [_]usize{ 1, 1, 1 },
+                    .strides = [_]usize{ @sizeOf(T), @sizeOf(T), @sizeOf(T) },
+                    .data = self.data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = false,
+                };
+            } else if (ndim == 1) {
+                // 1D [N] -> 3D [1, N, 1]
+                return NDArray(T, 3){
+                    .shape = [_]usize{ 1, self.shape[0], 1 },
+                    .strides = [_]usize{
+                        self.strides[0] * self.shape[0],
+                        self.strides[0],
+                        @sizeOf(T),
+                    },
+                    .data = self.data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = false,
+                };
+            } else if (ndim == 2) {
+                // 2D [M, N] -> 3D [M, N, 1] (append dimension)
+                return NDArray(T, 3){
+                    .shape = [_]usize{ self.shape[0], self.shape[1], 1 },
+                    .strides = [_]usize{ self.strides[0], self.strides[1], @sizeOf(T) },
+                    .data = self.data,
+                    .allocator = allocator,
+                    .layout = self.layout,
+                    .owned = false,
+                };
+            } else {
+                // Already 3D+, return view
+                return self.createView();
+            }
+        }
+
+        /// Expand dimensions of array by inserting a new axis.
+        /// Alias for unsqueeze() for NumPy compatibility.
+        ///
+        /// Time: O(1) - creates view
+        /// Space: O(1) - no data copying
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2,3}, &[_]f64{1,2,3,4,5,6}, .row_major);
+        /// const expanded = try arr.expandDims(allocator, 1);
+        /// // expanded.shape = [2, 1, 3]
+        /// ```
+        pub fn expandDims(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+            return self.unsqueeze(allocator, axis);
+        }
+
+        /// Broadcast array to new shape.
+        /// Creates a view with modified strides to broadcast along size-1 dimensions.
+        ///
+        /// Broadcasting rules:
+        /// - Trailing dimensions must match or one must be 1
+        /// - Missing leading dimensions are treated as 1
+        ///
+        /// Time: O(1) - creates view with modified strides
+        /// Space: O(1) - no data copying
+        ///
+        /// Errors:
+        /// - ShapeMismatch: if shapes are not broadcast-compatible
+        ///
+        /// Example:
+        /// ```
+        /// // [3, 1] -> [3, 4] by broadcasting along axis 1
+        /// const arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3,1}, &[_]f64{1,2,3}, .row_major);
+        /// const broadcasted = try arr.broadcastTo(allocator, [_]usize{3,4});
+        /// // broadcasted appears as [[1,1,1,1], [2,2,2,2], [3,3,3,3]]
+        /// ```
+        pub fn broadcastTo(self: *const Self, allocator: Allocator, new_shape: [ndim]usize) (Error || std.mem.Allocator.Error)!Self {
+            // Verify broadcast compatibility
+            for (0..ndim) |i| {
+                if (self.shape[i] != new_shape[i]) {
+                    if (self.shape[i] != 1) {
+                        return Error.ShapeMismatch;
+                    }
+                }
+            }
+
+            // Create view with modified strides
+            var new_strides: [ndim]usize = undefined;
+            for (0..ndim) |i| {
+                if (self.shape[i] == 1 and new_shape[i] > 1) {
+                    // Broadcasting: set stride to 0 so same element is reused
+                    new_strides[i] = 0;
+                } else {
+                    // No broadcasting needed
+                    new_strides[i] = self.strides[i];
+                }
+            }
+
+            return Self{
                 .shape = new_shape,
                 .strides = new_strides,
                 .data = self.data,
@@ -17600,4 +17800,342 @@ test "put: memory safety" {
 
         try arr.put(&indices, &values);
     }
+}
+
+// Broadcasting and dimension adjustment tests
+
+test "atleast1d: scalar to 1D" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{42};
+    var scalar = try NDArray(f64, 0).fromSlice(allocator, &[_]usize{}, &data, .row_major);
+    defer scalar.deinit();
+
+    var arr1d = try scalar.atleast1d(allocator);
+    defer if (arr1d.owned) arr1d.deinit();
+
+    try testing.expectEqual(@as(usize, 1), arr1d.shape[0]);
+    try testing.expectEqual(@as(f64, 42), arr1d.data[0]);
+    try testing.expect(!arr1d.owned); // View
+}
+
+test "atleast1d: 1D unchanged" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.atleast1d(allocator);
+    defer if (result.owned) result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expect(!result.owned); // View
+    try testing.expectEqual(arr.data.ptr, result.data.ptr);
+}
+
+test "atleast1d: 2D unchanged" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.atleast1d(allocator);
+    defer if (result.owned) result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expect(!result.owned); // View
+}
+
+test "atleast2d: scalar to 2D" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{42};
+    var scalar = try NDArray(f64, 0).fromSlice(allocator, &[_]usize{}, &data, .row_major);
+    defer scalar.deinit();
+
+    var arr2d = try scalar.atleast2d(allocator);
+    defer if (arr2d.owned) arr2d.deinit();
+
+    try testing.expectEqual(@as(usize, 1), arr2d.shape[0]);
+    try testing.expectEqual(@as(usize, 1), arr2d.shape[1]);
+    try testing.expectEqual(@as(f64, 42), arr2d.data[0]);
+}
+
+test "atleast2d: 1D to 2D" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3 };
+    var arr1d = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr1d.deinit();
+
+    var arr2d = try arr1d.atleast2d(allocator);
+    defer if (arr2d.owned) arr2d.deinit();
+
+    // [3] -> [1, 3]
+    try testing.expectEqual(@as(usize, 1), arr2d.shape[0]);
+    try testing.expectEqual(@as(usize, 3), arr2d.shape[1]);
+    try testing.expect(!arr2d.owned); // View
+}
+
+test "atleast2d: 2D unchanged" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.atleast2d(allocator);
+    defer if (result.owned) result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+}
+
+test "atleast3d: scalar to 3D" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{42};
+    var scalar = try NDArray(f64, 0).fromSlice(allocator, &[_]usize{}, &data, .row_major);
+    defer scalar.deinit();
+
+    var arr3d = try scalar.atleast3d(allocator);
+    defer if (arr3d.owned) arr3d.deinit();
+
+    try testing.expectEqual(@as(usize, 1), arr3d.shape[0]);
+    try testing.expectEqual(@as(usize, 1), arr3d.shape[1]);
+    try testing.expectEqual(@as(usize, 1), arr3d.shape[2]);
+    try testing.expectEqual(@as(f64, 42), arr3d.data[0]);
+}
+
+test "atleast3d: 1D to 3D" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3 };
+    var arr1d = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr1d.deinit();
+
+    var arr3d = try arr1d.atleast3d(allocator);
+    defer if (arr3d.owned) arr3d.deinit();
+
+    // [3] -> [1, 3, 1]
+    try testing.expectEqual(@as(usize, 1), arr3d.shape[0]);
+    try testing.expectEqual(@as(usize, 3), arr3d.shape[1]);
+    try testing.expectEqual(@as(usize, 1), arr3d.shape[2]);
+}
+
+test "atleast3d: 2D to 3D" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    var arr2d = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr2d.deinit();
+
+    var arr3d = try arr2d.atleast3d(allocator);
+    defer if (arr3d.owned) arr3d.deinit();
+
+    // [2, 3] -> [2, 3, 1]
+    try testing.expectEqual(@as(usize, 2), arr3d.shape[0]);
+    try testing.expectEqual(@as(usize, 3), arr3d.shape[1]);
+    try testing.expectEqual(@as(usize, 1), arr3d.shape[2]);
+}
+
+test "atleast3d: 3D unchanged" {
+    const allocator = testing.allocator;
+
+    const data = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var arr = try NDArray(u8, 3).fromSlice(allocator, &[_]usize{ 2, 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.atleast3d(allocator);
+    defer if (result.owned) result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+    try testing.expectEqual(@as(usize, 2), result.shape[2]);
+}
+
+test "expandDims: insert dimension at axis 0" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3, 4 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var expanded = try arr.expandDims(allocator, 0);
+    defer if (expanded.owned) expanded.deinit();
+
+    // [2, 2] -> [1, 2, 2]
+    try testing.expectEqual(@as(usize, 1), expanded.shape[0]);
+    try testing.expectEqual(@as(usize, 2), expanded.shape[1]);
+    try testing.expectEqual(@as(usize, 2), expanded.shape[2]);
+}
+
+test "expandDims: insert dimension at middle axis" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var expanded = try arr.expandDims(allocator, 1);
+    defer if (expanded.owned) expanded.deinit();
+
+    // [2, 2] -> [2, 1, 2]
+    try testing.expectEqual(@as(usize, 2), expanded.shape[0]);
+    try testing.expectEqual(@as(usize, 1), expanded.shape[1]);
+    try testing.expectEqual(@as(usize, 2), expanded.shape[2]);
+}
+
+test "expandDims: insert dimension at end" {
+    const allocator = testing.allocator;
+
+    const data = [_]u8{ 1, 2, 3 };
+    var arr = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    var expanded = try arr.expandDims(allocator, 1);
+    defer if (expanded.owned) expanded.deinit();
+
+    // [3] -> [3, 1]
+    try testing.expectEqual(@as(usize, 3), expanded.shape[0]);
+    try testing.expectEqual(@as(usize, 1), expanded.shape[1]);
+}
+
+test "broadcastTo: broadcast along single axis" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &data, .row_major);
+    defer arr.deinit();
+
+    // [3, 1] -> [3, 4]
+    var broadcasted = try arr.broadcastTo(allocator, [_]usize{ 3, 4 });
+    defer if (broadcasted.owned) broadcasted.deinit();
+
+    try testing.expectEqual(@as(usize, 3), broadcasted.shape[0]);
+    try testing.expectEqual(@as(usize, 4), broadcasted.shape[1]);
+
+    // Verify stride is 0 for broadcasted dimension
+    try testing.expectEqual(@as(usize, 0), broadcasted.strides[1]);
+
+    // Verify data access works (same value repeated)
+    const val0 = try broadcasted.get(&[_]isize{ 0, 0 });
+    const val1 = try broadcasted.get(&[_]isize{ 0, 3 });
+    try testing.expectEqual(val0, val1); // Same row broadcasts
+    try testing.expectEqual(@as(f64, 1), val0);
+}
+
+test "broadcastTo: no broadcasting needed" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var result = try arr.broadcastTo(allocator, [_]usize{ 2, 2 });
+    defer if (result.owned) result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 2), result.shape[1]);
+}
+
+test "broadcastTo: broadcast multiple axes" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{42};
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &data, .row_major);
+    defer arr.deinit();
+
+    // [1, 1] -> [3, 4]
+    var broadcasted = try arr.broadcastTo(allocator, [_]usize{ 3, 4 });
+    defer if (broadcasted.owned) broadcasted.deinit();
+
+    try testing.expectEqual(@as(usize, 3), broadcasted.shape[0]);
+    try testing.expectEqual(@as(usize, 4), broadcasted.shape[1]);
+
+    // Both strides should be 0
+    try testing.expectEqual(@as(usize, 0), broadcasted.strides[0]);
+    try testing.expectEqual(@as(usize, 0), broadcasted.strides[1]);
+
+    // All elements should be same value
+    const val = try broadcasted.get(&[_]isize{ 2, 3 });
+    try testing.expectEqual(@as(f64, 42), val);
+}
+
+test "broadcastTo: shape mismatch error" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &data, .row_major);
+    defer arr.deinit();
+
+    // Cannot broadcast [3, 1] to [2, 4] - first dimension mismatch
+    const result = arr.broadcastTo(allocator, [_]usize{ 2, 4 });
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "broadcastTo: non-1 dimension cannot broadcast" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3, 4, 5, 6 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    // Cannot broadcast [2, 3] to [2, 5] - dimension 3 != 1 and 3 != 5
+    const result = arr.broadcastTo(allocator, [_]usize{ 2, 5 });
+    try testing.expectError(error.ShapeMismatch, result);
+}
+
+test "atleast functions: type preservation" {
+    const allocator = testing.allocator;
+
+    // Test with u8 type
+    const data = [_]u8{255};
+    var scalar = try NDArray(u8, 0).fromSlice(allocator, &[_]usize{}, &data, .row_major);
+    defer scalar.deinit();
+
+    var arr1d = try scalar.atleast1d(allocator);
+    defer if (arr1d.owned) arr1d.deinit();
+    try testing.expectEqual(@as(u8, 255), arr1d.data[0]);
+
+    var arr2d = try scalar.atleast2d(allocator);
+    defer if (arr2d.owned) arr2d.deinit();
+    try testing.expectEqual(@as(u8, 255), arr2d.data[0]);
+
+    var arr3d = try scalar.atleast3d(allocator);
+    defer if (arr3d.owned) arr3d.deinit();
+    try testing.expectEqual(@as(u8, 255), arr3d.data[0]);
+}
+
+test "broadcastTo: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1, 2, 3 };
+        var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &data, .row_major);
+        defer arr.deinit();
+
+        var broadcasted = try arr.broadcastTo(allocator, [_]usize{ 3, 5 });
+        defer if (broadcasted.owned) broadcasted.deinit();
+
+        // Verify broadcasting works correctly
+        const val = try broadcasted.get(&[_]isize{ 0, 0 });
+        try testing.expectEqual(@as(f64, 1), val);
+    }
+}
+
+test "atleast functions: column-major layout" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1, 2, 3 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .column_major);
+    defer arr.deinit();
+
+    var arr2d = try arr.atleast2d(allocator);
+    defer if (arr2d.owned) arr2d.deinit();
+
+    try testing.expectEqual(Layout.column_major, arr2d.layout);
 }
