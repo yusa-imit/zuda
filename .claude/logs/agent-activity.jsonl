@@ -253,3 +253,4 @@
 {"timestamp":"2026-04-17T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write squeeze/unsqueeze tests for NDArray dimension manipulation","project":"zuda"}
 {"timestamp":"2026-04-17T11:18:55Z","action":"feature","task":"Implement concat() operation for NDArray","project":"zuda","module":"ndarray/ndarray.zig","tests":18,"status":"complete"}
 {"timestamp":"2026-04-18T00:00:00Z","action":"feature","task":"Implement split() operation for NDArray","project":"zuda","session":386,"files":["src/ndarray/ndarray.zig"],"tests_added":20,"functions_added":1}
+{"timestamp":"2026-04-21T11:05:55Z","action":"feature_implementation","task":"Implement extract() and compress() filtering operations","project":"zuda","functions":2,"tests":16,"commit":"bd206e7"}
