@@ -1,4 +1,55 @@
-## Latest Session (Session 405, 2026-04-22) — STABILIZATION MODE 🎉
+## Latest Session (Session 411, 2026-04-23) — FEATURE MODE
+- NDArray Statistical Correlation Functions: 27 tests, NumPy-compatible cov() and corrcoef()
+- Module: ndarray/ndarray.zig
+- Functions:
+  * cov(allocator, rowvar): Sample covariance matrix with Bessel correction (N-1 denominator)
+    - 1D input → 0D scalar variance
+    - 2D input → n_vars × n_vars covariance matrix
+    - rowvar: true = rows are variables (observations in columns), false = columns are variables (observations in rows)
+    - Formula: cov(X,Y) = Σ((xᵢ-μₓ)(yᵢ-μᵧ))/(N-1)
+    - Two-pass algorithm: compute means first, then covariances
+    - Type generic (int/float) with f64 output
+    - Time: O(n×m²), Space: O(m²) where n=observations, m=variables
+  * corrcoef(allocator, rowvar): Pearson correlation coefficient matrix
+    - Normalized covariance: ρ(X,Y) = cov(X,Y)/(σₓ×σᵧ)
+    - 1D input → 0D scalar 1.0 (perfect self-correlation)
+    - 2D input → correlation matrix with values in [-1,1]
+    - Diagonal always 1.0 (perfect self-correlation)
+    - NaN for zero-variance (constant) variables
+    - Time: O(n×m²), Space: O(m²)
+- Features:
+  * Bessel correction (N-1) for unbiased sample covariance
+  * rowvar parameter for flexible data layout (NumPy compatibility)
+  * Symmetric matrices (cov[i,j] = cov[j,i])
+  * Diagonal of cov matrix = variances of individual variables
+  * Correlation range validation [-1,1], diagonal = 1.0
+  * NaN handling for constant variables (division by zero in correlation)
+  * Type generic: works with all numeric types (int/float), outputs f64
+  * Error handling: EmptyArray for empty inputs
+- Use cases:
+  * Statistical analysis: multivariate data correlation analysis
+  * Machine learning: feature correlation, dimensionality reduction prep
+  * Finance: portfolio covariance, risk metrics (correlation between assets)
+  * Quality control: process variable relationships
+  * Sensor fusion: correlating sensor readings
+  * Time series: cross-correlation analysis
+- Tests (27 scenarios):
+  * cov: 2D rowvar=true/false, 1D scalar, perfect positive/negative/low covariance, identical variables, 3 variables, f32 type, symmetry, diagonal=variance, empty error, memory safety (13 tests)
+  * corrcoef: perfect correlations (±1.0), low correlation, diagonal=1.0, symmetry, range [-1,1], 1D→1.0, 2D rowvar variants, 3 variables, f32 type, constant variable (NaN), empty error, memory safety (14 tests)
+- Implementation notes:
+  * Two-pass covariance: means first, then deviations to avoid numerical instability
+  * corrcoef reuses cov() then normalizes by standard deviations
+  * Type dispatch via @typeInfo(T) switch (.int/.float)
+  * Array initialization syntax: &[_]usize{} for slices, &[0]usize{} for 0D
+  * All test get() calls need `try` (error union)
+- NDArray now has 149 public functions (was 147, +2)
+- Total ndarray tests: 804 (was 777, +27)
+- All tests: passing (2879/2879, exit code 0)
+- CI: Green (pending)
+- Issues: Zero open
+- Commits: f1e707d (cov/corrcoef), 3860ea6 (activity log)
+
+## Previous Session (Session 405, 2026-04-22) — STABILIZATION MODE 🎉
 - Stabilization audit: ALL systems green ✅
 - CI Status: Green, latest run successful on main (4/5 recent runs passed)
 - Issues: Zero open
