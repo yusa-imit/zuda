@@ -69,6 +69,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             InvalidPermutation,
             ShapeMismatch,
             InvalidFormat,
+            InvalidValue,
             UnsupportedVersion,
             DimensionMismatch,
             TypeMismatch,
@@ -4111,6 +4112,232 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 }
 
                 result.data[i] = found;
+            }
+
+            return result;
+        }
+
+        /// Count occurrences of non-negative integers in array.
+        ///
+        /// Returns a 1D array of length max(x)+1 where each index i contains
+        /// the count of occurrences of i in the input array. Similar to NumPy's bincount().
+        ///
+        /// Time: O(n) where n = number of elements
+        /// Space: O(max(x)+1) for count array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        ///
+        /// Returns: 1D array where result[i] = count of i in input
+        ///
+        /// Example:
+        /// ```
+        /// const arr = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{0, 1, 1, 3, 2, 1, 7}, .row_major);
+        /// const counts = try arr.bincount(allocator);
+        /// defer counts.deinit();
+        /// // counts.data = {1, 3, 1, 1, 0, 0, 0, 1} — indices 0,1,2,3,7 appear 1,3,1,1,1 times
+        /// ```
+        pub fn bincount(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+            // bincount only works with non-negative integer types
+            const type_info = @typeInfo(T);
+            if (type_info != .int and type_info != .comptime_int) {
+                @compileError("bincount only works with integer types");
+            }
+
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            const n = self.count();
+            if (n == 0) {
+                // Empty array -> empty bincount (manual construction)
+                const data = try allocator.alloc(usize, 0);
+                return NDArray(usize, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            // Find maximum value to determine output size
+            var max_val: T = self.data[0];
+            for (self.data[0..n]) |val| {
+                if (val < 0) return Error.InvalidValue; // bincount requires non-negative integers
+                if (val > max_val) max_val = val;
+            }
+
+            const output_size = @as(usize, @intCast(max_val)) + 1;
+
+            // Create result array initialized to zeros
+            var result = try NDArray(usize, 1).zeros(allocator, &[_]usize{output_size}, .row_major);
+            errdefer result.deinit();
+
+            // Count occurrences
+            for (self.data[0..n]) |val| {
+                const idx = @as(usize, @intCast(val));
+                result.data[idx] += 1;
+            }
+
+            return result;
+        }
+
+        /// Return indices of bins to which each value belongs.
+        ///
+        /// For each value in x, find which bin it falls into based on the bins array.
+        /// Similar to NumPy's digitize(). Bins must be sorted (ascending or descending).
+        ///
+        /// Time: O(n * log m) where n = values count, m = bins count
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - bins: 1D array of bin edges (must be monotonic)
+        /// - right: if true, intervals are (bins[i-1], bins[i]], else [bins[i-1], bins[i])
+        ///
+        /// Returns: 1D array where result[i] is the bin index for x[i]
+        ///   - Value k means bins[k-1] <= x[i] < bins[k] (for right=false)
+        ///   - Index 0 means x[i] < bins[0], index m means x[i] >= bins[m-1]
+        ///
+        /// Example:
+        /// ```
+        /// const values = try NDArray(f64, 1).fromSlice(allocator, &[_]f64{0.2, 6.4, 3.0, 1.6}, .row_major);
+        /// const bins = try NDArray(f64, 1).fromSlice(allocator, &[_]f64{0.0, 1.0, 2.5, 4.0, 10.0}, .row_major);
+        /// const indices = try values.digitize(allocator, &bins, false);
+        /// defer indices.deinit();
+        /// // indices.data = {1, 4, 3, 2} — 0.2 in [0,1), 6.4 in [4,10), etc.
+        /// ```
+        pub fn digitize(self: *const Self, allocator: Allocator, bins: *const NDArray(T, 1), right: bool) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            const n = self.count();
+            const m = bins.count();
+
+            if (m == 0) return Error.EmptyArray;
+
+            // Determine if bins are ascending or descending
+            const ascending = if (m > 1) bins.data[1] >= bins.data[0] else true;
+
+            // Create result array
+            var result = try NDArray(usize, 1).init(allocator, &[_]usize{n}, .row_major);
+            errdefer result.deinit();
+
+            // For each value, find its bin
+            for (0..n) |i| {
+                const val = self.data[i];
+                var bin_idx: usize = 0;
+
+                if (ascending) {
+                    // Binary search in ascending bins
+                    var left: usize = 0;
+                    var right_idx: usize = m;
+                    while (left < right_idx) {
+                        const mid = left + (right_idx - left) / 2;
+                        const bin_val = bins.data[mid];
+
+                        const cmp = if (right) val > bin_val else val >= bin_val;
+
+                        if (cmp) {
+                            left = mid + 1;
+                        } else {
+                            right_idx = mid;
+                        }
+                    }
+                    bin_idx = left;
+                } else {
+                    // Binary search in descending bins
+                    // Find first bin where val >= bin_val
+                    var left: usize = 0;
+                    var right_idx: usize = m;
+                    while (left < right_idx) {
+                        const mid = left + (right_idx - left) / 2;
+                        const bin_val = bins.data[mid];
+
+                        const cmp = if (right) val >= bin_val else val > bin_val;
+
+                        if (cmp) {
+                            right_idx = mid;
+                        } else {
+                            left = mid + 1;
+                        }
+                    }
+                    bin_idx = left;
+                }
+
+                result.data[i] = bin_idx;
+            }
+
+            return result;
+        }
+
+        /// Compute histogram of array values.
+        ///
+        /// Count occurrences of values in each bin. Similar to NumPy's histogram().
+        ///
+        /// Time: O(n * log m) where n = values count, m = bins count
+        /// Space: O(m-1) for histogram counts
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - bins: 1D array of bin edges (m+1 edges create m bins), must be sorted ascending
+        ///
+        /// Returns: 1D array of length m where result[i] = count of values in [bins[i], bins[i+1])
+        ///
+        /// Example:
+        /// ```
+        /// const data = try NDArray(f64, 1).fromSlice(allocator, &[_]f64{0.5, 1.5, 2.5, 3.5, 1.2, 2.8}, .row_major);
+        /// const bins = try NDArray(f64, 1).fromSlice(allocator, &[_]f64{0.0, 1.0, 2.0, 3.0, 4.0}, .row_major);
+        /// const hist = try data.histogram(allocator, &bins);
+        /// defer hist.deinit();
+        /// // hist.data = {1, 2, 2, 1} — bins [0,1), [1,2), [2,3), [3,4)
+        /// ```
+        pub fn histogram(self: *const Self, allocator: Allocator, bins: *const NDArray(T, 1)) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            const n = self.count();
+            const m = bins.count();
+
+            if (m < 2) return Error.InvalidValue; // Need at least 2 bin edges
+
+            // Verify bins are sorted ascending
+            for (0..m - 1) |i| {
+                if (bins.data[i + 1] < bins.data[i]) {
+                    return Error.InvalidValue; // Bins must be ascending
+                }
+            }
+
+            const num_bins = m - 1;
+
+            // Create result array initialized to zeros
+            var result = try NDArray(usize, 1).zeros(allocator, &[_]usize{num_bins}, .row_major);
+            errdefer result.deinit();
+
+            // For each value, find its bin and increment count
+            for (0..n) |i| {
+                const val = self.data[i];
+
+                // Skip values outside bin range
+                if (val < bins.data[0] or val >= bins.data[m - 1]) {
+                    // For the last bin, include right edge
+                    if (val == bins.data[m - 1]) {
+                        result.data[num_bins - 1] += 1;
+                    }
+                    continue;
+                }
+
+                // Binary search to find bin
+                var left: usize = 0;
+                var right: usize = num_bins;
+                while (left < right) {
+                    const mid = left + (right - left) / 2;
+                    if (val >= bins.data[mid + 1]) {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
+                }
+
+                result.data[left] += 1;
             }
 
             return result;
@@ -20107,4 +20334,478 @@ test "atleast functions: column-major layout" {
     defer if (arr2d.owned) arr2d.deinit();
 
     try testing.expectEqual(Layout.column_major, arr2d.layout);
+}
+
+// -- bincount Tests (7 tests) --
+
+test "bincount: basic usage" {
+    const allocator = testing.allocator;
+
+    const data = [_]usize{ 0, 1, 1, 3, 2, 1, 7 };
+    var arr = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{7}, &data, .row_major);
+    defer arr.deinit();
+
+    var counts = try arr.bincount(allocator);
+    defer counts.deinit();
+
+    // Verify shape
+    // ndim is comptime, verification implicit
+    try testing.expectEqual(@as(usize, 8), counts.shape[0]); // max(data)+1 = 7+1 = 8
+
+    // Verify counts: indices 0,1,2,3,7 appear 1,3,1,1,1 times
+    try testing.expectEqual(@as(usize, 1), counts.data[0]); // 0 appears 1 time
+    try testing.expectEqual(@as(usize, 3), counts.data[1]); // 1 appears 3 times
+    try testing.expectEqual(@as(usize, 1), counts.data[2]); // 2 appears 1 time
+    try testing.expectEqual(@as(usize, 1), counts.data[3]); // 3 appears 1 time
+    try testing.expectEqual(@as(usize, 0), counts.data[4]); // 4 appears 0 times
+    try testing.expectEqual(@as(usize, 0), counts.data[5]); // 5 appears 0 times
+    try testing.expectEqual(@as(usize, 0), counts.data[6]); // 6 appears 0 times
+    try testing.expectEqual(@as(usize, 1), counts.data[7]); // 7 appears 1 time
+}
+
+test "bincount: all zeros" {
+    const allocator = testing.allocator;
+
+    const data = [_]usize{ 0, 0, 0, 0 };
+    var arr = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    var counts = try arr.bincount(allocator);
+    defer counts.deinit();
+
+    try testing.expectEqual(@as(usize, 1), counts.shape[0]); // max(0)+1 = 1
+    try testing.expectEqual(@as(usize, 4), counts.data[0]); // 0 appears 4 times
+}
+
+test "bincount: single element" {
+    const allocator = testing.allocator;
+
+    const data = [_]usize{5};
+    var arr = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{1}, &data, .row_major);
+    defer arr.deinit();
+
+    var counts = try arr.bincount(allocator);
+    defer counts.deinit();
+
+    try testing.expectEqual(@as(usize, 6), counts.shape[0]); // max(5)+1 = 6
+    try testing.expectEqual(@as(usize, 0), counts.data[0]);
+    try testing.expectEqual(@as(usize, 1), counts.data[5]); // 5 appears 1 time
+}
+
+test "bincount: empty array" {
+    const allocator = testing.allocator;
+
+    // Create empty array manually (init doesn't allow zero dimensions)
+    const data = try allocator.alloc(usize, 0);
+    var arr = NDArray(usize, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    var counts = try arr.bincount(allocator);
+    defer counts.deinit();
+
+    try testing.expectEqual(@as(usize, 0), counts.shape[0]); // Empty result
+}
+
+test "bincount: large values" {
+    const allocator = testing.allocator;
+
+    const data = [_]usize{ 100, 0, 50, 100 };
+    var arr = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    var counts = try arr.bincount(allocator);
+    defer counts.deinit();
+
+    try testing.expectEqual(@as(usize, 101), counts.shape[0]); // max(100)+1 = 101
+    try testing.expectEqual(@as(usize, 1), counts.data[0]);
+    try testing.expectEqual(@as(usize, 1), counts.data[50]);
+    try testing.expectEqual(@as(usize, 2), counts.data[100]);
+}
+
+test "bincount: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]usize{ 0, 1, 2, 3, 4, 5 };
+        var arr = try NDArray(usize, 1).fromSlice(allocator, &[_]usize{6}, &data, .row_major);
+        defer arr.deinit();
+
+        var counts = try arr.bincount(allocator);
+        defer counts.deinit();
+
+        // Verify all values have count 1
+        for (0..6) |i| {
+            try testing.expectEqual(@as(usize, 1), counts.data[i]);
+        }
+    }
+}
+
+test "bincount: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    const data = [_]usize{ 0, 1, 2, 3 };
+    var arr = try NDArray(usize, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    const result = arr.bincount(allocator);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+// -- digitize Tests (8 tests) --
+
+test "digitize: basic usage" {
+    const allocator = testing.allocator;
+
+    const values = [_]f64{ 0.2, 6.4, 3.0, 1.6 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &values, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.5, 4.0, 10.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var indices = try arr.digitize(allocator, &bins, false);
+    defer indices.deinit();
+
+    // 0.2 in [0,1), 6.4 in [4,10), 3.0 in [2.5,4), 1.6 in [1,2.5)
+    try testing.expectEqual(@as(usize, 1), indices.data[0]); // 0.2 in bin 1
+    try testing.expectEqual(@as(usize, 4), indices.data[1]); // 6.4 in bin 4
+    try testing.expectEqual(@as(usize, 3), indices.data[2]); // 3.0 in bin 3
+    try testing.expectEqual(@as(usize, 2), indices.data[3]); // 1.6 in bin 2
+}
+
+test "digitize: right=true" {
+    const allocator = testing.allocator;
+
+    const values = [_]f64{ 1.0, 2.5, 4.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &values, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.5, 4.0, 10.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var indices = try arr.digitize(allocator, &bins, true);
+    defer indices.deinit();
+
+    // With right=true: (bins[i-1], bins[i]]
+    try testing.expectEqual(@as(usize, 1), indices.data[0]); // 1.0 in (0,1]
+    try testing.expectEqual(@as(usize, 2), indices.data[1]); // 2.5 in (1,2.5]
+    try testing.expectEqual(@as(usize, 3), indices.data[2]); // 4.0 in (2.5,4]
+}
+
+test "digitize: descending bins" {
+    const allocator = testing.allocator;
+
+    const values = [_]f64{ 0.2, 6.4, 3.0, 1.6 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &values, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 10.0, 4.0, 2.5, 1.0, 0.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var indices = try arr.digitize(allocator, &bins, false);
+    defer indices.deinit();
+
+    // Descending bins work correctly
+    try testing.expectEqual(@as(usize, 4), indices.data[0]); // 0.2
+    try testing.expectEqual(@as(usize, 1), indices.data[1]); // 6.4
+    try testing.expectEqual(@as(usize, 2), indices.data[2]); // 3.0
+    try testing.expectEqual(@as(usize, 3), indices.data[3]); // 1.6
+}
+
+test "digitize: values outside bins" {
+    const allocator = testing.allocator;
+
+    const values = [_]f64{ -1.0, 15.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &values, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.5, 4.0, 10.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var indices = try arr.digitize(allocator, &bins, false);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 0), indices.data[0]); // -1.0 before first bin
+    try testing.expectEqual(@as(usize, 5), indices.data[1]); // 15.0 after last bin
+    try testing.expectEqual(@as(usize, 4), indices.data[2]); // 5.0 in [4,10)
+}
+
+test "digitize: single bin" {
+    const allocator = testing.allocator;
+
+    const values = [_]i32{ 1, 2, 3 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &values, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]i32{2};
+    var bins = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{1}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var indices = try arr.digitize(allocator, &bins, false);
+    defer indices.deinit();
+
+    try testing.expectEqual(@as(usize, 0), indices.data[0]); // 1 < 2
+    try testing.expectEqual(@as(usize, 1), indices.data[1]); // 2 >= 2
+    try testing.expectEqual(@as(usize, 1), indices.data[2]); // 3 >= 2
+}
+
+test "digitize: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const values = [_]f64{ 0.5, 1.5, 2.5, 3.5 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &values, .row_major);
+        defer arr.deinit();
+
+        const bin_edges = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+        var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+        defer bins.deinit();
+
+        var indices = try arr.digitize(allocator, &bins, false);
+        defer indices.deinit();
+    }
+}
+
+test "digitize: empty bins error" {
+    const allocator = testing.allocator;
+
+    const values = [_]f64{ 1.0, 2.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &values, .row_major);
+    defer arr.deinit();
+
+    // Create empty bins manually (init doesn't allow zero dimensions)
+    const bin_data = try allocator.alloc(f64, 0);
+    var bins = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = bin_data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer bins.deinit();
+
+    const result = arr.digitize(allocator, &bins, false);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "digitize: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    const values = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &values, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    const result = arr.digitize(allocator, &bins, false);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+// -- histogram Tests (10 tests) --
+
+test "histogram: basic usage" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 0.5, 1.5, 2.5, 3.5, 1.2, 2.8 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{6}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    // Bins: [0,1), [1,2), [2,3), [3,4)
+    // Data: 0.5 in [0,1), 1.5 in [1,2), 2.5 in [2,3), 3.5 in [3,4), 1.2 in [1,2), 2.8 in [2,3)
+    try testing.expectEqual(@as(usize, 4), hist.shape[0]); // 4 bins
+    try testing.expectEqual(@as(usize, 1), hist.data[0]); // [0,1): 0.5
+    try testing.expectEqual(@as(usize, 2), hist.data[1]); // [1,2): 1.5, 1.2
+    try testing.expectEqual(@as(usize, 2), hist.data[2]); // [2,3): 2.5, 2.8
+    try testing.expectEqual(@as(usize, 1), hist.data[3]); // [3,4): 3.5
+}
+
+test "histogram: uniform distribution" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{10}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]i32{ 0, 5, 10 };
+    var bins = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{3}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    // [0,5): 0,1,2,3,4  [5,10): 5,6,7,8,9
+    try testing.expectEqual(@as(usize, 2), hist.shape[0]);
+    try testing.expectEqual(@as(usize, 5), hist.data[0]);
+    try testing.expectEqual(@as(usize, 5), hist.data[1]);
+}
+
+test "histogram: all values in one bin" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 5.1, 5.5, 5.9, 5.3 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 5.0, 6.0, 10.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    try testing.expectEqual(@as(usize, 3), hist.shape[0]);
+    try testing.expectEqual(@as(usize, 0), hist.data[0]); // [0,5)
+    try testing.expectEqual(@as(usize, 4), hist.data[1]); // [5,6)
+    try testing.expectEqual(@as(usize, 0), hist.data[2]); // [6,10)
+}
+
+test "histogram: values outside range" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ -1.0, 0.5, 5.5, 11.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 5.0, 10.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    // -1.0 and 11.0 are outside, only 0.5 and 5.5 counted
+    try testing.expectEqual(@as(usize, 1), hist.data[0]); // [0,5): 0.5
+    try testing.expectEqual(@as(usize, 1), hist.data[1]); // [5,10): 5.5
+}
+
+test "histogram: right edge inclusive" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 0.0, 5.0, 10.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 5.0, 10.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    // 10.0 is included in last bin
+    try testing.expectEqual(@as(usize, 1), hist.data[0]); // [0,5): 0.0
+    try testing.expectEqual(@as(usize, 2), hist.data[1]); // [5,10]: 5.0, 10.0 (right edge inclusive)
+}
+
+test "histogram: empty array" {
+    const allocator = testing.allocator;
+
+    // Create empty array manually (init doesn't allow zero dimensions)
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    // All bins empty
+    try testing.expectEqual(@as(usize, 0), hist.data[0]);
+    try testing.expectEqual(@as(usize, 0), hist.data[1]);
+}
+
+test "histogram: single bin" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]i32{ 0, 10 };
+    var bins = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{2}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    var hist = try arr.histogram(allocator, &bins);
+    defer hist.deinit();
+
+    try testing.expectEqual(@as(usize, 1), hist.shape[0]);
+    try testing.expectEqual(@as(usize, 4), hist.data[0]); // All values in [0,10)
+}
+
+test "histogram: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 0.5, 1.5, 2.5, 3.5 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+        defer arr.deinit();
+
+        const bin_edges = [_]f64{ 0.0, 1.0, 2.0, 3.0, 4.0 };
+        var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &bin_edges, .row_major);
+        defer bins.deinit();
+
+        var hist = try arr.histogram(allocator, &bins);
+        defer hist.deinit();
+    }
+}
+
+test "histogram: insufficient bins error" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{1.0};
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    const result = arr.histogram(allocator, &bins);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "histogram: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    const bin_edges = [_]f64{ 0.0, 1.0, 2.0 };
+    var bins = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &bin_edges, .row_major);
+    defer bins.deinit();
+
+    const result = arr.histogram(allocator, &bins);
+    try testing.expectError(error.DimensionMismatch, result);
 }
