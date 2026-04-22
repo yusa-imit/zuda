@@ -259,3 +259,4 @@
 {"timestamp":"2026-04-22T03:30:00Z","action":"subagent","agent_type":"direct_implementation","task":"Implement NDArray bincount, digitize, histogram operations","project":"zuda"}
 {"timestamp":"2026-04-22T11:05:57Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for std, var, median, percentile, quantile (40 tests)","project":"zuda"}
 {"timestamp":"2026-04-22T11:13:08Z","action":"subagent","agent_type":"zig-developer","task":"Implement std, var, median, percentile, quantile (5 functions, 40 tests passing)","project":"zuda"}
+{"timestamp":"2026-04-23T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write comprehensive tests for NDArray cov() and corrcoef() functions","project":"zuda"}
