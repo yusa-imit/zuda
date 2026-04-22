@@ -3728,6 +3728,394 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Find the union of two 1D arrays.
+        ///
+        /// Returns the unique, sorted array of values that are in either of the
+        /// input arrays. Similar to NumPy's union1d().
+        ///
+        /// Time: O((n + m) × log(n + m)) where n = self.count(), m = other.count()
+        /// Space: O(n + m) for combined array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - other: Second 1D array
+        ///
+        /// Returns: 1D array of unique values in union
+        ///
+        /// Example:
+        /// ```
+        /// const a = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3}, .row_major);
+        /// const b = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{2, 3, 4}, .row_major);
+        /// const result = try a.union1d(allocator, &b);
+        /// defer result.deinit();
+        /// // result.data = {1, 2, 3, 4}
+        /// ```
+        pub fn union1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            const n = self.count();
+            const m = other.count();
+
+            // Combine both arrays
+            var combined = try allocator.alloc(T, n + m);
+            defer allocator.free(combined);
+
+            // Copy elements
+            for (0..n) |i| combined[i] = self.data[i];
+            for (0..m) |i| combined[n + i] = other.data[i];
+
+            // Sort combined array
+            std.sort.heap(T, combined, {}, std.sort.asc(T));
+
+            // Count unique elements
+            var unique_count: usize = 0;
+            if (combined.len > 0) {
+                unique_count = 1;
+                for (1..combined.len) |i| {
+                    if (combined[i] != combined[i - 1]) unique_count += 1;
+                }
+            }
+
+            // Fill result with unique elements (handle empty case)
+            if (unique_count == 0) {
+                const data = try allocator.alloc(T, 0);
+                return NDArray(T, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            var result = try NDArray(T, 1).init(allocator, &[_]usize{unique_count}, .row_major);
+            errdefer result.deinit();
+
+            result.data[0] = combined[0];
+            var result_idx: usize = 1;
+            for (1..combined.len) |i| {
+                if (combined[i] != combined[i - 1]) {
+                    result.data[result_idx] = combined[i];
+                    result_idx += 1;
+                }
+            }
+
+            return result;
+        }
+
+        /// Find the intersection of two 1D arrays.
+        ///
+        /// Returns the unique, sorted array of values that are in both input arrays.
+        /// Similar to NumPy's intersect1d().
+        ///
+        /// Time: O((n + m) × log(n + m)) where n = self.count(), m = other.count()
+        /// Space: O(min(n, m)) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - other: Second 1D array
+        ///
+        /// Returns: 1D array of unique values in intersection
+        ///
+        /// Example:
+        /// ```
+        /// const a = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3}, .row_major);
+        /// const b = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{2, 3, 4}, .row_major);
+        /// const result = try a.intersect1d(allocator, &b);
+        /// defer result.deinit();
+        /// // result.data = {2, 3}
+        /// ```
+        pub fn intersect1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            // Get sorted unique values from both arrays
+            var unique_self = try self.unique(allocator);
+            defer unique_self.deinit();
+            var unique_other = try other.unique(allocator);
+            defer unique_other.deinit();
+
+            const n = unique_self.count();
+            const m = unique_other.count();
+
+            // Two-pointer approach on sorted arrays
+            var temp = try allocator.alloc(T, @min(n, m));
+            defer allocator.free(temp);
+
+            var i: usize = 0;
+            var j: usize = 0;
+            var result_count: usize = 0;
+
+            while (i < n and j < m) {
+                const val_self = unique_self.data[i];
+                const val_other = unique_other.data[j];
+
+                if (val_self == val_other) {
+                    temp[result_count] = val_self;
+                    result_count += 1;
+                    i += 1;
+                    j += 1;
+                } else if (val_self < val_other) {
+                    i += 1;
+                } else {
+                    j += 1;
+                }
+            }
+
+            // Create result array (handle empty case)
+            if (result_count == 0) {
+                const data = try allocator.alloc(T, 0);
+                return NDArray(T, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            var result = try NDArray(T, 1).init(allocator, &[_]usize{result_count}, .row_major);
+            errdefer result.deinit();
+            for (0..result_count) |k| result.data[k] = temp[k];
+
+            return result;
+        }
+
+        /// Find the set difference of two 1D arrays.
+        ///
+        /// Returns the unique values in self that are not in other.
+        /// Similar to NumPy's setdiff1d().
+        ///
+        /// Time: O((n + m) × log(n + m)) where n = self.count(), m = other.count()
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - other: Second 1D array
+        ///
+        /// Returns: 1D array of unique values in self but not in other
+        ///
+        /// Example:
+        /// ```
+        /// const a = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3}, .row_major);
+        /// const b = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{2, 3, 4}, .row_major);
+        /// const result = try a.setdiff1d(allocator, &b);
+        /// defer result.deinit();
+        /// // result.data = {1}
+        /// ```
+        pub fn setdiff1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            // Get sorted unique values from both arrays
+            var unique_self = try self.unique(allocator);
+            defer unique_self.deinit();
+            var unique_other = try other.unique(allocator);
+            defer unique_other.deinit();
+
+            const n = unique_self.count();
+            const m = unique_other.count();
+
+            // Two-pointer approach on sorted arrays
+            var temp = try allocator.alloc(T, n);
+            defer allocator.free(temp);
+
+            var i: usize = 0;
+            var j: usize = 0;
+            var result_count: usize = 0;
+
+            while (i < n) {
+                const val_self = unique_self.data[i];
+
+                // Advance j until we pass val_self
+                while (j < m and unique_other.data[j] < val_self) j += 1;
+
+                // If not found in other, add to result
+                if (j >= m or unique_other.data[j] != val_self) {
+                    temp[result_count] = val_self;
+                    result_count += 1;
+                }
+                i += 1;
+            }
+
+            // Create result array (handle empty case)
+            if (result_count == 0) {
+                const data = try allocator.alloc(T, 0);
+                return NDArray(T, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            var result = try NDArray(T, 1).init(allocator, &[_]usize{result_count}, .row_major);
+            errdefer result.deinit();
+            for (0..result_count) |k| result.data[k] = temp[k];
+
+            return result;
+        }
+
+        /// Find the symmetric difference of two 1D arrays.
+        ///
+        /// Returns the unique values that are in either array but not in both.
+        /// Similar to NumPy's setxor1d().
+        ///
+        /// Time: O((n + m) × log(n + m)) where n = self.count(), m = other.count()
+        /// Space: O(n + m) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - other: Second 1D array
+        ///
+        /// Returns: 1D array of unique values in symmetric difference
+        ///
+        /// Example:
+        /// ```
+        /// const a = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3}, .row_major);
+        /// const b = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{2, 3, 4}, .row_major);
+        /// const result = try a.setxor1d(allocator, &b);
+        /// defer result.deinit();
+        /// // result.data = {1, 4}
+        /// ```
+        pub fn setxor1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            // Get sorted unique values from both arrays
+            var unique_self = try self.unique(allocator);
+            defer unique_self.deinit();
+            var unique_other = try other.unique(allocator);
+            defer unique_other.deinit();
+
+            const n = unique_self.count();
+            const m = unique_other.count();
+
+            // Two-pointer approach on sorted arrays
+            var temp = try allocator.alloc(T, n + m);
+            defer allocator.free(temp);
+
+            var i: usize = 0;
+            var j: usize = 0;
+            var result_count: usize = 0;
+
+            while (i < n or j < m) {
+                if (i >= n) {
+                    // Remaining elements from other
+                    temp[result_count] = unique_other.data[j];
+                    result_count += 1;
+                    j += 1;
+                } else if (j >= m) {
+                    // Remaining elements from self
+                    temp[result_count] = unique_self.data[i];
+                    result_count += 1;
+                    i += 1;
+                } else {
+                    const val_self = unique_self.data[i];
+                    const val_other = unique_other.data[j];
+
+                    if (val_self == val_other) {
+                        // In both arrays, skip
+                        i += 1;
+                        j += 1;
+                    } else if (val_self < val_other) {
+                        // In self only
+                        temp[result_count] = val_self;
+                        result_count += 1;
+                        i += 1;
+                    } else {
+                        // In other only
+                        temp[result_count] = val_other;
+                        result_count += 1;
+                        j += 1;
+                    }
+                }
+            }
+
+            // Create result array (handle empty case)
+            if (result_count == 0) {
+                const data = try allocator.alloc(T, 0);
+                return NDArray(T, 1){
+                    .shape = [_]usize{0},
+                    .strides = [_]usize{1},
+                    .data = data,
+                    .allocator = allocator,
+                    .layout = .row_major,
+                    .owned = true,
+                };
+            }
+
+            var result = try NDArray(T, 1).init(allocator, &[_]usize{result_count}, .row_major);
+            errdefer result.deinit();
+            for (0..result_count) |k| result.data[k] = temp[k];
+
+            return result;
+        }
+
+        /// Test whether each element of a 1D array is in another 1D array.
+        ///
+        /// Returns a boolean array the same shape as self, with True where
+        /// an element of self is in other. Similar to NumPy's in1d().
+        ///
+        /// Time: O(n × m) naive, O((n + m) × log m) with sorting
+        /// Space: O(n) for result array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - other: Array to check membership against
+        ///
+        /// Returns: Boolean array indicating membership
+        ///
+        /// Example:
+        /// ```
+        /// const a = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{1, 2, 3, 4}, .row_major);
+        /// const b = try NDArray(i32, 1).fromSlice(allocator, &[_]i32{2, 4}, .row_major);
+        /// const result = try a.in1d(allocator, &b);
+        /// defer result.deinit();
+        /// // result.data = {false, true, false, true}
+        /// ```
+        pub fn in1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, 1) {
+            if (ndim != 1) return Error.DimensionMismatch;
+
+            const n = self.count();
+
+            // Sort other array for binary search
+            var sorted_other = try other.unique(allocator); // unique returns sorted
+            defer sorted_other.deinit();
+
+            // Create result array
+            var result = try NDArray(bool, 1).init(allocator, &[_]usize{n}, .row_major);
+            errdefer result.deinit();
+
+            // Check each element
+            for (0..n) |i| {
+                const target = self.data[i];
+                var found = false;
+
+                // Binary search in sorted_other
+                var left: usize = 0;
+                var right: usize = sorted_other.count();
+                while (left < right) {
+                    const mid = left + (right - left) / 2;
+                    const mid_val = sorted_other.data[mid];
+
+                    if (target == mid_val) {
+                        found = true;
+                        break;
+                    } else if (target < mid_val) {
+                        right = mid;
+                    } else {
+                        left = mid + 1;
+                    }
+                }
+
+                result.data[i] = found;
+            }
+
+            return result;
+        }
+
         /// Extract elements from an array based on a boolean condition.
         ///
         /// Returns a 1D array containing elements where the condition is True.
@@ -17600,6 +17988,388 @@ test "nonzero: memory safety" {
 
         var indices = try arr.nonzero(allocator);
         defer indices.deinit();
+    }
+}
+
+// ============================================================================
+// Set Operations Tests
+// ============================================================================
+
+test "union1d: basic arrays" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.union1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[1]);
+    try testing.expectEqual(@as(i32, 3), result.data[2]);
+    try testing.expectEqual(@as(i32, 4), result.data[3]);
+}
+
+test "union1d: duplicates" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 1, 2, 2 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 2, 3, 3 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.union1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[1]);
+    try testing.expectEqual(@as(i32, 3), result.data[2]);
+}
+
+test "union1d: disjoint sets" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 3, 5 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 4, 6 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.union1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 6), result.shape[0]);
+    for (0..6) |i| {
+        try testing.expectEqual(@as(i32, @intCast(i + 1)), result.data[i]);
+    }
+}
+
+test "union1d: empty arrays" {
+    const allocator = testing.allocator;
+    // Manually create empty array (init() doesn't allow zero dimensions)
+    const data_a = try allocator.alloc(i32, 0);
+    var a = NDArray(i32, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data_a,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer a.deinit();
+
+    const data_b = [_]i32{ 1, 2 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.union1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[1]);
+}
+
+test "intersect1d: basic arrays" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.intersect1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[0]);
+    try testing.expectEqual(@as(i32, 3), result.data[1]);
+}
+
+test "intersect1d: no intersection" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.intersect1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.shape[0]);
+}
+
+test "intersect1d: duplicates" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 2, 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.intersect1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[0]);
+    try testing.expectEqual(@as(i32, 3), result.data[1]);
+}
+
+test "setdiff1d: basic arrays" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.setdiff1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+}
+
+test "setdiff1d: no difference" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 1, 2, 3 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.setdiff1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.shape[0]);
+}
+
+test "setdiff1d: complete difference" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.setdiff1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[1]);
+}
+
+test "setxor1d: basic arrays" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.setxor1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 4), result.data[1]);
+}
+
+test "setxor1d: no overlap" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.setxor1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[0]);
+    try testing.expectEqual(@as(i32, 2), result.data[1]);
+    try testing.expectEqual(@as(i32, 3), result.data[2]);
+    try testing.expectEqual(@as(i32, 4), result.data[3]);
+}
+
+test "setxor1d: complete overlap" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 1, 2, 3 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.setxor1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.shape[0]);
+}
+
+test "in1d: basic arrays" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3, 4 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 2, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.in1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectEqual(false, result.data[0]);
+    try testing.expectEqual(true, result.data[1]);
+    try testing.expectEqual(false, result.data[2]);
+    try testing.expectEqual(true, result.data[3]);
+}
+
+test "in1d: no elements in set" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 4, 5 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.in1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(false, result.data[0]);
+    try testing.expectEqual(false, result.data[1]);
+    try testing.expectEqual(false, result.data[2]);
+}
+
+test "in1d: all elements in set" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ 1, 2 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ 1, 2, 3, 4 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var result = try a.in1d(allocator, &b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(true, result.data[0]);
+    try testing.expectEqual(true, result.data[1]);
+}
+
+test "set operations: type variants f64" {
+    const allocator = testing.allocator;
+    const data_a = [_]f64{ 1.0, 2.0, 3.0 };
+    var a = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]f64{ 2.0, 3.0, 4.0 };
+    var b = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var union_result = try a.union1d(allocator, &b);
+    defer union_result.deinit();
+    try testing.expectEqual(@as(usize, 4), union_result.shape[0]);
+
+    var intersect_result = try a.intersect1d(allocator, &b);
+    defer intersect_result.deinit();
+    try testing.expectEqual(@as(usize, 2), intersect_result.shape[0]);
+}
+
+test "set operations: type variants u8" {
+    const allocator = testing.allocator;
+    const data_a = [_]u8{ 10, 20, 30 };
+    var a = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]u8{ 20, 30, 40 };
+    var b = try NDArray(u8, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var setdiff_result = try a.setdiff1d(allocator, &b);
+    defer setdiff_result.deinit();
+    try testing.expectEqual(@as(usize, 1), setdiff_result.shape[0]);
+    try testing.expectEqual(@as(u8, 10), setdiff_result.data[0]);
+}
+
+test "set operations: negative numbers" {
+    const allocator = testing.allocator;
+    const data_a = [_]i32{ -3, -1, 1, 3 };
+    var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+    defer a.deinit();
+
+    const data_b = [_]i32{ -2, -1, 0, 1 };
+    var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+    defer b.deinit();
+
+    var union_result = try a.union1d(allocator, &b);
+    defer union_result.deinit();
+    // Union: {-3, -2, -1, 0, 1, 3} = 6 elements
+    try testing.expectEqual(@as(usize, 6), union_result.shape[0]);
+}
+
+test "set operations: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data_a = [_]i32{ 1, 2, 3, 4, 5 };
+        var a = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_a.len}, &data_a, .row_major);
+        defer a.deinit();
+
+        const data_b = [_]i32{ 3, 4, 5, 6, 7 };
+        var b = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data_b.len}, &data_b, .row_major);
+        defer b.deinit();
+
+        var union_result = try a.union1d(allocator, &b);
+        defer union_result.deinit();
+
+        var intersect_result = try a.intersect1d(allocator, &b);
+        defer intersect_result.deinit();
+
+        var setdiff_result = try a.setdiff1d(allocator, &b);
+        defer setdiff_result.deinit();
+
+        var setxor_result = try a.setxor1d(allocator, &b);
+        defer setxor_result.deinit();
+
+        var in1d_result = try a.in1d(allocator, &b);
+        defer in1d_result.deinit();
     }
 }
 
