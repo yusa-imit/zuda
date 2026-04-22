@@ -24,9 +24,21 @@
 //! - NumPy-compatible scientific computing
 
 const std = @import("std");
-const testing = std.testing;
-const Allocator = std.mem.Allocator;
+const stdlib = std;
+const testing = stdlib.testing;
+const Allocator = mem.Allocator;
 const ArrayList = std.ArrayList;
+const AllocatorError = mem.Allocator.Error;
+
+// Aliases to avoid shadowing by method names
+const mem = stdlib.mem;
+const math = stdlib.math;
+const debug = stdlib.debug;
+const fs = stdlib.fs;
+const fmt = stdlib.fmt;
+const io = stdlib.io;
+const builtin = stdlib.builtin;
+const sorting = stdlib.sort;
 
 /// Memory layout order for N-dimensional array
 pub const Layout = enum {
@@ -118,7 +130,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(ndim) strides calculation
         /// Space: O(prod(shape))
-        pub fn init(allocator: Allocator, shape: []const usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn init(allocator: Allocator, shape: []const usize, layout: Layout) (Error || AllocatorError)!Self {
             // Validate shape length
             if (shape.len != ndim) {
                 return error.ZeroDimension;
@@ -135,7 +147,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var total_elements: usize = 1;
             for (shape) |dim| {
                 // Check for overflow
-                if (total_elements > std.math.maxInt(usize) / dim) {
+                if (total_elements > math.maxInt(usize) / dim) {
                     return error.CapacityExceeded;
                 }
                 total_elements *= dim;
@@ -325,17 +337,17 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         pub fn validate(self: *const Self) !void {
             // Check all dimensions are positive
             for (self.shape) |dim| {
-                std.debug.assert(dim > 0);
+                debug.assert(dim > 0);
             }
 
             // Check data length matches product of shape
             const expected_len = self.count();
-            std.debug.assert(self.data.len == expected_len);
+            debug.assert(self.data.len == expected_len);
 
             // Verify strides are consistent with shape and layout
             const expected_strides = calculateStrides(self.shape, self.layout);
             for (0..ndim) |i| {
-                std.debug.assert(self.strides[i] == expected_strides[i]);
+                debug.assert(self.strides[i] == expected_strides[i]);
             }
         }
 
@@ -352,7 +364,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(prod(shape))
         /// Space: O(prod(shape))
-        pub fn zeros(allocator: Allocator, shape: []const usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn zeros(allocator: Allocator, shape: []const usize, layout: Layout) (Error || AllocatorError)!Self {
             var arr = try Self.init(allocator, shape, layout);
             errdefer arr.deinit();
             @memset(arr.data, 0);
@@ -370,7 +382,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(prod(shape))
         /// Space: O(prod(shape))
-        pub fn ones(allocator: Allocator, shape: []const usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn ones(allocator: Allocator, shape: []const usize, layout: Layout) (Error || AllocatorError)!Self {
             var arr = try Self.init(allocator, shape, layout);
             errdefer arr.deinit();
             for (arr.data) |*val| {
@@ -391,7 +403,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(prod(shape))
         /// Space: O(prod(shape))
-        pub fn full(allocator: Allocator, shape: []const usize, value: T, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn full(allocator: Allocator, shape: []const usize, value: T, layout: Layout) (Error || AllocatorError)!Self {
             var arr = try Self.init(allocator, shape, layout);
             errdefer arr.deinit();
             for (arr.data) |*val| {
@@ -413,7 +425,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(ndim)
         /// Space: O(prod(shape))
-        pub fn empty(allocator: Allocator, shape: []const usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn empty(allocator: Allocator, shape: []const usize, layout: Layout) (Error || AllocatorError)!Self {
             return Self.init(allocator, shape, layout);
         }
 
@@ -433,7 +445,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(num_elements) where num_elements = ceil((stop-start)/step)
         /// Space: O(num_elements)
-        pub fn arange(allocator: Allocator, start: T, stop: T, step: T, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn arange(allocator: Allocator, start: T, stop: T, step: T, layout: Layout) (Error || AllocatorError)!Self {
             // Validate step is not zero
             if (step == 0) {
                 return error.ZeroDimension;
@@ -491,7 +503,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(num)
         /// Space: O(num)
-        pub fn linspace(allocator: Allocator, start: T, stop: T, num: usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn linspace(allocator: Allocator, start: T, stop: T, num: usize, layout: Layout) (Error || AllocatorError)!Self {
             if (num == 0) {
                 return error.ZeroDimension;
             }
@@ -527,7 +539,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(prod(shape))
         /// Space: O(prod(shape))
-        pub fn fromSlice(allocator: Allocator, shape: []const usize, data_slice: []const T, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn fromSlice(allocator: Allocator, shape: []const usize, data_slice: []const T, layout: Layout) (Error || AllocatorError)!Self {
             var arr = try Self.init(allocator, shape, layout);
             errdefer arr.deinit();
 
@@ -560,7 +572,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(ndim) strides calculation only (no data copy)
         /// Space: O(ndim) for metadata (owns existing data)
-        pub fn fromOwnedSlice(allocator: Allocator, shape: []const usize, owned_data: []T, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn fromOwnedSlice(allocator: Allocator, shape: []const usize, owned_data: []T, layout: Layout) (Error || AllocatorError)!Self {
             // Validate shape length matches ndim
             if (shape.len != ndim) {
                 return error.ZeroDimension;
@@ -577,7 +589,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var total_elements: usize = 1;
             for (shape) |dim| {
                 // Check for overflow
-                if (total_elements > std.math.maxInt(usize) / dim) {
+                if (total_elements > math.maxInt(usize) / dim) {
                     return error.CapacityExceeded;
                 }
                 total_elements *= dim;
@@ -620,7 +632,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(rows * cols)
         /// Space: O(rows * cols)
-        pub fn eye(allocator: Allocator, rows: usize, cols: usize, k: isize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn eye(allocator: Allocator, rows: usize, cols: usize, k: isize, layout: Layout) (Error || AllocatorError)!Self {
             var arr = try Self.init(allocator, &[_]usize{ rows, cols }, layout);
             errdefer arr.deinit();
 
@@ -659,7 +671,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(rows * cols)
         /// Space: O(rows * cols)
-        pub fn identity(allocator: Allocator, rows: usize, cols: usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn identity(allocator: Allocator, rows: usize, cols: usize, layout: Layout) (Error || AllocatorError)!Self {
             return Self.eye(allocator, rows, cols, 0, layout);
         }
 
@@ -683,7 +695,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = length of diagonal
         /// Space: O(n²) for mode 1, O(n) for mode 2
-        pub fn diag(self: *const Self, allocator: Allocator, k: isize, layout: Layout) (Error || std.mem.Allocator.Error)!if (ndim == 1) NDArray(T, 2) else NDArray(T, 1) {
+        pub fn diag(self: *const Self, allocator: Allocator, k: isize, layout: Layout) (Error || AllocatorError)!if (ndim == 1) NDArray(T, 2) else NDArray(T, 1) {
             if (ndim == 1) {
                 // Mode 1: construct diagonal matrix from 1D array
                 const n = self.shape[0];
@@ -762,7 +774,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = diagonal length
         /// Space: O(n)
-        pub fn diagonal(self: *const Self, allocator: Allocator, offset: isize) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn diagonal(self: *const Self, allocator: Allocator, offset: isize) (Error || AllocatorError)!NDArray(T, 1) {
             if (ndim != 2) return error.ShapeMismatch;
             return self.diag(allocator, offset, .row_major);
         }
@@ -780,7 +792,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(rows * cols)
         /// Space: O(rows * cols)
-        pub fn triu(self: *const Self, allocator: Allocator, k: isize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn triu(self: *const Self, allocator: Allocator, k: isize) (Error || AllocatorError)!Self {
             if (ndim != 2) return error.ShapeMismatch;
 
             const rows = self.shape[0];
@@ -828,7 +840,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(rows * cols)
         /// Space: O(rows * cols)
-        pub fn tril(self: *const Self, allocator: Allocator, k: isize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn tril(self: *const Self, allocator: Allocator, k: isize) (Error || AllocatorError)!Self {
             if (ndim != 2) return error.ShapeMismatch;
 
             const rows = self.shape[0];
@@ -926,7 +938,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape) (currently always copies for memory safety)
         /// Space: O(prod(shape)) for new allocation
-        pub fn reshape(self: *const Self, new_shape: []const usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn reshape(self: *const Self, new_shape: []const usize) (Error || AllocatorError)!Self {
             // Validate new_shape length
             if (new_shape.len != ndim) {
                 return error.ZeroDimension;
@@ -943,7 +955,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var new_total: usize = 1;
             for (new_shape) |dim| {
                 // Check for overflow
-                if (new_total > std.math.maxInt(usize) / dim) {
+                if (new_total > math.maxInt(usize) / dim) {
                     return error.CapacityExceeded;
                 }
                 new_total *= dim;
@@ -1024,8 +1036,8 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var new_strides: [ndim]usize = self.strides;
 
             // Reverse both shape and strides arrays
-            std.mem.reverse(usize, &new_shape);
-            std.mem.reverse(usize, &new_strides);
+            mem.reverse(usize, &new_shape);
+            mem.reverse(usize, &new_strides);
 
             // Return new view with reversed metadata but same data pointer
             return Self{
@@ -1064,7 +1076,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(1) if contiguous, O(n) if non-contiguous (where n = prod(shape))
         /// Space: O(1) if contiguous, O(n) if non-contiguous
-        pub fn flatten(self: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn flatten(self: *const Self) (Error || AllocatorError)!NDArray(T, 1) {
             // Calculate total number of elements
             const total_elements = self.count();
 
@@ -1111,7 +1123,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for new allocation
-        pub fn ravel(self: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn ravel(self: *const Self) (Error || AllocatorError)!NDArray(T, 1) {
             // Calculate total number of elements
             const total_elements = self.count();
 
@@ -1212,11 +1224,11 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Returns: New NDArray with contiguous memory layout and independent allocation
         ///
         /// Errors:
-        /// - std.mem.Allocator.Error if memory allocation fails during copying
+        /// - AllocatorError if memory allocation fails during copying
         ///
         /// Time: O(1) if already contiguous, O(n) if copying required (n = prod(shape))
         /// Space: O(n) if allocation needed for new buffer
-        pub fn contiguous(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn contiguous(self: *const Self) (Error || AllocatorError)!Self {
             // Calculate total number of elements
             const total_elements = self.count();
 
@@ -1290,7 +1302,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn add(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn add(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) T {
                     return a + b;
@@ -1310,7 +1322,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn sub(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn sub(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) T {
                     return a - b;
@@ -1330,7 +1342,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn mul(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn mul(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) T {
                     return a * b;
@@ -1350,7 +1362,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn div(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn div(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             return applyBinaryOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) T {
                     return a / b;
@@ -1371,7 +1383,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn mod(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn mod(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: mod only works on integer types
             if (@typeInfo(T) != .int) {
                 @compileError("mod() is only defined for integer types");
@@ -1424,7 +1436,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const v2 = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
         /// const dot = try v1.matmul(&v2); // Shape: [] (scalar)
         /// ```
-        pub fn matmul(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn matmul(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             // Case 1: Both are 1D (vector dot product → scalar)
             if (ndim == 1) {
                 if (self.shape[0] != other.shape[0]) {
@@ -1503,7 +1515,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn neg(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn neg(self: *const Self) (Error || AllocatorError)!Self {
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -1536,7 +1548,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn abs(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn abs(self: *const Self) (Error || AllocatorError)!Self {
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -1572,7 +1584,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn exp(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn exp(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: exp only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("exp() is only defined for floating-point types");
@@ -1587,7 +1599,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.exp(val);
+                result_data[idx] = math.exp(val);
                 idx += 1;
             }
 
@@ -1611,7 +1623,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn log(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn log(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: log only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("log() is only defined for floating-point types");
@@ -1626,7 +1638,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.log(T, std.math.e, val);
+                result_data[idx] = math.log(T, math.e, val);
                 idx += 1;
             }
 
@@ -1650,7 +1662,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn sqrt(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn sqrt(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: sqrt only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("sqrt() is only defined for floating-point types");
@@ -1665,7 +1677,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.sqrt(val);
+                result_data[idx] = stdlib.math.sqrt(val);
                 idx += 1;
             }
 
@@ -1692,7 +1704,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn pow(self: *const Self, exponent: T) (Error || std.mem.Allocator.Error)!Self {
+        pub fn pow(self: *const Self, exponent: T) (Error || AllocatorError)!Self {
             // Compile-time check: pow only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("pow() is only defined for floating-point types");
@@ -1707,7 +1719,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.pow(T, val, exponent);
+                result_data[idx] = math.pow(T, val, exponent);
                 idx += 1;
             }
 
@@ -1726,7 +1738,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise floor - rounds each element down to nearest integer
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn floor(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn floor(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: floor only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("floor() is only defined for floating-point types");
@@ -1758,7 +1770,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise ceil - rounds each element up to nearest integer
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn ceil(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn ceil(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: ceil only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("ceil() is only defined for floating-point types");
@@ -1790,7 +1802,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise round - rounds each element to nearest integer (half away from zero)
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn round(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn round(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: round only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("round() is only defined for floating-point types");
@@ -1822,7 +1834,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise trunc - truncates each element toward zero (removes fractional part)
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn trunc(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn trunc(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: trunc only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("trunc() is only defined for floating-point types");
@@ -1863,7 +1875,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn sin(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn sin(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: sin only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("sin() is only defined for floating-point types");
@@ -1878,7 +1890,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.sin(val);
+                result_data[idx] = math.sin(val);
                 idx += 1;
             }
 
@@ -1902,7 +1914,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn cos(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn cos(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: cos only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("cos() is only defined for floating-point types");
@@ -1917,7 +1929,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.cos(val);
+                result_data[idx] = math.cos(val);
                 idx += 1;
             }
 
@@ -1941,7 +1953,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn tan(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn tan(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: tan only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("tan() is only defined for floating-point types");
@@ -1956,7 +1968,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.tan(val);
+                result_data[idx] = math.tan(val);
                 idx += 1;
             }
 
@@ -1973,7 +1985,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise arcsine (inverse sine) - returns array with asin of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn asin(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn asin(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: asin only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("asin() is only defined for floating-point types");
@@ -1988,7 +2000,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.asin(val);
+                result_data[idx] = math.asin(val);
                 idx += 1;
             }
 
@@ -2005,7 +2017,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise arccosine (inverse cosine) - returns array with acos of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn acos(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn acos(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: acos only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("acos() is only defined for floating-point types");
@@ -2020,7 +2032,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.acos(val);
+                result_data[idx] = math.acos(val);
                 idx += 1;
             }
 
@@ -2037,7 +2049,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise arctangent (inverse tangent) - returns array with atan of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn atan(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn atan(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: atan only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("atan() is only defined for floating-point types");
@@ -2052,7 +2064,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.atan(val);
+                result_data[idx] = math.atan(val);
                 idx += 1;
             }
 
@@ -2072,7 +2084,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// This gives the angle in radians from the positive x-axis to the point (x, y).
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn atan2(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn atan2(self: *const Self, other: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: atan2 only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("atan2() is only defined for floating-point types");
@@ -2097,7 +2109,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var idx: usize = 0;
             while (self_iter.next()) |y_val| {
                 const x_val = other_iter.next() orelse return error.ShapeMismatch;
-                result_data[idx] = std.math.atan2(y_val, x_val);
+                result_data[idx] = math.atan2(y_val, x_val);
                 idx += 1;
             }
 
@@ -2116,7 +2128,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Computes sinh(x) = (e^x - e^(-x)) / 2 for each element.
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn sinh(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn sinh(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: sinh only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("sinh() is only defined for floating-point types");
@@ -2131,7 +2143,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.sinh(val);
+                result_data[idx] = math.sinh(val);
                 idx += 1;
             }
 
@@ -2150,7 +2162,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Computes cosh(x) = (e^x + e^(-x)) / 2 for each element.
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn cosh(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn cosh(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: cosh only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("cosh() is only defined for floating-point types");
@@ -2165,7 +2177,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.cosh(val);
+                result_data[idx] = math.cosh(val);
                 idx += 1;
             }
 
@@ -2184,7 +2196,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Computes tanh(x) = sinh(x) / cosh(x) = (e^x - e^(-x)) / (e^x + e^(-x)) for each element.
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn tanh(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn tanh(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: tanh only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("tanh() is only defined for floating-point types");
@@ -2199,7 +2211,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.tanh(val);
+                result_data[idx] = math.tanh(val);
                 idx += 1;
             }
 
@@ -2223,7 +2235,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - Direction indicators in numerical methods
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn sign(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn sign(self: *const Self) (Error || AllocatorError)!Self {
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -2258,7 +2270,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - Saturation arithmetic in signal processing
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn clip(self: *const Self, min_val: T, max_val: T) (Error || std.mem.Allocator.Error)!Self {
+        pub fn clip(self: *const Self, min_val: T, max_val: T) (Error || AllocatorError)!Self {
             // Allocate new buffer for result
             const total = self.count();
             const result_data = try self.allocator.alloc(T, total);
@@ -2295,9 +2307,9 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - Threshold-based data transformation
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn where(condition: *const NDArray(bool, ndim), x: *const Self, y: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn where(condition: *const NDArray(bool, ndim), x: *const Self, y: *const Self) (Error || AllocatorError)!Self {
             // Shape validation: all arrays must match
-            if (!std.mem.eql(usize, &condition.shape, &x.shape) or !std.mem.eql(usize, &x.shape, &y.shape)) {
+            if (!mem.eql(usize, &condition.shape, &x.shape) or !mem.eql(usize, &x.shape, &y.shape)) {
                 return Error.ShapeMismatch;
             }
 
@@ -2332,7 +2344,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise base-2 logarithm - returns array with log2 of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn log2(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn log2(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: log2 only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("log2() is only defined for floating-point types");
@@ -2347,7 +2359,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.log2(val);
+                result_data[idx] = math.log2(val);
                 idx += 1;
             }
 
@@ -2364,7 +2376,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise base-10 logarithm - returns array with log10 of each element
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn log10(self: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn log10(self: *const Self) (Error || AllocatorError)!Self {
             // Compile-time check: log10 only works on float types
             if (@typeInfo(T) != .float) {
                 @compileError("log10() is only defined for floating-point types");
@@ -2379,7 +2391,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var iter = self.iterator();
             var idx: usize = 0;
             while (iter.next()) |val| {
-                result_data[idx] = std.math.log10(val);
+                result_data[idx] = math.log10(val);
                 idx += 1;
             }
 
@@ -2396,7 +2408,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise equality comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn eq(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
+        pub fn eq(self: *const Self, other: *const Self) (Error || AllocatorError)!NDArray(bool, ndim) {
             return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) bool {
                     return a == b;
@@ -2407,7 +2419,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise inequality comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn ne(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
+        pub fn ne(self: *const Self, other: *const Self) (Error || AllocatorError)!NDArray(bool, ndim) {
             return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) bool {
                     return a != b;
@@ -2418,7 +2430,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise less-than comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn lt(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
+        pub fn lt(self: *const Self, other: *const Self) (Error || AllocatorError)!NDArray(bool, ndim) {
             return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) bool {
                     return a < b;
@@ -2429,7 +2441,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise less-or-equal comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn le(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
+        pub fn le(self: *const Self, other: *const Self) (Error || AllocatorError)!NDArray(bool, ndim) {
             return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) bool {
                     return a <= b;
@@ -2440,7 +2452,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise greater-than comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn gt(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
+        pub fn gt(self: *const Self, other: *const Self) (Error || AllocatorError)!NDArray(bool, ndim) {
             return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) bool {
                     return a > b;
@@ -2451,7 +2463,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Element-wise greater-or-equal comparison - returns boolean array
         ///
         /// Time: O(n) | Space: O(n) for result allocation
-        pub fn ge(self: *const Self, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, ndim) {
+        pub fn ge(self: *const Self, other: *const Self) (Error || AllocatorError)!NDArray(bool, ndim) {
             return applyBinaryCompOp(T, ndim, self, other, self.allocator, struct {
                 pub fn op(a: T, b: T) bool {
                     return a >= b;
@@ -2492,7 +2504,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 };
             }
 
-            fn toTypeInfo(self: TypeTag) std.builtin.Type {
+            fn toTypeInfo(self: TypeTag) builtin.Type {
                 return switch (self) {
                     .i8 => @typeInfo(i8),
                     .i16 => @typeInfo(i16),
@@ -2526,13 +2538,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             const type_info = @typeInfo(Type);
             if (type_info == .int) {
-                return std.fmt.parseInt(Type, str, 10) catch return error.InvalidFormat;
+                return fmt.parseInt(Type, str, 10) catch return error.InvalidFormat;
             } else if (type_info == .float) {
-                return std.fmt.parseFloat(Type, str) catch return error.InvalidFormat;
+                return fmt.parseFloat(Type, str) catch return error.InvalidFormat;
             } else if (type_info == .bool) {
-                if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1")) {
+                if (mem.eql(u8, str, "true") or mem.eql(u8, str, "1")) {
                     return true;
-                } else if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0")) {
+                } else if (mem.eql(u8, str, "false") or mem.eql(u8, str, "0")) {
                     return false;
                 }
                 return error.InvalidFormat;
@@ -2555,17 +2567,17 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) | Space: O(1) - writes directly to file
         pub fn save(self: *const Self, path: []const u8) !void {
-            const file = try std.fs.cwd().createFile(path, .{});
+            const file = try fs.cwd().createFile(path, .{});
             defer file.close();
 
             // Write magic number "NDAR" (4 bytes)
             var magic_bytes: [4]u8 = undefined;
-            std.mem.writeInt(u32, &magic_bytes, 0x4E444152, .little);
+            mem.writeInt(u32, &magic_bytes, 0x4E444152, .little);
             _ = try file.write(&magic_bytes);
 
             // Write version (1) (4 bytes)
             var version_bytes: [4]u8 = undefined;
-            std.mem.writeInt(u32, &version_bytes, 1, .little);
+            mem.writeInt(u32, &version_bytes, 1, .little);
             _ = try file.write(&version_bytes);
 
             // Write ndim (1 byte)
@@ -2581,19 +2593,19 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             // Write shape array
             for (self.shape) |dim| {
                 var dim_bytes: [@sizeOf(usize)]u8 = undefined;
-                std.mem.writeInt(usize, &dim_bytes, dim, .little);
+                mem.writeInt(usize, &dim_bytes, dim, .little);
                 _ = try file.write(&dim_bytes);
             }
 
             // Write strides array
             for (self.strides) |stride| {
                 var stride_bytes: [@sizeOf(usize)]u8 = undefined;
-                std.mem.writeInt(usize, &stride_bytes, stride, .little);
+                mem.writeInt(usize, &stride_bytes, stride, .little);
                 _ = try file.write(&stride_bytes);
             }
 
             // Write data
-            const bytes = std.mem.sliceAsBytes(self.data);
+            const bytes = mem.sliceAsBytes(self.data);
             _ = try file.write(bytes);
         }
 
@@ -2609,14 +2621,14 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - error.TypeMismatch if file type doesn't match T
         ///
         /// Time: O(n) | Space: O(n) for data allocation
-        pub fn load(allocator: std.mem.Allocator, path: []const u8) !Self {
-            const file = try std.fs.cwd().openFile(path, .{});
+        pub fn load(allocator: mem.Allocator, path: []const u8) !Self {
+            const file = try fs.cwd().openFile(path, .{});
             defer file.close();
 
             // Read and validate magic number (4 bytes)
             var magic_bytes: [4]u8 = undefined;
             _ = try file.read(&magic_bytes);
-            const magic = std.mem.readInt(u32, &magic_bytes, .little);
+            const magic = mem.readInt(u32, &magic_bytes, .little);
             if (magic != 0x4E444152) {
                 return error.InvalidFormat;
             }
@@ -2624,7 +2636,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             // Read and validate version (4 bytes)
             var version_bytes: [4]u8 = undefined;
             _ = try file.read(&version_bytes);
-            const version = std.mem.readInt(u32, &version_bytes, .little);
+            const version = mem.readInt(u32, &version_bytes, .little);
             if (version != 1) {
                 return error.UnsupportedVersion;
             }
@@ -2656,7 +2668,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             for (0..ndim) |i| {
                 var dim_bytes: [@sizeOf(usize)]u8 = undefined;
                 _ = try file.read(&dim_bytes);
-                shape[i] = std.mem.readInt(usize, &dim_bytes, .little);
+                shape[i] = mem.readInt(usize, &dim_bytes, .little);
             }
 
             // Read strides
@@ -2664,7 +2676,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             for (0..ndim) |i| {
                 var stride_bytes: [@sizeOf(usize)]u8 = undefined;
                 _ = try file.read(&stride_bytes);
-                strides[i] = std.mem.readInt(usize, &stride_bytes, .little);
+                strides[i] = mem.readInt(usize, &stride_bytes, .little);
             }
 
             // Calculate total elements
@@ -2677,7 +2689,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             const data = try allocator.alloc(T, total);
             errdefer allocator.free(data);
 
-            const bytes = std.mem.sliceAsBytes(data);
+            const bytes = mem.sliceAsBytes(data);
             const bytes_read = try file.read(bytes);
             if (bytes_read != bytes.len) {
                 return error.UnexpectedEOF;
@@ -2713,14 +2725,14 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 return error.DimensionMismatch;
             }
 
-            const file = try std.fs.cwd().createFile(path, .{});
+            const file = try fs.cwd().createFile(path, .{});
             defer file.close();
 
             const rows = self.shape[0];
             const cols = self.shape[1];
 
             var buf: [4096]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&buf);
+            var fbs = io.fixedBufferStream(&buf);
             const writer = fbs.writer();
 
             for (0..rows) |r| {
@@ -2776,13 +2788,13 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - error.EmptyArray if file is empty
         ///
         /// Time: O(rows × cols) | Space: O(rows × cols)
-        pub fn fromCSV(allocator: std.mem.Allocator, path: []const u8, delimiter: u8) !Self {
+        pub fn fromCSV(allocator: mem.Allocator, path: []const u8, delimiter: u8) !Self {
             // Only 2D arrays can be loaded from CSV
             if (ndim != 2) {
                 return error.DimensionMismatch;
             }
 
-            const file = try std.fs.cwd().openFile(path, .{});
+            const file = try fs.cwd().openFile(path, .{});
             defer file.close();
 
             // Read entire file into memory
@@ -2801,12 +2813,12 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var in_first_row = true;
             var current_row_cols: usize = 0;
 
-            var lines = std.mem.splitScalar(u8, contents, '\n');
+            var lines = mem.splitScalar(u8, contents, '\n');
             while (lines.next()) |line| {
                 if (line.len == 0) continue; // Skip empty lines
                 row_count += 1;
 
-                var values = std.mem.splitScalar(u8, line, delimiter);
+                var values = mem.splitScalar(u8, line, delimiter);
                 current_row_cols = 0;
                 while (values.next()) |_| {
                     current_row_cols += 1;
@@ -2831,14 +2843,14 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             // Second pass: parse values
             var r: usize = 0;
-            lines = std.mem.splitScalar(u8, contents, '\n');
+            lines = mem.splitScalar(u8, contents, '\n');
             while (lines.next()) |line| {
                 if (line.len == 0) continue;
 
                 var c: usize = 0;
-                var values = std.mem.splitScalar(u8, line, delimiter);
+                var values = mem.splitScalar(u8, line, delimiter);
                 while (values.next()) |value_str| {
-                    const trimmed = std.mem.trim(u8, value_str, " \t\r");
+                    const trimmed = mem.trim(u8, value_str, " \t\r");
                     const parsed = parseValue(T, trimmed) catch return error.InvalidFormat;
                     result.set(&[_]isize{ @intCast(r), @intCast(c) }, parsed);
                     c += 1;
@@ -3091,6 +3103,180 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return sum_val / @as(f64, @floatFromInt(total));
         }
 
+        /// Variance of all elements in the array
+        ///
+        /// Parameters:
+        /// - ddof: Delta degrees of freedom. Use 0 for population variance, 1 for sample variance.
+        ///
+        /// Returns: Variance as f64 (average of squared deviations from mean)
+        ///
+        /// Errors:
+        /// - None (always succeeds)
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(1)
+        pub fn variance(self: *const Self, ddof: usize) f64 {
+            const total = self.count();
+            if (total <= ddof) {
+                return 0.0;
+            }
+
+            const mean_val = self.mean();
+            var sum_squared_dev: f64 = 0.0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                const fval = if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                const dev = fval - mean_val;
+                sum_squared_dev += dev * dev;
+            }
+            const denom = @as(f64, @floatFromInt(total - ddof));
+            return sum_squared_dev / denom;
+        }
+
+        /// Standard deviation of all elements in the array
+        ///
+        /// Parameters:
+        /// - ddof: Delta degrees of freedom. Use 0 for population std, 1 for sample std.
+        ///
+        /// Returns: Standard deviation as f64 (square root of variance)
+        ///
+        /// Errors:
+        /// - None (always succeeds)
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(1)
+        pub fn std(self: *const Self, ddof: usize) f64 {
+            return @sqrt(self.variance(ddof));
+        }
+
+        /// Median of all elements in the array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the sorted copy
+        ///
+        /// Returns: Median as f64 (middle value for odd length, average of two middle for even)
+        ///
+        /// Errors:
+        /// - error.EmptyArray if the array is empty
+        /// - AllocatorError on allocation failure
+        ///
+        /// Time: O(n log n) where n = prod(shape)
+        /// Space: O(n) for sorted copy
+        pub fn median(self: *const Self, allocator: Allocator) (Error || AllocatorError)!f64 {
+            const total = self.count();
+            if (total == 0) {
+                return error.EmptyArray;
+            }
+
+            // Allocate and copy data as f64 for sorting
+            var sorted = try allocator.alloc(f64, total);
+            defer allocator.free(sorted);
+
+            // Copy and convert to f64
+            var i: usize = 0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                sorted[i] = if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                i += 1;
+            }
+
+            // Sort ascending
+            stdlib.mem.sort(f64, sorted, {}, sorting.asc(f64));
+
+            // Compute median
+            if (total % 2 == 1) {
+                return sorted[total / 2];
+            } else {
+                const lower = sorted[total / 2 - 1];
+                const upper = sorted[total / 2];
+                return (lower + upper) / 2.0;
+            }
+        }
+
+        /// Percentile value at p% (0-100 scale)
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the sorted copy
+        /// - p: Percentile (0.0 to 100.0). p=0 is min, p=50 is median, p=100 is max.
+        ///
+        /// Returns: Value at percentile p as f64 (with linear interpolation)
+        ///
+        /// Errors:
+        /// - error.EmptyArray if the array is empty
+        /// - error.InvalidValue if p < 0 or p > 100
+        /// - AllocatorError on allocation failure
+        ///
+        /// Time: O(n log n) where n = prod(shape)
+        /// Space: O(n) for sorted copy
+        pub fn percentile(self: *const Self, allocator: Allocator, p: f64) (Error || AllocatorError)!f64 {
+            const total = self.count();
+            if (total == 0) {
+                return error.EmptyArray;
+            }
+
+            if (p < 0.0 or p > 100.0) {
+                return error.InvalidValue;
+            }
+
+            // Allocate and copy data as f64 for sorting
+            var sorted = try allocator.alloc(f64, total);
+            defer allocator.free(sorted);
+
+            // Copy and convert to f64
+            var i: usize = 0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                sorted[i] = if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                i += 1;
+            }
+
+            // Sort ascending
+            stdlib.mem.sort(f64, sorted, {}, sorting.asc(f64));
+
+            // Compute index with linear interpolation
+            const index = (p / 100.0) * @as(f64, @floatFromInt(total - 1));
+            const lower_idx = @as(usize, @intFromFloat(@floor(index)));
+            const upper_idx = @as(usize, @intFromFloat(@ceil(index)));
+
+            if (lower_idx == upper_idx) {
+                return sorted[lower_idx];
+            }
+
+            const fraction = index - @floor(index);
+            return sorted[lower_idx] * (1.0 - fraction) + sorted[upper_idx] * fraction;
+        }
+
+        /// Quantile value at q fraction (0-1 scale)
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the sorted copy
+        /// - q: Quantile (0.0 to 1.0). q=0 is min, q=0.5 is median, q=1 is max.
+        ///
+        /// Returns: Value at quantile q as f64 (with linear interpolation)
+        ///
+        /// Errors:
+        /// - error.EmptyArray if the array is empty
+        /// - error.InvalidValue if q < 0 or q > 1
+        /// - AllocatorError on allocation failure
+        ///
+        /// Time: O(n log n) where n = prod(shape)
+        /// Space: O(n) for sorted copy
+        pub fn quantile(self: *const Self, allocator: Allocator, q: f64) (Error || AllocatorError)!f64 {
+            if (q < 0.0 or q > 1.0) {
+                return error.InvalidValue;
+            }
+            return self.percentile(allocator, q * 100.0);
+        }
+
         /// Minimum element in the array
         ///
         /// Returns: Minimum element value as type T
@@ -3200,7 +3386,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn cumsum(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!Self {
+        pub fn cumsum(self: *const Self, allocator: Allocator) (Error || AllocatorError)!Self {
             // Create result array with same shape and layout
             var result = try Self.init(allocator, self.shape[0..], self.layout);
             errdefer result.deinit();
@@ -3229,7 +3415,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(n) where n = prod(shape)
         /// Space: O(n) for result array
-        pub fn cumprod(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!Self {
+        pub fn cumprod(self: *const Self, allocator: Allocator) (Error || AllocatorError)!Self {
             // Create result array with same shape and layout
             var result = try Self.init(allocator, self.shape[0..], self.layout);
             errdefer result.deinit();
@@ -3263,7 +3449,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(m × n log n) where m = number of slices, n = slice length
         /// Space: O(prod(shape)) for result array
-        pub fn sort(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn sort(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) {
                 return error.IndexOutOfBounds;
             }
@@ -3330,7 +3516,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 }
 
                 // Sort the slice
-                std.sort.heap(T, slice_buf, {}, comptime std.sort.asc(T));
+                sorting.heap(T, slice_buf, {}, comptime sorting.asc(T));
 
                 // Write sorted values back
                 for (0..axis_len) |i| {
@@ -3362,7 +3548,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Time: O(m × n log n) where m = number of slices, n = slice length
         /// Space: O(prod(shape)) for result array
-        pub fn argsort(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(usize, ndim) {
+        pub fn argsort(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(usize, ndim) {
             if (axis >= ndim) {
                 return error.IndexOutOfBounds;
             }
@@ -3433,7 +3619,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 }
 
                 // Sort by value
-                std.sort.heap(IndexValue, slice_buf, {}, struct {
+                sorting.heap(IndexValue, slice_buf, {}, struct {
                     fn lessThan(_: void, a: IndexValue, b: IndexValue) bool {
                         return a.value < b.value;
                     }
@@ -3468,7 +3654,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer uniq.deinit();
         /// // uniq.data = {1, 2, 3}
         /// ```
-        pub fn unique(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn unique(self: *const Self, allocator: Allocator) (Error || AllocatorError)!NDArray(T, 1) {
             const total = self.count();
             if (total == 0) {
                 return NDArray(T, 1).init(allocator, &[_]usize{0}, .row_major);
@@ -3485,7 +3671,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
 
             // Sort the temporary buffer
-            std.sort.heap(T, temp, {}, struct {
+            sorting.heap(T, temp, {}, struct {
                 fn lessThan(_: void, a: T, b: T) bool {
                     return a < b;
                 }
@@ -3534,7 +3720,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// // result.values.data = {1, 2, 3}
         /// // result.counts.data = {2, 1, 3}
         /// ```
-        pub fn uniqueWithCounts(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!struct {
+        pub fn uniqueWithCounts(self: *const Self, allocator: Allocator) (Error || AllocatorError)!struct {
             values: NDArray(T, 1),
             counts: NDArray(usize, 1),
         } {
@@ -3557,7 +3743,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
 
             // Sort
-            std.sort.heap(T, temp, {}, struct {
+            sorting.heap(T, temp, {}, struct {
                 fn lessThan(_: void, a: T, b: T) bool {
                     return a < b;
                 }
@@ -3622,7 +3808,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             allocator: Allocator,
             values: *const NDArray(T, 1),
             side: enum { left, right },
-        ) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+        ) (Error || AllocatorError)!NDArray(usize, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             const n = self.count();
@@ -3677,7 +3863,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer indices.deinit();
         /// // indices.data = {1, 2, 4} — flat indices of non-zero elements (1, 2, 3)
         /// ```
-        pub fn nonzero(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+        pub fn nonzero(self: *const Self, allocator: Allocator) (Error || AllocatorError)!NDArray(usize, 1) {
             // First pass: count non-zero elements
             var nz_count: usize = 0;
             var iter = self.iterator();
@@ -3751,7 +3937,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer result.deinit();
         /// // result.data = {1, 2, 3, 4}
         /// ```
-        pub fn union1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn union1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || AllocatorError)!NDArray(T, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             const n = self.count();
@@ -3766,7 +3952,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             for (0..m) |i| combined[n + i] = other.data[i];
 
             // Sort combined array
-            std.sort.heap(T, combined, {}, std.sort.asc(T));
+            sorting.heap(T, combined, {}, sorting.asc(T));
 
             // Count unique elements
             var unique_count: usize = 0;
@@ -3827,7 +4013,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer result.deinit();
         /// // result.data = {2, 3}
         /// ```
-        pub fn intersect1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn intersect1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || AllocatorError)!NDArray(T, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             // Get sorted unique values from both arrays
@@ -3905,7 +4091,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer result.deinit();
         /// // result.data = {1}
         /// ```
-        pub fn setdiff1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn setdiff1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || AllocatorError)!NDArray(T, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             // Get sorted unique values from both arrays
@@ -3981,7 +4167,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer result.deinit();
         /// // result.data = {1, 4}
         /// ```
-        pub fn setxor1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn setxor1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || AllocatorError)!NDArray(T, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             // Get sorted unique values from both arrays
@@ -4076,7 +4262,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer result.deinit();
         /// // result.data = {false, true, false, true}
         /// ```
-        pub fn in1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || std.mem.Allocator.Error)!NDArray(bool, 1) {
+        pub fn in1d(self: *const Self, allocator: Allocator, other: *const Self) (Error || AllocatorError)!NDArray(bool, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             const n = self.count();
@@ -4137,7 +4323,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer counts.deinit();
         /// // counts.data = {1, 3, 1, 1, 0, 0, 0, 1} — indices 0,1,2,3,7 appear 1,3,1,1,1 times
         /// ```
-        pub fn bincount(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+        pub fn bincount(self: *const Self, allocator: Allocator) (Error || AllocatorError)!NDArray(usize, 1) {
             // bincount only works with non-negative integer types
             const type_info = @typeInfo(T);
             if (type_info != .int and type_info != .comptime_int) {
@@ -4207,7 +4393,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer indices.deinit();
         /// // indices.data = {1, 4, 3, 2} — 0.2 in [0,1), 6.4 in [4,10), etc.
         /// ```
-        pub fn digitize(self: *const Self, allocator: Allocator, bins: *const NDArray(T, 1), right: bool) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+        pub fn digitize(self: *const Self, allocator: Allocator, bins: *const NDArray(T, 1), right: bool) (Error || AllocatorError)!NDArray(usize, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             const n = self.count();
@@ -4291,7 +4477,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer hist.deinit();
         /// // hist.data = {1, 2, 2, 1} — bins [0,1), [1,2), [2,3), [3,4)
         /// ```
-        pub fn histogram(self: *const Self, allocator: Allocator, bins: *const NDArray(T, 1)) (Error || std.mem.Allocator.Error)!NDArray(usize, 1) {
+        pub fn histogram(self: *const Self, allocator: Allocator, bins: *const NDArray(T, 1)) (Error || AllocatorError)!NDArray(usize, 1) {
             if (ndim != 1) return Error.DimensionMismatch;
 
             const n = self.count();
@@ -4365,9 +4551,9 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer extracted.deinit();
         /// // extracted.data = {1, 3}
         /// ```
-        pub fn extract(self: *const Self, allocator: Allocator, condition: *const NDArray(bool, ndim)) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        pub fn extract(self: *const Self, allocator: Allocator, condition: *const NDArray(bool, ndim)) (Error || AllocatorError)!NDArray(T, 1) {
             // Verify shapes match
-            if (!std.mem.eql(usize, &self.shape, &condition.shape)) {
+            if (!mem.eql(usize, &self.shape, &condition.shape)) {
                 return Error.ShapeMismatch;
             }
 
@@ -4434,7 +4620,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer compressed.deinit();
         /// // compressed = [[1,2,3], [7,8,9]] (rows 0 and 2)
         /// ```
-        pub fn compress(self: *const Self, allocator: Allocator, condition: *const NDArray(bool, 1), axis: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn compress(self: *const Self, allocator: Allocator, condition: *const NDArray(bool, 1), axis: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
             if (condition.shape[0] != self.shape[axis]) return Error.ShapeMismatch;
 
@@ -4535,7 +4721,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer flipped.deinit();
         /// // flipped.data = {3, 2, 1}
         /// ```
-        pub fn flip(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn flip(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
 
             var result = try Self.init(allocator, &self.shape, self.layout);
@@ -4601,7 +4787,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const rotated = try arr.rot90(allocator, 1, [2]usize{0, 1});
         /// // rotated = [[2, 4], [1, 3]]
         /// ```
-        pub fn rot90(self: *const Self, allocator: Allocator, k: i32, axes: [2]usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn rot90(self: *const Self, allocator: Allocator, k: i32, axes: [2]usize) (Error || AllocatorError)!Self {
             if (axes[0] >= ndim or axes[1] >= ndim) return Error.IndexOutOfBounds;
             if (axes[0] == axes[1]) return Error.ShapeMismatch;
 
@@ -4709,7 +4895,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer rolled.deinit();
         /// // rolled.data = {4, 5, 1, 2, 3}
         /// ```
-        pub fn roll(self: *const Self, allocator: Allocator, shift: i32, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn roll(self: *const Self, allocator: Allocator, shift: i32, axis: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
 
             var result = try Self.init(allocator, &self.shape, self.layout);
@@ -4779,7 +4965,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer d.deinit();
         /// // d.data = {2, 3, 4}
         /// ```
-        pub fn diff(self: *const Self, allocator: Allocator, n_order: usize, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn diff(self: *const Self, allocator: Allocator, n_order: usize, axis: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
             if (n_order == 0) {
                 // n=0 means no difference, return copy
@@ -4873,7 +5059,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// defer grad.deinit();
         /// // grad.data = {1.0, 1.5, 2.5, 3.5, 4.0}
         /// ```
-        pub fn gradient(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn gradient(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
             if (self.shape[axis] < 2) return Error.ShapeMismatch;
 
@@ -4962,7 +5148,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// values = [[5, 6]]        // shape [1, 2]
         /// insert(arr, 1, values, 0) => [[1, 2], [5, 6], [3, 4]]  // shape [3, 2]
         /// ```
-        pub fn insert(self: *const Self, allocator: Allocator, axis: usize, index: usize, values: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn insert(self: *const Self, allocator: Allocator, axis: usize, index: usize, values: *const Self) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
             if (index > self.shape[axis]) return Error.IndexOutOfBounds;
 
@@ -5010,7 +5196,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// values = [[5, 6]]        // shape [1, 2]
         /// append(arr, values, 0) => [[1, 2], [3, 4], [5, 6]]  // shape [3, 2]
         /// ```
-        pub fn append(self: *const Self, allocator: Allocator, axis: usize, values: *const Self) (Error || std.mem.Allocator.Error)!Self {
+        pub fn append(self: *const Self, allocator: Allocator, axis: usize, values: *const Self) (Error || AllocatorError)!Self {
             return self.insert(allocator, axis, self.shape[axis], values);
         }
 
@@ -5027,7 +5213,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// arr = [[1, 2], [3, 4], [5, 6]]  // shape [3, 2]
         /// delete(arr, 0, 1, 2) => [[1, 2], [5, 6]]  // shape [2, 2] (removed index 1)
         /// ```
-        pub fn delete(self: *const Self, allocator: Allocator, axis: usize, start_idx: usize, end_idx: usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn delete(self: *const Self, allocator: Allocator, axis: usize, start_idx: usize, end_idx: usize) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
             if (start_idx >= end_idx) return Error.IndexOutOfBounds;
             if (end_idx > self.shape[axis]) return Error.IndexOutOfBounds;
@@ -5075,7 +5261,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// indices = [0, 2]
         /// take(arr, 0, indices) => [[1, 2], [5, 6]]  // shape [2, 2]
         /// ```
-        pub fn take(self: *const Self, allocator: Allocator, axis: usize, indices: *const NDArray(usize, 1)) (Error || std.mem.Allocator.Error)!Self {
+        pub fn take(self: *const Self, allocator: Allocator, axis: usize, indices: *const NDArray(usize, 1)) (Error || AllocatorError)!Self {
             if (axis >= ndim) return Error.IndexOutOfBounds;
             const indices_len = indices.count();
             if (indices_len == 0) return Error.ZeroDimension;
@@ -5350,7 +5536,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Errors:
         /// - ShapeMismatch: if dimension at axis is not size 1
         /// - IndexOutOfBounds: if axis >= ndim
-        pub fn squeeze(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(T, ndim - 1) {
+        pub fn squeeze(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(T, ndim - 1) {
             if (ndim == 0) {
                 @compileError("Cannot squeeze 0-dimensional array");
             }
@@ -5396,7 +5582,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Errors:
         /// - IndexOutOfBounds: if axis > ndim (note: axis == ndim is valid for trailing insertion)
-        pub fn unsqueeze(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+        pub fn unsqueeze(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(T, ndim + 1) {
             if (axis > ndim) {
                 return Error.IndexOutOfBounds;
             }
@@ -5442,7 +5628,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const arr1d = try scalar.atleast1d(allocator);
         /// // arr1d.shape = [1], arr1d.data[0] = 42
         /// ```
-        pub fn atleast1d(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!if (ndim == 0) NDArray(T, 1) else Self {
+        pub fn atleast1d(self: *const Self, allocator: Allocator) (Error || AllocatorError)!if (ndim == 0) NDArray(T, 1) else Self {
             if (ndim == 0) {
                 // Scalar -> 1D with shape [1]
                 return NDArray(T, 1){
@@ -5473,7 +5659,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const arr2d = try arr1d.atleast2d(allocator);
         /// // arr2d.shape = [1, 3]
         /// ```
-        pub fn atleast2d(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!if (ndim < 2) NDArray(T, 2) else Self {
+        pub fn atleast2d(self: *const Self, allocator: Allocator) (Error || AllocatorError)!if (ndim < 2) NDArray(T, 2) else Self {
             if (ndim == 0) {
                 // Scalar -> 2D with shape [1, 1]
                 return NDArray(T, 2){
@@ -5514,7 +5700,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const arr3d = try arr2d.atleast3d(allocator);
         /// // arr3d.shape = [2, 3, 1]
         /// ```
-        pub fn atleast3d(self: *const Self, allocator: Allocator) (Error || std.mem.Allocator.Error)!if (ndim < 3) NDArray(T, 3) else Self {
+        pub fn atleast3d(self: *const Self, allocator: Allocator) (Error || AllocatorError)!if (ndim < 3) NDArray(T, 3) else Self {
             if (ndim == 0) {
                 // Scalar -> 3D [1, 1, 1]
                 return NDArray(T, 3){
@@ -5567,7 +5753,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const expanded = try arr.expandDims(allocator, 1);
         /// // expanded.shape = [2, 1, 3]
         /// ```
-        pub fn expandDims(self: *const Self, allocator: Allocator, axis: usize) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+        pub fn expandDims(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(T, ndim + 1) {
             return self.unsqueeze(allocator, axis);
         }
 
@@ -5591,7 +5777,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// const broadcasted = try arr.broadcastTo(allocator, [_]usize{3,4});
         /// // broadcasted appears as [[1,1,1,1], [2,2,2,2], [3,3,3,3]]
         /// ```
-        pub fn broadcastTo(self: *const Self, allocator: Allocator, new_shape: [ndim]usize) (Error || std.mem.Allocator.Error)!Self {
+        pub fn broadcastTo(self: *const Self, allocator: Allocator, new_shape: [ndim]usize) (Error || AllocatorError)!Self {
             // Verify broadcast compatibility
             for (0..ndim) |i| {
                 if (self.shape[i] != new_shape[i]) {
@@ -5643,7 +5829,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// var result = try NDArray(f64, 2).concat(allocator, &[_]*const NDArray(f64, 2){&a, &b}, 0, .row_major);
         /// // result shape: [4, 3] (concatenated along axis 0)
         /// ```
-        pub fn concat(allocator: Allocator, arrays: []const *const Self, axis: usize, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn concat(allocator: Allocator, arrays: []const *const Self, axis: usize, layout: Layout) (Error || AllocatorError)!Self {
             if (arrays.len == 0) {
                 return Error.EmptyArray;
             }
@@ -5704,7 +5890,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         ///
         /// Returns: NDArray(T, ndim+1) with shape [...shape[:axis], n, ...shape[axis:]]
         /// Errors: EmptyArray, IndexOutOfBounds, ShapeMismatch
-        pub fn stack(allocator: Allocator, arrays: []const *const Self, axis: usize, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+        pub fn stack(allocator: Allocator, arrays: []const *const Self, axis: usize, layout: Layout) (Error || AllocatorError)!NDArray(T, ndim + 1) {
             if (arrays.len == 0) {
                 return Error.EmptyArray;
             }
@@ -5776,7 +5962,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// for (parts) |*part| part.deinit();
         /// // parts[0].shape = [2, 4], parts[1].shape = [2, 4], parts[2].shape = [2, 4]
         /// ```
-        pub fn split(self: *const Self, allocator: Allocator, axis: usize, n_sections: usize) (Error || std.mem.Allocator.Error)![]Self {
+        pub fn split(self: *const Self, allocator: Allocator, axis: usize, n_sections: usize) (Error || AllocatorError)![]Self {
             if (axis >= ndim) {
                 return Error.IndexOutOfBounds;
             }
@@ -5823,7 +6009,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Stack arrays vertically (row-wise) — convenience wrapper for stack() along axis 0
         ///
         /// Time: O(n × m) | Space: O(n × m)
-        pub fn vstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+        pub fn vstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || AllocatorError)!NDArray(T, ndim + 1) {
             return stack(allocator, arrays, 0, layout);
         }
 
@@ -5833,7 +6019,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// For ndim ≥ 2: concatenates along axis 1 (columns)
         ///
         /// Time: O(n × m) | Space: O(n × m)
-        pub fn hstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!Self {
+        pub fn hstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || AllocatorError)!Self {
             if (ndim == 1) {
                 return concat(allocator, arrays, 0, layout);
             } else {
@@ -5846,7 +6032,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Requires ndim ≥ 2.
         ///
         /// Time: O(n × m) | Space: O(n × m)
-        pub fn dstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+        pub fn dstack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || AllocatorError)!NDArray(T, ndim + 1) {
             comptime {
                 if (ndim < 2) {
                     @compileError("dstack requires ndim >= 2");
@@ -5858,7 +6044,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Stack arrays row-wise — alias for vstack()
         ///
         /// Time: O(n × m) | Space: O(n × m)
-        pub fn row_stack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, ndim + 1) {
+        pub fn row_stack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || AllocatorError)!NDArray(T, ndim + 1) {
             return vstack(allocator, arrays, layout);
         }
 
@@ -5868,7 +6054,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// For 2D arrays: same as hstack (concatenates along axis 1)
         ///
         /// Time: O(n × m) | Space: O(n × m)
-        pub fn column_stack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || std.mem.Allocator.Error)!NDArray(T, if (ndim == 1) 2 else ndim) {
+        pub fn column_stack(allocator: Allocator, arrays: []const *const Self, layout: Layout) (Error || AllocatorError)!NDArray(T, if (ndim == 1) 2 else ndim) {
             if (arrays.len == 0) {
                 return Error.EmptyArray;
             }
@@ -5948,7 +6134,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             pad_width: []const [2]usize,
             mode: PadMode,
             constant_value: T,
-        ) (Error || std.mem.Allocator.Error)!Self {
+        ) (Error || AllocatorError)!Self {
             if (pad_width.len != ndim) {
                 return Error.ZeroDimension;
             }
@@ -6001,7 +6187,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             allocator: Allocator,
             repeats: usize,
             axis: usize,
-        ) (Error || std.mem.Allocator.Error)!Self {
+        ) (Error || AllocatorError)!Self {
             if (repeats == 0) {
                 return Error.ZeroDimension;
             }
@@ -6024,7 +6210,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             errdefer result.deinit();
 
             // Iterate through source array
-            var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+            var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
             var done = false;
 
             while (!done) {
@@ -6086,7 +6272,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             self: *const Self,
             allocator: Allocator,
             repeats: usize,
-        ) (Error || std.mem.Allocator.Error)!NDArray(T, 1) {
+        ) (Error || AllocatorError)!NDArray(T, 1) {
             if (repeats == 0) {
                 return Error.ZeroDimension;
             }
@@ -6097,7 +6283,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             errdefer result.deinit();
 
             var flat_idx: usize = 0;
-            var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+            var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
             var done = false;
 
             while (!done) {
@@ -6154,7 +6340,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             self: *const Self,
             allocator: Allocator,
             reps: []const usize,
-        ) (Error || std.mem.Allocator.Error)!Self {
+        ) (Error || AllocatorError)!Self {
             if (reps.len != ndim) {
                 return Error.ShapeMismatch;
             }
@@ -6176,7 +6362,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             errdefer result.deinit();
 
             // Iterate through all output positions
-            var out_indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+            var out_indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
             var done = false;
 
             while (!done) {
@@ -6219,7 +6405,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
 /// Helper to copy original array data to center of padded array
 fn copyToPaddedCenter(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6262,7 +6448,7 @@ fn copyToPaddedCenter(comptime T: type, comptime ndim: usize, dest: *NDArray(T, 
 /// Fill padding regions with constant value
 fn fillConstantPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize, constant_value: T) !void {
     _ = src;
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6308,7 +6494,7 @@ fn fillConstantPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T,
 
 /// Fill padding regions by extending edge values
 fn fillEdgePadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6369,7 +6555,7 @@ fn fillEdgePadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndi
 
 /// Fill padding regions with reflected values (without repeating edge)
 fn fillReflectPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6434,7 +6620,7 @@ fn fillReflectPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, 
 
 /// Fill padding regions with symmetric reflection (with repeating edge)
 fn fillSymmetricPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6499,7 +6685,7 @@ fn fillSymmetricPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T
 
 /// Fill padding regions with wrapped values (circular)
 fn fillWrapPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), pad_width: []const [2]usize) !void {
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6566,7 +6752,7 @@ fn fillWrapPadding(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndi
 /// Helper to copy a section of array during split operation
 fn copySplitSection(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), axis: usize, axis_offset: usize) !void {
     // Iterate through all elements of destination array using multi-dimensional indices
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6615,7 +6801,7 @@ fn copySplitSection(comptime T: type, comptime ndim: usize, dest: *NDArray(T, nd
 /// Helper to copy array to stacked result during stack operation
 fn copyArrayToStack(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim + 1), src: *const NDArray(T, ndim), axis: usize, stack_index: usize) !void {
     // Iterate through all elements of source array using multi-dimensional indices
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6662,7 +6848,7 @@ fn copyArrayToStack(comptime T: type, comptime ndim: usize, dest: *NDArray(T, nd
 /// Helper to copy array segment during concatenation
 fn copyArraySegment(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), axis: usize, offset: usize) !void {
     // Iterate through all elements of source array using multi-dimensional indices
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6717,7 +6903,7 @@ fn copyArraySegment(comptime T: type, comptime ndim: usize, dest: *NDArray(T, nd
 /// count: number of elements to copy along axis
 fn copyArraySegmentInsert(comptime T: type, comptime ndim: usize, dest: *NDArray(T, ndim), src: *const NDArray(T, ndim), axis: usize, dest_offset: usize, src_offset: usize, count: usize) !void {
     // Iterate through all elements in the slice
-    var indices: [ndim]usize = std.mem.zeroes([ndim]usize);
+    var indices: [ndim]usize = stdlib.mem.zeroes([ndim]usize);
 
     var done = false;
     while (!done) {
@@ -6854,7 +7040,7 @@ test "ndarray: init rejects zero-sized dimensions" {
 test "ndarray: init rejects oversized shape exceeding usize max" {
     const allocator = testing.allocator;
     // Attempt: [usize.max, 2] → product overflows
-    const result = NDArray(f64, 2).init(allocator, &[_]usize{ std.math.maxInt(usize), 2 }, .row_major);
+    const result = NDArray(f64, 2).init(allocator, &[_]usize{ math.maxInt(usize), 2 }, .row_major);
 
     try testing.expectError(error.CapacityExceeded, result);
 }
@@ -6928,7 +7114,7 @@ test "ndarray: deinit frees allocated memory (leak detection)" {
     var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 100, 100 }, .row_major);
     arr.deinit();
 
-    // std.testing.allocator automatically detects leaks
+    // stdlib.testing.allocator automatically detects leaks
     // If deinit didn't free, test will fail with leak error
 }
 
@@ -7546,7 +7732,7 @@ test "ndarray: fromOwnedSlice() basic 1D array [5] takes ownership" {
     const data = try allocator.alloc(f64, 5);
     defer {
         // Only free if test fails; normally deinit() handles it
-        if (!std.debug.runtime_safety) {
+        if (!debug.runtime_safety) {
             // In release mode, trust the NDArray to free
         }
     }
@@ -7697,7 +7883,7 @@ test "ndarray: fromOwnedSlice() shape overflow check" {
     defer allocator.free(data); // Manually free since fromOwnedSlice will fail
 
     // Try shape that would overflow: [max_usize, 2]
-    const huge_shape = &[_]usize{ std.math.maxInt(usize), 2 };
+    const huge_shape = &[_]usize{ math.maxInt(usize), 2 };
     const result = NDArray(f64, 2).fromOwnedSlice(allocator, huge_shape, data, .row_major);
 
     try testing.expectError(error.CapacityExceeded, result);
@@ -9410,7 +9596,7 @@ test "ndarray: reshape no memory leak with multiple allocations" {
         try testing.expectEqual(30, reshaped.count());
     }
 
-    // std.testing.allocator will detect leaks if any allocation not freed
+    // stdlib.testing.allocator will detect leaks if any allocation not freed
 }
 
 // -- transpose() Function Tests (13+ tests) --
@@ -9608,7 +9794,7 @@ test "ndarray: transpose no memory leak with multiple transposes" {
         }
     }
 
-    // std.testing.allocator will detect leaks if any transposes incorrectly allocate
+    // stdlib.testing.allocator will detect leaks if any transposes incorrectly allocate
 }
 
 // ============================================================================
@@ -9681,7 +9867,7 @@ test "ndarray: ravel empty-dimension array [0,5] error handling" {
 
 
 test "ndarray: contiguous distinguishes contiguous from non-contiguous views" {
-    const allocator = std.testing.allocator;
+    const allocator = stdlib.testing.allocator;
     var arr = try NDArray(i32, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr.deinit();
 
@@ -10112,8 +10298,8 @@ test "ndarray: exp 1D array exponential" {
     defer result.deinit();
 
     try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10); // e^0 = 1
-    try testing.expectApproxEqAbs(std.math.exp(1.0), result.data[1], 1e-10); // e^1 ≈ 2.71828
-    try testing.expectApproxEqAbs(std.math.exp(2.0), result.data[2], 1e-10); // e^2 ≈ 7.38906
+    try testing.expectApproxEqAbs(math.exp(1.0), result.data[1], 1e-10); // e^1 ≈ 2.71828
+    try testing.expectApproxEqAbs(math.exp(2.0), result.data[2], 1e-10); // e^2 ≈ 7.38906
 
     try testing.expect(result.data.ptr != a.data.ptr);
 }
@@ -10132,9 +10318,9 @@ test "ndarray: exp 2D array exponential" {
     defer result.deinit();
 
     try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);
-    try testing.expectApproxEqAbs(std.math.exp(1.0), result.data[1], 1e-10);
-    try testing.expectApproxEqAbs(std.math.exp(-1.0), result.data[2], 1e-10);
-    try testing.expectApproxEqAbs(std.math.exp(2.0), result.data[3], 1e-10);
+    try testing.expectApproxEqAbs(math.exp(1.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(math.exp(-1.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(math.exp(2.0), result.data[3], 1e-10);
 }
 
 test "ndarray: log 1D array natural logarithm" {
@@ -10144,8 +10330,8 @@ test "ndarray: log 1D array natural logarithm" {
 
     // a = [1, e, e^2]
     a.data[0] = 1.0;
-    a.data[1] = std.math.exp(1.0);
-    a.data[2] = std.math.exp(2.0);
+    a.data[1] = math.exp(1.0);
+    a.data[2] = math.exp(2.0);
 
     var result = try a.log();
     defer result.deinit();
@@ -10163,9 +10349,9 @@ test "ndarray: log 2D array natural logarithm" {
     defer a.deinit();
 
     a.data[0] = 1.0;
-    a.data[1] = std.math.exp(1.0);
-    a.data[2] = std.math.exp(2.0);
-    a.data[3] = std.math.exp(3.0);
+    a.data[1] = math.exp(1.0);
+    a.data[2] = math.exp(2.0);
+    a.data[3] = math.exp(3.0);
 
     var result = try a.log();
     defer result.deinit();
@@ -10764,7 +10950,7 @@ test "ndarray: sin 1D array sine" {
     defer a.deinit();
 
     // a = [0, π/6, π/4, π/3, π/2]
-    const pi = std.math.pi;
+    const pi = math.pi;
     a.data[0] = 0.0;
     a.data[1] = pi / 6.0;
     a.data[2] = pi / 4.0;
@@ -10776,8 +10962,8 @@ test "ndarray: sin 1D array sine" {
 
     try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);     // sin(0) = 0
     try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10);     // sin(π/6) = 0.5
-    try testing.expectApproxEqAbs(std.math.sin(pi / 4.0), result.data[2], 1e-10); // sin(π/4) ≈ 0.707
-    try testing.expectApproxEqAbs(std.math.sin(pi / 3.0), result.data[3], 1e-10); // sin(π/3) ≈ 0.866
+    try testing.expectApproxEqAbs(math.sin(pi / 4.0), result.data[2], 1e-10); // sin(π/4) ≈ 0.707
+    try testing.expectApproxEqAbs(math.sin(pi / 3.0), result.data[3], 1e-10); // sin(π/3) ≈ 0.866
     try testing.expectApproxEqAbs(1.0, result.data[4], 1e-10);     // sin(π/2) = 1
 
     try testing.expect(result.data.ptr != a.data.ptr);
@@ -10788,7 +10974,7 @@ test "ndarray: sin 2D array sine" {
     var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer a.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     a.data[0] = 0.0;
     a.data[1] = pi / 2.0;
     a.data[2] = pi;
@@ -10808,7 +10994,7 @@ test "ndarray: cos 1D array cosine" {
     var a = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
     defer a.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     a.data[0] = 0.0;
     a.data[1] = pi / 3.0;
     a.data[2] = pi / 4.0;
@@ -10820,7 +11006,7 @@ test "ndarray: cos 1D array cosine" {
 
     try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);                    // cos(0) = 1
     try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10);                    // cos(π/3) = 0.5
-    try testing.expectApproxEqAbs(std.math.cos(pi / 4.0), result.data[2], 1e-10); // cos(π/4) ≈ 0.707
+    try testing.expectApproxEqAbs(math.cos(pi / 4.0), result.data[2], 1e-10); // cos(π/4) ≈ 0.707
     try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10);                    // cos(π/2) = 0
     try testing.expectApproxEqAbs(-1.0, result.data[4], 1e-10);                   // cos(π) = -1
 
@@ -10832,7 +11018,7 @@ test "ndarray: cos 2D array cosine" {
     var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer a.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     a.data[0] = 0.0;
     a.data[1] = pi / 2.0;
     a.data[2] = pi;
@@ -10852,7 +11038,7 @@ test "ndarray: tan 1D array tangent" {
     var a = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
     defer a.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     a.data[0] = 0.0;
     a.data[1] = pi / 6.0;
     a.data[2] = pi / 4.0;
@@ -10862,9 +11048,9 @@ test "ndarray: tan 1D array tangent" {
     defer result.deinit();
 
     try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);                    // tan(0) = 0
-    try testing.expectApproxEqAbs(std.math.tan(pi / 6.0), result.data[1], 1e-10); // tan(π/6) ≈ 0.577
+    try testing.expectApproxEqAbs(math.tan(pi / 6.0), result.data[1], 1e-10); // tan(π/6) ≈ 0.577
     try testing.expectApproxEqAbs(1.0, result.data[2], 1e-10);                    // tan(π/4) = 1
-    try testing.expectApproxEqAbs(std.math.tan(pi / 3.0), result.data[3], 1e-10); // tan(π/3) ≈ 1.732
+    try testing.expectApproxEqAbs(math.tan(pi / 3.0), result.data[3], 1e-10); // tan(π/3) ≈ 1.732
 
     try testing.expect(result.data.ptr != a.data.ptr);
 }
@@ -10874,7 +11060,7 @@ test "ndarray: tan 2D array tangent" {
     var a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer a.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     a.data[0] = 0.0;
     a.data[1] = pi / 4.0;
     a.data[2] = -pi / 4.0;
@@ -10886,7 +11072,7 @@ test "ndarray: tan 2D array tangent" {
     try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);                     // tan(0) = 0
     try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);                     // tan(π/4) = 1
     try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10);                    // tan(-π/4) = -1
-    try testing.expectApproxEqAbs(std.math.tan(pi / 6.0), result.data[3], 1e-10);  // tan(π/6) ≈ 0.577
+    try testing.expectApproxEqAbs(math.tan(pi / 6.0), result.data[3], 1e-10);  // tan(π/6) ≈ 0.577
 }
 
 test "ndarray: asin 1D array arcsine" {
@@ -10902,7 +11088,7 @@ test "ndarray: asin 1D array arcsine" {
     var result = try a.asin();
     defer result.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);           // asin(0) = 0
     try testing.expectApproxEqAbs(pi / 6.0, result.data[1], 1e-10);      // asin(0.5) = π/6
     try testing.expectApproxEqAbs(-pi / 6.0, result.data[2], 1e-10);     // asin(-0.5) = -π/6
@@ -10922,7 +11108,7 @@ test "ndarray: acos 1D array arccosine" {
     var result = try a.acos();
     defer result.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);           // acos(1) = 0
     try testing.expectApproxEqAbs(pi / 3.0, result.data[1], 1e-10);      // acos(0.5) = π/3
     try testing.expectApproxEqAbs(2.0 * pi / 3.0, result.data[2], 1e-10); // acos(-0.5) = 2π/3
@@ -10937,12 +11123,12 @@ test "ndarray: atan 1D array arctangent" {
     a.data[0] = 0.0;
     a.data[1] = 1.0;
     a.data[2] = -1.0;
-    a.data[3] = std.math.sqrt(3.0);
+    a.data[3] = stdlib.math.sqrt(3.0);
 
     var result = try a.atan();
     defer result.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);           // atan(0) = 0
     try testing.expectApproxEqAbs(pi / 4.0, result.data[1], 1e-10);      // atan(1) = π/4
     try testing.expectApproxEqAbs(-pi / 4.0, result.data[2], 1e-10);     // atan(-1) = -π/4
@@ -10965,7 +11151,7 @@ test "ndarray: atan2 2D array two-argument arctangent" {
     var result = try y.atan2(&x);
     defer result.deinit();
 
-    const pi = std.math.pi;
+    const pi = math.pi;
     try testing.expectApproxEqAbs(pi / 4.0, result.data[0], 1e-10);        // atan2(1, 1) = π/4
     try testing.expectApproxEqAbs(3.0 * pi / 4.0, result.data[1], 1e-10);  // atan2(1, -1) = 3π/4
     try testing.expectApproxEqAbs(-3.0 * pi / 4.0, result.data[2], 1e-10); // atan2(-1, -1) = -3π/4
@@ -12646,7 +12832,7 @@ test "ndarray: save and load 1D i32 array" {
     try testing.expectEqual(Layout.row_major, loaded.layout);
 
     // Clean up
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_1d.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_1d.bin");
 }
 
 test "ndarray: save and load 2D f64 array" {
@@ -12683,7 +12869,7 @@ test "ndarray: save and load 2D f64 array" {
     try testing.expectApproxEqAbs(6.6, loaded.data[5], 1e-10);
 
     // Clean up
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_2d.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_2d.bin");
 }
 
 test "ndarray: save and load 3D u8 array column-major" {
@@ -12718,7 +12904,7 @@ test "ndarray: save and load 3D u8 array column-major" {
     }
 
     // Clean up
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_3d.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_3d.bin");
 }
 
 test "ndarray: save and load bool array" {
@@ -12742,7 +12928,7 @@ test "ndarray: save and load bool array" {
     try testing.expect(loaded.data[2] == true);
     try testing.expect(loaded.data[3] == false);
 
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_bool.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_bool.bin");
 }
 
 test "ndarray: load with wrong ndim fails" {
@@ -12762,7 +12948,7 @@ test "ndarray: load with wrong ndim fails" {
     const result = NDArray(i32, 2).load(allocator, "/tmp/test_ndarray_wrong_ndim.bin");
     try testing.expectError(error.DimensionMismatch, result);
 
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_wrong_ndim.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_wrong_ndim.bin");
 }
 
 test "ndarray: load with wrong type fails" {
@@ -12782,7 +12968,7 @@ test "ndarray: load with wrong type fails" {
     const result = NDArray(f64, 1).load(allocator, "/tmp/test_ndarray_wrong_type.bin");
     try testing.expectError(error.TypeMismatch, result);
 
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_wrong_type.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_wrong_type.bin");
 }
 
 test "ndarray: load nonexistent file fails" {
@@ -12819,7 +13005,7 @@ test "ndarray: save and load large array" {
     try testing.expectEqual(@as(i64, 5000), loaded.data[5000]);
     try testing.expectEqual(@as(i64, 9999), loaded.data[9999]);
 
-    try std.fs.cwd().deleteFile("/tmp/test_ndarray_large.bin");
+    try fs.cwd().deleteFile("/tmp/test_ndarray_large.bin");
 }
 
 // ============================================================================
@@ -13774,7 +13960,7 @@ test "broadcast: comparison ge with [2,1] >= [1,3] broadcasts to [2,3]" {
 ///
 /// Time: O(max(ndim_a, ndim_b))
 /// Space: O(max(ndim_a, ndim_b))
-fn broadcastShapes(shape_a: []const usize, shape_b: []const usize, allocator: std.mem.Allocator) !([]usize) {
+fn broadcastShapes(shape_a: []const usize, shape_b: []const usize, allocator: mem.Allocator) !([]usize) {
     // Determine result rank
     const result_rank = @max(shape_a.len, shape_b.len);
 
@@ -13813,7 +13999,7 @@ fn broadcastShapes(shape_a: []const usize, shape_b: []const usize, allocator: st
 /// Apply a binary operation with broadcasting support
 /// Operation function signature: fn(a: T, b: T) T
 fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim),
-    other: *const NDArray(T, ndim), allocator: std.mem.Allocator,
+    other: *const NDArray(T, ndim), allocator: mem.Allocator,
     comptime op: fn (T, T) T) !(NDArray(T, ndim)) {
 
     const Self = NDArray(T, ndim);
@@ -13911,7 +14097,7 @@ fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T,
 /// Operation function signature: fn(a: T, b: T) bool
 /// Returns an NDArray(bool, ndim) with the comparison result
 fn applyBinaryCompOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim),
-    other: *const NDArray(T, ndim), allocator: std.mem.Allocator,
+    other: *const NDArray(T, ndim), allocator: mem.Allocator,
     comptime op: fn (T, T) bool) !(NDArray(bool, ndim)) {
 
     // Compute broadcasted shape
@@ -16781,7 +16967,7 @@ test "ndarray: toCSV() and fromCSV() basic roundtrip f64" {
     }
 
     // Cleanup
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() and fromCSV() integer types i32" {
@@ -16814,7 +17000,7 @@ test "ndarray: toCSV() and fromCSV() integer types i32" {
         }
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() and fromCSV() u8 type" {
@@ -16844,7 +17030,7 @@ test "ndarray: toCSV() and fromCSV() u8 type" {
         }
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() custom delimiter semicolon" {
@@ -16876,7 +17062,7 @@ test "ndarray: toCSV() custom delimiter semicolon" {
         }
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() custom delimiter tab" {
@@ -16907,7 +17093,7 @@ test "ndarray: toCSV() custom delimiter tab" {
         }
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() single row" {
@@ -16937,7 +17123,7 @@ test "ndarray: toCSV() single row" {
         try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() single column" {
@@ -16966,7 +17152,7 @@ test "ndarray: toCSV() single column" {
         try testing.expectEqual(orig_val, loaded_val);
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() 1x1 matrix" {
@@ -16990,7 +17176,7 @@ test "ndarray: toCSV() 1x1 matrix" {
     const loaded_val = try loaded.get(&[_]isize{ @intCast(0), @intCast(0) });
     try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() large array (100 rows)" {
@@ -17021,7 +17207,7 @@ test "ndarray: toCSV() large array (100 rows)" {
     try testing.expectApproxEqAbs(99.0, try loaded.get(&[_]isize{ @intCast(9), @intCast(9) }), 1e-9);
     try testing.expectApproxEqAbs(505.0, try loaded.get(&[_]isize{ @intCast(50), @intCast(5) }), 1e-9);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: fromCSV() handles whitespace trimming" {
@@ -17031,7 +17217,7 @@ test "ndarray: fromCSV() handles whitespace trimming" {
     // Create CSV with extra whitespace
     const csv_content = "  1.5  ,  2.7  ,  3.2  \n  4.1  ,  5.9  ,  6.3  \n";
     {
-        const file = try std.fs.cwd().createFile(path, .{});
+        const file = try fs.cwd().createFile(path, .{});
         defer file.close();
         _ = try file.write(csv_content);
     }
@@ -17046,7 +17232,7 @@ test "ndarray: fromCSV() handles whitespace trimming" {
     try testing.expectApproxEqAbs(2.7, try loaded.get(&[_]isize{ @intCast(0), @intCast(1) }), 1e-9);
     try testing.expectApproxEqAbs(6.3, try loaded.get(&[_]isize{ @intCast(1), @intCast(2) }), 1e-9);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: fromCSV() error on empty file" {
@@ -17054,7 +17240,7 @@ test "ndarray: fromCSV() error on empty file" {
     const path = "/tmp/test_ndarray_csv_empty.csv";
 
     {
-        const file = try std.fs.cwd().createFile(path, .{});
+        const file = try fs.cwd().createFile(path, .{});
         defer file.close();
         // Write nothing
     }
@@ -17062,7 +17248,7 @@ test "ndarray: fromCSV() error on empty file" {
     const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
     try testing.expectError(error.EmptyArray, result);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: fromCSV() error on ragged array (unequal columns)" {
@@ -17071,7 +17257,7 @@ test "ndarray: fromCSV() error on ragged array (unequal columns)" {
 
     const csv_content = "1,2,3\n4,5\n6,7,8\n";
     {
-        const file = try std.fs.cwd().createFile(path, .{});
+        const file = try fs.cwd().createFile(path, .{});
         defer file.close();
         _ = try file.write(csv_content);
     }
@@ -17079,7 +17265,7 @@ test "ndarray: fromCSV() error on ragged array (unequal columns)" {
     const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
     try testing.expectError(error.InvalidFormat, result);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: fromCSV() error on invalid number format" {
@@ -17088,7 +17274,7 @@ test "ndarray: fromCSV() error on invalid number format" {
 
     const csv_content = "1.5,abc,3.2\n4.1,5.9,6.3\n";
     {
-        const file = try std.fs.cwd().createFile(path, .{});
+        const file = try fs.cwd().createFile(path, .{});
         defer file.close();
         _ = try file.write(csv_content);
     }
@@ -17096,7 +17282,7 @@ test "ndarray: fromCSV() error on invalid number format" {
     const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
     try testing.expectError(error.InvalidFormat, result);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: toCSV() error on 1D array" {
@@ -17127,7 +17313,7 @@ test "ndarray: fromCSV() error on 1D type" {
 
     const csv_content = "1,2,3\n4,5,6\n";
     {
-        const file = try std.fs.cwd().createFile(path, .{});
+        const file = try fs.cwd().createFile(path, .{});
         defer file.close();
         _ = try file.write(csv_content);
     }
@@ -17135,7 +17321,7 @@ test "ndarray: fromCSV() error on 1D type" {
     const result = NDArray(f64, 1).fromCSV(allocator, path, ',');
     try testing.expectError(error.DimensionMismatch, result);
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: CSV roundtrip with negative values" {
@@ -17168,7 +17354,7 @@ test "ndarray: CSV roundtrip with negative values" {
         }
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: CSV roundtrip with zeros" {
@@ -17198,7 +17384,7 @@ test "ndarray: CSV roundtrip with zeros" {
         }
     }
 
-    std.fs.cwd().deleteFile(path) catch {};
+    fs.cwd().deleteFile(path) catch {};
 }
 
 test "ndarray: CSV roundtrip memory safety with allocator" {
@@ -17225,7 +17411,7 @@ test "ndarray: CSV roundtrip memory safety with allocator" {
         try testing.expectEqual(@as(usize, 5), loaded.shape[0]);
         try testing.expectEqual(@as(usize, 5), loaded.shape[1]);
 
-        std.fs.cwd().deleteFile(path) catch {};
+        fs.cwd().deleteFile(path) catch {};
     }
 }
 
@@ -20808,4 +20994,495 @@ test "histogram: dimension mismatch error" {
 
     const result = arr.histogram(allocator, &bins);
     try testing.expectError(error.DimensionMismatch, result);
+}
+
+// ============================================================================
+// Statistical Aggregation Functions Tests
+// ============================================================================
+
+// variance() — Variance with delta degrees of freedom
+test "variance: basic variance f64 array" {
+    const allocator = testing.allocator;
+
+    // [1, 2, 3, 4, 5] has mean=3, sum of squared deviations = 10
+    // variance(ddof=0) = 10/5 = 2.0, variance(ddof=1) = 10/4 = 2.5
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const variance_val = arr.variance(0);
+    try testing.expectApproxEqAbs(2.0, variance_val, 1e-9);
+}
+
+test "variance: sample variance with ddof=1" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const variance_val = arr.variance(1);
+    try testing.expectApproxEqAbs(2.5, variance_val, 1e-9);
+}
+
+test "variance: zero variance (all same elements)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 5.0, 5.0, 5.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    const variance_val = arr.variance(0);
+    try testing.expectApproxEqAbs(0.0, variance_val, 1e-9);
+}
+
+test "variance: single element (variance is undefined, should be 0)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{42.0};
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &data, .row_major);
+    defer arr.deinit();
+
+    const variance_val = arr.variance(0);
+    try testing.expectApproxEqAbs(0.0, variance_val, 1e-9);
+}
+
+test "variance: integer array converted to f64" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const variance_val = arr.variance(0);
+    try testing.expectApproxEqAbs(200.0, variance_val, 1e-9);
+}
+
+test "variance: 2D array flattened" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    // Mean = 2.5, variance = sum((x-2.5)^2) / 4 = 1.25
+    const variance_val = arr.variance(0);
+    try testing.expectApproxEqAbs(1.25, variance_val, 1e-9);
+}
+
+// std() — Standard deviation with delta degrees of freedom
+test "std: basic standard deviation" {
+    const allocator = testing.allocator;
+
+    // [1, 2, 3, 4, 5] var(0)=2.0, std(0)=sqrt(2.0)≈1.414
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const std_val = arr.std(0);
+    try testing.expectApproxEqAbs(stdlib.math.sqrt(2.0), std_val, 1e-9);
+}
+
+test "std: sample standard deviation with ddof=1" {
+    const allocator = testing.allocator;
+
+    // [1, 2, 3, 4, 5] var(1)=2.5, std(1)=sqrt(2.5)≈1.581
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const std_val = arr.std(1);
+    try testing.expectApproxEqAbs(stdlib.math.sqrt(2.5), std_val, 1e-9);
+}
+
+test "std: zero standard deviation" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 7.0, 7.0, 7.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const std_val = arr.std(0);
+    try testing.expectApproxEqAbs(0.0, std_val, 1e-9);
+}
+
+test "std: integer array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 2, 4, 6, 8, 10 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    // var = 8.0, std = sqrt(8.0) ≈ 2.828
+    const std_val = arr.std(0);
+    try testing.expectApproxEqAbs(stdlib.math.sqrt(8.0), std_val, 1e-9);
+}
+
+// median() — Middle value or average of two middle values
+test "median: odd length array" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const med = try arr.median(allocator);
+    try testing.expectApproxEqAbs(3.0, med, 1e-9);
+}
+
+test "median: even length array (average of two middle)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+    defer arr.deinit();
+
+    const med = try arr.median(allocator);
+    try testing.expectApproxEqAbs(2.5, med, 1e-9);
+}
+
+test "median: unsorted array" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 5.0, 1.0, 3.0, 2.0, 4.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const med = try arr.median(allocator);
+    try testing.expectApproxEqAbs(3.0, med, 1e-9);
+}
+
+test "median: single element" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{42.5};
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &data, .row_major);
+    defer arr.deinit();
+
+    const med = try arr.median(allocator);
+    try testing.expectApproxEqAbs(42.5, med, 1e-9);
+}
+
+test "median: integer array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 9, 1, 5, 3, 7 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const med = try arr.median(allocator);
+    try testing.expectApproxEqAbs(5.0, med, 1e-9);
+}
+
+test "median: 2D array flattened" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 2.0, 4.0, 1.0, 3.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    // Flattened: [2,4,1,3], sorted: [1,2,3,4], median = (2+3)/2 = 2.5
+    const med = try arr.median(allocator);
+    try testing.expectApproxEqAbs(2.5, med, 1e-9);
+}
+
+test "median: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 3.0, 1.0, 4.0, 2.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &data, .row_major);
+        defer arr.deinit();
+
+        const med = try arr.median(allocator);
+        try testing.expectApproxEqAbs(2.5, med, 1e-9);
+    }
+}
+
+test "median: empty array error" {
+    const allocator = testing.allocator;
+
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    const result = arr.median(allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+// percentile() — Value at percentage p (0-100 scale)
+test "percentile: p=0 (minimum)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const p0 = try arr.percentile(allocator, 0.0);
+    try testing.expectApproxEqAbs(1.0, p0, 1e-9);
+}
+
+test "percentile: p=50 (median)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const p50 = try arr.percentile(allocator, 50.0);
+    try testing.expectApproxEqAbs(3.0, p50, 1e-9);
+}
+
+test "percentile: p=100 (maximum)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const p100 = try arr.percentile(allocator, 100.0);
+    try testing.expectApproxEqAbs(5.0, p100, 1e-9);
+}
+
+test "percentile: p=25 (first quartile)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &data, .row_major);
+    defer arr.deinit();
+
+    // Linear interpolation: idx = 0.25 * (8-1) = 1.75
+    // result ≈ arr[1] + 0.75 * (arr[2] - arr[1]) = 2 + 0.75 * 1 = 2.75
+    const p25 = try arr.percentile(allocator, 25.0);
+    try testing.expectApproxEqAbs(2.75, p25, 1e-9);
+}
+
+test "percentile: p=75 (third quartile)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &data, .row_major);
+    defer arr.deinit();
+
+    // Linear interpolation: idx = 0.75 * (8-1) = 5.25
+    // result ≈ arr[5] + 0.25 * (arr[6] - arr[5]) = 6 + 0.25 * 1 = 6.25
+    const p75 = try arr.percentile(allocator, 75.0);
+    try testing.expectApproxEqAbs(6.25, p75, 1e-9);
+}
+
+test "percentile: unsorted array" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 5.0, 1.0, 3.0, 2.0, 4.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const p50 = try arr.percentile(allocator, 50.0);
+    try testing.expectApproxEqAbs(3.0, p50, 1e-9);
+}
+
+test "percentile: integer array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const p50 = try arr.percentile(allocator, 50.0);
+    try testing.expectApproxEqAbs(30.0, p50, 1e-9);
+}
+
+test "percentile: out of range error (p < 0)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const result = arr.percentile(allocator, -1.0);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "percentile: out of range error (p > 100)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const result = arr.percentile(allocator, 101.0);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "percentile: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 3.0, 1.0, 4.0, 1.0, 5.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+        defer arr.deinit();
+
+        const p50 = try arr.percentile(allocator, 50.0);
+        try testing.expectApproxEqAbs(3.0, p50, 1e-9);
+    }
+}
+
+test "percentile: empty array error" {
+    const allocator = testing.allocator;
+
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    const result = arr.percentile(allocator, 50.0);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+// quantile() — Value at fraction q (0-1 scale)
+test "quantile: q=0 (minimum)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const q0 = try arr.quantile(allocator, 0.0);
+    try testing.expectApproxEqAbs(1.0, q0, 1e-9);
+}
+
+test "quantile: q=0.5 (median)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const q50 = try arr.quantile(allocator, 0.5);
+    try testing.expectApproxEqAbs(3.0, q50, 1e-9);
+}
+
+test "quantile: q=1 (maximum)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const q1 = try arr.quantile(allocator, 1.0);
+    try testing.expectApproxEqAbs(5.0, q1, 1e-9);
+}
+
+test "quantile: q=0.25 (first quartile)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &data, .row_major);
+    defer arr.deinit();
+
+    // Linear interpolation: idx = 0.25 * (8-1) = 1.75
+    // result ≈ arr[1] + 0.75 * (arr[2] - arr[1]) = 2 + 0.75 * 1 = 2.75
+    const q25 = try arr.quantile(allocator, 0.25);
+    try testing.expectApproxEqAbs(2.75, q25, 1e-9);
+}
+
+test "quantile: q=0.75 (third quartile)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &data, .row_major);
+    defer arr.deinit();
+
+    // Linear interpolation: idx = 0.75 * (8-1) = 5.25
+    // result ≈ arr[5] + 0.25 * (arr[6] - arr[5]) = 6 + 0.25 * 1 = 6.25
+    const q75 = try arr.quantile(allocator, 0.75);
+    try testing.expectApproxEqAbs(6.25, q75, 1e-9);
+}
+
+test "quantile: unsorted array" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 5.0, 1.0, 3.0, 2.0, 4.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const q50 = try arr.quantile(allocator, 0.5);
+    try testing.expectApproxEqAbs(3.0, q50, 1e-9);
+}
+
+test "quantile: integer array" {
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    const q50 = try arr.quantile(allocator, 0.5);
+    try testing.expectApproxEqAbs(30.0, q50, 1e-9);
+}
+
+test "quantile: out of range error (q < 0)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const result = arr.quantile(allocator, -0.1);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "quantile: out of range error (q > 1)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &data, .row_major);
+    defer arr.deinit();
+
+    const result = arr.quantile(allocator, 1.1);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "quantile: memory safety" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 3.0, 1.0, 4.0, 1.0, 5.0 };
+        var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+        defer arr.deinit();
+
+        const q50 = try arr.quantile(allocator, 0.5);
+        try testing.expectApproxEqAbs(3.0, q50, 1e-9);
+    }
+}
+
+test "quantile: empty array error" {
+    const allocator = testing.allocator;
+
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    const result = arr.quantile(allocator, 0.5);
+    try testing.expectError(error.EmptyArray, result);
 }
