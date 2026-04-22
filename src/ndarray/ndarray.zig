@@ -22150,3 +22150,437 @@ test "corrcoef: memory safety (10 iterations)" {
         try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[0]);
     }
 }
+
+// ================== mode() tests ==================
+
+test "mode: basic integer array [1,2,2,3,3,3,4] returns 3" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{7}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]i32{ 1, 2, 2, 3, 3, 3, 4 };
+    for (0..7) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 3.0);
+}
+
+test "mode: tie-breaking returns first mode in sorted order" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]i32{ 1, 1, 2, 2 };
+    for (0..4) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 1.0); // 1 comes before 2 in sorted order
+}
+
+test "mode: single element returns that element" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{0}, 5.0);
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 5.0);
+}
+
+test "mode: all same elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 7.0, 7.0, 7.0, 7.0, 7.0 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 7.0);
+}
+
+test "mode: unsorted input [5,1,3,1,2,1]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]i32{ 5, 1, 3, 1, 2, 1 };
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 1.0); // 1 appears 3 times
+}
+
+test "mode: float data [1.5, 2.5, 2.5, 3.5]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.5, 2.5, 2.5, 3.5 };
+    for (0..4) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 2.5);
+}
+
+test "mode: empty array returns error.EmptyArray" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    defer arr.deinit();
+
+    const result = arr.mode(allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "mode: 2D array flattened mode [1,2; 2,3; 3,3]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer arr.deinit();
+
+    const data = [_]i32{ 1, 2, 2, 3, 3, 3 };
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i/2), @intCast(i%2)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == 3.0);
+}
+
+test "mode: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 1).init(allocator, &[_]usize{8}, .row_major);
+        defer arr.deinit();
+
+        const data = [_]f64{ 1.1, 2.2, 2.2, 3.3, 3.3, 3.3, 4.4, 5.5 };
+        for (0..8) |i| {
+            arr.set(&[_]isize{@intCast(i)}, data[i]);
+        }
+
+        const mode_val = try arr.mode(allocator);
+        try testing.expect(mode_val == 3.3);
+    }
+}
+
+test "mode: i32 type compatibility" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]i32{ -10, -5, -5, 0, 10 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const mode_val = try arr.mode(allocator);
+    try testing.expect(mode_val == -5.0);
+}
+
+// ================== skewness() tests ==================
+
+test "skewness: symmetric distribution [1,2,3,4,5] near 0" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const skew = try arr.skewness(allocator);
+    try testing.expect(@abs(skew) < 0.1); // Nearly symmetric
+}
+
+test "skewness: right-skewed distribution [1,1,1,2,5] is positive" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 1.0, 1.0, 2.0, 5.0 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const skew = try arr.skewness(allocator);
+    try testing.expect(skew > 0.0); // Right-skewed
+}
+
+test "skewness: left-skewed distribution [1,5,5,5,5] is negative" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 5.0, 5.0, 5.0, 5.0 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const skew = try arr.skewness(allocator);
+    try testing.expect(skew < 0.0); // Left-skewed
+}
+
+test "skewness: zero variance returns error.InvalidValue" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 3.0, 3.0, 3.0, 3.0 };
+    for (0..4) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const result = arr.skewness(allocator);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "skewness: single element returns error (std undefined)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{0}, 42.0);
+
+    const result = arr.skewness(allocator);
+    // Single element has std = 0, so should return error.InvalidValue
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "skewness: normal distribution sample has low skewness" {
+    const allocator = testing.allocator;
+    // Approximate normal distribution: bell curve centered at 3
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{9}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.5, 2.0, 2.5, 2.8, 3.0, 3.2, 3.5, 4.0, 4.5 };
+    for (0..9) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const skew = try arr.skewness(allocator);
+    try testing.expect(@abs(skew) < 0.5); // Approximately normal, low skewness
+}
+
+test "skewness: exponential-like [1,2,3,5,10,50] has strong positive skewness" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 5.0, 10.0, 50.0 };
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const skew = try arr.skewness(allocator);
+    try testing.expect(skew > 0.5); // Strong right skew
+}
+
+test "skewness: empty array returns error.EmptyArray" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    defer arr.deinit();
+
+    const result = arr.skewness(allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "skewness: 2D array flattened" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 1.0, 1.0, 2.0, 5.0, 6.0 };
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i/2), @intCast(i%2)}, data[i]);
+    }
+
+    const skew = try arr.skewness(allocator);
+    try testing.expect(skew > 0.0); // Right-skewed
+}
+
+test "skewness: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 1).init(allocator, &[_]usize{7}, .row_major);
+        defer arr.deinit();
+
+        const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 20.0 };
+        for (0..7) |i| {
+            arr.set(&[_]isize{@intCast(i)}, data[i]);
+        }
+
+        const skew = try arr.skewness(allocator);
+        try testing.expect(skew > 0.0); // Right-skewed
+    }
+}
+
+// ================== kurtosis() tests ==================
+
+test "kurtosis: normal-like [1,2,3,4,5] fisher=true (excess) is negative (platykurtic)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const kurt = try arr.kurtosis(allocator, true);
+    try testing.expect(kurt < 0.0); // Uniform distribution is platykurtic
+}
+
+test "kurtosis: fisher=false vs fisher=true difference is 3" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{6}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const kurt_pearson = try arr.kurtosis(allocator, false);
+    const kurt_fisher = try arr.kurtosis(allocator, true);
+
+    const diff = kurt_pearson - kurt_fisher;
+    try testing.expect(@abs(diff - 3.0) < 0.01); // Difference should be exactly 3
+}
+
+test "kurtosis: heavy tails [1,1,1,1,10] has positive excess kurtosis" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 1.0, 1.0, 1.0, 10.0 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const kurt = try arr.kurtosis(allocator, true);
+    try testing.expect(kurt > 0.0); // Leptokurtic (heavy tails)
+}
+
+test "kurtosis: uniform-like [1,2,3,4] has negative excess kurtosis" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    for (0..4) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const kurt = try arr.kurtosis(allocator, true);
+    try testing.expect(kurt < 0.0); // Platykurtic (light tails)
+}
+
+test "kurtosis: zero variance returns error.InvalidValue" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{3}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 5.0, 5.0, 5.0 };
+    for (0..3) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const result = arr.kurtosis(allocator, true);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "kurtosis: single element returns error (std undefined)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{0}, 7.0);
+
+    const result = arr.kurtosis(allocator, true);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "kurtosis: empty array returns error.EmptyArray" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    defer arr.deinit();
+
+    const result = arr.kurtosis(allocator, true);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "kurtosis: 2D array flattened" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    for (0..6) |i| {
+        arr.set(&[_]isize{@intCast(i/2), @intCast(i%2)}, data[i]);
+    }
+
+    const kurt_fisher = try arr.kurtosis(allocator, true);
+    try testing.expect(kurt_fisher < 0.0); // Uniform-like, platykurtic
+}
+
+test "kurtosis: excess kurtosis calculation validation" {
+    const allocator = testing.allocator;
+    // Create a leptokurtic distribution (concentrated at center with heavy tails)
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{7}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]f64{ 0.5, 2.0, 5.0, 5.0, 5.0, 8.0, 9.5 };
+    for (0..7) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const kurt_fisher = try arr.kurtosis(allocator, true);
+    const kurt_pearson = try arr.kurtosis(allocator, false);
+
+    // Verify relationship: excess = Pearson - 3
+    try testing.expect(@abs(kurt_fisher - (kurt_pearson - 3.0)) < 0.001);
+}
+
+test "kurtosis: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 1).init(allocator, &[_]usize{8}, .row_major);
+        defer arr.deinit();
+
+        const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+        for (0..8) |i| {
+            arr.set(&[_]isize{@intCast(i)}, data[i]);
+        }
+
+        const kurt = try arr.kurtosis(allocator, true);
+        try testing.expect(kurt < 0.0); // Uniform should be platykurtic
+    }
+}
+
+test "kurtosis: i32 type compatibility" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer arr.deinit();
+
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    for (0..5) |i| {
+        arr.set(&[_]isize{@intCast(i)}, data[i]);
+    }
+
+    const kurt = try arr.kurtosis(allocator, true);
+    try testing.expect(kurt < 0.0); // Uniform-like
+}
