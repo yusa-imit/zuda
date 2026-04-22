@@ -1,52 +1,58 @@
-## Latest Session (Session 411, 2026-04-23) — FEATURE MODE
-- NDArray Statistical Correlation Functions: 27 tests, NumPy-compatible cov() and corrcoef()
+## Latest Session (Session 412, 2026-04-23) — FEATURE MODE
+- NDArray Descriptive Statistics Completion: 31 tests, mode/skewness/kurtosis complete Phase 8 stats
 - Module: ndarray/ndarray.zig
 - Functions:
-  * cov(allocator, rowvar): Sample covariance matrix with Bessel correction (N-1 denominator)
-    - 1D input → 0D scalar variance
-    - 2D input → n_vars × n_vars covariance matrix
-    - rowvar: true = rows are variables (observations in columns), false = columns are variables (observations in rows)
-    - Formula: cov(X,Y) = Σ((xᵢ-μₓ)(yᵢ-μᵧ))/(N-1)
-    - Two-pass algorithm: compute means first, then covariances
-    - Type generic (int/float) with f64 output
-    - Time: O(n×m²), Space: O(m²) where n=observations, m=variables
-  * corrcoef(allocator, rowvar): Pearson correlation coefficient matrix
-    - Normalized covariance: ρ(X,Y) = cov(X,Y)/(σₓ×σᵧ)
-    - 1D input → 0D scalar 1.0 (perfect self-correlation)
-    - 2D input → correlation matrix with values in [-1,1]
-    - Diagonal always 1.0 (perfect self-correlation)
-    - NaN for zero-variance (constant) variables
-    - Time: O(n×m²), Space: O(m²)
+  * mode(allocator): Most frequent value - O(n log n) time, O(n) space
+    - Sorting-based frequency counting algorithm
+    - Tie-breaking: returns smallest value when multiple modes exist
+    - Works with all numeric types (f64, f32, i32)
+    - Error: EmptyArray for zero-length arrays
+  * skewness(allocator): Fisher-Pearson skewness coefficient E[((X-μ)/σ)³] - O(n) time, O(1) space
+    - Positive = right-skewed (longer tail to the right)
+    - Negative = left-skewed (longer tail to the left)
+    - ~0 = symmetric distribution
+    - Three-pass algorithm: mean, std, sum of cubed deviations
+    - Error: EmptyArray, InvalidValue (zero variance)
+  * kurtosis(allocator, fisher): Pearson kurtosis E[((X-μ)/σ)⁴] - O(n) time, O(1) space
+    - fisher=false: Pearson kurtosis (raw value)
+    - fisher=true: Excess kurtosis (Pearson - 3, where 3 = normal distribution baseline)
+    - Positive excess = heavy tails (leptokurtic)
+    - Negative excess = light tails (platykurtic)
+    - Three-pass algorithm: mean, std, sum of fourth-power deviations
+    - Error: EmptyArray, InvalidValue (zero variance)
 - Features:
-  * Bessel correction (N-1) for unbiased sample covariance
-  * rowvar parameter for flexible data layout (NumPy compatibility)
-  * Symmetric matrices (cov[i,j] = cov[j,i])
-  * Diagonal of cov matrix = variances of individual variables
-  * Correlation range validation [-1,1], diagonal = 1.0
-  * NaN handling for constant variables (division by zero in correlation)
-  * Type generic: works with all numeric types (int/float), outputs f64
-  * Error handling: EmptyArray for empty inputs
+  * TDD workflow: test-writer → zig-developer with scratchpad coordination
+  * Type-generic: works with all numeric types via iterator protocol
+  * Multidimensional support: automatically flatten via iterator
+  * NumPy/SciPy compatibility: matches API conventions and formulas
+  * Error handling: proper error unions (Error || AllocatorError)
+  * Memory safety: all functions tested with testing.allocator (10 iterations each)
 - Use cases:
-  * Statistical analysis: multivariate data correlation analysis
-  * Machine learning: feature correlation, dimensionality reduction prep
-  * Finance: portfolio covariance, risk metrics (correlation between assets)
-  * Quality control: process variable relationships
-  * Sensor fusion: correlating sensor readings
-  * Time series: cross-correlation analysis
-- Tests (27 scenarios):
-  * cov: 2D rowvar=true/false, 1D scalar, perfect positive/negative/low covariance, identical variables, 3 variables, f32 type, symmetry, diagonal=variance, empty error, memory safety (13 tests)
-  * corrcoef: perfect correlations (±1.0), low correlation, diagonal=1.0, symmetry, range [-1,1], 1D→1.0, 2D rowvar variants, 3 variables, f32 type, constant variable (NaN), empty error, memory safety (14 tests)
+  * mode: Categorical data analysis, finding most common values
+  * skewness: Distribution shape analysis, normality testing, outlier detection
+  * kurtosis: Tail risk assessment (finance), quality control (process stability), anomaly detection
+  * Combined: Complete descriptive statistics suite for exploratory data analysis
+- Tests (31 scenarios):
+  * mode: basic detection, tie-breaking, edge cases (single/all same/empty), types (f64/f32/i32), 2D flattened, memory safety (10 tests)
+  * skewness: symmetric (~0), right-skewed (+), left-skewed (-), normal/exponential examples, error paths, 2D, memory (10 tests)
+  * kurtosis: Pearson vs Excess (difference = 3), heavy tails (+), light tails (-), relationship validation, error paths, 2D, memory (11 tests)
 - Implementation notes:
-  * Two-pass covariance: means first, then deviations to avoid numerical instability
-  * corrcoef reuses cov() then normalizes by standard deviations
-  * Type dispatch via @typeInfo(T) switch (.int/.float)
-  * Array initialization syntax: &[_]usize{} for slices, &[0]usize{} for 0D
-  * All test get() calls need `try` (error union)
+  * mode uses sorting instead of HashMap for simplicity (O(n log n) vs O(n) but cleaner code)
+  * skewness/kurtosis reuse mean() and std(ddof=0) for consistency
+  * Fixed parameter shadowing: pad() function's `mode` parameter → `pad_mode`
+  * Type conversions: @as(f64, @floatFromInt(val)) for safe numeric conversion
+- Phase 8 Descriptive Stats Status: mean ✓, median ✓, std ✓, variance ✓, percentile ✓, quantile ✓, mode ✓, skewness ✓, kurtosis ✓
+- NDArray now has 153 public functions (was 149, +3 net: +3 new)
+- Total ndarray tests: 835 (was 804, +31)
+- All tests: passing (exit code 0)
+- CI: Pending
+- Issues: Zero open
+- Commits: 86b130b (tests), e87855a (implementation), f6edeb8 (activity log)
+
+## Previous Session (Session 411, 2026-04-23) — FEATURE MODE
+- NDArray Statistical Correlation Functions: 27 tests, NumPy-compatible cov() and corrcoef()
 - NDArray now has 149 public functions (was 147, +2)
 - Total ndarray tests: 804 (was 777, +27)
-- All tests: passing (2879/2879, exit code 0)
-- CI: Green (pending)
-- Issues: Zero open
 - Commits: f1e707d (cov/corrcoef), 3860ea6 (activity log)
 
 ## Previous Session (Session 405, 2026-04-22) — STABILIZATION MODE 🎉
