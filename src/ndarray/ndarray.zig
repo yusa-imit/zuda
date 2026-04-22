@@ -3277,6 +3277,171 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return self.percentile(allocator, q * 100.0);
         }
 
+        /// Covariance matrix
+        ///
+        /// Computes the sample covariance matrix with Bessel correction (N-1 denominator).
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result
+        /// - rowvar: If true, each row is a variable (observations in columns).
+        ///           If false, each column is a variable (observations in rows).
+        ///
+        /// For 1D input: Returns scalar variance (0D array)
+        /// For 2D input: Returns covariance matrix (2D array)
+        ///
+        /// Formula: cov(X,Y) = E[(X - μₓ)(Y - μᵧ)] = Σ((xᵢ - μₓ)(yᵢ - μᵧ)) / (N-1)
+        ///
+        /// Returns: NDArray(f64, ndim) - covariance matrix or scalar
+        ///
+        /// Errors:
+        /// - error.EmptyArray if input is empty
+        /// - AllocatorError if memory allocation fails
+        ///
+        /// Time: O(n×m²) where n = num_observations, m = num_variables
+        /// Space: O(m²) for covariance matrix
+        pub fn cov(self: *const Self, allocator: Allocator, rowvar: bool) (Error || AllocatorError)!if (ndim == 1) NDArray(f64, 0) else NDArray(f64, 2) {
+            if (self.data.len == 0) {
+                return error.EmptyArray;
+            }
+
+            // 1D case: return scalar variance
+            if (ndim == 1) {
+                const var_val = self.variance(1); // Bessel correction (N-1)
+                var result = try NDArray(f64, 0).init(allocator, &[0]usize{}, self.layout);
+                result.data[0] = var_val;
+                return result;
+            }
+
+            // 2D case: compute covariance matrix
+            const n_vars: usize = if (rowvar) self.shape[0] else self.shape[1];
+            const n_obs: usize = if (rowvar) self.shape[1] else self.shape[0];
+
+            // Allocate covariance matrix (n_vars × n_vars)
+            var result = try NDArray(f64, 2).init(allocator, &[_]usize{ n_vars, n_vars }, self.layout);
+            errdefer result.deinit();
+
+            // Compute means for each variable
+            var means = try allocator.alloc(f64, n_vars);
+            defer allocator.free(means);
+            @memset(means, 0.0);
+
+            for (0..n_vars) |v| {
+                var var_sum: f64 = 0.0;
+                for (0..n_obs) |o| {
+                    const idx = if (rowvar) v * self.shape[1] + o else o * self.shape[1] + v;
+                    const val = switch (@typeInfo(T)) {
+                        .int => @as(f64, @floatFromInt(self.data[idx])),
+                        .float => @as(f64, @floatCast(self.data[idx])),
+                        else => @compileError("Unsupported type for cov"),
+                    };
+                    var_sum += val;
+                }
+                means[v] = var_sum / @as(f64, @floatFromInt(n_obs));
+            }
+
+            // Compute covariance matrix
+            for (0..n_vars) |i| {
+                for (0..n_vars) |j| {
+                    var covariance: f64 = 0.0;
+                    for (0..n_obs) |o| {
+                        const idx_i = if (rowvar) i * self.shape[1] + o else o * self.shape[1] + i;
+                        const idx_j = if (rowvar) j * self.shape[1] + o else o * self.shape[1] + j;
+                        const val_i = switch (@typeInfo(T)) {
+                            .int => @as(f64, @floatFromInt(self.data[idx_i])),
+                            .float => @as(f64, @floatCast(self.data[idx_i])),
+                            else => @compileError("Unsupported type for cov"),
+                        };
+                        const val_j = switch (@typeInfo(T)) {
+                            .int => @as(f64, @floatFromInt(self.data[idx_j])),
+                            .float => @as(f64, @floatCast(self.data[idx_j])),
+                            else => @compileError("Unsupported type for cov"),
+                        };
+                        covariance += (val_i - means[i]) * (val_j - means[j]);
+                    }
+                    // Bessel correction: divide by (N-1)
+                    const denom = if (n_obs > 1) @as(f64, @floatFromInt(n_obs - 1)) else 1.0;
+                    result.data[i * n_vars + j] = covariance / denom;
+                }
+            }
+
+            return result;
+        }
+
+        /// Pearson correlation coefficient matrix
+        ///
+        /// Computes the correlation coefficient matrix, which is the normalized covariance matrix.
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result
+        /// - rowvar: If true, each row is a variable (observations in columns).
+        ///           If false, each column is a variable (observations in rows).
+        ///
+        /// For 1D input: Returns scalar 1.0 (0D array, perfect self-correlation)
+        /// For 2D input: Returns correlation matrix (2D array)
+        ///
+        /// Formula: ρ(X,Y) = cov(X,Y) / (σₓ × σᵧ)
+        ///
+        /// Correlation values are in [-1, 1]:
+        /// - 1.0 = perfect positive correlation
+        /// - -1.0 = perfect negative correlation
+        /// - 0.0 = no correlation
+        /// - Diagonal is always 1.0 (perfect self-correlation)
+        ///
+        /// Returns: NDArray(f64, ndim) - correlation matrix or scalar
+        ///
+        /// Errors:
+        /// - error.EmptyArray if input is empty
+        /// - AllocatorError if memory allocation fails
+        ///
+        /// Note: If a variable has zero variance (constant), correlation will be NaN or Inf
+        ///
+        /// Time: O(n×m²) where n = num_observations, m = num_variables
+        /// Space: O(m²) for correlation matrix
+        pub fn corrcoef(self: *const Self, allocator: Allocator, rowvar: bool) (Error || AllocatorError)!if (ndim == 1) NDArray(f64, 0) else NDArray(f64, 2) {
+            if (self.data.len == 0) {
+                return error.EmptyArray;
+            }
+
+            // 1D case: return scalar 1.0 (perfect self-correlation)
+            if (ndim == 1) {
+                var result = try NDArray(f64, 0).init(allocator, &[0]usize{}, self.layout);
+                result.data[0] = 1.0;
+                return result;
+            }
+
+            // 2D case: compute correlation from covariance
+            var cov_matrix = try self.cov(allocator, rowvar);
+            defer cov_matrix.deinit();
+
+            const n_vars = cov_matrix.shape[0];
+
+            // Extract standard deviations (sqrt of diagonal)
+            var std_devs = try allocator.alloc(f64, n_vars);
+            defer allocator.free(std_devs);
+
+            for (0..n_vars) |i| {
+                std_devs[i] = @sqrt(cov_matrix.data[i * n_vars + i]);
+            }
+
+            // Compute correlation matrix
+            var result = try NDArray(f64, 2).init(allocator, &[_]usize{ n_vars, n_vars }, self.layout);
+            errdefer result.deinit();
+
+            for (0..n_vars) |i| {
+                for (0..n_vars) |j| {
+                    const denom = std_devs[i] * std_devs[j];
+                    if (denom == 0.0) {
+                        // Handle zero variance (constant variable)
+                        result.data[i * n_vars + j] = math.nan(f64);
+                    } else {
+                        result.data[i * n_vars + j] = cov_matrix.data[i * n_vars + j] / denom;
+                    }
+                }
+            }
+
+            return result;
+        }
+
         /// Minimum element in the array
         ///
         /// Returns: Minimum element value as type T
@@ -21485,4 +21650,503 @@ test "quantile: empty array error" {
 
     const result = arr.quantile(allocator, 0.5);
     try testing.expectError(error.EmptyArray, result);
+}
+
+// ============================================================================
+// cov() — Covariance matrix computation
+// ============================================================================
+
+test "cov: 2D array with rowvar=true (2 variables, 5 observations)" {
+    const allocator = testing.allocator;
+
+    // 2 variables, 5 observations each
+    // X = [1, 2, 3, 4, 5]
+    // Y = [2, 4, 6, 8, 10]
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    // Check shape is [2, 2]
+    try testing.expectEqual(@as(usize, 2), cov_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 2), cov_matrix.shape[1]);
+
+    // X variance: mean=3, sum_sq_dev = (1-3)^2 + (2-3)^2 + (3-3)^2 + (4-3)^2 + (5-3)^2 = 4+1+0+1+4 = 10, var = 10/4 = 2.5
+    // Y variance: mean=6, sum_sq_dev = (2-6)^2 + (4-6)^2 + (6-6)^2 + (8-6)^2 + (10-6)^2 = 16+4+0+4+16 = 40, var = 40/4 = 10
+    // Covariance: (1-3)(2-6) + (2-3)(4-6) + (3-3)(6-6) + (4-3)(8-6) + (5-3)(10-6) = 8+2+0+2+8 = 20, cov = 20/4 = 5
+    try testing.expectApproxEqAbs(2.5, try cov_matrix.get(&[_]isize{ 0, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(10.0, try cov_matrix.get(&[_]isize{ 1, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(5.0, try cov_matrix.get(&[_]isize{ 0, 1 }), 1e-9);
+    try testing.expectApproxEqAbs(5.0, try cov_matrix.get(&[_]isize{ 1, 0 }), 1e-9);
+}
+
+test "cov: 2D array with rowvar=false (5 observations, 2 variables)" {
+    const allocator = testing.allocator;
+
+    // 5 observations, 2 variables
+    const data = [_]f64{ 1.0, 2.0, 2.0, 4.0, 3.0, 6.0, 4.0, 8.0, 5.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, false);
+    defer cov_matrix.deinit();
+
+    // Should produce same result as rowvar=true version (different data layout)
+    try testing.expectEqual(@as(usize, 2), cov_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 2), cov_matrix.shape[1]);
+    try testing.expectApproxEqAbs(2.5, try cov_matrix.get(&[_]isize{ 0, 0 }), 1e-9);
+    try testing.expectApproxEqAbs(10.0, try cov_matrix.get(&[_]isize{ 1, 1 }), 1e-9);
+}
+
+test "cov: 1D input returns scalar variance" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_scalar = try arr.cov(allocator, true);
+    defer cov_scalar.deinit();
+
+    // Should return 0D array with the variance value
+    try testing.expectEqual(@as(usize, 0), cov_scalar.shape.len);
+    const expected_var = arr.variance(1);
+    try testing.expectApproxEqAbs(expected_var, try cov_scalar.get(&[_]isize{}), 1e-9);
+}
+
+test "cov: perfect positive covariance" {
+    const allocator = testing.allocator;
+
+    // X = [1, 2, 3], Y = [2, 4, 6] (Y = 2*X)
+    // They are perfectly positively correlated
+    const data = [_]f64{ 1.0, 2.0, 3.0, 2.0, 4.0, 6.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    const cov_xy = try cov_matrix.get(&[_]isize{ 0, 1 });
+    try testing.expect(cov_xy > 0.0);
+}
+
+test "cov: perfect negative covariance" {
+    const allocator = testing.allocator;
+
+    // X = [1, 2, 3], Y = [6, 4, 2] (Y = -2*X + 8)
+    // They are perfectly negatively correlated
+    const data = [_]f64{ 1.0, 2.0, 3.0, 6.0, 4.0, 2.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    const cov_xy = try cov_matrix.get(&[_]isize{ 0, 1 });
+    try testing.expect(cov_xy < 0.0);
+}
+
+test "cov: independent variables (covariance near zero)" {
+    const allocator = testing.allocator;
+
+    // X = [1, 2, 3, 4, 5], Y = [2, 3, 2, 3, 2] (Y constant mean, low correlation)
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 3.0, 2.0, 3.0, 2.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    const cov_xy = try cov_matrix.get(&[_]isize{ 0, 1 });
+    // Covariance is small but not exactly zero
+    try testing.expect(@abs(cov_xy) < 0.5);
+}
+
+test "cov: identical variables (cov(X,X) = var(X))" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    // Verify diagonal element matches variance
+    // Extract first variable and compute variance manually
+    var first_var_data = [_]f64{ data[0], data[1], data[2], data[3], data[4] };
+    var first_var = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &first_var_data, .row_major);
+    defer first_var.deinit();
+
+    const var_x = first_var.variance(1);
+    const cov_xx = try cov_matrix.get(&[_]isize{ 0, 0 });
+    try testing.expectApproxEqAbs(var_x, cov_xx, 1e-9);
+}
+
+test "cov: three variables (3x10 matrix)" {
+    const allocator = testing.allocator;
+
+    // 3 variables, 10 observations
+    var data = try allocator.alloc(f64, 30);
+    defer allocator.free(data);
+
+    for (0..10) |i| {
+        data[i * 3 + 0] = @as(f64, @floatFromInt(i + 1)); // Variable 1: 1..10
+        data[i * 3 + 1] = @as(f64, @floatFromInt(2 * (i + 1))); // Variable 2: 2..20
+        data[i * 3 + 2] = @as(f64, @floatFromInt(10 - i)); // Variable 3: 10..1 (decreasing)
+    }
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 10 }, data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    // Should produce 3x3 covariance matrix
+    try testing.expectEqual(@as(usize, 3), cov_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 3), cov_matrix.shape[1]);
+
+    // Diagonal should be positive (variances)
+    for (0..3) |i| {
+        const i_signed: isize = @intCast(i);
+        const var_diag = try cov_matrix.get(&[_]isize{ i_signed, i_signed });
+        try testing.expect(var_diag >= 0.0);
+    }
+}
+
+test "cov: f32 type compatibility" {
+    const allocator = testing.allocator;
+
+    const data = [_]f32{ 1.0, 2.0, 3.0, 2.0, 4.0, 6.0 };
+    var arr = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    try testing.expectEqual(@as(usize, 2), cov_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 2), cov_matrix.shape[1]);
+}
+
+test "cov: covariance matrix is symmetric" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    for (0..cov_matrix.shape[0]) |i| {
+        for (0..cov_matrix.shape[1]) |j| {
+            const i_signed: isize = @intCast(i);
+            const j_signed: isize = @intCast(j);
+            const val_ij = try cov_matrix.get(&[_]isize{ i_signed, j_signed });
+            const val_ji = try cov_matrix.get(&[_]isize{ j_signed, i_signed });
+            try testing.expectApproxEqAbs(val_ij, val_ji, 1e-9);
+        }
+    }
+}
+
+test "cov: diagonal elements are variances" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var cov_matrix = try arr.cov(allocator, true);
+    defer cov_matrix.deinit();
+
+    // Extract variables and compute their variances
+    const data_x = data[0..5];
+    var var_x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, data_x, .row_major);
+    defer var_x.deinit();
+
+    const data_y = data[5..10];
+    var var_y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, data_y, .row_major);
+    defer var_y.deinit();
+
+    const expected_var_x = var_x.variance(1);
+    const expected_var_y = var_y.variance(1);
+
+    const diag_00 = try cov_matrix.get(&[_]isize{ 0, 0 });
+    const diag_11 = try cov_matrix.get(&[_]isize{ 1, 1 });
+
+    try testing.expectApproxEqAbs(expected_var_x, diag_00, 1e-9);
+    try testing.expectApproxEqAbs(expected_var_y, diag_11, 1e-9);
+}
+
+test "cov: empty array error" {
+    const allocator = testing.allocator;
+
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 2){
+        .shape = [_]usize{ 0, 0 },
+        .strides = [_]usize{ 0, 0 },
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    const result = arr.cov(allocator, true);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "cov: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.0, 3.0, 2.0, 4.0, 6.0 };
+        var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+        defer arr.deinit();
+
+        var cov_matrix = try arr.cov(allocator, true);
+        defer cov_matrix.deinit();
+
+        try testing.expectEqual(@as(usize, 2), cov_matrix.shape[0]);
+    }
+}
+
+// ============================================================================
+// corrcoef() — Pearson correlation coefficient matrix
+// ============================================================================
+
+test "corrcoef: perfect positive correlation (X=[1,2,3], Y=[2,4,6])" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 2.0, 4.0, 6.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    const rho_01 = try corrcoef_matrix.get(&[_]isize{ 0, 1 });
+    try testing.expectApproxEqAbs(1.0, rho_01, 1e-9);
+}
+
+test "corrcoef: perfect negative correlation (X=[1,2,3], Y=[6,4,2])" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 6.0, 4.0, 2.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    const rho_01 = try corrcoef_matrix.get(&[_]isize{ 0, 1 });
+    try testing.expectApproxEqAbs(-1.0, rho_01, 1e-9);
+}
+
+test "corrcoef: no correlation (independent variables)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 3.0, 2.0, 3.0, 2.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    const rho_01 = try corrcoef_matrix.get(&[_]isize{ 0, 1 });
+    // Correlation is small but not exactly zero
+    try testing.expect(@abs(rho_01) < 0.5);
+}
+
+test "corrcoef: diagonal is 1.0 (perfect self-correlation)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    for (0..corrcoef_matrix.shape[0]) |i| {
+        const i_signed: isize = @intCast(i);
+        const diag_val = try corrcoef_matrix.get(&[_]isize{ i_signed, i_signed });
+        try testing.expectApproxEqAbs(1.0, diag_val, 1e-9);
+    }
+}
+
+test "corrcoef: matrix is symmetric" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    for (0..corrcoef_matrix.shape[0]) |i| {
+        for (0..corrcoef_matrix.shape[1]) |j| {
+            const i_signed: isize = @intCast(i);
+            const j_signed: isize = @intCast(j);
+            const val_ij = try corrcoef_matrix.get(&[_]isize{ i_signed, j_signed });
+            const val_ji = try corrcoef_matrix.get(&[_]isize{ j_signed, i_signed });
+            try testing.expectApproxEqAbs(val_ij, val_ji, 1e-9);
+        }
+    }
+}
+
+test "corrcoef: all values in [-1, 1]" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    var iter = corrcoef_matrix.iterator();
+    while (iter.next()) |val| {
+        try testing.expect(val >= -1.0 and val <= 1.0);
+    }
+}
+
+test "corrcoef: 1D input returns 1.0 (scalar perfect correlation)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    var arr = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_scalar = try arr.corrcoef(allocator, true);
+    defer corrcoef_scalar.deinit();
+
+    // Should return 0D array with value 1.0
+    try testing.expectApproxEqAbs(1.0, try corrcoef_scalar.get(&[_]isize{}), 1e-9);
+}
+
+test "corrcoef: 2D with rowvar=true (2 variables, 5 observations)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 2.0, 4.0, 6.0, 8.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 5 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[1]);
+
+    const rho_01 = try corrcoef_matrix.get(&[_]isize{ 0, 1 });
+    // Y = 2*X perfectly, so correlation should be 1.0
+    try testing.expectApproxEqAbs(1.0, rho_01, 1e-9);
+}
+
+test "corrcoef: 2D with rowvar=false (5 observations, 2 variables)" {
+    const allocator = testing.allocator;
+
+    const data = [_]f64{ 1.0, 2.0, 2.0, 4.0, 3.0, 6.0, 4.0, 8.0, 5.0, 10.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 2 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, false);
+    defer corrcoef_matrix.deinit();
+
+    try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[1]);
+}
+
+test "corrcoef: three variables (3x10 matrix)" {
+    const allocator = testing.allocator;
+
+    var data = try allocator.alloc(f64, 30);
+    defer allocator.free(data);
+
+    for (0..10) |i| {
+        data[i * 3 + 0] = @as(f64, @floatFromInt(i + 1));
+        data[i * 3 + 1] = @as(f64, @floatFromInt(2 * (i + 1)));
+        data[i * 3 + 2] = @as(f64, @floatFromInt(10 - i));
+    }
+
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 10 }, data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    try testing.expectEqual(@as(usize, 3), corrcoef_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 3), corrcoef_matrix.shape[1]);
+
+    // Diagonal should be 1.0
+    for (0..3) |i| {
+        const i_signed: isize = @intCast(i);
+        try testing.expectApproxEqAbs(1.0, try corrcoef_matrix.get(&[_]isize{ i_signed, i_signed }), 1e-9);
+    }
+}
+
+test "corrcoef: f32 type compatibility" {
+    const allocator = testing.allocator;
+
+    const data = [_]f32{ 1.0, 2.0, 3.0, 2.0, 4.0, 6.0 };
+    var arr = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[0]);
+    try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[1]);
+}
+
+test "corrcoef: constant variable (σ=0) handling" {
+    const allocator = testing.allocator;
+
+    // Second variable has no variance (all 5s)
+    const data = [_]f64{ 1.0, 2.0, 3.0, 5.0, 5.0, 5.0 };
+    var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+    defer arr.deinit();
+
+    var corrcoef_matrix = try arr.corrcoef(allocator, true);
+    defer corrcoef_matrix.deinit();
+
+    // When one variable is constant, correlation is undefined (NaN)
+    const rho_01 = try corrcoef_matrix.get(&[_]isize{ 0, 1 });
+    try testing.expect(math.isNan(rho_01) or math.isInf(rho_01));
+}
+
+test "corrcoef: empty array error" {
+    const allocator = testing.allocator;
+
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 2){
+        .shape = [_]usize{ 0, 0 },
+        .strides = [_]usize{ 0, 0 },
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
+    defer arr.deinit();
+
+    const result = arr.corrcoef(allocator, true);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "corrcoef: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        const data = [_]f64{ 1.0, 2.0, 3.0, 2.0, 4.0, 6.0 };
+        var arr = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &data, .row_major);
+        defer arr.deinit();
+
+        var corrcoef_matrix = try arr.corrcoef(allocator, true);
+        defer corrcoef_matrix.deinit();
+
+        try testing.expectEqual(@as(usize, 2), corrcoef_matrix.shape[0]);
+    }
 }
