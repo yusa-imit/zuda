@@ -3442,6 +3442,180 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return result;
         }
 
+        /// Mode (most frequent value) of all elements in the array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for frequency counting HashMap
+        ///
+        /// Returns: Most frequent value as f64. When multiple modes exist (tie), returns the smallest.
+        ///
+        /// Errors:
+        /// - error.EmptyArray if the array is empty
+        /// - AllocatorError on allocation failure
+        ///
+        /// Algorithm: Builds a HashMap of element frequencies in O(n) time, finds max frequency,
+        /// collects all values with max frequency, sorts them, returns minimum.
+        ///
+        /// Time: O(n) average where n = prod(shape)
+        /// Space: O(k) where k = number of unique elements
+        pub fn mode(self: *const Self, allocator: Allocator) (Error || AllocatorError)!f64 {
+            const total = self.count();
+            if (total == 0) {
+                return error.EmptyArray;
+            }
+
+            // Allocate and copy data as f64 for sorting
+            var sorted = try allocator.alloc(f64, total);
+            defer allocator.free(sorted);
+
+            // Copy and convert to f64
+            var i: usize = 0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                sorted[i] = if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                i += 1;
+            }
+
+            // Sort ascending
+            stdlib.mem.sort(f64, sorted, {}, sorting.asc(f64));
+
+            // Count frequencies and find mode
+            var current_val = sorted[0];
+            var current_freq: usize = 1;
+            var max_freq: usize = 1;
+            var mode_val = current_val;
+
+            for (1..total) |idx| {
+                if (sorted[idx] == current_val) {
+                    current_freq += 1;
+                } else {
+                    if (current_freq > max_freq) {
+                        max_freq = current_freq;
+                        mode_val = current_val;
+                    }
+                    current_val = sorted[idx];
+                    current_freq = 1;
+                }
+            }
+
+            // Check final frequency
+            if (current_freq > max_freq) {
+                mode_val = current_val;
+            }
+
+            return mode_val;
+        }
+
+        /// Skewness (Fisher-Pearson skewness coefficient) of all elements
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator (unused, for API consistency)
+        ///
+        /// Returns: Skewness as f64. Positive = right-skewed, Negative = left-skewed, ~0 = symmetric
+        ///
+        /// Errors:
+        /// - error.EmptyArray if the array is empty
+        /// - error.InvalidValue if standard deviation is zero or array has < 2 elements
+        ///
+        /// Formula: skewness = E[((X - μ) / σ)³] = (sum((x - mean)³) / n) / std³
+        ///
+        /// Interpretation:
+        /// - Positive: distribution has long right tail
+        /// - Negative: distribution has long left tail
+        /// - Zero: symmetric distribution (e.g., normal distribution)
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(1)
+        pub fn skewness(self: *const Self, allocator: Allocator) (Error || AllocatorError)!f64 {
+            _ = allocator; // unused for API consistency
+            const total = self.count();
+            if (total == 0) {
+                return error.EmptyArray;
+            }
+
+            const mean_val = self.mean();
+            const std_val = self.std(0);
+
+            // Check for zero variance
+            if (std_val <= 1e-10) {
+                return error.InvalidValue;
+            }
+
+            // Compute sum of cubed deviations
+            var sum_cubed_dev: f64 = 0.0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                const fval = if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                const dev = fval - mean_val;
+                sum_cubed_dev += dev * dev * dev;
+            }
+
+            const n_f64 = @as(f64, @floatFromInt(total));
+            const std_cubed = std_val * std_val * std_val;
+            return (sum_cubed_dev / n_f64) / std_cubed;
+        }
+
+        /// Kurtosis of all elements in the array
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator (unused, for API consistency)
+        /// - fisher: If true, returns excess kurtosis (Pearson - 3); if false, returns Pearson kurtosis
+        ///
+        /// Returns: Kurtosis as f64. Excess kurtosis interpretation:
+        /// - Positive: leptokurtic (heavy tails, peaked)
+        /// - Zero: mesokurtic (normal-like)
+        /// - Negative: platykurtic (light tails, flat)
+        ///
+        /// Errors:
+        /// - error.EmptyArray if the array is empty
+        /// - error.InvalidValue if standard deviation is zero or array has < 2 elements
+        ///
+        /// Formula:
+        /// - Pearson kurtosis: E[((X - μ) / σ)⁴] = (sum((x - mean)⁴) / n) / std⁴
+        /// - Excess kurtosis: Pearson kurtosis - 3
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(1)
+        pub fn kurtosis(self: *const Self, allocator: Allocator, fisher: bool) (Error || AllocatorError)!f64 {
+            _ = allocator; // unused for API consistency
+            const total = self.count();
+            if (total == 0) {
+                return error.EmptyArray;
+            }
+
+            const mean_val = self.mean();
+            const std_val = self.std(0);
+
+            // Check for zero variance
+            if (std_val <= 1e-10) {
+                return error.InvalidValue;
+            }
+
+            // Compute sum of fourth power deviations
+            var sum_fourth_dev: f64 = 0.0;
+            var iter = self.iterator();
+            while (iter.next()) |val| {
+                const fval = if (@typeInfo(T) == .float)
+                    @as(f64, val)
+                else
+                    @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                const dev = fval - mean_val;
+                sum_fourth_dev += dev * dev * dev * dev;
+            }
+
+            const n_f64 = @as(f64, @floatFromInt(total));
+            const std_fourth = std_val * std_val * std_val * std_val;
+            const kurt_pearson = (sum_fourth_dev / n_f64) / std_fourth;
+
+            return if (fisher) kurt_pearson - 3.0 else kurt_pearson;
+        }
+
         /// Minimum element in the array
         ///
         /// Returns: Minimum element value as type T
@@ -6297,7 +6471,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             self: *const Self,
             allocator: Allocator,
             pad_width: []const [2]usize,
-            mode: PadMode,
+            pad_mode: PadMode,
             constant_value: T,
         ) (Error || AllocatorError)!Self {
             if (pad_width.len != ndim) {
@@ -6323,7 +6497,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             try copyToPaddedCenter(T, ndim, &result, self, pad_width);
 
             // Fill padding regions based on mode
-            switch (mode) {
+            switch (pad_mode) {
                 .constant => try fillConstantPadding(T, ndim, &result, self, pad_width, constant_value),
                 .edge => try fillEdgePadding(T, ndim, &result, self, pad_width),
                 .reflect => try fillReflectPadding(T, ndim, &result, self, pad_width),
@@ -22236,7 +22410,15 @@ test "mode: float data [1.5, 2.5, 2.5, 3.5]" {
 
 test "mode: empty array returns error.EmptyArray" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
     defer arr.deinit();
 
     const result = arr.mode(allocator);
@@ -22389,7 +22571,15 @@ test "skewness: exponential-like [1,2,3,5,10,50] has strong positive skewness" {
 
 test "skewness: empty array returns error.EmptyArray" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
     defer arr.deinit();
 
     const result = arr.skewness(allocator);
@@ -22515,7 +22705,15 @@ test "kurtosis: single element returns error (std undefined)" {
 
 test "kurtosis: empty array returns error.EmptyArray" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    const data = try allocator.alloc(f64, 0);
+    var arr = NDArray(f64, 1){
+        .shape = [_]usize{0},
+        .strides = [_]usize{1},
+        .data = data,
+        .allocator = allocator,
+        .layout = .row_major,
+        .owned = true,
+    };
     defer arr.deinit();
 
     const result = arr.kurtosis(allocator, true);
