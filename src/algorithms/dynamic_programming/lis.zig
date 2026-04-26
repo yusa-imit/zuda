@@ -7,11 +7,10 @@ const Allocator = std.mem.Allocator;
 
 /// Find LIS length using dynamic programming
 /// Time: O(n²) | Space: O(n)
-pub fn lengthDP(comptime T: type, items: []const T) !usize {
+pub fn lengthDP(comptime T: type, allocator: Allocator, items: []const T) !usize {
     if (items.len == 0) return 0;
     if (items.len == 1) return 1;
 
-    const allocator = std.heap.page_allocator;
     const dp = try allocator.alloc(usize, items.len);
     defer allocator.free(dp);
 
@@ -32,11 +31,10 @@ pub fn lengthDP(comptime T: type, items: []const T) !usize {
 
 /// Find LIS length using binary search optimization
 /// Time: O(n log n) | Space: O(n)
-pub fn lengthBinarySearch(comptime T: type, items: []const T) !usize {
+pub fn lengthBinarySearch(comptime T: type, allocator: Allocator, items: []const T) !usize {
     if (items.len == 0) return 0;
     if (items.len == 1) return 1;
 
-    const allocator = std.heap.page_allocator;
     const tails = try allocator.alloc(T, items.len);
     defer allocator.free(tails);
 
@@ -131,13 +129,13 @@ pub fn findSequence(comptime T: type, allocator: Allocator, items: []const T) ![
 /// Time: O(n log n) | Space: O(n)
 pub fn lengthWithComparator(
     comptime T: type,
+    allocator: Allocator,
     items: []const T,
     comptime lessThan: fn (T, T) bool,
 ) !usize {
     if (items.len == 0) return 0;
     if (items.len == 1) return 1;
 
-    const allocator = std.heap.page_allocator;
     const tails = try allocator.alloc(T, items.len);
     defer allocator.free(tails);
 
@@ -167,11 +165,10 @@ pub fn lengthWithComparator(
 
 /// Find Longest Non-Decreasing Subsequence (allows equal elements)
 /// Time: O(n log n) | Space: O(n)
-pub fn lengthNonDecreasing(comptime T: type, items: []const T) !usize {
+pub fn lengthNonDecreasing(comptime T: type, allocator: Allocator, items: []const T) !usize {
     if (items.len == 0) return 0;
     if (items.len == 1) return 1;
 
-    const allocator = std.heap.page_allocator;
     const tails = try allocator.alloc(T, items.len);
     defer allocator.free(tails);
 
@@ -206,8 +203,8 @@ pub fn lengthNonDecreasing(comptime T: type, items: []const T) !usize {
 
 test "LIS: empty array" {
     const items: []const i32 = &[_]i32{};
-    try std.testing.expectEqual(0, try lengthDP(i32, items));
-    try std.testing.expectEqual(0, try lengthBinarySearch(i32, items));
+    try std.testing.expectEqual(0, try lengthDP(i32, std.testing.allocator, items));
+    try std.testing.expectEqual(0, try lengthBinarySearch(i32, std.testing.allocator, items));
 
     const seq = try findSequence(i32, std.testing.allocator, items);
     defer std.testing.allocator.free(seq);
@@ -216,8 +213,8 @@ test "LIS: empty array" {
 
 test "LIS: single element" {
     const items = [_]i32{42};
-    try std.testing.expectEqual(1, try lengthDP(i32, &items));
-    try std.testing.expectEqual(1, try lengthBinarySearch(i32, &items));
+    try std.testing.expectEqual(1, try lengthDP(i32, std.testing.allocator, &items));
+    try std.testing.expectEqual(1, try lengthBinarySearch(i32, std.testing.allocator, &items));
 
     const seq = try findSequence(i32, std.testing.allocator, &items);
     defer std.testing.allocator.free(seq);
@@ -227,8 +224,8 @@ test "LIS: single element" {
 
 test "LIS: all increasing" {
     const items = [_]i32{ 1, 2, 3, 4, 5 };
-    try std.testing.expectEqual(5, try lengthDP(i32, &items));
-    try std.testing.expectEqual(5, try lengthBinarySearch(i32, &items));
+    try std.testing.expectEqual(5, try lengthDP(i32, std.testing.allocator, &items));
+    try std.testing.expectEqual(5, try lengthBinarySearch(i32, std.testing.allocator, &items));
 
     const seq = try findSequence(i32, std.testing.allocator, &items);
     defer std.testing.allocator.free(seq);
@@ -238,8 +235,8 @@ test "LIS: all increasing" {
 
 test "LIS: all decreasing" {
     const items = [_]i32{ 5, 4, 3, 2, 1 };
-    try std.testing.expectEqual(1, try lengthDP(i32, &items));
-    try std.testing.expectEqual(1, try lengthBinarySearch(i32, &items));
+    try std.testing.expectEqual(1, try lengthDP(i32, std.testing.allocator, &items));
+    try std.testing.expectEqual(1, try lengthBinarySearch(i32, std.testing.allocator, &items));
 
     const seq = try findSequence(i32, std.testing.allocator, &items);
     defer std.testing.allocator.free(seq);
@@ -249,8 +246,8 @@ test "LIS: all decreasing" {
 test "LIS: mixed sequence" {
     const items = [_]i32{ 10, 9, 2, 5, 3, 7, 101, 18 };
     // LIS: 2, 3, 7, 101 or 2, 3, 7, 18 (length 4)
-    try std.testing.expectEqual(4, try lengthDP(i32, &items));
-    try std.testing.expectEqual(4, try lengthBinarySearch(i32, &items));
+    try std.testing.expectEqual(4, try lengthDP(i32, std.testing.allocator, &items));
+    try std.testing.expectEqual(4, try lengthBinarySearch(i32, std.testing.allocator, &items));
 
     const seq = try findSequence(i32, std.testing.allocator, &items);
     defer std.testing.allocator.free(seq);
@@ -265,14 +262,14 @@ test "LIS: mixed sequence" {
 test "LIS: duplicates (strictly increasing)" {
     const items = [_]i32{ 1, 3, 3, 4, 5 };
     // Strictly increasing, so can't use duplicate 3s
-    try std.testing.expectEqual(4, try lengthDP(i32, &items));
-    try std.testing.expectEqual(4, try lengthBinarySearch(i32, &items));
+    try std.testing.expectEqual(4, try lengthDP(i32, std.testing.allocator, &items));
+    try std.testing.expectEqual(4, try lengthBinarySearch(i32, std.testing.allocator, &items));
 }
 
 test "LIS: non-decreasing allows duplicates" {
     const items = [_]i32{ 1, 3, 3, 4, 5 };
     // Non-decreasing allows equal elements
-    try std.testing.expectEqual(5, try lengthNonDecreasing(i32, &items));
+    try std.testing.expectEqual(5, try lengthNonDecreasing(i32, std.testing.allocator, &items));
 }
 
 test "LIS: custom comparator (reverse order)" {
@@ -284,7 +281,7 @@ test "LIS: custom comparator (reverse order)" {
     }.gt;
 
     // With reverse comparator, this is longest decreasing sequence
-    try std.testing.expectEqual(5, try lengthWithComparator(i32, &items, greaterThan));
+    try std.testing.expectEqual(5, try lengthWithComparator(i32, std.testing.allocator, &items, greaterThan));
 }
 
 test "LIS: large sequence" {
@@ -298,8 +295,8 @@ test "LIS: large sequence" {
         items[i] = @intCast(i % 100);
     }
 
-    const len1 = try lengthDP(i32, items);
-    const len2 = try lengthBinarySearch(i32, items);
+    const len1 = try lengthDP(i32, std.testing.allocator, items);
+    const len2 = try lengthBinarySearch(i32, std.testing.allocator, items);
     try std.testing.expectEqual(len1, len2);
 
     const seq = try findSequence(i32, allocator, items);
@@ -315,8 +312,8 @@ test "LIS: large sequence" {
 test "LIS: negative numbers" {
     const items = [_]i32{ -3, -1, -4, 0, 2, -2, 5 };
     // LIS: -3, -1, 0, 2, 5 (length 5)
-    try std.testing.expectEqual(5, try lengthDP(i32, &items));
-    try std.testing.expectEqual(5, try lengthBinarySearch(i32, &items));
+    try std.testing.expectEqual(5, try lengthDP(i32, std.testing.allocator, &items));
+    try std.testing.expectEqual(5, try lengthBinarySearch(i32, std.testing.allocator, &items));
 
     const seq = try findSequence(i32, std.testing.allocator, &items);
     defer std.testing.allocator.free(seq);
@@ -330,7 +327,7 @@ test "LIS: negative numbers" {
 test "LIS: floating point" {
     const items = [_]f64{ 1.5, 2.3, 1.8, 3.2, 2.9, 4.1 };
     // LIS: 1.5, 1.8, 2.9, 4.1 or 1.5, 2.3, 2.9, 4.1 (length 4)
-    try std.testing.expectEqual(4, try lengthBinarySearch(f64, &items));
+    try std.testing.expectEqual(4, try lengthBinarySearch(f64, std.testing.allocator, &items));
 
     const seq = try findSequence(f64, std.testing.allocator, &items);
     defer std.testing.allocator.free(seq);
@@ -354,8 +351,8 @@ test "LIS: performance comparison DP vs Binary Search" {
         items[i] = random.intRangeAtMost(i32, 0, 1000);
     }
 
-    const len1 = try lengthDP(i32, items);
-    const len2 = try lengthBinarySearch(i32, items);
+    const len1 = try lengthDP(i32, std.testing.allocator, items);
+    const len2 = try lengthBinarySearch(i32, std.testing.allocator, items);
 
     // Both should give the same result
     try std.testing.expectEqual(len1, len2);

@@ -7,10 +7,9 @@ const Allocator = std.mem.Allocator;
 
 /// Find LCS length using dynamic programming
 /// Time: O(m*n) | Space: O(m*n)
-pub fn length(comptime T: type, a: []const T, b: []const T) !usize {
+pub fn length(comptime T: type, allocator: Allocator, a: []const T, b: []const T) !usize {
     if (a.len == 0 or b.len == 0) return 0;
 
-    const allocator = std.heap.page_allocator;
     const m = a.len;
     const n = b.len;
 
@@ -41,14 +40,13 @@ pub fn length(comptime T: type, a: []const T, b: []const T) !usize {
 
 /// Find LCS length with space optimization
 /// Time: O(m*n) | Space: O(min(m,n))
-pub fn lengthOptimized(comptime T: type, a: []const T, b: []const T) !usize {
+pub fn lengthOptimized(comptime T: type, allocator: Allocator, a: []const T, b: []const T) !usize {
     if (a.len == 0 or b.len == 0) return 0;
 
     // Use shorter sequence for space optimization
     const shorter = if (a.len <= b.len) a else b;
     const longer = if (a.len <= b.len) b else a;
 
-    const allocator = std.heap.page_allocator;
     const n = shorter.len;
 
     var prev = try allocator.alloc(usize, n + 1);
@@ -214,8 +212,8 @@ fn backtrackLCS(
 
 /// Compute LCS for strings (convenience wrapper)
 /// Time: O(m*n) | Space: O(m*n)
-pub fn lengthString(a: []const u8, b: []const u8) !usize {
-    return length(u8, a, b);
+pub fn lengthString(allocator: Allocator, a: []const u8, b: []const u8) !usize {
+    return length(u8, allocator, a, b);
 }
 
 /// Find LCS for strings
@@ -232,9 +230,9 @@ test "LCS: empty sequences" {
     const a: []const i32 = &[_]i32{};
     const b = [_]i32{ 1, 2, 3 };
 
-    try std.testing.expectEqual(0, try length(i32, a, &b));
-    try std.testing.expectEqual(0, try length(i32, &b, a));
-    try std.testing.expectEqual(0, try lengthOptimized(i32, a, &b));
+    try std.testing.expectEqual(0, try length(i32, std.testing.allocator, a, &b));
+    try std.testing.expectEqual(0, try length(i32, std.testing.allocator, &b, a));
+    try std.testing.expectEqual(0, try lengthOptimized(i32, std.testing.allocator, a, &b));
 
     const seq = try findSequence(i32, std.testing.allocator, a, &b);
     defer std.testing.allocator.free(seq);
@@ -244,8 +242,8 @@ test "LCS: empty sequences" {
 test "LCS: identical sequences" {
     const items = [_]i32{ 1, 2, 3, 4, 5 };
 
-    try std.testing.expectEqual(5, try length(i32, &items, &items));
-    try std.testing.expectEqual(5, try lengthOptimized(i32, &items, &items));
+    try std.testing.expectEqual(5, try length(i32, std.testing.allocator, &items, &items));
+    try std.testing.expectEqual(5, try lengthOptimized(i32, std.testing.allocator, &items, &items));
 
     const seq = try findSequence(i32, std.testing.allocator, &items, &items);
     defer std.testing.allocator.free(seq);
@@ -257,8 +255,8 @@ test "LCS: no common elements" {
     const a = [_]i32{ 1, 2, 3 };
     const b = [_]i32{ 4, 5, 6 };
 
-    try std.testing.expectEqual(0, try length(i32, &a, &b));
-    try std.testing.expectEqual(0, try lengthOptimized(i32, &a, &b));
+    try std.testing.expectEqual(0, try length(i32, std.testing.allocator, &a, &b));
+    try std.testing.expectEqual(0, try lengthOptimized(i32, std.testing.allocator, &a, &b));
 
     const seq = try findSequence(i32, std.testing.allocator, &a, &b);
     defer std.testing.allocator.free(seq);
@@ -269,8 +267,8 @@ test "LCS: simple case" {
     const a = [_]i32{ 1, 2, 3, 4, 5 };
     const b = [_]i32{ 2, 4, 5 };
 
-    try std.testing.expectEqual(3, try length(i32, &a, &b));
-    try std.testing.expectEqual(3, try lengthOptimized(i32, &a, &b));
+    try std.testing.expectEqual(3, try length(i32, std.testing.allocator, &a, &b));
+    try std.testing.expectEqual(3, try lengthOptimized(i32, std.testing.allocator, &a, &b));
 
     const seq = try findSequence(i32, std.testing.allocator, &a, &b);
     defer std.testing.allocator.free(seq);
@@ -283,8 +281,8 @@ test "LCS: classic example ABCDGH vs AEDFHR" {
     const b = "AEDFHR";
 
     // LCS: ADH (length 3)
-    try std.testing.expectEqual(3, try lengthString(a, b));
-    try std.testing.expectEqual(3, try lengthOptimized(u8, a, b));
+    try std.testing.expectEqual(3, try lengthString(std.testing.allocator, a, b));
+    try std.testing.expectEqual(3, try lengthOptimized(u8, std.testing.allocator, a, b));
 
     const seq = try findSequenceString(std.testing.allocator, a, b);
     defer std.testing.allocator.free(seq);
@@ -297,8 +295,8 @@ test "LCS: AGGTAB vs GXTXAYB" {
     const b = "GXTXAYB";
 
     // LCS: GTAB (length 4)
-    try std.testing.expectEqual(4, try lengthString(a, b));
-    try std.testing.expectEqual(4, try lengthOptimized(u8, a, b));
+    try std.testing.expectEqual(4, try lengthString(std.testing.allocator, a, b));
+    try std.testing.expectEqual(4, try lengthOptimized(u8, std.testing.allocator, a, b));
 
     const seq = try findSequenceString(std.testing.allocator, a, b);
     defer std.testing.allocator.free(seq);
@@ -311,8 +309,8 @@ test "LCS: all common with different order" {
     const b = [_]i32{ 4, 3, 2, 1 };
 
     // LCS: any single element (length 1)
-    try std.testing.expectEqual(1, try length(i32, &a, &b));
-    try std.testing.expectEqual(1, try lengthOptimized(i32, &a, &b));
+    try std.testing.expectEqual(1, try length(i32, std.testing.allocator, &a, &b));
+    try std.testing.expectEqual(1, try lengthOptimized(i32, std.testing.allocator, &a, &b));
 }
 
 test "LCS: multiple LCS" {
@@ -320,7 +318,7 @@ test "LCS: multiple LCS" {
     const b = "BDCABA";
 
     // Multiple LCS: BCAB, BCBA, BDAB (all length 4)
-    try std.testing.expectEqual(4, try lengthString(a, b));
+    try std.testing.expectEqual(4, try lengthString(std.testing.allocator, a, b));
 
     const all_seqs = try findAllSequences(u8, std.testing.allocator, a, b);
     defer {
@@ -348,8 +346,8 @@ test "LCS: long sequences" {
     }
 
     // Identical sequences, LCS = n
-    try std.testing.expectEqual(n, try length(i32, a, b));
-    try std.testing.expectEqual(n, try lengthOptimized(i32, a, b));
+    try std.testing.expectEqual(n, try length(i32, allocator, a, b));
+    try std.testing.expectEqual(n, try lengthOptimized(i32, allocator, a, b));
 
     const seq = try findSequence(i32, allocator, a, b);
     defer allocator.free(seq);
@@ -360,8 +358,8 @@ test "LCS: space optimization correctness" {
     const a = "ABCDEFGHIJ";
     const b = "ACEGI";
 
-    const len1 = try lengthString(a, b);
-    const len2 = try lengthOptimized(u8, a, b);
+    const len1 = try lengthString(std.testing.allocator, a, b);
+    const len2 = try lengthOptimized(u8, std.testing.allocator, a, b);
 
     try std.testing.expectEqual(len1, len2);
 }
@@ -371,8 +369,8 @@ test "LCS: with duplicates" {
     const b = [_]i32{ 2, 2, 3, 3, 4 };
 
     // LCS: 2, 2, 3, 4 (length 4)
-    try std.testing.expectEqual(4, try length(i32, &a, &b));
-    try std.testing.expectEqual(4, try lengthOptimized(i32, &a, &b));
+    try std.testing.expectEqual(4, try length(i32, std.testing.allocator, &a, &b));
+    try std.testing.expectEqual(4, try lengthOptimized(i32, std.testing.allocator, &a, &b));
 
     const seq = try findSequence(i32, std.testing.allocator, &a, &b);
     defer std.testing.allocator.free(seq);
@@ -383,8 +381,8 @@ test "LCS: different lengths" {
     const a = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
     const b = [_]i32{ 2, 4, 6, 8 };
 
-    try std.testing.expectEqual(4, try length(i32, &a, &b));
-    try std.testing.expectEqual(4, try lengthOptimized(i32, &a, &b));
+    try std.testing.expectEqual(4, try length(i32, std.testing.allocator, &a, &b));
+    try std.testing.expectEqual(4, try lengthOptimized(i32, std.testing.allocator, &a, &b));
 
     const seq = try findSequence(i32, std.testing.allocator, &a, &b);
     defer std.testing.allocator.free(seq);
@@ -408,8 +406,8 @@ test "LCS: random sequences" {
         b[i] = random.intRangeAtMost(i32, 0, 20);
     }
 
-    const len1 = try length(i32, a, b);
-    const len2 = try lengthOptimized(i32, a, b);
+    const len1 = try length(i32, allocator, a, b);
+    const len2 = try lengthOptimized(i32, allocator, a, b);
 
     // Both algorithms should give the same result
     try std.testing.expectEqual(len1, len2);
