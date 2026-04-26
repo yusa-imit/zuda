@@ -6739,6 +6739,414 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             return result;
         }
+
+        /// Sum along a specified axis, reducing dimensionality
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        /// - axis: Axis to sum along (must be < ndim)
+        ///
+        /// Returns: NDArray with shape = original shape with axis dimension removed
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if axis >= ndim
+        ///
+        /// Example: [3,4,5] sumAxis(1) → [3,5]
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(m) where m = prod(output shape)
+        pub fn sumAxis(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(T, ndim - 1) {
+            if (axis >= ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Build output shape by removing the reduction axis
+            var out_shape: [ndim - 1]usize = undefined;
+            if (ndim > 1) {
+                var idx: usize = 0;
+                for (self.shape, 0..) |dim, i| {
+                    if (i != axis) {
+                        out_shape[idx] = dim;
+                        idx += 1;
+                    }
+                }
+            }
+
+            // Allocate result array initialized to zero
+            var result = try NDArray(T, ndim - 1).zeros(allocator, &out_shape, self.layout);
+            errdefer result.deinit();
+
+            // Special case: reducing to 0D (scalar)
+            if (ndim == 1) {
+                var sum_val: T = 0;
+                for (self.data) |val| {
+                    sum_val += val;
+                }
+                result.data[0] = sum_val;
+                return result;
+            }
+
+            // Iterate through all output positions
+            var out_indices: [ndim - 1]usize = stdlib.mem.zeroes([ndim - 1]usize);
+            var done = false;
+
+            while (!done) {
+                // Sum along the reduction axis
+                var sum_val: T = 0;
+                for (0..self.shape[axis]) |axis_idx| {
+                    // Map output position to full input position
+                    var full_indices: [ndim]usize = undefined;
+                    var out_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        if (i == axis) {
+                            full_indices[i] = axis_idx;
+                        } else {
+                            full_indices[i] = out_indices[out_idx];
+                            out_idx += 1;
+                        }
+                    }
+
+                    // Convert to linear index and get value
+                    var linear_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        linear_idx = linear_idx * self.shape[i] + full_indices[i];
+                    }
+                    sum_val += self.data[linear_idx];
+                }
+
+                // Convert output position to linear index and set value
+                var out_linear_idx: usize = 0;
+                for (0..ndim - 1) |i| {
+                    out_linear_idx = out_linear_idx * out_shape[i] + out_indices[i];
+                }
+                result.data[out_linear_idx] = sum_val;
+
+                // Increment output index
+                var carry: usize = 1;
+                var dim: usize = ndim - 1;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    out_indices[dim] += carry;
+                    if (out_indices[dim] >= out_shape[dim]) {
+                        out_indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
+
+        /// Mean along a specified axis, reducing dimensionality
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        /// - axis: Axis to compute mean along (must be < ndim)
+        ///
+        /// Returns: NDArray(f64, ndim-1) containing mean values
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if axis >= ndim
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(m) where m = prod(output shape)
+        pub fn meanAxis(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(f64, ndim - 1) {
+            if (axis >= ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Build output shape by removing the reduction axis
+            var out_shape: [ndim - 1]usize = undefined;
+            if (ndim > 1) {
+                var idx: usize = 0;
+                for (self.shape, 0..) |dim, i| {
+                    if (i != axis) {
+                        out_shape[idx] = dim;
+                        idx += 1;
+                    }
+                }
+            }
+
+            // Allocate result array initialized to zero
+            var result = try NDArray(f64, ndim - 1).zeros(allocator, &out_shape, self.layout);
+            errdefer result.deinit();
+
+            const axis_size = self.shape[axis];
+            const axis_size_f64 = @as(f64, @floatFromInt(axis_size));
+
+            // Special case: reducing to 0D (scalar)
+            if (ndim == 1) {
+                var sum_val: f64 = 0.0;
+                for (self.data) |val| {
+                    const fval = if (@typeInfo(T) == .float)
+                        @as(f64, val)
+                    else
+                        @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                    sum_val += fval;
+                }
+                result.data[0] = sum_val / axis_size_f64;
+                return result;
+            }
+
+            // Iterate through all output positions
+            var out_indices: [ndim - 1]usize = stdlib.mem.zeroes([ndim - 1]usize);
+            var done = false;
+
+            while (!done) {
+                // Sum along the reduction axis
+                var sum_val: f64 = 0.0;
+                for (0..axis_size) |axis_idx| {
+                    // Map output position to full input position
+                    var full_indices: [ndim]usize = undefined;
+                    var out_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        if (i == axis) {
+                            full_indices[i] = axis_idx;
+                        } else {
+                            full_indices[i] = out_indices[out_idx];
+                            out_idx += 1;
+                        }
+                    }
+
+                    // Convert to linear index and get value
+                    var linear_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        linear_idx = linear_idx * self.shape[i] + full_indices[i];
+                    }
+                    const val = self.data[linear_idx];
+                    const fval = if (@typeInfo(T) == .float)
+                        @as(f64, val)
+                    else
+                        @as(f64, @floatFromInt(@as(i128, @intCast(val))));
+                    sum_val += fval;
+                }
+
+                // Convert output position to linear index and set value (mean = sum / axis_size)
+                var out_linear_idx: usize = 0;
+                for (0..ndim - 1) |i| {
+                    out_linear_idx = out_linear_idx * out_shape[i] + out_indices[i];
+                }
+                result.data[out_linear_idx] = sum_val / axis_size_f64;
+
+                // Increment output index
+                var carry: usize = 1;
+                var dim: usize = ndim - 1;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    out_indices[dim] += carry;
+                    if (out_indices[dim] >= out_shape[dim]) {
+                        out_indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
+
+        /// Minimum along a specified axis, reducing dimensionality
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        /// - axis: Axis to find minimum along (must be < ndim)
+        ///
+        /// Returns: NDArray with shape = original shape with axis dimension removed
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if axis >= ndim
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(m) where m = prod(output shape)
+        pub fn minAxis(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(T, ndim - 1) {
+            if (axis >= ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Build output shape by removing the reduction axis
+            var out_shape: [ndim - 1]usize = undefined;
+            if (ndim > 1) {
+                var idx: usize = 0;
+                for (self.shape, 0..) |dim, i| {
+                    if (i != axis) {
+                        out_shape[idx] = dim;
+                        idx += 1;
+                    }
+                }
+            }
+
+            // Allocate result array
+            var result = try NDArray(T, ndim - 1).init(allocator, &out_shape, self.layout);
+            errdefer result.deinit();
+
+            // Iterate through all output positions
+            var out_indices: [ndim - 1]usize = stdlib.mem.zeroes([ndim - 1]usize);
+            var done = false;
+
+            while (!done) {
+                // Find minimum along the reduction axis
+                var min_val: T = undefined;
+                var first = true;
+                for (0..self.shape[axis]) |axis_idx| {
+                    // Map output position to full input position
+                    var full_indices: [ndim]usize = undefined;
+                    var out_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        if (i == axis) {
+                            full_indices[i] = axis_idx;
+                        } else {
+                            full_indices[i] = out_indices[out_idx];
+                            out_idx += 1;
+                        }
+                    }
+
+                    // Convert to linear index and get value
+                    var linear_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        linear_idx = linear_idx * self.shape[i] + full_indices[i];
+                    }
+                    const val = self.data[linear_idx];
+                    if (first) {
+                        min_val = val;
+                        first = false;
+                    } else if (val < min_val) {
+                        min_val = val;
+                    }
+                }
+
+                // Convert output position to linear index and set value
+                var out_linear_idx: usize = 0;
+                for (0..ndim - 1) |i| {
+                    out_linear_idx = out_linear_idx * out_shape[i] + out_indices[i];
+                }
+                result.data[out_linear_idx] = min_val;
+
+                // Increment output index
+                var carry: usize = 1;
+                var dim: usize = ndim - 1;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    out_indices[dim] += carry;
+                    if (out_indices[dim] >= out_shape[dim]) {
+                        out_indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
+
+        /// Maximum along a specified axis, reducing dimensionality
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator for the result array
+        /// - axis: Axis to find maximum along (must be < ndim)
+        ///
+        /// Returns: NDArray with shape = original shape with axis dimension removed
+        ///
+        /// Errors:
+        /// - error.IndexOutOfBounds if axis >= ndim
+        ///
+        /// Time: O(n) where n = prod(shape)
+        /// Space: O(m) where m = prod(output shape)
+        pub fn maxAxis(self: *const Self, allocator: Allocator, axis: usize) (Error || AllocatorError)!NDArray(T, ndim - 1) {
+            if (axis >= ndim) {
+                return error.IndexOutOfBounds;
+            }
+
+            // Build output shape by removing the reduction axis
+            var out_shape: [ndim - 1]usize = undefined;
+            if (ndim > 1) {
+                var idx: usize = 0;
+                for (self.shape, 0..) |dim, i| {
+                    if (i != axis) {
+                        out_shape[idx] = dim;
+                        idx += 1;
+                    }
+                }
+            }
+
+            // Allocate result array
+            var result = try NDArray(T, ndim - 1).init(allocator, &out_shape, self.layout);
+            errdefer result.deinit();
+
+            // Iterate through all output positions
+            var out_indices: [ndim - 1]usize = stdlib.mem.zeroes([ndim - 1]usize);
+            var done = false;
+
+            while (!done) {
+                // Find maximum along the reduction axis
+                var max_val: T = undefined;
+                var first = true;
+                for (0..self.shape[axis]) |axis_idx| {
+                    // Map output position to full input position
+                    var full_indices: [ndim]usize = undefined;
+                    var out_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        if (i == axis) {
+                            full_indices[i] = axis_idx;
+                        } else {
+                            full_indices[i] = out_indices[out_idx];
+                            out_idx += 1;
+                        }
+                    }
+
+                    // Convert to linear index and get value
+                    var linear_idx: usize = 0;
+                    for (0..ndim) |i| {
+                        linear_idx = linear_idx * self.shape[i] + full_indices[i];
+                    }
+                    const val = self.data[linear_idx];
+                    if (first) {
+                        max_val = val;
+                        first = false;
+                    } else if (val > max_val) {
+                        max_val = val;
+                    }
+                }
+
+                // Convert output position to linear index and set value
+                var out_linear_idx: usize = 0;
+                for (0..ndim - 1) |i| {
+                    out_linear_idx = out_linear_idx * out_shape[i] + out_indices[i];
+                }
+                result.data[out_linear_idx] = max_val;
+
+                // Increment output index
+                var carry: usize = 1;
+                var dim: usize = ndim - 1;
+                while (dim > 0 and carry == 1) {
+                    dim -= 1;
+                    out_indices[dim] += carry;
+                    if (out_indices[dim] >= out_shape[dim]) {
+                        out_indices[dim] = 0;
+                        carry = 1;
+                    } else {
+                        carry = 0;
+                    }
+                }
+                if (carry == 1) {
+                    done = true;
+                }
+            }
+
+            return result;
+        }
     };
 }
 
@@ -22781,4 +23189,560 @@ test "kurtosis: i32 type compatibility" {
 
     const kurt = try arr.kurtosis(allocator, true);
     try testing.expect(kurt < 0.0); // Uniform-like
+}
+
+// ============================================================================
+// AXIS-WISE REDUCTION FUNCTION TESTS
+// ============================================================================
+
+test "sumAxis: 2D array [3,4] axis=0 sums down columns" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with simple values: row i, col j = i * 10 + j
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // sumAxis(0) should sum along rows, resulting in shape [4]
+    // Column 0: 0 + 10 + 20 = 30
+    // Column 1: 1 + 11 + 21 = 33
+    // Column 2: 2 + 12 + 22 = 36
+    // Column 3: 3 + 13 + 23 = 39
+    var result = try arr.sumAxis(allocator, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 30.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 33.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 36.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 39.0), result.data[3], 1e-10);
+}
+
+test "sumAxis: 2D array [3,4] axis=1 sums across rows" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // sumAxis(1) should sum along columns, resulting in shape [3]
+    // Row 0: 0 + 1 + 2 + 3 = 6
+    // Row 1: 10 + 11 + 12 + 13 = 46
+    // Row 2: 20 + 21 + 22 + 23 = 86
+    var result = try arr.sumAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 46.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 86.0), result.data[2], 1e-10);
+}
+
+test "sumAxis: 3D array [2,3,4] axis=0 reduces to [3,4]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    // Fill with simple values
+    var idx: f64 = 0.0;
+    var iter = arr.iterator();
+    while (iter.next()) |_| {
+        arr.data[iter.index - 1] = idx;
+        idx += 1.0;
+    }
+
+    var result = try arr.sumAxis(allocator, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+    // First element: arr[0,0,0] + arr[1,0,0] = 0 + 12 = 12
+    try testing.expectApproxEqAbs(@as(f64, 12.0), result.data[0], 1e-10);
+}
+
+test "sumAxis: 3D array [2,3,4] axis=1 reduces to [2,4]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var idx: f64 = 0.0;
+    var iter = arr.iterator();
+    while (iter.next()) |_| {
+        arr.data[iter.index - 1] = idx;
+        idx += 1.0;
+    }
+
+    var result = try arr.sumAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+}
+
+test "sumAxis: 3D array [2,3,4] axis=2 reduces to [2,3]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var idx: f64 = 0.0;
+    var iter = arr.iterator();
+    while (iter.next()) |_| {
+        arr.data[iter.index - 1] = idx;
+        idx += 1.0;
+    }
+
+    var result = try arr.sumAxis(allocator, 2);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+}
+
+test "sumAxis: i32 type compatibility" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    const data = [_][3]i32{ [_]i32{ 1, 2, 3 }, [_]i32{ 4, 5, 6 } };
+    for (0..2) |i| {
+        for (0..3) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, data[i][j]);
+        }
+    }
+
+    var result = try arr.sumAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 6), result.data[0]);
+    try testing.expectEqual(@as(i32, 15), result.data[1]);
+}
+
+test "sumAxis: f32 type compatibility" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, @as(f32, 1.5));
+    arr.set(&[_]isize{ 0, 1 }, @as(f32, 2.5));
+    arr.set(&[_]isize{ 0, 2 }, @as(f32, 3.0));
+    arr.set(&[_]isize{ 1, 0 }, @as(f32, 1.0));
+    arr.set(&[_]isize{ 1, 1 }, @as(f32, 2.0));
+    arr.set(&[_]isize{ 1, 2 }, @as(f32, 3.0));
+
+    var result = try arr.sumAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(@as(f32, 7.0), result.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 6.0), result.data[1], 1e-5);
+}
+
+test "sumAxis: single element array reduces to 0D scalar" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{1}, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{0}, 42.0);
+
+    var result = try arr.sumAxis(allocator, 0);
+    defer result.deinit();
+
+    // Result is 0D (scalar), so shape is empty array
+    try testing.expectEqual(@as(usize, 0), result.shape.len);
+    try testing.expectEqual(@as(f64, 42.0), result.data[0]);
+}
+
+test "sumAxis: axis >= ndim returns InvalidAxis error" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, 1.0);
+
+    const result = arr.sumAxis(allocator, 2); // Invalid axis for 2D array
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "sumAxis: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+        defer arr.deinit();
+
+        for (0..3) |i| {
+            for (0..4) |j| {
+                arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i + j)));
+            }
+        }
+
+        var result = try arr.sumAxis(allocator, 0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    }
+}
+
+test "meanAxis: 2D array [3,4] axis=0 means down columns" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // meanAxis(0) should mean along rows, resulting in shape [4]
+    // Column 0: (0 + 10 + 20) / 3 = 10
+    // Column 1: (1 + 11 + 21) / 3 = 11
+    // Column 2: (2 + 12 + 22) / 3 = 12
+    // Column 3: (3 + 13 + 23) / 3 = 13
+    var result = try arr.meanAxis(allocator, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 11.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 12.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 13.0), result.data[3], 1e-10);
+}
+
+test "meanAxis: 2D array [3,4] axis=1 means across rows" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // meanAxis(1) should mean along columns, resulting in shape [3]
+    // Row 0: (0 + 1 + 2 + 3) / 4 = 1.5
+    // Row 1: (10 + 11 + 12 + 13) / 4 = 11.5
+    // Row 2: (20 + 21 + 22 + 23) / 4 = 21.5
+    var result = try arr.meanAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 1.5), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 11.5), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 21.5), result.data[2], 1e-10);
+}
+
+test "meanAxis: 3D array [2,3,4] axis=0 reduces to [3,4]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var idx: f64 = 0.0;
+    var iter = arr.iterator();
+    while (iter.next()) |_| {
+        arr.data[iter.index - 1] = idx;
+        idx += 1.0;
+    }
+
+    var result = try arr.meanAxis(allocator, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+}
+
+test "meanAxis: meanAxis always returns f64 for i32 input" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, @as(i32, 1));
+    arr.set(&[_]isize{ 0, 1 }, @as(i32, 2));
+    arr.set(&[_]isize{ 0, 2 }, @as(i32, 3));
+    arr.set(&[_]isize{ 1, 0 }, @as(i32, 4));
+    arr.set(&[_]isize{ 1, 1 }, @as(i32, 5));
+    arr.set(&[_]isize{ 1, 2 }, @as(i32, 6));
+
+    var result = try arr.meanAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectApproxEqAbs(@as(f64, 2.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), result.data[1], 1e-10);
+}
+
+test "meanAxis: axis >= ndim returns error" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, 1.0);
+
+    const result = arr.meanAxis(allocator, 3);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "meanAxis: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+        defer arr.deinit();
+
+        for (0..3) |i| {
+            for (0..4) |j| {
+                arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i + j)));
+            }
+        }
+
+        var result = try arr.meanAxis(allocator, 1);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    }
+}
+
+test "minAxis: 2D array [3,4] axis=0 minimums down columns" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // minAxis(0) should min along rows, resulting in shape [4]
+    // Column 0: min(0, 10, 20) = 0
+    // Column 1: min(1, 11, 21) = 1
+    // Column 2: min(2, 12, 22) = 2
+    // Column 3: min(3, 13, 23) = 3
+    var result = try arr.minAxis(allocator, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), result.data[3], 1e-10);
+}
+
+test "minAxis: 2D array [3,4] axis=1 minimums across rows" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // minAxis(1) should min along columns, resulting in shape [3]
+    // Row 0: min(0, 1, 2, 3) = 0
+    // Row 1: min(10, 11, 12, 13) = 10
+    // Row 2: min(20, 21, 22, 23) = 20
+    var result = try arr.minAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 20.0), result.data[2], 1e-10);
+}
+
+test "minAxis: 3D array shape reduction" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var idx: f64 = 0.0;
+    var iter = arr.iterator();
+    while (iter.next()) |_| {
+        arr.data[iter.index - 1] = idx;
+        idx += 1.0;
+    }
+
+    var result = try arr.minAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 4), result.shape[1]);
+}
+
+test "minAxis: i32 type compatibility" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, @as(i32, 10));
+    arr.set(&[_]isize{ 0, 1 }, @as(i32, 5));
+    arr.set(&[_]isize{ 0, 2 }, @as(i32, 8));
+    arr.set(&[_]isize{ 1, 0 }, @as(i32, 3));
+    arr.set(&[_]isize{ 1, 1 }, @as(i32, 7));
+    arr.set(&[_]isize{ 1, 2 }, @as(i32, 1));
+
+    var result = try arr.minAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 5), result.data[0]);
+    try testing.expectEqual(@as(i32, 1), result.data[1]);
+}
+
+test "minAxis: axis >= ndim returns error" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, 1.0);
+
+    const result = arr.minAxis(allocator, 2);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "minAxis: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+        defer arr.deinit();
+
+        for (0..3) |i| {
+            for (0..4) |j| {
+                arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i + j)));
+            }
+        }
+
+        var result = try arr.minAxis(allocator, 0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    }
+}
+
+test "maxAxis: 2D array [3,4] axis=0 maximums down columns" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // maxAxis(0) should max along rows, resulting in shape [4]
+    // Column 0: max(0, 10, 20) = 20
+    // Column 1: max(1, 11, 21) = 21
+    // Column 2: max(2, 12, 22) = 22
+    // Column 3: max(3, 13, 23) = 23
+    var result = try arr.maxAxis(allocator, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 20.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 21.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 22.0), result.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 23.0), result.data[3], 1e-10);
+}
+
+test "maxAxis: 2D array [3,4] axis=1 maximums across rows" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    for (0..3) |i| {
+        for (0..4) |j| {
+            arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i * 10 + j)));
+        }
+    }
+
+    // maxAxis(1) should max along columns, resulting in shape [3]
+    // Row 0: max(0, 1, 2, 3) = 3
+    // Row 1: max(10, 11, 12, 13) = 13
+    // Row 2: max(20, 21, 22, 23) = 23
+    var result = try arr.maxAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.shape[0]);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), result.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 13.0), result.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 23.0), result.data[2], 1e-10);
+}
+
+test "maxAxis: 3D array shape reduction" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    var idx: f64 = 0.0;
+    var iter = arr.iterator();
+    while (iter.next()) |_| {
+        arr.data[iter.index - 1] = idx;
+        idx += 1.0;
+    }
+
+    var result = try arr.maxAxis(allocator, 2);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.shape[0]);
+    try testing.expectEqual(@as(usize, 3), result.shape[1]);
+}
+
+test "maxAxis: i32 type compatibility" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, @as(i32, 10));
+    arr.set(&[_]isize{ 0, 1 }, @as(i32, 5));
+    arr.set(&[_]isize{ 0, 2 }, @as(i32, 8));
+    arr.set(&[_]isize{ 1, 0 }, @as(i32, 3));
+    arr.set(&[_]isize{ 1, 1 }, @as(i32, 7));
+    arr.set(&[_]isize{ 1, 2 }, @as(i32, 1));
+
+    var result = try arr.maxAxis(allocator, 1);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 10), result.data[0]);
+    try testing.expectEqual(@as(i32, 7), result.data[1]);
+}
+
+test "maxAxis: axis >= ndim returns error" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer arr.deinit();
+
+    arr.set(&[_]isize{ 0, 0 }, 1.0);
+
+    const result = arr.maxAxis(allocator, 2);
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "maxAxis: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
+        defer arr.deinit();
+
+        for (0..3) |i| {
+            for (0..4) |j| {
+                arr.set(&[_]isize{ @intCast(i), @intCast(j) }, @as(f64, @floatFromInt(i + j)));
+            }
+        }
+
+        var result = try arr.maxAxis(allocator, 0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 4), result.shape[0]);
+    }
 }
