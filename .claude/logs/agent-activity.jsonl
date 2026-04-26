@@ -265,3 +265,4 @@
 {"timestamp":"2026-04-23T03:05:54Z","action":"subagent","agent_type":"test-writer","task":"Write tests for NDArray axis-wise reductions (sumAxis, meanAxis, minAxis, maxAxis)","project":"zuda"}
 {"timestamp":"2026-04-26T11:05:38Z","action":"bugfix","task":"Fix 0D array handling in sumAxis/meanAxis + iterator usage","project":"zuda"}
 {"timestamp":"2026-04-27T00:00:00Z","action":"direct_implementation","task":"Optimize Bentley-Ottmann findInsertPosition O(n)→O(log n)","project":"zuda"}
+{"timestamp":"2026-04-27T12:00:00Z","action":"direct","task":"Refactor DP algorithms LCS and LIS to allocator-first API","project":"zuda"}
