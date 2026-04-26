@@ -216,7 +216,7 @@ pub fn findIntersections(comptime T: type, allocator: Allocator, segments: []con
                 _ = seg_idx;
 
                 // Insert segment into status at correct y-position
-                const insert_pos = findInsertPosition(T, status.items, normalized.items, x);
+                const insert_pos = findInsertPosition(T, status.items, normalized.items, seg_id, seg_map, x);
                 try status.insert(insert_pos, seg_id);
 
                 // Check for intersections with neighbors
@@ -292,14 +292,51 @@ pub fn findIntersections(comptime T: type, allocator: Allocator, segments: []con
 }
 
 /// Find insert position for a segment in status array (sorted by y at x)
-fn findInsertPosition(comptime T: type, status: []const usize, segments: []const Segment(T), x: T) usize {
-    _ = segments;
-    _ = x;
+/// Time: O(log n) | Space: O(1)
+///
+/// Uses binary search to find the correct insertion position based on y-coordinate
+/// at the current sweep line position x. The status array maintains segments
+/// sorted by their y-coordinate at x.
+///
+/// Arguments:
+/// - status: Current status structure (segment IDs sorted by y at x)
+/// - segments: Array of all normalized segments
+/// - new_seg_id: ID of the segment to insert
+/// - seg_map: Map from segment ID to index in segments array
+/// - x: Current sweep line x-coordinate
+fn findInsertPosition(
+    comptime T: type,
+    status: []const usize,
+    segments: []const Segment(T),
+    new_seg_id: usize,
+    seg_map: *const AutoHashMap(usize, usize),
+    x: T,
+) usize {
     if (status.len == 0) return 0;
 
-    // For simplicity, use linear insertion at end
-    // TODO: Optimize with binary search based on y-coordinate at x
-    return status.len;
+    // Get the segment we're inserting
+    const new_seg_idx = seg_map.get(new_seg_id).?;
+    const new_seg = segments[new_seg_idx];
+    const new_y = new_seg.yAtX(x);
+
+    // Binary search: find leftmost position where segments[status[i]].yAtX(x) >= new_y
+    var left: usize = 0;
+    var right: usize = status.len;
+
+    while (left < right) {
+        const mid = left + (right - left) / 2;
+        const mid_seg_idx = seg_map.get(status[mid]).?;
+        const mid_seg = segments[mid_seg_idx];
+        const mid_y = mid_seg.yAtX(x);
+
+        if (mid_y < new_y) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+
+    return left;
 }
 
 /// Check if two segments intersect and add to result if they do
