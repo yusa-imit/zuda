@@ -262,3 +262,5 @@
 {"timestamp":"2026-04-23T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write comprehensive tests for NDArray cov() and corrcoef() functions","project":"zuda"}
 {"timestamp":"2026-04-23T00:01:00Z","action":"subagent","agent_type":"test-writer","task":"Write 31 comprehensive tests for mode, skewness, kurtosis statistical functions","project":"zuda"}
 {"timestamp":"2026-04-23T00:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement mode, skewness, kurtosis to pass 31 tests","project":"zuda"}
+{"timestamp":"2026-04-23T03:05:54Z","action":"subagent","agent_type":"test-writer","task":"Write tests for NDArray axis-wise reductions (sumAxis, meanAxis, minAxis, maxAxis)","project":"zuda"}
+{"timestamp":"2026-04-26T11:05:38Z","action":"bugfix","task":"Fix 0D array handling in sumAxis/meanAxis + iterator usage","project":"zuda"}
