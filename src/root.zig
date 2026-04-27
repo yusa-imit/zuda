@@ -697,6 +697,8 @@ pub const linalg = struct {
     pub const solve = @import("linalg/solve.zig");
     /// Matrix properties — rank, condition number
     pub const properties = @import("linalg/properties.zig");
+    /// Sparse matrix formats — COO, CSR, CSC
+    pub const sparse = @import("linalg/sparse.zig");
 };
 
 /// Statistics and data analysis
