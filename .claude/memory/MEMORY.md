@@ -1,4 +1,27 @@
-## Latest Session (Session 412, 2026-04-23) — FEATURE MODE
+## Latest Session (Session 419, 2026-04-27) — FEATURE MODE (CODE QUALITY)
+- **Mode**: Feature (Session 419)
+- **Type**: Code quality refactoring - allocator-first compliance
+- **Modules**: algorithms/dynamic_programming/{catalan_numbers,perfect_squares,unique_paths}.zig
+- **Issue**: 3 more DP algorithms using hardcoded `std.heap.page_allocator` (continuation of Session 417)
+- **Changes**:
+  * catalan_numbers: Migrated `nthCatalan()` and 4 wrapper functions (countBST, countParentheses, countTriangulations, countFullBinaryTrees) to allocator-first API
+  * perfect_squares: Migrated `numSquares()` to accept allocator parameter
+  * unique_paths: Migrated `uniquePaths()`, `uniquePathsWithObstacles()`, `minPathSum()`, `uniquePathsExact()` to allocator-first API
+  * Updated all test calls (45 tests total: 19 catalan + 8 perfect_squares + 18 unique_paths, all passing)
+  * Removed hardcoded page_allocator from function bodies
+- **Rationale**: Library code must never hardcode allocators — essential for embedded systems, leak detection, custom allocation strategies
+- **Impact**:
+  * API change: All affected functions now require allocator as first parameter (after comptime T where applicable)
+  * Backward compatibility: Breaking change, but necessary for library correctness
+  * Tests: All 45 tests passing with std.testing.allocator
+- **Test Status**: All tests passing (exit code 0)
+- **Commits**: 62fe156 (catalan+perfect_squares+unique_paths refactor), 72a1c8c (activity log)
+- **Verification**: Checked remaining files from Session 417 — target_sum, regex_matching, edit_distance, knapsack only have hardcoded allocator in DOC COMMENTS (not actual code)
+- **Status**: DP module allocator-first migration COMPLETE — all code-level violations fixed (Sessions 417+419)
+- **Total Fixed**: 5 files (lcs, lis, catalan_numbers, perfect_squares, unique_paths), 12+ functions, 70+ tests
+- **Next Priority**: Continue with other feature development or code quality improvements
+
+## Previous Session (Session 412, 2026-04-23) — FEATURE MODE
 - NDArray Descriptive Statistics Completion: 31 tests, mode/skewness/kurtosis complete Phase 8 stats
 - Module: ndarray/ndarray.zig
 - Functions:
