@@ -13,16 +13,17 @@ const Allocator = std.mem.Allocator;
 ///
 /// Example:
 /// ```
-/// const count = uniquePaths(3, 3);
+/// const allocator = std.testing.allocator;
+/// const count = try uniquePaths(allocator, 3, 3);
 /// // Returns 6 unique paths in 3×3 grid
 /// ```
-pub fn uniquePaths(m: usize, n: usize) !u64 {
+pub fn uniquePaths(allocator: Allocator, m: usize, n: usize) !u64 {
     if (m == 0 or n == 0) return 0;
     if (m == 1 or n == 1) return 1;
 
     // Single row DP: paths[j] represents paths to column j in current row
-    var paths = try std.heap.page_allocator.alloc(u64, n);
-    defer std.heap.page_allocator.free(paths);
+    var paths = try allocator.alloc(u64, n);
+    defer allocator.free(paths);
 
     // Initialize first row: all cells have 1 path (straight right)
     for (paths) |*cell| {
@@ -94,20 +95,21 @@ pub fn uniquePathsTable(allocator: Allocator, m: usize, n: usize) ![][]u64 {
 ///
 /// Example:
 /// ```
+/// const allocator = std.testing.allocator;
 /// const grid = [_][3]u8{
 ///     [_]u8{0, 0, 0},
 ///     [_]u8{0, 1, 0},  // obstacle at (1, 1)
 ///     [_]u8{0, 0, 0},
 /// };
-/// const count = try uniquePathsWithObstacles(&grid);
+/// const count = try uniquePathsWithObstacles(allocator, &grid);
 /// // Returns 2 (paths avoiding obstacle)
 /// ```
-pub fn uniquePathsWithObstacles(comptime m: usize, comptime n: usize, grid: *const [m][n]u8) !u64 {
+pub fn uniquePathsWithObstacles(allocator: Allocator, comptime m: usize, comptime n: usize, grid: *const [m][n]u8) !u64 {
     if (m == 0 or n == 0) return 0;
     if (grid[0][0] == 1 or grid[m - 1][n - 1] == 1) return 0; // Start or end blocked
 
-    var paths = try std.heap.page_allocator.alloc(u64, n);
-    defer std.heap.page_allocator.free(paths);
+    var paths = try allocator.alloc(u64, n);
+    defer allocator.free(paths);
 
     // Initialize first row
     paths[0] = if (grid[0][0] == 1) 0 else 1;
@@ -142,19 +144,20 @@ pub fn uniquePathsWithObstacles(comptime m: usize, comptime n: usize, grid: *con
 ///
 /// Example:
 /// ```
+/// const allocator = std.testing.allocator;
 /// const grid = [_][3]u32{
 ///     [_]u32{1, 3, 1},
 ///     [_]u32{1, 5, 1},
 ///     [_]u32{4, 2, 1},
 /// };
-/// const cost = try minPathSum(u32, &grid);
+/// const cost = try minPathSum(u32, allocator, &grid);
 /// // Returns 7 (path: 1→3→1→1→1)
 /// ```
-pub fn minPathSum(comptime T: type, comptime m: usize, comptime n: usize, grid: *const [m][n]T) !T {
+pub fn minPathSum(comptime T: type, allocator: Allocator, comptime m: usize, comptime n: usize, grid: *const [m][n]T) !T {
     if (m == 0 or n == 0) return 0;
 
-    var costs = try std.heap.page_allocator.alloc(T, n);
-    defer std.heap.page_allocator.free(costs);
+    var costs = try allocator.alloc(T, n);
+    defer allocator.free(costs);
 
     // Initialize first row (cumulative sum)
     costs[0] = grid[0][0];
@@ -192,12 +195,12 @@ pub fn minPathSum(comptime T: type, comptime m: usize, comptime n: usize, grid: 
 ///
 /// Note: This is a simpler version that returns only the count,
 /// not the full 3D table (which would be memory-intensive).
-pub fn uniquePathsExact(m: usize, n: usize, k: usize) !u64 {
+pub fn uniquePathsExact(allocator: Allocator, m: usize, n: usize, k: usize) !u64 {
     if (m == 0 or n == 0) return 0;
     // Minimum steps needed is m+n-2 (m-1 down, n-1 right)
     if (k < m + n - 2) return 0;
     // For exactly minimum steps, it's the standard uniquePaths problem
-    if (k == m + n - 2) return try uniquePaths(m, n);
+    if (k == m + n - 2) return try uniquePaths(allocator, m, n);
 
     // For k > minimum, we need extra back-and-forth moves
     // which is not possible with only right/down moves
@@ -209,36 +212,44 @@ pub fn uniquePathsExact(m: usize, n: usize, k: usize) !u64 {
 // ============================================================================
 
 test "unique paths: basic 1×1 grid" {
-    try testing.expectEqual(1, try uniquePaths(1, 1));
+    const allocator = testing.allocator;
+    try testing.expectEqual(1, try uniquePaths(allocator, 1, 1));
 }
 
 test "unique paths: basic 2×2 grid" {
-    try testing.expectEqual(2, try uniquePaths(2, 2));
+    const allocator = testing.allocator;
+    try testing.expectEqual(2, try uniquePaths(allocator, 2, 2));
 }
 
 test "unique paths: 3×3 grid" {
-    try testing.expectEqual(6, try uniquePaths(3, 3));
+    const allocator = testing.allocator;
+    try testing.expectEqual(6, try uniquePaths(allocator, 3, 3));
 }
 
 test "unique paths: 4×5 grid" {
-    try testing.expectEqual(35, try uniquePaths(4, 5));
+    const allocator = testing.allocator;
+    try testing.expectEqual(35, try uniquePaths(allocator, 4, 5));
 }
 
 test "unique paths: 1×n grid (straight line)" {
-    try testing.expectEqual(1, try uniquePaths(1, 10));
+    const allocator = testing.allocator;
+    try testing.expectEqual(1, try uniquePaths(allocator, 1, 10));
 }
 
 test "unique paths: m×1 grid (straight line)" {
-    try testing.expectEqual(1, try uniquePaths(10, 1));
+    const allocator = testing.allocator;
+    try testing.expectEqual(1, try uniquePaths(allocator, 10, 1));
 }
 
 test "unique paths: empty grid" {
-    try testing.expectEqual(0, try uniquePaths(0, 5));
-    try testing.expectEqual(0, try uniquePaths(5, 0));
+    const allocator = testing.allocator;
+    try testing.expectEqual(0, try uniquePaths(allocator, 0, 5));
+    try testing.expectEqual(0, try uniquePaths(allocator, 5, 0));
 }
 
 test "unique paths: large grid" {
-    try testing.expectEqual(48620, try uniquePaths(10, 10));
+    const allocator = testing.allocator;
+    try testing.expectEqual(48620, try uniquePaths(allocator, 10, 10));
 }
 
 test "unique paths table: basic 3×3" {
@@ -261,79 +272,89 @@ test "unique paths table: basic 3×3" {
 }
 
 test "unique paths with obstacles: basic" {
+    const allocator = testing.allocator;
     const grid = [_][3]u8{
         [_]u8{ 0, 0, 0 },
         [_]u8{ 0, 1, 0 },
         [_]u8{ 0, 0, 0 },
     };
-    try testing.expectEqual(2, try uniquePathsWithObstacles(3, 3, &grid));
+    try testing.expectEqual(2, try uniquePathsWithObstacles(allocator, 3, 3, &grid));
 }
 
 test "unique paths with obstacles: start blocked" {
+    const allocator = testing.allocator;
     const grid = [_][2]u8{
         [_]u8{ 1, 0 },
         [_]u8{ 0, 0 },
     };
-    try testing.expectEqual(0, try uniquePathsWithObstacles(2, 2, &grid));
+    try testing.expectEqual(0, try uniquePathsWithObstacles(allocator, 2, 2, &grid));
 }
 
 test "unique paths with obstacles: end blocked" {
+    const allocator = testing.allocator;
     const grid = [_][2]u8{
         [_]u8{ 0, 0 },
         [_]u8{ 0, 1 },
     };
-    try testing.expectEqual(0, try uniquePathsWithObstacles(2, 2, &grid));
+    try testing.expectEqual(0, try uniquePathsWithObstacles(allocator, 2, 2, &grid));
 }
 
 test "unique paths with obstacles: middle path blocked" {
+    const allocator = testing.allocator;
     const grid = [_][3]u8{
         [_]u8{ 0, 0, 0 },
         [_]u8{ 0, 0, 1 },
         [_]u8{ 0, 0, 0 },
     };
-    try testing.expectEqual(3, try uniquePathsWithObstacles(3, 3, &grid));
+    try testing.expectEqual(3, try uniquePathsWithObstacles(allocator, 3, 3, &grid));
 }
 
 test "min path sum: basic 3×3" {
+    const allocator = testing.allocator;
     const grid = [_][3]u32{
         [_]u32{ 1, 3, 1 },
         [_]u32{ 1, 5, 1 },
         [_]u32{ 4, 2, 1 },
     };
-    try testing.expectEqual(7, try minPathSum(u32, 3, 3, &grid));
+    try testing.expectEqual(7, try minPathSum(u32, allocator, 3, 3, &grid));
 }
 
 test "min path sum: uniform costs" {
+    const allocator = testing.allocator;
     const grid = [_][2]u32{
         [_]u32{ 1, 1 },
         [_]u32{ 1, 1 },
     };
-    try testing.expectEqual(3, try minPathSum(u32, 2, 2, &grid));
+    try testing.expectEqual(3, try minPathSum(u32, allocator, 2, 2, &grid));
 }
 
 test "min path sum: increasing costs" {
+    const allocator = testing.allocator;
     const grid = [_][3]u32{
         [_]u32{ 1, 2, 3 },
         [_]u32{ 2, 3, 4 },
         [_]u32{ 3, 4, 5 },
     };
-    try testing.expectEqual(15, try minPathSum(u32, 3, 3, &grid));
+    try testing.expectEqual(15, try minPathSum(u32, allocator, 3, 3, &grid));
 }
 
 test "unique paths exact: exactly 4 steps in 3×3" {
+    const allocator = testing.allocator;
     // Minimum steps in 3×3 grid is 4 (2 right + 2 down)
-    const count = try uniquePathsExact(3, 3, 4);
+    const count = try uniquePathsExact(allocator, 3, 3, 4);
     try testing.expectEqual(6, count); // All paths use exactly 4 steps
 }
 
 test "unique paths exact: too few steps" {
+    const allocator = testing.allocator;
     // Need at least 4 steps (m+n-2) for 3×3 grid
-    const count = try uniquePathsExact(3, 3, 3);
+    const count = try uniquePathsExact(allocator, 3, 3, 3);
     try testing.expectEqual(0, count);
 }
 
 test "unique paths exact: more than minimum steps" {
+    const allocator = testing.allocator;
     // With only right/down moves, can't use more than minimum steps
-    const count = try uniquePathsExact(3, 3, 5);
+    const count = try uniquePathsExact(allocator, 3, 3, 5);
     try testing.expectEqual(0, count);
 }

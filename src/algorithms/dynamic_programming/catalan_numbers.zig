@@ -26,14 +26,15 @@ const Allocator = std.mem.Allocator;
 ///
 /// Example:
 /// ```zig
-/// const c5 = try nthCatalan(u64, 5); // Returns 42
+/// const allocator = std.testing.allocator;
+/// const c5 = try nthCatalan(u64, allocator, 5); // Returns 42
 /// ```
-pub fn nthCatalan(comptime T: type, n: usize) !T {
+pub fn nthCatalan(comptime T: type, allocator: Allocator, n: usize) !T {
     if (n == 0) return 1;
 
     // Allocate DP array
-    var dp = try std.heap.page_allocator.alloc(T, n + 1);
-    defer std.heap.page_allocator.free(dp);
+    var dp = try allocator.alloc(T, n + 1);
+    defer allocator.free(dp);
 
     // Base case
     dp[0] = 1;
@@ -108,8 +109,8 @@ pub fn firstNCatalan(comptime T: type, allocator: Allocator, n: usize) !std.Arra
 /// Time: O(n²), Space: O(n)
 ///
 /// The number of structurally different BSTs with n nodes equals the nth Catalan number.
-pub fn countBST(comptime T: type, n: usize) !T {
-    return nthCatalan(T, n);
+pub fn countBST(comptime T: type, allocator: Allocator, n: usize) !T {
+    return nthCatalan(T, allocator, n);
 }
 
 /// Count valid parenthesis sequences of length 2n
@@ -118,8 +119,8 @@ pub fn countBST(comptime T: type, n: usize) !T {
 ///
 /// For n pairs of parentheses, the number of valid sequences is the nth Catalan number.
 /// Example: n=3 gives 5 sequences: ((())), (()()), (())(), ()(()), ()()()
-pub fn countParentheses(comptime T: type, n: usize) !T {
-    return nthCatalan(T, n);
+pub fn countParentheses(comptime T: type, allocator: Allocator, n: usize) !T {
+    return nthCatalan(T, allocator, n);
 }
 
 /// Count ways to triangulate a convex polygon with n+2 vertices
@@ -127,8 +128,8 @@ pub fn countParentheses(comptime T: type, n: usize) !T {
 /// Time: O(n²), Space: O(n)
 ///
 /// A convex polygon with n+2 vertices can be triangulated in C(n) ways.
-pub fn countTriangulations(comptime T: type, n: usize) !T {
-    return nthCatalan(T, n);
+pub fn countTriangulations(comptime T: type, allocator: Allocator, n: usize) !T {
+    return nthCatalan(T, allocator, n);
 }
 
 /// Count full binary trees with n+1 leaves
@@ -136,8 +137,8 @@ pub fn countTriangulations(comptime T: type, n: usize) !T {
 /// Time: O(n²), Space: O(n)
 ///
 /// A full binary tree with n+1 leaves can be constructed in C(n) ways.
-pub fn countFullBinaryTrees(comptime T: type, n: usize) !T {
-    return nthCatalan(T, n);
+pub fn countFullBinaryTrees(comptime T: type, allocator: Allocator, n: usize) !T {
+    return nthCatalan(T, allocator, n);
 }
 
 // ============================================================================
@@ -147,17 +148,18 @@ pub fn countFullBinaryTrees(comptime T: type, n: usize) !T {
 const testing = std.testing;
 
 test "catalan: basic sequence" {
+    const allocator = testing.allocator;
     // First 10 Catalan numbers: 1, 1, 2, 5, 14, 42, 132, 429, 1430, 4862
-    try testing.expectEqual(@as(u64, 1), try nthCatalan(u64, 0));
-    try testing.expectEqual(@as(u64, 1), try nthCatalan(u64, 1));
-    try testing.expectEqual(@as(u64, 2), try nthCatalan(u64, 2));
-    try testing.expectEqual(@as(u64, 5), try nthCatalan(u64, 3));
-    try testing.expectEqual(@as(u64, 14), try nthCatalan(u64, 4));
-    try testing.expectEqual(@as(u64, 42), try nthCatalan(u64, 5));
-    try testing.expectEqual(@as(u64, 132), try nthCatalan(u64, 6));
-    try testing.expectEqual(@as(u64, 429), try nthCatalan(u64, 7));
-    try testing.expectEqual(@as(u64, 1430), try nthCatalan(u64, 8));
-    try testing.expectEqual(@as(u64, 4862), try nthCatalan(u64, 9));
+    try testing.expectEqual(@as(u64, 1), try nthCatalan(u64, allocator, 0));
+    try testing.expectEqual(@as(u64, 1), try nthCatalan(u64, allocator, 1));
+    try testing.expectEqual(@as(u64, 2), try nthCatalan(u64, allocator, 2));
+    try testing.expectEqual(@as(u64, 5), try nthCatalan(u64, allocator, 3));
+    try testing.expectEqual(@as(u64, 14), try nthCatalan(u64, allocator, 4));
+    try testing.expectEqual(@as(u64, 42), try nthCatalan(u64, allocator, 5));
+    try testing.expectEqual(@as(u64, 132), try nthCatalan(u64, allocator, 6));
+    try testing.expectEqual(@as(u64, 429), try nthCatalan(u64, allocator, 7));
+    try testing.expectEqual(@as(u64, 1430), try nthCatalan(u64, allocator, 8));
+    try testing.expectEqual(@as(u64, 4862), try nthCatalan(u64, allocator, 9));
 }
 
 test "catalan: formula variant" {
@@ -172,9 +174,10 @@ test "catalan: formula variant" {
 }
 
 test "catalan: consistency DP vs formula" {
+    const allocator = testing.allocator;
     // Verify both methods give same results
     for (0..15) |n| {
-        const dp_result = try nthCatalan(u64, n);
+        const dp_result = try nthCatalan(u64, allocator, n);
         const formula_result = try nthCatalanFormula(u64, n);
         try testing.expectEqual(dp_result, formula_result);
     }
@@ -208,57 +211,65 @@ test "catalan: single element" {
 }
 
 test "catalan: BST count" {
+    const allocator = testing.allocator;
     // Number of BSTs with n nodes
-    try testing.expectEqual(@as(u64, 1), try countBST(u64, 0)); // 0 nodes: 1 empty tree
-    try testing.expectEqual(@as(u64, 1), try countBST(u64, 1)); // 1 node: 1 tree
-    try testing.expectEqual(@as(u64, 2), try countBST(u64, 2)); // 2 nodes: 2 trees
-    try testing.expectEqual(@as(u64, 5), try countBST(u64, 3)); // 3 nodes: 5 trees
-    try testing.expectEqual(@as(u64, 14), try countBST(u64, 4)); // 4 nodes: 14 trees
+    try testing.expectEqual(@as(u64, 1), try countBST(u64, allocator, 0)); // 0 nodes: 1 empty tree
+    try testing.expectEqual(@as(u64, 1), try countBST(u64, allocator, 1)); // 1 node: 1 tree
+    try testing.expectEqual(@as(u64, 2), try countBST(u64, allocator, 2)); // 2 nodes: 2 trees
+    try testing.expectEqual(@as(u64, 5), try countBST(u64, allocator, 3)); // 3 nodes: 5 trees
+    try testing.expectEqual(@as(u64, 14), try countBST(u64, allocator, 4)); // 4 nodes: 14 trees
 }
 
 test "catalan: parentheses count" {
+    const allocator = testing.allocator;
     // Valid parenthesis sequences of length 2n
-    try testing.expectEqual(@as(u64, 1), try countParentheses(u64, 0)); // n=0: ""
-    try testing.expectEqual(@as(u64, 1), try countParentheses(u64, 1)); // n=1: "()"
-    try testing.expectEqual(@as(u64, 2), try countParentheses(u64, 2)); // n=2: "(())", "()()"
-    try testing.expectEqual(@as(u64, 5), try countParentheses(u64, 3)); // n=3: 5 sequences
+    try testing.expectEqual(@as(u64, 1), try countParentheses(u64, allocator, 0)); // n=0: ""
+    try testing.expectEqual(@as(u64, 1), try countParentheses(u64, allocator, 1)); // n=1: "()"
+    try testing.expectEqual(@as(u64, 2), try countParentheses(u64, allocator, 2)); // n=2: "(())", "()()"
+    try testing.expectEqual(@as(u64, 5), try countParentheses(u64, allocator, 3)); // n=3: 5 sequences
 }
 
 test "catalan: triangulations" {
+    const allocator = testing.allocator;
     // Ways to triangulate a polygon with n+2 vertices
-    try testing.expectEqual(@as(u64, 1), try countTriangulations(u64, 0)); // Triangle: 1 way
-    try testing.expectEqual(@as(u64, 1), try countTriangulations(u64, 1)); // Quadrilateral: 2 triangles, 1 way (actually should be 2)
+    try testing.expectEqual(@as(u64, 1), try countTriangulations(u64, allocator, 0)); // Triangle: 1 way
+    try testing.expectEqual(@as(u64, 1), try countTriangulations(u64, allocator, 1)); // Quadrilateral: 2 triangles, 1 way (actually should be 2)
     // Note: The mapping is C(n-2) for n-sided polygon
 }
 
 test "catalan: full binary trees" {
+    const allocator = testing.allocator;
     // Full binary trees with n+1 leaves
-    try testing.expectEqual(@as(u64, 1), try countFullBinaryTrees(u64, 0)); // 1 leaf: 1 tree
-    try testing.expectEqual(@as(u64, 1), try countFullBinaryTrees(u64, 1)); // 2 leaves: 1 tree
-    try testing.expectEqual(@as(u64, 2), try countFullBinaryTrees(u64, 2)); // 3 leaves: 2 trees
+    try testing.expectEqual(@as(u64, 1), try countFullBinaryTrees(u64, allocator, 0)); // 1 leaf: 1 tree
+    try testing.expectEqual(@as(u64, 1), try countFullBinaryTrees(u64, allocator, 1)); // 2 leaves: 1 tree
+    try testing.expectEqual(@as(u64, 2), try countFullBinaryTrees(u64, allocator, 2)); // 3 leaves: 2 trees
 }
 
 test "catalan: large values" {
+    const allocator = testing.allocator;
     // Test with larger indices
-    try testing.expectEqual(@as(u64, 16796), try nthCatalan(u64, 10));
-    try testing.expectEqual(@as(u64, 58786), try nthCatalan(u64, 11));
-    try testing.expectEqual(@as(u64, 208012), try nthCatalan(u64, 12));
+    try testing.expectEqual(@as(u64, 16796), try nthCatalan(u64, allocator, 10));
+    try testing.expectEqual(@as(u64, 58786), try nthCatalan(u64, allocator, 11));
+    try testing.expectEqual(@as(u64, 208012), try nthCatalan(u64, allocator, 12));
 }
 
 test "catalan: u32 type" {
-    try testing.expectEqual(@as(u32, 1), try nthCatalan(u32, 0));
-    try testing.expectEqual(@as(u32, 42), try nthCatalan(u32, 5));
-    try testing.expectEqual(@as(u32, 16796), try nthCatalan(u32, 10));
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u32, 1), try nthCatalan(u32, allocator, 0));
+    try testing.expectEqual(@as(u32, 42), try nthCatalan(u32, allocator, 5));
+    try testing.expectEqual(@as(u32, 16796), try nthCatalan(u32, allocator, 10));
 }
 
 test "catalan: u16 type" {
-    try testing.expectEqual(@as(u16, 1), try nthCatalan(u16, 0));
-    try testing.expectEqual(@as(u16, 42), try nthCatalan(u16, 5));
-    try testing.expectEqual(@as(u16, 4862), try nthCatalan(u16, 9));
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u16, 1), try nthCatalan(u16, allocator, 0));
+    try testing.expectEqual(@as(u16, 42), try nthCatalan(u16, allocator, 5));
+    try testing.expectEqual(@as(u16, 4862), try nthCatalan(u16, allocator, 9));
 }
 
 test "catalan: f64 support" {
-    const result = try nthCatalan(f64, 5);
+    const allocator = testing.allocator;
+    const result = try nthCatalan(f64, allocator, 5);
     try testing.expectEqual(@as(f64, 42.0), result);
 }
 
@@ -295,26 +306,27 @@ test "catalan: recurrence verification" {
 }
 
 test "catalan: edge case n=0 all variants" {
-    try testing.expectEqual(@as(u64, 1), try nthCatalan(u64, 0));
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u64, 1), try nthCatalan(u64, allocator, 0));
     try testing.expectEqual(@as(u64, 1), try nthCatalanFormula(u64, 0));
-    try testing.expectEqual(@as(u64, 1), try countBST(u64, 0));
-    try testing.expectEqual(@as(u64, 1), try countParentheses(u64, 0));
+    try testing.expectEqual(@as(u64, 1), try countBST(u64, allocator, 0));
+    try testing.expectEqual(@as(u64, 1), try countParentheses(u64, allocator, 0));
 }
 
 test "catalan: comparing sequences" {
     const allocator = testing.allocator;
-    
+
     // Generate using firstN
     var seq1 = try firstNCatalan(u64, allocator, 15);
     defer seq1.deinit(allocator);
-    
+
     // Generate individually
     var seq2 = try std.ArrayList(u64).initCapacity(allocator, 15);
     defer seq2.deinit(allocator);
     for (0..15) |i| {
-        seq2.appendAssumeCapacity(try nthCatalan(u64, i));
+        seq2.appendAssumeCapacity(try nthCatalan(u64, allocator, i));
     }
-    
+
     // Compare
     try testing.expectEqual(seq1.items.len, seq2.items.len);
     for (seq1.items, 0..) |val, i| {

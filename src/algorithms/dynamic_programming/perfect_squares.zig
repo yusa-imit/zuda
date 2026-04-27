@@ -21,7 +21,7 @@ const testing = std.testing;
 /// Example:
 ///   n = 12 → 3 (4 + 4 + 4)
 ///   n = 13 → 2 (4 + 9)
-pub fn numSquares(comptime T: type, n: T) !T {
+pub fn numSquares(comptime T: type, allocator: Allocator, n: T) !T {
     if (@typeInfo(T) != .Int or @typeInfo(T).Int.signedness != .unsigned) {
         @compileError("numSquares requires unsigned integer type");
     }
@@ -34,7 +34,7 @@ pub fn numSquares(comptime T: type, n: T) !T {
     if (sqrt_n * sqrt_n == n) return 1;
 
     // DP array: dp[i] = minimum count for sum i
-    var dp = try std.ArrayList(T).initCapacity(std.heap.page_allocator, n + 1);
+    var dp = try std.ArrayList(T).initCapacity(allocator, n + 1);
     defer dp.deinit();
 
     // Initialize with max values
@@ -265,30 +265,34 @@ fn intSqrt(comptime T: type, n: T) T {
 // ============================================================================
 
 test "numSquares - basic cases" {
-    try testing.expectEqual(@as(u32, 0), try numSquares(u32, 0));
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 1));
-    try testing.expectEqual(@as(u32, 2), try numSquares(u32, 2)); // 1 + 1
-    try testing.expectEqual(@as(u32, 3), try numSquares(u32, 3)); // 1 + 1 + 1
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 4)); // 4
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u32, 0), try numSquares(u32, allocator, 0));
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 1));
+    try testing.expectEqual(@as(u32, 2), try numSquares(u32, allocator, 2)); // 1 + 1
+    try testing.expectEqual(@as(u32, 3), try numSquares(u32, allocator, 3)); // 1 + 1 + 1
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 4)); // 4
 }
 
 test "numSquares - classic examples" {
-    try testing.expectEqual(@as(u32, 3), try numSquares(u32, 12)); // 4 + 4 + 4
-    try testing.expectEqual(@as(u32, 2), try numSquares(u32, 13)); // 4 + 9
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 16)); // 16
-    try testing.expectEqual(@as(u32, 2), try numSquares(u32, 17)); // 16 + 1
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u32, 3), try numSquares(u32, allocator, 12)); // 4 + 4 + 4
+    try testing.expectEqual(@as(u32, 2), try numSquares(u32, allocator, 13)); // 4 + 9
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 16)); // 16
+    try testing.expectEqual(@as(u32, 2), try numSquares(u32, allocator, 17)); // 16 + 1
 }
 
 test "numSquares - perfect squares" {
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 9)); // 9
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 25)); // 25
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 100)); // 100
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 9)); // 9
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 25)); // 25
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 100)); // 100
 }
 
 test "numSquares - larger numbers" {
-    try testing.expectEqual(@as(u32, 2), try numSquares(u32, 18)); // 9 + 9
-    try testing.expectEqual(@as(u32, 3), try numSquares(u32, 19)); // 9 + 9 + 1
-    try testing.expectEqual(@as(u32, 2), try numSquares(u32, 20)); // 16 + 4
+    const allocator = testing.allocator;
+    try testing.expectEqual(@as(u32, 2), try numSquares(u32, allocator, 18)); // 9 + 9
+    try testing.expectEqual(@as(u32, 3), try numSquares(u32, allocator, 19)); // 9 + 9 + 1
+    try testing.expectEqual(@as(u32, 2), try numSquares(u32, allocator, 20)); // 16 + 4
 }
 
 test "numSquaresWithPath - basic" {
@@ -395,7 +399,7 @@ test "numSquaresBFS - consistency with DP" {
 
     var i: u32 = 1;
     while (i <= 30) : (i += 1) {
-        const dp_result = try numSquares(u32, i);
+        const dp_result = try numSquares(u32, allocator, i);
         const bfs_result = try numSquaresBFS(u32, allocator, i);
         try testing.expectEqual(dp_result, bfs_result);
     }
@@ -422,23 +426,25 @@ test "intSqrt helper" {
 }
 
 test "numSquares - type support" {
+    const allocator = testing.allocator;
     // u8
-    try testing.expectEqual(@as(u8, 1), try numSquares(u8, 1));
-    try testing.expectEqual(@as(u8, 3), try numSquares(u8, 12));
+    try testing.expectEqual(@as(u8, 1), try numSquares(u8, allocator, 1));
+    try testing.expectEqual(@as(u8, 3), try numSquares(u8, allocator, 12));
 
     // u16
-    try testing.expectEqual(@as(u16, 2), try numSquares(u16, 13));
-    try testing.expectEqual(@as(u16, 1), try numSquares(u16, 100));
+    try testing.expectEqual(@as(u16, 2), try numSquares(u16, allocator, 13));
+    try testing.expectEqual(@as(u16, 1), try numSquares(u16, allocator, 100));
 
     // u64
-    try testing.expectEqual(@as(u64, 3), try numSquares(u64, 12));
+    try testing.expectEqual(@as(u64, 3), try numSquares(u64, allocator, 12));
 }
 
 test "numSquares - large numbers" {
+    const allocator = testing.allocator;
     // Test with larger inputs
-    try testing.expectEqual(@as(u32, 3), try numSquares(u32, 43)); // 36 + 4 + 1 + 1 + 1 = 43 (wrong), actually 25+9+9
-    try testing.expectEqual(@as(u32, 1), try numSquares(u32, 49)); // 49
-    try testing.expectEqual(@as(u32, 2), try numSquares(u32, 50)); // 49 + 1
+    try testing.expectEqual(@as(u32, 3), try numSquares(u32, allocator, 43)); // 36 + 4 + 1 + 1 + 1 = 43 (wrong), actually 25+9+9
+    try testing.expectEqual(@as(u32, 1), try numSquares(u32, allocator, 49)); // 49
+    try testing.expectEqual(@as(u32, 2), try numSquares(u32, allocator, 50)); // 49 + 1
 }
 
 test "numSquaresWithPath - memory safety" {
