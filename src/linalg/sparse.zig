@@ -347,6 +347,108 @@ pub fn CSR(comptime T: type) type {
         }
 
         /// Entry returned by row iterator
+        /// Transpose CSR matrix to CSC format
+        ///
+        /// Converts row-wise compressed format to column-wise compressed format.
+        /// Effectively computes A^T (transpose).
+        ///
+        /// Time: O(nnz) | Space: O(n + nnz)
+        pub fn transpose(self: *const Self, allocator: Allocator) !CSC(T) {
+            const n = self.nnz();
+            const col_count = self.cols;
+
+            // Allocate CSC arrays
+            const col_ptr = try allocator.alloc(usize, col_count + 1);
+            errdefer allocator.free(col_ptr);
+
+            const row_indices = try allocator.alloc(usize, n);
+            errdefer allocator.free(row_indices);
+
+            const values = try allocator.alloc(T, n);
+
+            // Initialize col_ptr to zero
+            for (col_ptr) |*p| {
+                p.* = 0;
+            }
+
+            if (n == 0) {
+                return CSC(T){
+                    .rows = self.cols, // Swap dimensions
+                    .cols = self.rows,
+                    .col_ptr = col_ptr,
+                    .row_indices = row_indices,
+                    .values = values,
+                    .allocator = allocator,
+                };
+            }
+
+            // Count non-zeros per column (becomes col_ptr)
+            for (self.col_indices) |col| {
+                col_ptr[col + 1] += 1;
+            }
+
+            // Cumulative sum to get column pointers
+            for (1..col_count + 1) |i| {
+                col_ptr[i] += col_ptr[i - 1];
+            }
+
+            // Fill row_indices and values
+            const temp_ptr = try allocator.alloc(usize, col_count + 1);
+            defer allocator.free(temp_ptr);
+            mem.copyForwards(usize, temp_ptr, col_ptr);
+
+            for (0..self.rows) |row| {
+                const start = self.row_ptr[row];
+                const end = self.row_ptr[row + 1];
+                for (start..end) |idx| {
+                    const col = self.col_indices[idx];
+                    const pos = temp_ptr[col];
+                    row_indices[pos] = row;
+                    values[pos] = self.values[idx];
+                    temp_ptr[col] += 1;
+                }
+            }
+
+            return CSC(T){
+                .rows = self.cols, // Swap dimensions
+                .cols = self.rows,
+                .col_ptr = col_ptr,
+                .row_indices = row_indices,
+                .values = values,
+                .allocator = allocator,
+            };
+        }
+
+        /// Sparse matrix-vector multiplication: y = A*x
+        ///
+        /// Computes the product of this sparse matrix (m×n) with a dense vector x (n×1),
+        /// producing a dense vector y (m×1). Uses row-wise accumulation.
+        ///
+        /// Time: O(nnz) | Space: O(m) for result vector
+        pub fn matvec(self: *const Self, allocator: Allocator, x: []const T) ![]T {
+            const y = try allocator.alloc(T, self.rows);
+            errdefer allocator.free(y);
+
+            // Initialize result to zero
+            for (y) |*val| {
+                val.* = 0;
+            }
+
+            // Row-wise accumulation
+            for (0..self.rows) |row| {
+                const start = self.row_ptr[row];
+                const end = self.row_ptr[row + 1];
+                var sum: T = 0;
+                for (start..end) |idx| {
+                    const col = self.col_indices[idx];
+                    sum += self.values[idx] * x[col];
+                }
+                y[row] = sum;
+            }
+
+            return y;
+        }
+
         pub const Entry = struct {
             col: usize,
             value: T,
@@ -541,6 +643,107 @@ pub fn CSC(comptime T: type) type {
             }
 
             return 0;
+        }
+
+        /// Transpose CSC matrix to CSR format
+        ///
+        /// Converts column-wise compressed format to row-wise compressed format.
+        /// Effectively computes A^T (transpose).
+        ///
+        /// Time: O(nnz) | Space: O(m + nnz)
+        pub fn transpose(self: *const Self, allocator: Allocator) !CSR(T) {
+            const n = self.nnz();
+            const row_count = self.rows;
+
+            // Allocate CSR arrays
+            const row_ptr = try allocator.alloc(usize, row_count + 1);
+            errdefer allocator.free(row_ptr);
+
+            const col_indices = try allocator.alloc(usize, n);
+            errdefer allocator.free(col_indices);
+
+            const values = try allocator.alloc(T, n);
+
+            // Initialize row_ptr to zero
+            for (row_ptr) |*p| {
+                p.* = 0;
+            }
+
+            if (n == 0) {
+                return CSR(T){
+                    .rows = self.cols, // Swap dimensions
+                    .cols = self.rows,
+                    .row_ptr = row_ptr,
+                    .col_indices = col_indices,
+                    .values = values,
+                    .allocator = allocator,
+                };
+            }
+
+            // Count non-zeros per row (becomes row_ptr)
+            for (self.row_indices) |row| {
+                row_ptr[row + 1] += 1;
+            }
+
+            // Cumulative sum to get row pointers
+            for (1..row_count + 1) |i| {
+                row_ptr[i] += row_ptr[i - 1];
+            }
+
+            // Fill col_indices and values
+            const temp_ptr = try allocator.alloc(usize, row_count + 1);
+            defer allocator.free(temp_ptr);
+            mem.copyForwards(usize, temp_ptr, row_ptr);
+
+            for (0..self.cols) |col| {
+                const start = self.col_ptr[col];
+                const end = self.col_ptr[col + 1];
+                for (start..end) |idx| {
+                    const row = self.row_indices[idx];
+                    const pos = temp_ptr[row];
+                    col_indices[pos] = col;
+                    values[pos] = self.values[idx];
+                    temp_ptr[row] += 1;
+                }
+            }
+
+            return CSR(T){
+                .rows = self.cols, // Swap dimensions
+                .cols = self.rows,
+                .row_ptr = row_ptr,
+                .col_indices = col_indices,
+                .values = values,
+                .allocator = allocator,
+            };
+        }
+
+        /// Sparse matrix-vector multiplication: y = A*x
+        ///
+        /// Computes the product of this sparse matrix (m×n) with a dense vector x (n×1),
+        /// producing a dense vector y (m×1). Uses column-wise accumulation.
+        ///
+        /// Time: O(nnz) | Space: O(m) for result vector
+        pub fn matvec(self: *const Self, allocator: Allocator, x: []const T) ![]T {
+            const y = try allocator.alloc(T, self.rows);
+            errdefer allocator.free(y);
+
+            // Initialize result to zero
+            for (y) |*val| {
+                val.* = 0;
+            }
+
+            // Column-wise accumulation: y += x[j] * A[:,j]
+            for (0..self.cols) |col| {
+                const start = self.col_ptr[col];
+                const end = self.col_ptr[col + 1];
+                const x_val = x[col];
+                for (start..end) |idx| {
+                    const row = self.row_indices[idx];
+                    y[row] += self.values[idx] * x_val;
+                }
+            }
+
+            return y;
         }
     };
 }
@@ -840,4 +1043,611 @@ test "COO: memory safety with multiple iterations" {
         try coo.sort();
         try testing.expectEqual(@as(usize, 50), coo.nnz());
     }
+}
+
+// ============================================================================
+// Sparse Matrix Operations: Transpose and SpMV
+// ============================================================================
+
+test "CSR transpose: general 3x3 matrix" {
+    // Create 3x3 matrix:
+    // [1 0 3]
+    // [0 5 0]
+    // [7 0 9]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 2, 3.0);
+    try coo.append(1, 1, 5.0);
+    try coo.append(2, 0, 7.0);
+    try coo.append(2, 2, 9.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // Manually build transpose: [A^T]_ij = A_ji
+    // A^T will be:
+    // [1 0 7]
+    // [0 5 0]
+    // [3 0 9]
+    var coo_t = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_t.deinit();
+
+    try coo_t.append(0, 0, 1.0); // A[0,0] -> A^T[0,0]
+    try coo_t.append(0, 2, 7.0); // A[2,0] -> A^T[0,2]
+    try coo_t.append(1, 1, 5.0); // A[1,1] -> A^T[1,1]
+    try coo_t.append(2, 0, 3.0); // A[0,2] -> A^T[2,0]
+    try coo_t.append(2, 2, 9.0); // A[2,2] -> A^T[2,2]
+    try coo_t.sort();
+
+    var csr_t = try CSR(f64).fromCOO(testing.allocator, &coo_t);
+    defer csr_t.deinit();
+
+    try testing.expectEqual(@as(usize, 3), csr_t.rows);
+    try testing.expectEqual(@as(usize, 3), csr_t.cols);
+    try testing.expectEqual(@as(usize, 5), csr_t.nnz());
+
+    // Verify transposed values
+    try testing.expectEqual(@as(f64, 1.0), csr_t.get(0, 0));
+    try testing.expectEqual(@as(f64, 7.0), csr_t.get(0, 2));
+    try testing.expectEqual(@as(f64, 5.0), csr_t.get(1, 1));
+    try testing.expectEqual(@as(f64, 3.0), csr_t.get(2, 0));
+    try testing.expectEqual(@as(f64, 9.0), csr_t.get(2, 2));
+}
+
+test "CSR transpose: 2x4 rectangular matrix" {
+    // Create 2x4 matrix:
+    // [1 2 0 3]
+    // [0 4 5 0]
+    var coo = COO(f64).init(testing.allocator, 2, 4);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(0, 3, 3.0);
+    try coo.append(1, 1, 4.0);
+    try coo.append(1, 2, 5.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // Build CSC representation of transpose (should be 4x2)
+    var coo_t = COO(f64).init(testing.allocator, 4, 2);
+    defer coo_t.deinit();
+
+    try coo_t.append(0, 0, 1.0); // (0,0) from A
+    try coo_t.append(1, 0, 2.0); // (0,1) from A
+    try coo_t.append(1, 1, 4.0); // (1,1) from A
+    try coo_t.append(2, 1, 5.0); // (1,2) from A
+    try coo_t.append(3, 0, 3.0); // (0,3) from A
+
+    var csc_t = try CSC(f64).fromCOO(testing.allocator, &coo_t);
+    defer csc_t.deinit();
+
+    try testing.expectEqual(@as(usize, 4), csc_t.rows);
+    try testing.expectEqual(@as(usize, 2), csc_t.cols);
+    try testing.expectEqual(@as(usize, 5), csc_t.nnz());
+}
+
+test "CSR transpose: single element matrix" {
+    // Create 1x1 matrix with single non-zero
+    var coo = COO(f64).init(testing.allocator, 1, 1);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 42.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    var coo_t = COO(f64).init(testing.allocator, 1, 1);
+    defer coo_t.deinit();
+
+    try coo_t.append(0, 0, 42.0);
+
+    var csr_t = try CSR(f64).fromCOO(testing.allocator, &coo_t);
+    defer csr_t.deinit();
+
+    try testing.expectEqual(@as(f64, 42.0), csr_t.get(0, 0));
+    try testing.expectEqual(@as(usize, 1), csr_t.nnz());
+}
+
+test "CSR transpose: empty matrix" {
+    // Create empty 3x3 matrix
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    var coo_t = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_t.deinit();
+
+    var csr_t = try CSR(f64).fromCOO(testing.allocator, &coo_t);
+    defer csr_t.deinit();
+
+    try testing.expectEqual(@as(usize, 0), csr_t.nnz());
+    try testing.expectEqual(@as(f64, 0.0), csr_t.get(0, 0));
+}
+
+test "CSC transpose: 3x3 matrix to CSR" {
+    // Create 3x3 CSC matrix:
+    // [1 0 3]
+    // [0 5 0]
+    // [7 0 9]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 2, 3.0);
+    try coo.append(1, 1, 5.0);
+    try coo.append(2, 0, 7.0);
+    try coo.append(2, 2, 9.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // Transpose of CSC: build COO from transposed values
+    var coo_t = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_t.deinit();
+
+    try coo_t.append(0, 0, 1.0);
+    try coo_t.append(1, 0, 5.0);
+    try coo_t.append(2, 0, 3.0);
+    try coo_t.append(0, 2, 7.0);
+    try coo_t.append(2, 2, 9.0);
+    try coo_t.sort();
+
+    var csr_t = try CSR(f64).fromCOO(testing.allocator, &coo_t);
+    defer csr_t.deinit();
+
+    try testing.expectEqual(@as(usize, 3), csr_t.rows);
+    try testing.expectEqual(@as(usize, 3), csr_t.cols);
+    try testing.expectEqual(@as(usize, 5), csr_t.nnz());
+}
+
+test "CSC transpose: symmetric matrix" {
+    // Create 3x3 symmetric matrix:
+    // [2 1 0]
+    // [1 3 4]
+    // [0 4 5]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 2.0);
+    try coo.append(0, 1, 1.0);
+    try coo.append(1, 0, 1.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+    try coo.append(2, 1, 4.0);
+    try coo.append(2, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // Transpose should equal original (symmetric)
+    var coo_t = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_t.deinit();
+
+    try coo_t.append(0, 0, 2.0);
+    try coo_t.append(0, 1, 1.0);
+    try coo_t.append(1, 0, 1.0);
+    try coo_t.append(1, 1, 3.0);
+    try coo_t.append(1, 2, 4.0);
+    try coo_t.append(2, 1, 4.0);
+    try coo_t.append(2, 2, 5.0);
+
+    var csc_t = try CSC(f64).fromCOO(testing.allocator, &coo_t);
+    defer csc_t.deinit();
+
+    try testing.expectEqual(csc.nnz(), csc_t.nnz());
+    // Verify symmetric property: A[i,j] = A[j,i]
+    try testing.expectEqual(@as(f64, 1.0), csc_t.get(0, 1));
+    try testing.expectEqual(@as(f64, 1.0), csc_t.get(1, 0));
+}
+
+// ============================================================================
+// Sparse Matrix-Vector Multiplication (SpMV)
+// ============================================================================
+
+test "CSR matvec: identity matrix" {
+    // Create 3x3 identity matrix
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // Create vector x = [1, 2, 3]
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+
+    // y = I * x = x = [1, 2, 3]
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    // Perform y = A*x (identity case)
+    for (0..csr.rows) |i| {
+        y[i] = 0.0;
+        var it = csr.rowIterator(i);
+        while (it.next()) |entry| {
+            y[i] += entry.value * x[entry.col];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 1.0), y[0]);
+    try testing.expectEqual(@as(f64, 2.0), y[1]);
+    try testing.expectEqual(@as(f64, 3.0), y[2]);
+}
+
+test "CSR matvec: diagonal matrix" {
+    // Create 3x3 diagonal matrix [2, 3, 5]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 5.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // x = [1, 2, 3]
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+
+    // y = D*x = [2*1, 3*2, 5*3] = [2, 6, 15]
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    for (0..csr.rows) |i| {
+        y[i] = 0.0;
+        var it = csr.rowIterator(i);
+        while (it.next()) |entry| {
+            y[i] += entry.value * x[entry.col];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 2.0), y[0]);
+    try testing.expectEqual(@as(f64, 6.0), y[1]);
+    try testing.expectEqual(@as(f64, 15.0), y[2]);
+}
+
+test "CSR matvec: general sparse matrix" {
+    // Create 3x4 matrix:
+    // [1 0 2 0]
+    // [0 3 0 4]
+    // [5 0 0 6]
+    var coo = COO(f64).init(testing.allocator, 3, 4);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 2, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 3, 4.0);
+    try coo.append(2, 0, 5.0);
+    try coo.append(2, 3, 6.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // x = [1, 2, 3, 4]
+    const x = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+
+    // Manual calculation:
+    // y[0] = 1*1 + 2*3 = 1 + 6 = 7
+    // y[1] = 3*2 + 4*4 = 6 + 16 = 22
+    // y[2] = 5*1 + 6*4 = 5 + 24 = 29
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    for (0..csr.rows) |i| {
+        y[i] = 0.0;
+        var it = csr.rowIterator(i);
+        while (it.next()) |entry| {
+            y[i] += entry.value * x[entry.col];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 7.0), y[0]);
+    try testing.expectEqual(@as(f64, 22.0), y[1]);
+    try testing.expectEqual(@as(f64, 29.0), y[2]);
+}
+
+test "CSR matvec: single row matrix" {
+    // Create 1x4 matrix: [2 0 3 0]
+    var coo = COO(f64).init(testing.allocator, 1, 4);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 2.0);
+    try coo.append(0, 2, 3.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // x = [1, 2, 3, 4]
+    const x = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+
+    // y = [2*1 + 3*3] = [11]
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 1);
+    defer allocator.free(y);
+
+    for (0..csr.rows) |i| {
+        y[i] = 0.0;
+        var it = csr.rowIterator(i);
+        while (it.next()) |entry| {
+            y[i] += entry.value * x[entry.col];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 11.0), y[0]);
+}
+
+test "CSR matvec: single column matrix" {
+    // Create 3x1 matrix: [5]
+    //                    [2]
+    //                    [7]
+    var coo = COO(f64).init(testing.allocator, 3, 1);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 5.0);
+    try coo.append(1, 0, 2.0);
+    try coo.append(2, 0, 7.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // x = [3]
+    const x = [_]f64{3.0};
+
+    // y = [5*3, 2*3, 7*3] = [15, 6, 21]
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    for (0..csr.rows) |i| {
+        y[i] = 0.0;
+        var it = csr.rowIterator(i);
+        while (it.next()) |entry| {
+            y[i] += entry.value * x[entry.col];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 15.0), y[0]);
+    try testing.expectEqual(@as(f64, 6.0), y[1]);
+    try testing.expectEqual(@as(f64, 21.0), y[2]);
+}
+
+test "CSR matvec: empty matrix" {
+    // Create empty 3x3 matrix
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    // y = A*x where A is zero matrix should be zero vector
+    for (0..csr.rows) |i| {
+        y[i] = 0.0;
+        var it = csr.rowIterator(i);
+        while (it.next()) |entry| {
+            y[i] += entry.value * x[entry.col];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 0.0), y[0]);
+    try testing.expectEqual(@as(f64, 0.0), y[1]);
+    try testing.expectEqual(@as(f64, 0.0), y[2]);
+}
+
+test "CSC matvec: identity matrix" {
+    // Create 3x3 identity matrix via CSC
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // x = [1, 2, 3]
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+
+    // y = I * x = x = [1, 2, 3]
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    // SpMV with CSC: column-wise accumulation
+    for (0..csc.rows) |i| {
+        y[i] = 0.0;
+    }
+
+    for (0..csc.cols) |j| {
+        const col_start = csc.col_ptr[j];
+        const col_end = csc.col_ptr[j + 1];
+        for (csc.row_indices[col_start..col_end], col_start..) |row, idx| {
+            y[row] += csc.values[idx] * x[j];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 1.0), y[0]);
+    try testing.expectEqual(@as(f64, 2.0), y[1]);
+    try testing.expectEqual(@as(f64, 3.0), y[2]);
+}
+
+test "CSC matvec: diagonal matrix" {
+    // Create 3x3 diagonal matrix [2, 3, 5]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // x = [1, 2, 3]
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+
+    // y = D*x = [2*1, 3*2, 5*3] = [2, 6, 15]
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    for (0..csc.rows) |i| {
+        y[i] = 0.0;
+    }
+
+    for (0..csc.cols) |j| {
+        const col_start = csc.col_ptr[j];
+        const col_end = csc.col_ptr[j + 1];
+        for (csc.row_indices[col_start..col_end], col_start..) |row, idx| {
+            y[row] += csc.values[idx] * x[j];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 2.0), y[0]);
+    try testing.expectEqual(@as(f64, 6.0), y[1]);
+    try testing.expectEqual(@as(f64, 15.0), y[2]);
+}
+
+test "CSC matvec: general sparse matrix" {
+    // Create 3x4 matrix:
+    // [1 0 2 0]
+    // [0 3 0 4]
+    // [5 0 0 6]
+    var coo = COO(f64).init(testing.allocator, 3, 4);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 2, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 3, 4.0);
+    try coo.append(2, 0, 5.0);
+    try coo.append(2, 3, 6.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // x = [1, 2, 3, 4]
+    const x = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+
+    // SpMV: y = A*x
+    // y[0] = A[0,0]*x[0] + A[0,1]*x[1] + A[0,2]*x[2] + A[0,3]*x[3] = 1*1 + 0*2 + 2*3 + 0*4 = 1 + 6 = 7
+    // y[1] = A[1,0]*x[0] + A[1,1]*x[1] + A[1,2]*x[2] + A[1,3]*x[3] = 0*1 + 3*2 + 0*3 + 4*4 = 6 + 16 = 22
+    // y[2] = A[2,0]*x[0] + A[2,1]*x[1] + A[2,2]*x[2] + A[2,3]*x[3] = 5*1 + 0*2 + 0*3 + 6*4 = 5 + 24 = 29
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    for (0..csc.rows) |i| {
+        y[i] = 0.0;
+    }
+
+    for (0..csc.cols) |j| {
+        const col_start = csc.col_ptr[j];
+        const col_end = csc.col_ptr[j + 1];
+        for (csc.row_indices[col_start..col_end], col_start..) |row, idx| {
+            y[row] += csc.values[idx] * x[j];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 7.0), y[0]);
+    try testing.expectEqual(@as(f64, 22.0), y[1]);
+    try testing.expectEqual(@as(f64, 29.0), y[2]);
+}
+
+test "CSC matvec: empty matrix" {
+    // Create empty 3x3 matrix
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(f64, 3);
+    defer allocator.free(y);
+
+    for (0..csc.rows) |i| {
+        y[i] = 0.0;
+    }
+
+    for (0..csc.cols) |j| {
+        const col_start = csc.col_ptr[j];
+        const col_end = csc.col_ptr[j + 1];
+        for (csc.row_indices[col_start..col_end], col_start..) |row, idx| {
+            y[row] += csc.values[idx] * x[j];
+        }
+    }
+
+    try testing.expectEqual(@as(f64, 0.0), y[0]);
+    try testing.expectEqual(@as(f64, 0.0), y[1]);
+    try testing.expectEqual(@as(f64, 0.0), y[2]);
+}
+
+test "CSC matvec: integer types" {
+    // Create 2x3 matrix with i32:
+    // [1 2 0]
+    // [0 3 4]
+    var coo = COO(i32).init(testing.allocator, 2, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1);
+    try coo.append(0, 1, 2);
+    try coo.append(1, 1, 3);
+    try coo.append(1, 2, 4);
+
+    var csc = try CSC(i32).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // x = [5, 6, 7]
+    const x = [_]i32{ 5, 6, 7 };
+
+    // y[0] = 1*5 + 2*6 = 5 + 12 = 17
+    // y[1] = 3*6 + 4*7 = 18 + 28 = 46
+    const allocator = testing.allocator;
+    const y = try allocator.alloc(i32, 2);
+    defer allocator.free(y);
+
+    for (0..csc.rows) |i| {
+        y[i] = 0;
+    }
+
+    for (0..csc.cols) |j| {
+        const col_start = csc.col_ptr[j];
+        const col_end = csc.col_ptr[j + 1];
+        for (csc.row_indices[col_start..col_end], col_start..) |row, idx| {
+            y[row] += csc.values[idx] * x[j];
+        }
+    }
+
+    try testing.expectEqual(@as(i32, 17), y[0]);
+    try testing.expectEqual(@as(i32, 46), y[1]);
 }
