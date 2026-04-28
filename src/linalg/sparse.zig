@@ -736,6 +736,69 @@ pub fn CSR(comptime T: type) type {
             };
         }
 
+        /// Hadamard product (element-wise multiplication): C = A ∘ B
+        ///
+        /// Both matrices must have the same dimensions.
+        /// Only positions where BOTH matrices have non-zero entries will be non-zero in result.
+        /// Result is a new CSR matrix containing the element-wise product.
+        ///
+        /// Time: O(nnz(A) + nnz(B)) | Space: O(min(nnz(A), nnz(B)))
+        pub fn hadamard(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.rows != other.rows or self.cols != other.cols) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format
+            var coo = COO(T).init(allocator, self.rows, self.cols);
+            errdefer coo.deinit();
+
+            // Create HashMap from the matrix with fewer non-zeros for efficiency
+            const HashMap = std.AutoHashMap(usize, T);
+            var map = HashMap.init(allocator);
+            defer map.deinit();
+
+            // Choose smaller matrix to populate HashMap
+            const use_self_for_map = self.nnz() <= other.nnz();
+            const map_matrix = if (use_self_for_map) self else other;
+            const scan_matrix = if (use_self_for_map) other else self;
+
+            // Populate HashMap with one matrix
+            for (0..map_matrix.rows) |i| {
+                const start = map_matrix.row_ptr[i];
+                const end = map_matrix.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    const j = map_matrix.col_indices[idx];
+                    const value = map_matrix.values[idx];
+                    const key = i * map_matrix.cols + j;
+                    try map.put(key, value);
+                }
+            }
+
+            // Scan other matrix and multiply where both have non-zeros
+            for (0..scan_matrix.rows) |i| {
+                const start = scan_matrix.row_ptr[i];
+                const end = scan_matrix.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    const j = scan_matrix.col_indices[idx];
+                    const value = scan_matrix.values[idx];
+                    const key = i * scan_matrix.cols + j;
+                    if (map.get(key)) |other_value| {
+                        const product = value * other_value;
+                        try coo.append(i, j, product);
+                    }
+                }
+            }
+
+            // Sort COO before converting to CSR
+            try coo.sort();
+
+            // Convert COO to CSR
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
+        }
+
         pub const Entry = struct {
             col: usize,
             value: T,
@@ -1336,6 +1399,69 @@ pub fn CSC(comptime T: type) type {
                 .values = values,
                 .allocator = allocator,
             };
+        }
+
+        /// Hadamard product (element-wise multiplication): C = A ∘ B
+        ///
+        /// Both matrices must have the same dimensions.
+        /// Only positions where BOTH matrices have non-zero entries will be non-zero in result.
+        /// Result is a new CSC matrix containing the element-wise product.
+        ///
+        /// Time: O(nnz(A) + nnz(B)) | Space: O(min(nnz(A), nnz(B)))
+        pub fn hadamard(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.rows != other.rows or self.cols != other.cols) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format
+            var coo = COO(T).init(allocator, self.rows, self.cols);
+            errdefer coo.deinit();
+
+            // Create HashMap from the matrix with fewer non-zeros for efficiency
+            const HashMap = std.AutoHashMap(usize, T);
+            var map = HashMap.init(allocator);
+            defer map.deinit();
+
+            // Choose smaller matrix to populate HashMap
+            const use_self_for_map = self.nnz() <= other.nnz();
+            const map_matrix = if (use_self_for_map) self else other;
+            const scan_matrix = if (use_self_for_map) other else self;
+
+            // Populate HashMap with one matrix
+            for (0..map_matrix.cols) |j| {
+                const start = map_matrix.col_ptr[j];
+                const end = map_matrix.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    const i = map_matrix.row_indices[idx];
+                    const value = map_matrix.values[idx];
+                    const key = i * map_matrix.cols + j;
+                    try map.put(key, value);
+                }
+            }
+
+            // Scan other matrix and multiply where both have non-zeros
+            for (0..scan_matrix.cols) |j| {
+                const start = scan_matrix.col_ptr[j];
+                const end = scan_matrix.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    const i = scan_matrix.row_indices[idx];
+                    const value = scan_matrix.values[idx];
+                    const key = i * scan_matrix.cols + j;
+                    if (map.get(key)) |other_value| {
+                        const product = value * other_value;
+                        try coo.append(i, j, product);
+                    }
+                }
+            }
+
+            // Sort COO before converting to CSC
+            try coo.sort();
+
+            // Convert COO to CSC
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
         }
 
         /// Compute trace (sum of diagonal elements)
@@ -2692,6 +2818,232 @@ test "CSR scale: memory safety check" {
     }
 }
 
+test "CSR hadamard: general sparse matrices" {
+    // Matrix A:          Matrix B:
+    // [1  0  2]          [0  0  2]
+    // [0  3  0]          [0  3  5]
+    // [4  0  5]          [4  6  0]
+    //
+    // A ∘ B (element-wise product, only where both non-zero):
+    // [0  0  4]  (1×0=0 missing, 0×0=0 missing, 2×2=4)
+    // [0  9  0]  (0×0=0 missing, 3×3=9, 0×5=0 missing)
+    // [16 0  0]  (4×4=16, 0×6=0 missing, 5×0=0 missing)
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 0, 4.0);
+    try coo_a.append(2, 2, 5.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 2, 2.0);
+    try coo_b.append(1, 1, 3.0);
+    try coo_b.append(1, 2, 5.0);
+    try coo_b.append(2, 0, 4.0);
+    try coo_b.append(2, 1, 6.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.hadamard(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Result should have 3 non-zeros
+    try testing.expectEqual(@as(usize, 3), result.nnz());
+
+    // Check values
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 2));  // 2×2=4
+    try testing.expectEqual(@as(f64, 9.0), result.get(1, 1));  // 3×3=9
+    try testing.expectEqual(@as(f64, 16.0), result.get(2, 0)); // 4×4=16
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));  // No overlap
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 2));  // No overlap
+}
+
+test "CSR hadamard: diagonal matrices" {
+    // A = diag([1, 2, 3])
+    // B = diag([4, 5, 6])
+    // A ∘ B = diag([4, 10, 18])
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 2.0);
+    try coo_a.append(2, 2, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 4.0);
+    try coo_b.append(1, 1, 5.0);
+    try coo_b.append(2, 2, 6.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.hadamard(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.nnz());
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0));   // 1×4=4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2×5=10
+    try testing.expectEqual(@as(f64, 18.0), result.get(2, 2));  // 3×6=18
+}
+
+test "CSR hadamard: no overlap (result is zero matrix)" {
+    // A has non-zeros at (0,0) and (1,1)
+    // B has non-zeros at (0,1) and (1,0)
+    // No overlap → result should be empty
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 2.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 1, 3.0);
+    try coo_b.append(1, 0, 4.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.hadamard(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+    try testing.expect(result.isEmpty());
+}
+
+test "CSR hadamard: complete overlap" {
+    // A and B have same sparsity pattern
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2.0);
+    try coo_a.append(0, 1, 3.0);
+    try coo_a.append(1, 0, 4.0);
+    try coo_a.append(1, 1, 5.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 6.0);
+    try coo_b.append(0, 1, 7.0);
+    try coo_b.append(1, 0, 8.0);
+    try coo_b.append(1, 1, 9.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.hadamard(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+    try testing.expectEqual(@as(f64, 12.0), result.get(0, 0)); // 2×6=12
+    try testing.expectEqual(@as(f64, 21.0), result.get(0, 1)); // 3×7=21
+    try testing.expectEqual(@as(f64, 32.0), result.get(1, 0)); // 4×8=32
+    try testing.expectEqual(@as(f64, 45.0), result.get(1, 1)); // 5×9=45
+}
+
+test "CSR hadamard: dimension mismatch error" {
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 2.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    try testing.expectError(error.DimensionMismatch, csr_a.hadamard(testing.allocator, &csr_b));
+}
+
+test "CSR hadamard: empty matrices" {
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.hadamard(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+    try testing.expect(result.isEmpty());
+}
+
+test "CSR hadamard: integer type" {
+    var coo_a = COO(i32).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 3);
+    try coo_a.append(1, 1, 4);
+
+    var coo_b = COO(i32).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 5);
+    try coo_b.append(1, 1, 6);
+
+    var csr_a = try CSR(i32).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(i32).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.hadamard(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+    try testing.expectEqual(@as(i32, 15), result.get(0, 0)); // 3×5=15
+    try testing.expectEqual(@as(i32, 24), result.get(1, 1)); // 4×6=24
+}
+
+test "CSR hadamard: memory safety check" {
+    // Run multiple iterations to check for memory leaks
+    for (0..10) |_| {
+        var coo_a = COO(f64).init(testing.allocator, 5, 5);
+        defer coo_a.deinit();
+        try coo_a.append(0, 1, 2.0);
+        try coo_a.append(2, 3, 4.0);
+        try coo_a.append(4, 0, 5.0);
+
+        var coo_b = COO(f64).init(testing.allocator, 5, 5);
+        defer coo_b.deinit();
+        try coo_b.append(0, 1, 3.0);
+        try coo_b.append(2, 3, 6.0);
+
+        var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+        defer csr_a.deinit();
+
+        var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+        defer csr_b.deinit();
+
+        var result = try csr_a.hadamard(testing.allocator, &csr_b);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 2), result.nnz());
+    }
+}
+
 test "CSR trace: square matrix with diagonal" {
     // Matrix:
     // [1  2  0]
@@ -3401,6 +3753,230 @@ test "CSC scale: memory safety check" {
         defer result.deinit();
 
         try testing.expectEqual(@as(usize, 3), result.nnz());
+    }
+}
+
+test "CSC hadamard: general sparse matrices" {
+    // Matrix A:          Matrix B:
+    // [1  0  2]          [0  0  2]
+    // [0  3  0]          [0  3  5]
+    // [4  0  5]          [4  6  0]
+    //
+    // A ∘ B (element-wise product, only where both non-zero):
+    // [0  0  4]  (1×0=0 missing, 0×0=0 missing, 2×2=4)
+    // [0  9  0]  (0×0=0 missing, 3×3=9, 0×5=0 missing)
+    // [16 0  0]  (4×4=16, 0×6=0 missing, 5×0=0 missing)
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 0, 4.0);
+    try coo_a.append(2, 2, 5.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 2, 2.0);
+    try coo_b.append(1, 1, 3.0);
+    try coo_b.append(1, 2, 5.0);
+    try coo_b.append(2, 0, 4.0);
+    try coo_b.append(2, 1, 6.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.hadamard(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Result should have 3 non-zeros
+    try testing.expectEqual(@as(usize, 3), result.nnz());
+
+    // Check values
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 2));  // 2×2=4
+    try testing.expectEqual(@as(f64, 9.0), result.get(1, 1));  // 3×3=9
+    try testing.expectEqual(@as(f64, 16.0), result.get(2, 0)); // 4×4=16
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));  // No overlap
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 2));  // No overlap
+}
+
+test "CSC hadamard: diagonal matrices" {
+    // A = diag([1, 2, 3])
+    // B = diag([4, 5, 6])
+    // A ∘ B = diag([4, 10, 18])
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 2.0);
+    try coo_a.append(2, 2, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 4.0);
+    try coo_b.append(1, 1, 5.0);
+    try coo_b.append(2, 2, 6.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.hadamard(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.nnz());
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0));   // 1×4=4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2×5=10
+    try testing.expectEqual(@as(f64, 18.0), result.get(2, 2));  // 3×6=18
+}
+
+test "CSC hadamard: no overlap (result is zero matrix)" {
+    // A has non-zeros at (0,0) and (1,1)
+    // B has non-zeros at (0,1) and (1,0)
+    // No overlap → result should be empty
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 2.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 1, 3.0);
+    try coo_b.append(1, 0, 4.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.hadamard(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+}
+
+test "CSC hadamard: complete overlap" {
+    // A and B have same sparsity pattern
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2.0);
+    try coo_a.append(0, 1, 3.0);
+    try coo_a.append(1, 0, 4.0);
+    try coo_a.append(1, 1, 5.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 6.0);
+    try coo_b.append(0, 1, 7.0);
+    try coo_b.append(1, 0, 8.0);
+    try coo_b.append(1, 1, 9.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.hadamard(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+    try testing.expectEqual(@as(f64, 12.0), result.get(0, 0)); // 2×6=12
+    try testing.expectEqual(@as(f64, 21.0), result.get(0, 1)); // 3×7=21
+    try testing.expectEqual(@as(f64, 32.0), result.get(1, 0)); // 4×8=32
+    try testing.expectEqual(@as(f64, 45.0), result.get(1, 1)); // 5×9=45
+}
+
+test "CSC hadamard: dimension mismatch error" {
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 2.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    try testing.expectError(error.DimensionMismatch, csc_a.hadamard(testing.allocator, &csc_b));
+}
+
+test "CSC hadamard: empty matrices" {
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.hadamard(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+}
+
+test "CSC hadamard: integer type" {
+    var coo_a = COO(i32).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 3);
+    try coo_a.append(1, 1, 4);
+
+    var coo_b = COO(i32).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 5);
+    try coo_b.append(1, 1, 6);
+
+    var csc_a = try CSC(i32).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(i32).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.hadamard(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+    try testing.expectEqual(@as(i32, 15), result.get(0, 0)); // 3×5=15
+    try testing.expectEqual(@as(i32, 24), result.get(1, 1)); // 4×6=24
+}
+
+test "CSC hadamard: memory safety check" {
+    // Run multiple iterations to check for memory leaks
+    for (0..10) |_| {
+        var coo_a = COO(f64).init(testing.allocator, 5, 5);
+        defer coo_a.deinit();
+        try coo_a.append(0, 1, 2.0);
+        try coo_a.append(2, 3, 4.0);
+        try coo_a.append(4, 0, 5.0);
+
+        var coo_b = COO(f64).init(testing.allocator, 5, 5);
+        defer coo_b.deinit();
+        try coo_b.append(0, 1, 3.0);
+        try coo_b.append(2, 3, 6.0);
+
+        var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+        defer csc_a.deinit();
+
+        var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+        defer csc_b.deinit();
+
+        var result = try csc_a.hadamard(testing.allocator, &csc_b);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 2), result.nnz());
     }
 }
 
