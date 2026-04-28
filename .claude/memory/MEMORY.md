@@ -1,4 +1,41 @@
-## Latest Session (Session 425, 2026-04-28) — STABILIZATION MODE
+## Latest Session (Session 429, 2026-04-29) — FEATURE MODE
+- **Mode**: Feature (Session 429)
+- **Type**: Scientific computing enhancement - sparse matrix Hadamard product
+- **Module**: linalg/sparse.zig
+- **Feature**: Implemented Hadamard product (element-wise multiplication) for CSR and CSC sparse matrices
+- **Operations Added**:
+  * CSR.hadamard(): Element-wise multiply A ∘ B - O(nnz(A) + nnz(B)) time, O(min(nnz(A), nnz(B))) space
+  * CSC.hadamard(): Same operation for column-compressed format
+  * Uses HashMap for efficient intersection detection (only positions with non-zero in BOTH matrices)
+  * Result has at most min(nnz(A), nnz(B)) non-zeros
+- **Implementation Details**:
+  * Chooses smaller matrix to populate HashMap for efficiency
+  * Scans larger matrix and multiplies where overlap exists
+  * Uses COO as intermediate format with sorting before conversion
+  * Proper error handling: DimensionMismatch for incompatible dimensions
+  * All methods follow allocator-first principle
+  * Big-O complexity documented in all doc comments
+- **Use Cases**:
+  * Machine learning feature masking (element-wise feature selection)
+  * Element-wise weighted combinations
+  * Sparsity pattern intersection analysis
+  * Conditional matrix operations (multiply where both have data)
+- **Tests**: 18 new tests (9 CSR + 9 CSC), 104 total sparse matrix tests, all passing
+  * General sparse matrices with partial overlap
+  * Diagonal matrices (complete overlap)
+  * No overlap (zero matrix result)
+  * Complete overlap (same sparsity pattern)
+  * Dimension mismatch error handling
+  * Empty matrices
+  * Integer types (i32)
+  * Memory safety (10 iterations each)
+- **Test Status**: All tests passing (exit code 0)
+- **Files Changed**: 1 (+576 lines)
+  * src/linalg/sparse.zig (added 2 hadamard methods + 18 tests)
+- **Commits**: 3703755 (Hadamard product), 194218a (activity log)
+- **Next Priority**: Continue scientific computing track - could add more sparse ops (norm1, normInf, Kronecker product) or move to other v2.0 modules
+
+## Previous Session (Session 425, 2026-04-28) — STABILIZATION MODE
 - **Mode**: Stabilization (Session 425, every 5th session)
 - **Status**: ✅ ALL SYSTEMS GREEN
 - **CI Status**: Last run on main - SUCCESS (2026-04-27T23:06:31Z)
