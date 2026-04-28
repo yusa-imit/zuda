@@ -195,6 +195,38 @@ pub fn COO(comptime T: type) type {
             mem.copyForwards(usize, self.col_indices.items, temp_cols);
             mem.copyForwards(T, self.values.items, temp_vals);
         }
+
+        /// Validate internal invariants
+        ///
+        /// Checks:
+        /// - All arrays have equal length
+        /// - Row indices are within bounds [0, rows)
+        /// - Column indices are within bounds [0, cols)
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn validate(self: *const Self) !void {
+            const n = self.row_indices.items.len;
+
+            // Check array lengths match
+            if (self.col_indices.items.len != n) {
+                return error.InvalidArrayLength;
+            }
+            if (self.values.items.len != n) {
+                return error.InvalidArrayLength;
+            }
+
+            // Check indices are within bounds
+            for (self.row_indices.items) |row| {
+                if (row >= self.rows) {
+                    return error.IndexOutOfBounds;
+                }
+            }
+            for (self.col_indices.items) |col| {
+                if (col >= self.cols) {
+                    return error.IndexOutOfBounds;
+                }
+            }
+        }
     };
 }
 
@@ -495,6 +527,55 @@ pub fn CSR(comptime T: type) type {
                 .end = end,
             };
         }
+
+        /// Validate internal invariants
+        ///
+        /// Checks:
+        /// - row_ptr has correct length (rows + 1)
+        /// - col_indices and values have equal length
+        /// - row_ptr is monotonically increasing
+        /// - row_ptr[0] == 0
+        /// - row_ptr[rows] == nnz
+        /// - Column indices are within bounds [0, cols)
+        /// - Column indices within each row are sorted (optional, CSR doesn't require this but it's good practice)
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn validate(self: *const Self) !void {
+            const n = self.nnz();
+
+            // Check row_ptr length
+            if (self.row_ptr.len != self.rows + 1) {
+                return error.InvalidRowPtrLength;
+            }
+
+            // Check col_indices and values have equal length
+            if (self.col_indices.len != n) {
+                return error.InvalidArrayLength;
+            }
+            if (self.values.len != n) {
+                return error.InvalidArrayLength;
+            }
+
+            // Check row_ptr is monotonically increasing
+            if (self.row_ptr[0] != 0) {
+                return error.InvalidRowPtrStart;
+            }
+            for (1..self.row_ptr.len) |i| {
+                if (self.row_ptr[i] < self.row_ptr[i - 1]) {
+                    return error.RowPtrNotMonotonic;
+                }
+            }
+            if (self.row_ptr[self.rows] != n) {
+                return error.InvalidRowPtrEnd;
+            }
+
+            // Check column indices are within bounds
+            for (self.col_indices) |col| {
+                if (col >= self.cols) {
+                    return error.IndexOutOfBounds;
+                }
+            }
+        }
     };
 }
 
@@ -744,6 +825,54 @@ pub fn CSC(comptime T: type) type {
             }
 
             return y;
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Checks:
+        /// - col_ptr has correct length (cols + 1)
+        /// - row_indices and values have equal length
+        /// - col_ptr is monotonically increasing
+        /// - col_ptr[0] == 0
+        /// - col_ptr[cols] == nnz
+        /// - Row indices are within bounds [0, rows)
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn validate(self: *const Self) !void {
+            const n = self.nnz();
+
+            // Check col_ptr length
+            if (self.col_ptr.len != self.cols + 1) {
+                return error.InvalidColPtrLength;
+            }
+
+            // Check row_indices and values have equal length
+            if (self.row_indices.len != n) {
+                return error.InvalidArrayLength;
+            }
+            if (self.values.len != n) {
+                return error.InvalidArrayLength;
+            }
+
+            // Check col_ptr is monotonically increasing
+            if (self.col_ptr[0] != 0) {
+                return error.InvalidColPtrStart;
+            }
+            for (1..self.col_ptr.len) |i| {
+                if (self.col_ptr[i] < self.col_ptr[i - 1]) {
+                    return error.ColPtrNotMonotonic;
+                }
+            }
+            if (self.col_ptr[self.cols] != n) {
+                return error.InvalidColPtrEnd;
+            }
+
+            // Check row indices are within bounds
+            for (self.row_indices) |row| {
+                if (row >= self.rows) {
+                    return error.IndexOutOfBounds;
+                }
+            }
         }
     };
 }
@@ -1650,4 +1779,72 @@ test "CSC matvec: integer types" {
 
     try testing.expectEqual(@as(i32, 17), y[0]);
     try testing.expectEqual(@as(i32, 46), y[1]);
+}
+
+test "COO: validate valid matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 2, 2.0);
+    try coo.append(2, 1, 3.0);
+
+    // Should pass validation
+    try coo.validate();
+}
+
+test "COO: validate detects out-of-bounds row" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(3, 0, 2.0); // row 3 is out of bounds for 3x3 matrix
+
+    // Should fail validation
+    const result = coo.validate();
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "COO: validate detects out-of-bounds column" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 3, 2.0); // col 3 is out of bounds for 3x3 matrix
+
+    // Should fail validation
+    const result = coo.validate();
+    try testing.expectError(error.IndexOutOfBounds, result);
+}
+
+test "CSR: validate valid matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(2, 2, 3.0);
+    try coo.sort();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // Should pass validation
+    try csr.validate();
+}
+
+test "CSC: validate valid matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(2, 2, 3.0);
+    try coo.sort();
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // Should pass validation
+    try csc.validate();
 }
