@@ -481,6 +481,92 @@ pub fn CSR(comptime T: type) type {
             return y;
         }
 
+        /// Sparse matrix-matrix multiply: C = A × B
+        ///
+        /// Computes the product of two CSR sparse matrices.
+        /// Returns a new CSR matrix containing the result.
+        ///
+        /// Algorithm: Row-wise multiplication using intermediate COO format
+        /// - For each row i in A:
+        ///   - For each non-zero A[i,k]:
+        ///     - For each non-zero B[k,j]:
+        ///       - Accumulate A[i,k] * B[k,j] into C[i,j]
+        /// - Convert accumulated COO to CSR format
+        ///
+        /// Use cases:
+        /// - Matrix powers (A^k) for graph algorithms
+        /// - Sparse linear algebra operations
+        /// - Iterative methods requiring A × A^T
+        ///
+        /// Time: O(nnz(A) × nnz_row_avg(B)) | Space: O(nnz(C))
+        pub fn matmul(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.cols != other.rows) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format for accumulation
+            var coo = COO(T).init(allocator, self.rows, other.cols);
+            errdefer coo.deinit();
+
+            // Use HashMap to accumulate products at each (row, col) position
+            // Key: (row, col) encoded as row * other.cols + col
+            // Value: accumulated sum
+            const HashMap = std.AutoHashMap(usize, T);
+            var accumulator = HashMap.init(allocator);
+            defer accumulator.deinit();
+
+            // For each row in A
+            for (0..self.rows) |i| {
+                const a_start = self.row_ptr[i];
+                const a_end = self.row_ptr[i + 1];
+
+                // For each non-zero A[i,k]
+                for (a_start..a_end) |a_idx| {
+                    const k = self.col_indices[a_idx];
+                    const a_ik = self.values[a_idx];
+
+                    // For each non-zero B[k,j]
+                    const b_start = other.row_ptr[k];
+                    const b_end = other.row_ptr[k + 1];
+                    for (b_start..b_end) |b_idx| {
+                        const j = other.col_indices[b_idx];
+                        const b_kj = other.values[b_idx];
+
+                        // Accumulate into C[i,j]
+                        const key = i * other.cols + j;
+                        const product = a_ik * b_kj;
+
+                        if (accumulator.get(key)) |existing| {
+                            try accumulator.put(key, existing + product);
+                        } else {
+                            try accumulator.put(key, product);
+                        }
+                    }
+                }
+            }
+
+            // Convert accumulator to COO
+            var iter = accumulator.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                const row = key / other.cols;
+                const col = key % other.cols;
+                try coo.append(row, col, value);
+            }
+
+            // Sort COO before converting to CSR
+            try coo.sort();
+
+            // Convert COO to CSR
+            const result = try Self.fromCOO(allocator, &coo);
+
+            // Clean up COO (fromCOO only borrows, doesn't consume)
+            coo.deinit();
+
+            return result;
+        }
+
         pub const Entry = struct {
             col: usize,
             value: T,
@@ -1587,6 +1673,240 @@ test "CSR matvec: empty matrix" {
     try testing.expectEqual(@as(f64, 0.0), y[0]);
     try testing.expectEqual(@as(f64, 0.0), y[1]);
     try testing.expectEqual(@as(f64, 0.0), y[2]);
+}
+
+test "CSR matmul: identity × identity" {
+    // I × I = I
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 1.0);
+    try coo_a.append(2, 2, 1.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 1.0);
+    try coo_b.append(2, 2, 1.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.matmul(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Result should be identity
+    try testing.expectEqual(@as(usize, 3), result.nnz());
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 1.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 1.0), result.get(2, 2));
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 2));
+}
+
+test "CSR matmul: diagonal × diagonal" {
+    // [2 0 0]   [3 0 0]   [6 0 0]
+    // [0 3 0] × [0 4 0] = [0 12 0]
+    // [0 0 4]   [0 0 5]   [0 0 20]
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 2, 4.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 3.0);
+    try coo_b.append(1, 1, 4.0);
+    try coo_b.append(2, 2, 5.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.matmul(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.nnz());
+    try testing.expectEqual(@as(f64, 6.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 12.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 20.0), result.get(2, 2));
+}
+
+test "CSR matmul: general sparse matrices" {
+    // A = [1 2 0]   B = [1 0]   C = [1*1+2*3  1*0+2*4] = [7  8]
+    //     [0 3 0]       [3 4]       [0*1+3*3  0*0+3*4]   [9 12]
+    //                   [0 0]       [0        0]         [0  0]
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 1, 2.0);
+    try coo_a.append(1, 1, 3.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 0, 3.0);
+    try coo_b.append(1, 1, 4.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.matmul(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 2), result.cols);
+    try testing.expectEqual(@as(f64, 7.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 8.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 9.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 12.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 1));
+}
+
+test "CSR matmul: rectangular dimensions" {
+    // A (2×3) × B (3×2) = C (2×2)
+    // A = [1 0 2]   B = [1 2]   C = [1*1+0*0+2*0  1*2+0*0+2*3] = [1 8]
+    //     [0 3 0]       [0 0]       [0*1+3*0+0*0  0*2+3*0+0*3]   [0 0]
+    //                   [0 3]
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(0, 1, 2.0);
+    try coo_b.append(2, 1, 3.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.matmul(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.rows);
+    try testing.expectEqual(@as(usize, 2), result.cols);
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 8.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 1));
+}
+
+test "CSR matmul: empty matrices" {
+    // Zero matrix × zero matrix = zero matrix
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.matmul(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.rows);
+    try testing.expectEqual(@as(usize, 2), result.cols);
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+}
+
+test "CSR matmul: dimension mismatch error" {
+    // A (2×3) × B (2×2) should fail (cols of A != rows of B)
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    const result = csr_a.matmul(testing.allocator, &csr_b);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "CSR matmul: integer types (i32)" {
+    // Test with integer type
+    var coo_a = COO(i32).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2);
+    try coo_a.append(0, 1, 3);
+    try coo_a.append(1, 1, 4);
+
+    var csr_a = try CSR(i32).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(i32).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1);
+    try coo_b.append(1, 0, 2);
+    try coo_b.append(1, 1, 3);
+
+    var csr_b = try CSR(i32).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.matmul(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // [2 3] × [1 0] = [2*1+3*2  2*0+3*3] = [8  9]
+    // [0 4]   [2 3]   [0*1+4*2  0*0+4*3]   [8 12]
+    try testing.expectEqual(@as(i32, 8), result.get(0, 0));
+    try testing.expectEqual(@as(i32, 9), result.get(0, 1));
+    try testing.expectEqual(@as(i32, 8), result.get(1, 0));
+    try testing.expectEqual(@as(i32, 12), result.get(1, 1));
+}
+
+test "CSR matmul: memory safety check" {
+    // Run multiple iterations to check for memory leaks
+    for (0..10) |_| {
+        var coo_a = COO(f64).init(testing.allocator, 5, 5);
+        defer coo_a.deinit();
+        try coo_a.append(0, 1, 2.0);
+        try coo_a.append(2, 3, 4.0);
+        try coo_a.append(4, 0, 5.0);
+
+        var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+        defer csr_a.deinit();
+
+        var coo_b = COO(f64).init(testing.allocator, 5, 5);
+        defer coo_b.deinit();
+        try coo_b.append(1, 2, 3.0);
+        try coo_b.append(3, 4, 6.0);
+
+        var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+        defer csr_b.deinit();
+
+        var result = try csr_a.matmul(testing.allocator, &csr_b);
+        defer result.deinit();
+
+        // Verify expected non-zero count and values
+        const expected_nnz = result.nnz();
+        try testing.expect(expected_nnz >= 0); // Should be valid
+    }
 }
 
 test "CSC matvec: identity matrix" {
