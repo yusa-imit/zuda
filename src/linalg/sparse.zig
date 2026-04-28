@@ -567,6 +567,175 @@ pub fn CSR(comptime T: type) type {
             return result;
         }
 
+        /// Element-wise addition: C = A + B
+        ///
+        /// Both matrices must have the same dimensions.
+        /// Result is a new CSR matrix containing the sum.
+        ///
+        /// Time: O(nnz(A) + nnz(B)) | Space: O(nnz(A) + nnz(B))
+        pub fn add(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.rows != other.rows or self.cols != other.cols) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format for easy merging
+            var coo = COO(T).init(allocator, self.rows, self.cols);
+            errdefer coo.deinit();
+
+            // Use HashMap to accumulate values at each (row, col) position
+            const HashMap = std.AutoHashMap(usize, T);
+            var accumulator = HashMap.init(allocator);
+            defer accumulator.deinit();
+
+            // Add all entries from self
+            for (0..self.rows) |i| {
+                const start = self.row_ptr[i];
+                const end = self.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    const j = self.col_indices[idx];
+                    const value = self.values[idx];
+                    const key = i * self.cols + j;
+                    try accumulator.put(key, value);
+                }
+            }
+
+            // Add all entries from other
+            for (0..other.rows) |i| {
+                const start = other.row_ptr[i];
+                const end = other.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    const j = other.col_indices[idx];
+                    const value = other.values[idx];
+                    const key = i * other.cols + j;
+                    if (accumulator.get(key)) |existing| {
+                        try accumulator.put(key, existing + value);
+                    } else {
+                        try accumulator.put(key, value);
+                    }
+                }
+            }
+
+            // Convert accumulator to COO
+            var iter = accumulator.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                const row = key / self.cols;
+                const col = key % self.cols;
+                try coo.append(row, col, value);
+            }
+
+            // Sort COO before converting to CSR
+            try coo.sort();
+
+            // Convert COO to CSR
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
+        }
+
+        /// Element-wise subtraction: C = A - B
+        ///
+        /// Both matrices must have the same dimensions.
+        /// Result is a new CSR matrix containing the difference.
+        ///
+        /// Time: O(nnz(A) + nnz(B)) | Space: O(nnz(A) + nnz(B))
+        pub fn subtract(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.rows != other.rows or self.cols != other.cols) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format
+            var coo = COO(T).init(allocator, self.rows, self.cols);
+            errdefer coo.deinit();
+
+            const HashMap = std.AutoHashMap(usize, T);
+            var accumulator = HashMap.init(allocator);
+            defer accumulator.deinit();
+
+            // Add all entries from self
+            for (0..self.rows) |i| {
+                const start = self.row_ptr[i];
+                const end = self.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    const j = self.col_indices[idx];
+                    const value = self.values[idx];
+                    const key = i * self.cols + j;
+                    try accumulator.put(key, value);
+                }
+            }
+
+            // Subtract all entries from other
+            for (0..other.rows) |i| {
+                const start = other.row_ptr[i];
+                const end = other.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    const j = other.col_indices[idx];
+                    const value = other.values[idx];
+                    const key = i * other.cols + j;
+                    if (accumulator.get(key)) |existing| {
+                        try accumulator.put(key, existing - value);
+                    } else {
+                        try accumulator.put(key, -value);
+                    }
+                }
+            }
+
+            // Convert accumulator to COO
+            var iter = accumulator.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                const row = key / self.cols;
+                const col = key % self.cols;
+                try coo.append(row, col, value);
+            }
+
+            // Sort COO before converting to CSR
+            try coo.sort();
+
+            // Convert COO to CSR
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
+        }
+
+        /// Scalar multiplication: C = alpha * A
+        ///
+        /// Multiplies all non-zero elements by scalar alpha.
+        /// Result is a new CSR matrix.
+        ///
+        /// Time: O(nnz) | Space: O(nnz)
+        pub fn scale(self: *const Self, allocator: Allocator, alpha: T) !Self {
+            // Allocate new arrays
+            const n = self.nnz();
+            const row_ptr = try allocator.alloc(usize, self.rows + 1);
+            errdefer allocator.free(row_ptr);
+
+            const col_indices = try allocator.alloc(usize, n);
+            errdefer allocator.free(col_indices);
+
+            const values = try allocator.alloc(T, n);
+
+            // Copy structure and scale values
+            @memcpy(row_ptr, self.row_ptr);
+            @memcpy(col_indices, self.col_indices);
+            for (0..n) |i| {
+                values[i] = alpha * self.values[i];
+            }
+
+            return Self{
+                .rows = self.rows,
+                .cols = self.cols,
+                .row_ptr = row_ptr,
+                .col_indices = col_indices,
+                .values = values,
+                .allocator = allocator,
+            };
+        }
+
         pub const Entry = struct {
             col: usize,
             value: T,
@@ -612,6 +781,93 @@ pub fn CSR(comptime T: type) type {
                 .index = start,
                 .end = end,
             };
+        }
+
+        /// Compute trace (sum of diagonal elements)
+        ///
+        /// Only valid for square matrices (rows == cols).
+        /// Returns sum of all elements A[i,i] for i in [0, min(rows, cols)).
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn trace(self: *const Self) !T {
+            if (self.rows != self.cols) {
+                return error.NotSquare;
+            }
+
+            var sum: T = 0;
+            for (0..self.rows) |i| {
+                const start = self.row_ptr[i];
+                const end = self.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    if (self.col_indices[idx] == i) {
+                        sum += self.values[idx];
+                        break;
+                    }
+                }
+            }
+            return sum;
+        }
+
+        /// Extract diagonal elements as dense vector
+        ///
+        /// Returns array of length min(rows, cols) containing diagonal elements.
+        /// Missing diagonal elements are returned as zero.
+        ///
+        /// Time: O(nnz) | Space: O(min(rows, cols))
+        pub fn diag(self: *const Self, allocator: Allocator) ![]T {
+            const n = @min(self.rows, self.cols);
+            const result = try allocator.alloc(T, n);
+            @memset(result, 0);
+
+            for (0..n) |i| {
+                const start = self.row_ptr[i];
+                const end = self.row_ptr[i + 1];
+                for (start..end) |idx| {
+                    if (self.col_indices[idx] == i) {
+                        result[i] = self.values[idx];
+                        break;
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// Compute density (ratio of non-zero elements)
+        ///
+        /// Returns value in [0.0, 1.0] where:
+        /// - 0.0 = completely sparse (empty)
+        /// - 1.0 = completely dense (no zeros)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn density(self: *const Self) f64 {
+            if (self.rows == 0 or self.cols == 0) return 0.0;
+            const total: f64 = @floatFromInt(self.rows * self.cols);
+            const nonzeros: f64 = @floatFromInt(self.nnz());
+            return nonzeros / total;
+        }
+
+        /// Compute sparsity (ratio of zero elements)
+        ///
+        /// Returns value in [0.0, 1.0] where:
+        /// - 0.0 = completely dense (no zeros)
+        /// - 1.0 = completely sparse (all zeros)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sparsity(self: *const Self) f64 {
+            return 1.0 - self.density();
+        }
+
+        /// Compute Frobenius norm (sqrt of sum of squares of all elements)
+        ///
+        /// ||A||_F = sqrt(sum_{i,j} |A[i,j]|^2) = sqrt(sum_{k=1}^{nnz} |values[k]|^2)
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn normFrobenius(self: *const Self) T {
+            var sum_sq: T = 0;
+            for (self.values) |val| {
+                sum_sq += val * val;
+            }
+            return @sqrt(sum_sq);
         }
 
         /// Validate internal invariants
@@ -911,6 +1167,262 @@ pub fn CSC(comptime T: type) type {
             }
 
             return y;
+        }
+
+        /// Element-wise addition: C = A + B
+        ///
+        /// Both matrices must have the same dimensions.
+        /// Result is a new CSC matrix containing the sum.
+        ///
+        /// Time: O(nnz(A) + nnz(B)) | Space: O(nnz(A) + nnz(B))
+        pub fn add(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.rows != other.rows or self.cols != other.cols) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format for easy merging
+            var coo = COO(T).init(allocator, self.rows, self.cols);
+            errdefer coo.deinit();
+
+            // Use HashMap to accumulate values at each (row, col) position
+            const HashMap = std.AutoHashMap(usize, T);
+            var accumulator = HashMap.init(allocator);
+            defer accumulator.deinit();
+
+            // Add all entries from self
+            for (0..self.cols) |j| {
+                const start = self.col_ptr[j];
+                const end = self.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    const i = self.row_indices[idx];
+                    const value = self.values[idx];
+                    const key = i * self.cols + j;
+                    try accumulator.put(key, value);
+                }
+            }
+
+            // Add all entries from other
+            for (0..other.cols) |j| {
+                const start = other.col_ptr[j];
+                const end = other.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    const i = other.row_indices[idx];
+                    const value = other.values[idx];
+                    const key = i * other.cols + j;
+                    if (accumulator.get(key)) |existing| {
+                        try accumulator.put(key, existing + value);
+                    } else {
+                        try accumulator.put(key, value);
+                    }
+                }
+            }
+
+            // Convert accumulator to COO
+            var iter = accumulator.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                const row = key / self.cols;
+                const col = key % self.cols;
+                try coo.append(row, col, value);
+            }
+
+            // Sort COO before converting to CSC
+            try coo.sort();
+
+            // Convert COO to CSC
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
+        }
+
+        /// Element-wise subtraction: C = A - B
+        ///
+        /// Both matrices must have the same dimensions.
+        /// Result is a new CSC matrix containing the difference.
+        ///
+        /// Time: O(nnz(A) + nnz(B)) | Space: O(nnz(A) + nnz(B))
+        pub fn subtract(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            if (self.rows != other.rows or self.cols != other.cols) {
+                return error.DimensionMismatch;
+            }
+
+            // Use COO as intermediate format
+            var coo = COO(T).init(allocator, self.rows, self.cols);
+            errdefer coo.deinit();
+
+            const HashMap = std.AutoHashMap(usize, T);
+            var accumulator = HashMap.init(allocator);
+            defer accumulator.deinit();
+
+            // Add all entries from self
+            for (0..self.cols) |j| {
+                const start = self.col_ptr[j];
+                const end = self.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    const i = self.row_indices[idx];
+                    const value = self.values[idx];
+                    const key = i * self.cols + j;
+                    try accumulator.put(key, value);
+                }
+            }
+
+            // Subtract all entries from other
+            for (0..other.cols) |j| {
+                const start = other.col_ptr[j];
+                const end = other.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    const i = other.row_indices[idx];
+                    const value = other.values[idx];
+                    const key = i * other.cols + j;
+                    if (accumulator.get(key)) |existing| {
+                        try accumulator.put(key, existing - value);
+                    } else {
+                        try accumulator.put(key, -value);
+                    }
+                }
+            }
+
+            // Convert accumulator to COO
+            var iter = accumulator.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                const row = key / self.cols;
+                const col = key % self.cols;
+                try coo.append(row, col, value);
+            }
+
+            // Sort COO before converting to CSC
+            try coo.sort();
+
+            // Convert COO to CSC
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
+        }
+
+        /// Scalar multiplication: C = alpha * A
+        ///
+        /// Multiplies all non-zero elements by scalar alpha.
+        /// Result is a new CSC matrix.
+        ///
+        /// Time: O(nnz) | Space: O(nnz)
+        pub fn scale(self: *const Self, allocator: Allocator, alpha: T) !Self {
+            // Allocate new arrays
+            const n = self.nnz();
+            const col_ptr = try allocator.alloc(usize, self.cols + 1);
+            errdefer allocator.free(col_ptr);
+
+            const row_indices = try allocator.alloc(usize, n);
+            errdefer allocator.free(row_indices);
+
+            const values = try allocator.alloc(T, n);
+
+            // Copy structure and scale values
+            @memcpy(col_ptr, self.col_ptr);
+            @memcpy(row_indices, self.row_indices);
+            for (0..n) |i| {
+                values[i] = alpha * self.values[i];
+            }
+
+            return Self{
+                .rows = self.rows,
+                .cols = self.cols,
+                .col_ptr = col_ptr,
+                .row_indices = row_indices,
+                .values = values,
+                .allocator = allocator,
+            };
+        }
+
+        /// Compute trace (sum of diagonal elements)
+        ///
+        /// Only valid for square matrices (rows == cols).
+        /// Returns sum of all elements A[i,i] for i in [0, min(rows, cols)).
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn trace(self: *const Self) !T {
+            if (self.rows != self.cols) {
+                return error.NotSquare;
+            }
+
+            var sum: T = 0;
+            for (0..self.cols) |j| {
+                const start = self.col_ptr[j];
+                const end = self.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    if (self.row_indices[idx] == j) {
+                        sum += self.values[idx];
+                        break;
+                    }
+                }
+            }
+            return sum;
+        }
+
+        /// Extract diagonal elements as dense vector
+        ///
+        /// Returns array of length min(rows, cols) containing diagonal elements.
+        /// Missing diagonal elements are returned as zero.
+        ///
+        /// Time: O(nnz) | Space: O(min(rows, cols))
+        pub fn diag(self: *const Self, allocator: Allocator) ![]T {
+            const n = @min(self.rows, self.cols);
+            const result = try allocator.alloc(T, n);
+            @memset(result, 0);
+
+            for (0..n) |j| {
+                const start = self.col_ptr[j];
+                const end = self.col_ptr[j + 1];
+                for (start..end) |idx| {
+                    if (self.row_indices[idx] == j) {
+                        result[j] = self.values[idx];
+                        break;
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// Compute density (ratio of non-zero elements)
+        ///
+        /// Returns value in [0.0, 1.0] where:
+        /// - 0.0 = completely sparse (empty)
+        /// - 1.0 = completely dense (no zeros)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn density(self: *const Self) f64 {
+            if (self.rows == 0 or self.cols == 0) return 0.0;
+            const total: f64 = @floatFromInt(self.rows * self.cols);
+            const nonzeros: f64 = @floatFromInt(self.nnz());
+            return nonzeros / total;
+        }
+
+        /// Compute sparsity (ratio of zero elements)
+        ///
+        /// Returns value in [0.0, 1.0] where:
+        /// - 0.0 = completely dense (no zeros)
+        /// - 1.0 = completely sparse (all zeros)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sparsity(self: *const Self) f64 {
+            return 1.0 - self.density();
+        }
+
+        /// Compute Frobenius norm (sqrt of sum of squares of all elements)
+        ///
+        /// ||A||_F = sqrt(sum_{i,j} |A[i,j]|^2) = sqrt(sum_{k=1}^{nnz} |values[k]|^2)
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn normFrobenius(self: *const Self) T {
+            var sum_sq: T = 0;
+            for (self.values) |val| {
+                sum_sq += val * val;
+            }
+            return @sqrt(sum_sq);
         }
 
         /// Validate internal invariants
@@ -1909,6 +2421,526 @@ test "CSR matmul: memory safety check" {
     }
 }
 
+test "CSR add: general sparse matrices" {
+    // Matrix A (3x3):
+    // [1 0 2]
+    // [0 3 0]
+    // [4 0 5]
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 0, 4.0);
+    try coo_a.append(2, 2, 5.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    // Matrix B (3x3):
+    // [0 1 0]
+    // [2 0 3]
+    // [0 4 0]
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 1, 1.0);
+    try coo_b.append(1, 0, 2.0);
+    try coo_b.append(1, 2, 3.0);
+    try coo_b.append(2, 1, 4.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    // C = A + B =
+    // [1 1 2]
+    // [2 3 3]
+    // [4 4 5]
+    var result = try csr_a.add(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 3), result.cols);
+    try testing.expectEqual(@as(usize, 9), result.nnz());
+
+    // Verify values
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 2));
+    try testing.expectEqual(@as(f64, 2.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 3.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 3.0), result.get(1, 2));
+    try testing.expectEqual(@as(f64, 4.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, 4.0), result.get(2, 1));
+    try testing.expectEqual(@as(f64, 5.0), result.get(2, 2));
+}
+
+test "CSR add: disjoint patterns" {
+    // Matrix A (2x2): [1 0; 0 0]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    // Matrix B (2x2): [0 0; 0 2]
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(1, 1, 2.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    // C = A + B = [1 0; 0 2]
+    var result = try csr_a.add(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 2.0), result.get(1, 1));
+}
+
+test "CSR add: dimension mismatch error" {
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    try testing.expectError(error.DimensionMismatch, csr_a.add(testing.allocator, &csr_b));
+}
+
+test "CSR subtract: general sparse matrices" {
+    // Matrix A (3x3):
+    // [5 0 2]
+    // [0 3 0]
+    // [4 0 5]
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 5.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 0, 4.0);
+    try coo_a.append(2, 2, 5.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    // Matrix B (3x3):
+    // [1 1 0]
+    // [2 0 3]
+    // [0 4 0]
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(0, 1, 1.0);
+    try coo_b.append(1, 0, 2.0);
+    try coo_b.append(1, 2, 3.0);
+    try coo_b.append(2, 1, 4.0);
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    // C = A - B =
+    // [ 4 -1  2]
+    // [-2  3 -3]
+    // [ 4 -4  5]
+    var result = try csr_a.subtract(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 3), result.cols);
+    try testing.expectEqual(@as(usize, 9), result.nnz());
+
+    // Verify values
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, -1.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 2));
+    try testing.expectEqual(@as(f64, -2.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 3.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, -3.0), result.get(1, 2));
+    try testing.expectEqual(@as(f64, 4.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, -4.0), result.get(2, 1));
+    try testing.expectEqual(@as(f64, 5.0), result.get(2, 2));
+}
+
+test "CSR subtract: cancellation creates zeros" {
+    // Matrix A (2x2): [1 2; 3 4]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 1, 2.0);
+    try coo_a.append(1, 0, 3.0);
+    try coo_a.append(1, 1, 4.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    // B = A, so A - B should be zero
+    var result = try csr_a.subtract(testing.allocator, &csr_a);
+    defer result.deinit();
+
+    // All elements should be zero (still stored in sparse format)
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 1));
+}
+
+test "CSR subtract: dimension mismatch error" {
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    try testing.expectError(error.DimensionMismatch, csr_a.subtract(testing.allocator, &csr_b));
+}
+
+test "CSR scale: general sparse matrix" {
+    // Matrix A (3x3):
+    // [1 0 2]
+    // [0 3 0]
+    // [4 0 5]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 2, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 0, 4.0);
+    try coo.append(2, 2, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // C = 2.5 * A
+    var result = try csr.scale(testing.allocator, 2.5);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 3), result.cols);
+    try testing.expectEqual(@as(usize, 5), result.nnz());
+
+    // Verify scaled values
+    try testing.expectEqual(@as(f64, 2.5), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 5.0), result.get(0, 2));
+    try testing.expectEqual(@as(f64, 7.5), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 10.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, 12.5), result.get(2, 2));
+}
+
+test "CSR scale: zero scalar" {
+    var coo = COO(f64).init(testing.allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 2.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // C = 0 * A (all zeros)
+    var result = try csr.scale(testing.allocator, 0.0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 1));
+}
+
+test "CSR scale: negative scalar" {
+    var coo = COO(f64).init(testing.allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(1, 1, -4.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    // C = -1 * A
+    var result = try csr.scale(testing.allocator, -1.0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(f64, -3.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 4.0), result.get(1, 1));
+}
+
+test "CSR scale: memory safety check" {
+    // Run multiple iterations to check for memory leaks
+    for (0..10) |_| {
+        var coo = COO(f64).init(testing.allocator, 5, 5);
+        defer coo.deinit();
+        try coo.append(0, 1, 2.0);
+        try coo.append(2, 3, 4.0);
+        try coo.append(4, 0, 5.0);
+
+        var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+        defer csr.deinit();
+
+        var result = try csr.scale(testing.allocator, 3.0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.nnz());
+    }
+}
+
+test "CSR trace: square matrix with diagonal" {
+    // Matrix:
+    // [1  2  0]
+    // [0  3  4]
+    // [5  0  6]
+    // Trace = 1 + 3 + 6 = 10
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+    try coo.append(2, 0, 5.0);
+    try coo.append(2, 2, 6.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const tr = try csr.trace();
+    try testing.expectEqual(@as(f64, 10.0), tr);
+}
+
+test "CSR trace: identity matrix" {
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const tr = try csr.trace();
+    try testing.expectEqual(@as(f64, 4.0), tr);
+}
+
+test "CSR trace: non-square matrix error" {
+    var coo = COO(f64).init(testing.allocator, 2, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    try testing.expectError(error.NotSquare, csr.trace());
+}
+
+test "CSR trace: missing diagonal elements" {
+    // Matrix with no diagonal elements (trace = 0)
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 2, 3.0);
+    try coo.append(2, 0, 4.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const tr = try csr.trace();
+    try testing.expectEqual(@as(f64, 0.0), tr);
+}
+
+test "CSR diag: general sparse matrix" {
+    // Matrix:
+    // [1  2  0]
+    // [0  3  4]
+    // [5  0  6]
+    // Diagonal = [1, 3, 6]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+    try coo.append(2, 0, 5.0);
+    try coo.append(2, 2, 6.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const d = try csr.diag(testing.allocator);
+    defer testing.allocator.free(d);
+
+    try testing.expectEqual(@as(usize, 3), d.len);
+    try testing.expectEqual(@as(f64, 1.0), d[0]);
+    try testing.expectEqual(@as(f64, 3.0), d[1]);
+    try testing.expectEqual(@as(f64, 6.0), d[2]);
+}
+
+test "CSR diag: rectangular matrix" {
+    // 2×3 matrix:
+    // [1  2  0]
+    // [0  3  4]
+    // Diagonal = [1, 3] (min(2,3) = 2)
+    var coo = COO(f64).init(testing.allocator, 2, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const d = try csr.diag(testing.allocator);
+    defer testing.allocator.free(d);
+
+    try testing.expectEqual(@as(usize, 2), d.len);
+    try testing.expectEqual(@as(f64, 1.0), d[0]);
+    try testing.expectEqual(@as(f64, 3.0), d[1]);
+}
+
+test "CSR diag: missing diagonal elements" {
+    // Matrix with missing diagonal → zeros in result
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 2, 3.0);
+    try coo.append(2, 0, 4.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const d = try csr.diag(testing.allocator);
+    defer testing.allocator.free(d);
+
+    try testing.expectEqual(@as(usize, 3), d.len);
+    try testing.expectEqual(@as(f64, 0.0), d[0]);
+    try testing.expectEqual(@as(f64, 0.0), d[1]);
+    try testing.expectEqual(@as(f64, 0.0), d[2]);
+}
+
+test "CSR density and sparsity: various matrices" {
+    // Dense 2x2 matrix (all elements non-zero)
+    {
+        var coo = COO(f64).init(testing.allocator, 2, 2);
+        defer coo.deinit();
+        try coo.append(0, 0, 1.0);
+        try coo.append(0, 1, 2.0);
+        try coo.append(1, 0, 3.0);
+        try coo.append(1, 1, 4.0);
+
+        var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+        defer csr.deinit();
+
+        try testing.expectEqual(@as(f64, 1.0), csr.density());
+        try testing.expectEqual(@as(f64, 0.0), csr.sparsity());
+    }
+
+    // Sparse 3x3 matrix (3 non-zeros out of 9)
+    {
+        var coo = COO(f64).init(testing.allocator, 3, 3);
+        defer coo.deinit();
+        try coo.append(0, 0, 1.0);
+        try coo.append(1, 1, 2.0);
+        try coo.append(2, 2, 3.0);
+
+        var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+        defer csr.deinit();
+
+        const expected_density = 3.0 / 9.0;
+        const expected_sparsity = 6.0 / 9.0;
+        try testing.expectApproxEqRel(expected_density, csr.density(), 1e-10);
+        try testing.expectApproxEqRel(expected_sparsity, csr.sparsity(), 1e-10);
+    }
+
+    // Empty matrix
+    {
+        var coo = COO(f64).init(testing.allocator, 3, 3);
+        defer coo.deinit();
+
+        var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+        defer csr.deinit();
+
+        try testing.expectEqual(@as(f64, 0.0), csr.density());
+        try testing.expectEqual(@as(f64, 1.0), csr.sparsity());
+    }
+}
+
+test "CSR normFrobenius: general sparse matrix" {
+    // Matrix:
+    // [3  0  4]
+    // [0  0  0]
+    // [0  5  0]
+    // Frobenius norm = sqrt(3^2 + 4^2 + 5^2) = sqrt(9 + 16 + 25) = sqrt(50) ≈ 7.071
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(2, 1, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normFrobenius();
+    const expected = @sqrt(@as(f64, 50.0));
+    try testing.expectApproxEqRel(expected, norm, 1e-10);
+}
+
+test "CSR normFrobenius: identity matrix" {
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normFrobenius();
+    try testing.expectApproxEqRel(@as(f64, 2.0), norm, 1e-10); // sqrt(4) = 2
+}
+
+test "CSR normFrobenius: empty matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normFrobenius();
+    try testing.expectEqual(@as(f64, 0.0), norm);
+}
+
+test "CSR utilities: memory safety check" {
+    // Run multiple iterations to check for memory leaks in diag()
+    for (0..10) |_| {
+        var coo = COO(f64).init(testing.allocator, 4, 4);
+        defer coo.deinit();
+        try coo.append(0, 0, 1.0);
+        try coo.append(1, 1, 2.0);
+        try coo.append(2, 2, 3.0);
+        try coo.append(3, 3, 4.0);
+
+        var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+        defer csr.deinit();
+
+        const d = try csr.diag(testing.allocator);
+        defer testing.allocator.free(d);
+
+        _ = try csr.trace();
+        _ = csr.density();
+        _ = csr.sparsity();
+        _ = csr.normFrobenius();
+    }
+}
+
 test "CSC matvec: identity matrix" {
     // Create 3x3 identity matrix via CSC
     var coo = COO(f64).init(testing.allocator, 3, 3);
@@ -2099,6 +3131,526 @@ test "CSC matvec: integer types" {
 
     try testing.expectEqual(@as(i32, 17), y[0]);
     try testing.expectEqual(@as(i32, 46), y[1]);
+}
+
+test "CSC add: general sparse matrices" {
+    // Matrix A (3x3):
+    // [1 0 2]
+    // [0 3 0]
+    // [4 0 5]
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 0, 4.0);
+    try coo_a.append(2, 2, 5.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    // Matrix B (3x3):
+    // [0 1 0]
+    // [2 0 3]
+    // [0 4 0]
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 1, 1.0);
+    try coo_b.append(1, 0, 2.0);
+    try coo_b.append(1, 2, 3.0);
+    try coo_b.append(2, 1, 4.0);
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    // C = A + B =
+    // [1 1 2]
+    // [2 3 3]
+    // [4 4 5]
+    var result = try csc_a.add(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 3), result.cols);
+    try testing.expectEqual(@as(usize, 9), result.nnz());
+
+    // Verify values
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 2));
+    try testing.expectEqual(@as(f64, 2.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 3.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 3.0), result.get(1, 2));
+    try testing.expectEqual(@as(f64, 4.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, 4.0), result.get(2, 1));
+    try testing.expectEqual(@as(f64, 5.0), result.get(2, 2));
+}
+
+test "CSC add: disjoint patterns" {
+    // Matrix A (2x2): [1 0; 0 0]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    // Matrix B (2x2): [0 0; 0 2]
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(1, 1, 2.0);
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    // C = A + B = [1 0; 0 2]
+    var result = try csc_a.add(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 2.0), result.get(1, 1));
+}
+
+test "CSC add: dimension mismatch error" {
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    try testing.expectError(error.DimensionMismatch, csc_a.add(testing.allocator, &csc_b));
+}
+
+test "CSC subtract: general sparse matrices" {
+    // Matrix A (3x3):
+    // [5 0 2]
+    // [0 3 0]
+    // [4 0 5]
+    var coo_a = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 5.0);
+    try coo_a.append(0, 2, 2.0);
+    try coo_a.append(1, 1, 3.0);
+    try coo_a.append(2, 0, 4.0);
+    try coo_a.append(2, 2, 5.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    // Matrix B (3x3):
+    // [1 1 0]
+    // [2 0 3]
+    // [0 4 0]
+    var coo_b = COO(f64).init(testing.allocator, 3, 3);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(0, 1, 1.0);
+    try coo_b.append(1, 0, 2.0);
+    try coo_b.append(1, 2, 3.0);
+    try coo_b.append(2, 1, 4.0);
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    // C = A - B =
+    // [ 4 -1  2]
+    // [-2  3 -3]
+    // [ 4 -4  5]
+    var result = try csc_a.subtract(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 3), result.cols);
+    try testing.expectEqual(@as(usize, 9), result.nnz());
+
+    // Verify values
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, -1.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 2));
+    try testing.expectEqual(@as(f64, -2.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 3.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, -3.0), result.get(1, 2));
+    try testing.expectEqual(@as(f64, 4.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, -4.0), result.get(2, 1));
+    try testing.expectEqual(@as(f64, 5.0), result.get(2, 2));
+}
+
+test "CSC subtract: cancellation creates zeros" {
+    // Matrix A (2x2): [1 2; 3 4]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(0, 1, 2.0);
+    try coo_a.append(1, 0, 3.0);
+    try coo_a.append(1, 1, 4.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    // B = A, so A - B should be zero
+    var result = try csc_a.subtract(testing.allocator, &csc_a);
+    defer result.deinit();
+
+    // All elements should be zero (still stored in sparse format)
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 1));
+}
+
+test "CSC subtract: dimension mismatch error" {
+    var coo_a = COO(f64).init(testing.allocator, 2, 3);
+    defer coo_a.deinit();
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 3, 2);
+    defer coo_b.deinit();
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    try testing.expectError(error.DimensionMismatch, csc_a.subtract(testing.allocator, &csc_b));
+}
+
+test "CSC scale: general sparse matrix" {
+    // Matrix A (3x3):
+    // [1 0 2]
+    // [0 3 0]
+    // [4 0 5]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 2, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 0, 4.0);
+    try coo.append(2, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // C = 2.5 * A
+    var result = try csc.scale(testing.allocator, 2.5);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.rows);
+    try testing.expectEqual(@as(usize, 3), result.cols);
+    try testing.expectEqual(@as(usize, 5), result.nnz());
+
+    // Verify scaled values
+    try testing.expectEqual(@as(f64, 2.5), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 5.0), result.get(0, 2));
+    try testing.expectEqual(@as(f64, 7.5), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 10.0), result.get(2, 0));
+    try testing.expectEqual(@as(f64, 12.5), result.get(2, 2));
+}
+
+test "CSC scale: zero scalar" {
+    var coo = COO(f64).init(testing.allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 2.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // C = 0 * A (all zeros)
+    var result = try csc.scale(testing.allocator, 0.0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(1, 1));
+}
+
+test "CSC scale: negative scalar" {
+    var coo = COO(f64).init(testing.allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(1, 1, -4.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    // C = -1 * A
+    var result = try csc.scale(testing.allocator, -1.0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(f64, -3.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 4.0), result.get(1, 1));
+}
+
+test "CSC scale: memory safety check" {
+    // Run multiple iterations to check for memory leaks
+    for (0..10) |_| {
+        var coo = COO(f64).init(testing.allocator, 5, 5);
+        defer coo.deinit();
+        try coo.append(0, 1, 2.0);
+        try coo.append(2, 3, 4.0);
+        try coo.append(4, 0, 5.0);
+
+        var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+        defer csc.deinit();
+
+        var result = try csc.scale(testing.allocator, 3.0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.nnz());
+    }
+}
+
+test "CSC trace: square matrix with diagonal" {
+    // Matrix:
+    // [1  2  0]
+    // [0  3  4]
+    // [5  0  6]
+    // Trace = 1 + 3 + 6 = 10
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+    try coo.append(2, 0, 5.0);
+    try coo.append(2, 2, 6.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const tr = try csc.trace();
+    try testing.expectEqual(@as(f64, 10.0), tr);
+}
+
+test "CSC trace: identity matrix" {
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const tr = try csc.trace();
+    try testing.expectEqual(@as(f64, 4.0), tr);
+}
+
+test "CSC trace: non-square matrix error" {
+    var coo = COO(f64).init(testing.allocator, 2, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    try testing.expectError(error.NotSquare, csc.trace());
+}
+
+test "CSC trace: missing diagonal elements" {
+    // Matrix with no diagonal elements (trace = 0)
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 2, 3.0);
+    try coo.append(2, 0, 4.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const tr = try csc.trace();
+    try testing.expectEqual(@as(f64, 0.0), tr);
+}
+
+test "CSC diag: general sparse matrix" {
+    // Matrix:
+    // [1  2  0]
+    // [0  3  4]
+    // [5  0  6]
+    // Diagonal = [1, 3, 6]
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+    try coo.append(2, 0, 5.0);
+    try coo.append(2, 2, 6.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const d = try csc.diag(testing.allocator);
+    defer testing.allocator.free(d);
+
+    try testing.expectEqual(@as(usize, 3), d.len);
+    try testing.expectEqual(@as(f64, 1.0), d[0]);
+    try testing.expectEqual(@as(f64, 3.0), d[1]);
+    try testing.expectEqual(@as(f64, 6.0), d[2]);
+}
+
+test "CSC diag: rectangular matrix" {
+    // 2×3 matrix:
+    // [1  2  0]
+    // [0  3  4]
+    // Diagonal = [1, 3] (min(2,3) = 2)
+    var coo = COO(f64).init(testing.allocator, 2, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 4.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const d = try csc.diag(testing.allocator);
+    defer testing.allocator.free(d);
+
+    try testing.expectEqual(@as(usize, 2), d.len);
+    try testing.expectEqual(@as(f64, 1.0), d[0]);
+    try testing.expectEqual(@as(f64, 3.0), d[1]);
+}
+
+test "CSC diag: missing diagonal elements" {
+    // Matrix with missing diagonal → zeros in result
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 1, 2.0);
+    try coo.append(1, 2, 3.0);
+    try coo.append(2, 0, 4.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const d = try csc.diag(testing.allocator);
+    defer testing.allocator.free(d);
+
+    try testing.expectEqual(@as(usize, 3), d.len);
+    try testing.expectEqual(@as(f64, 0.0), d[0]);
+    try testing.expectEqual(@as(f64, 0.0), d[1]);
+    try testing.expectEqual(@as(f64, 0.0), d[2]);
+}
+
+test "CSC density and sparsity: various matrices" {
+    // Dense 2x2 matrix (all elements non-zero)
+    {
+        var coo = COO(f64).init(testing.allocator, 2, 2);
+        defer coo.deinit();
+        try coo.append(0, 0, 1.0);
+        try coo.append(0, 1, 2.0);
+        try coo.append(1, 0, 3.0);
+        try coo.append(1, 1, 4.0);
+
+        var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+        defer csc.deinit();
+
+        try testing.expectEqual(@as(f64, 1.0), csc.density());
+        try testing.expectEqual(@as(f64, 0.0), csc.sparsity());
+    }
+
+    // Sparse 3x3 matrix (3 non-zeros out of 9)
+    {
+        var coo = COO(f64).init(testing.allocator, 3, 3);
+        defer coo.deinit();
+        try coo.append(0, 0, 1.0);
+        try coo.append(1, 1, 2.0);
+        try coo.append(2, 2, 3.0);
+
+        var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+        defer csc.deinit();
+
+        const expected_density = 3.0 / 9.0;
+        const expected_sparsity = 6.0 / 9.0;
+        try testing.expectApproxEqRel(expected_density, csc.density(), 1e-10);
+        try testing.expectApproxEqRel(expected_sparsity, csc.sparsity(), 1e-10);
+    }
+
+    // Empty matrix
+    {
+        var coo = COO(f64).init(testing.allocator, 3, 3);
+        defer coo.deinit();
+
+        var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+        defer csc.deinit();
+
+        try testing.expectEqual(@as(f64, 0.0), csc.density());
+        try testing.expectEqual(@as(f64, 1.0), csc.sparsity());
+    }
+}
+
+test "CSC normFrobenius: general sparse matrix" {
+    // Matrix:
+    // [3  0  4]
+    // [0  0  0]
+    // [0  5  0]
+    // Frobenius norm = sqrt(3^2 + 4^2 + 5^2) = sqrt(9 + 16 + 25) = sqrt(50) ≈ 7.071
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(2, 1, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.normFrobenius();
+    const expected = @sqrt(@as(f64, 50.0));
+    try testing.expectApproxEqRel(expected, norm, 1e-10);
+}
+
+test "CSC normFrobenius: identity matrix" {
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.normFrobenius();
+    try testing.expectApproxEqRel(@as(f64, 2.0), norm, 1e-10); // sqrt(4) = 2
+}
+
+test "CSC normFrobenius: empty matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.normFrobenius();
+    try testing.expectEqual(@as(f64, 0.0), norm);
+}
+
+test "CSC utilities: memory safety check" {
+    // Run multiple iterations to check for memory leaks in diag()
+    for (0..10) |_| {
+        var coo = COO(f64).init(testing.allocator, 4, 4);
+        defer coo.deinit();
+        try coo.append(0, 0, 1.0);
+        try coo.append(1, 1, 2.0);
+        try coo.append(2, 2, 3.0);
+        try coo.append(3, 3, 4.0);
+
+        var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+        defer csc.deinit();
+
+        const d = try csc.diag(testing.allocator);
+        defer testing.allocator.free(d);
+
+        _ = try csc.trace();
+        _ = csc.density();
+        _ = csc.sparsity();
+        _ = csc.normFrobenius();
+    }
 }
 
 test "COO: validate valid matrix" {
