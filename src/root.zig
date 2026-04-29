@@ -699,6 +699,8 @@ pub const linalg = struct {
     pub const properties = @import("linalg/properties.zig");
     /// Sparse matrix formats — COO, CSR, CSC
     pub const sparse = @import("linalg/sparse.zig");
+    /// Iterative solvers — Conjugate Gradient, GMRES, BiCGSTAB
+    pub const iterative = @import("linalg/iterative.zig");
 };
 
 /// Statistics and data analysis
