@@ -8,6 +8,10 @@
 //!   - Optimal Krylov subspace method
 //!   - Convergence in ≤ n iterations (theory), often much faster (practice)
 //!   - Memory: O(n) vs O(n²) for direct methods
+//! - **GMRES** (Generalized Minimal Residual): For general non-symmetric matrices
+//!   - Krylov subspace method with orthogonalization
+//!   - Minimizes residual norm over Krylov subspace
+//!   - Memory: O(n × m) for restart size m
 //!
 //! Use cases:
 //! - Large-scale FEM/FDM simulations (> 10⁶ unknowns)
@@ -223,6 +227,267 @@ pub fn conjugateGradient(
     };
 }
 
+/// GMRES (Generalized Minimal Residual) solver for general non-symmetric systems
+///
+/// Solves Ax = b where A is sparse (no symmetry or definiteness required).
+///
+/// Algorithm (Saad & Schultz, 1986):
+/// 1. Construct orthonormal basis {v₁, v₂, ..., vₘ} for Krylov subspace Kₘ(A, r₀)
+/// 2. Project problem onto Kₘ: minimize ||β e₁ - H̄ₘ y||₂
+/// 3. Update solution: x = x₀ + Vₘ y
+/// 4. Restart if not converged after m iterations
+///
+/// Arnoldi process (modified Gram-Schmidt):
+/// - Orthogonalize each new Krylov vector against previous ones
+/// - Build upper Hessenberg matrix H̄ₘ
+/// - Use Givens rotations to solve least squares problem
+///
+/// Time: O(nnz × m × k) where m = restart size, k = restarts
+/// Space: O(n × m) for Krylov basis vectors
+///
+/// Parameters:
+/// - A: Sparse CSR matrix (general, no restrictions)
+/// - b: Right-hand side vector
+/// - x0: Initial guess (optional, can be null for zero init)
+/// - tol: Convergence tolerance (relative residual)
+/// - max_iter: Maximum outer iterations (restarts)
+/// - restart: Restart size m (Krylov subspace dimension)
+///
+/// Returns: SolverResult with solution, iterations, residual norm
+///
+/// Errors:
+/// - DimensionMismatch: A.rows ≠ A.cols or A.rows ≠ b.len or x0.len ≠ b.len
+/// - OutOfMemory: Allocation failure
+///
+/// Example:
+/// ```zig
+/// var result = try gmres(f64, allocator, &A, b, null, 1e-6, 100, 30);
+/// defer result.deinit();
+/// if (result.converged) {
+///     std.debug.print("Solution: {d}\n", .{result.x});
+/// }
+/// ```
+pub fn gmres(
+    comptime T: type,
+    allocator: Allocator,
+    A: *const sparse.CSR(T),
+    b: []const T,
+    x0: ?[]const T,
+    tol: T,
+    max_iter: usize,
+    restart: usize,
+) !SolverResult(T) {
+    const n = A.rows;
+
+    // Validate dimensions
+    if (A.rows != A.cols) return error.DimensionMismatch;
+    if (b.len != n) return error.DimensionMismatch;
+    if (x0) |x_init| {
+        if (x_init.len != n) return error.DimensionMismatch;
+    }
+
+    const m = restart;
+
+    // Allocate solution vector
+    const x = try allocator.alloc(T, n);
+    errdefer allocator.free(x);
+
+    // Initialize x (copy x0 or zero)
+    if (x0) |x_init| {
+        @memcpy(x, x_init);
+    } else {
+        @memset(x, 0);
+    }
+
+    // Allocate Krylov basis V (n × (m+1) matrix, column-major)
+    const V_data = try allocator.alloc(T, n * (m + 1));
+    defer allocator.free(V_data);
+
+    // Allocate Hessenberg matrix H ((m+1) × m, column-major)
+    const H = try allocator.alloc(T, (m + 1) * m);
+    defer allocator.free(H);
+
+    // Givens rotation storage: cos and sin arrays
+    const cs = try allocator.alloc(T, m);
+    defer allocator.free(cs);
+    const sn = try allocator.alloc(T, m);
+    defer allocator.free(sn);
+
+    // Right-hand side of least squares: s = β e₁
+    const s = try allocator.alloc(T, m + 1);
+    defer allocator.free(s);
+
+    // Workspace for matvec
+    const w = try allocator.alloc(T, n);
+    defer allocator.free(w);
+
+    var total_iters: usize = 0;
+    var converged = false;
+
+    for (0..max_iter) |_| {
+        // Compute initial residual: r = b - Ax
+        const Ax = try A.matvec(allocator, x);
+        defer allocator.free(Ax);
+
+        var beta: T = 0;
+        for (0..n) |i| {
+            const r_i = b[i] - Ax[i];
+            V_data[i] = r_i; // v₁ = r / ||r||
+            beta += r_i * r_i;
+        }
+        beta = @sqrt(beta);
+
+        // Check convergence before restart
+        if (beta < tol) {
+            converged = true;
+            break;
+        }
+
+        // Normalize v₁
+        for (0..n) |i| {
+            V_data[i] /= beta;
+        }
+
+        // Initialize s = β e₁
+        @memset(s, 0);
+        s[0] = beta;
+
+        // Arnoldi iteration
+        var j: usize = 0;
+        while (j < m) : (j += 1) {
+            total_iters += 1;
+
+            // w = A × vⱼ
+            const v_j = V_data[j * n .. (j + 1) * n];
+            const Av = try A.matvec(allocator, v_j);
+            @memcpy(w, Av);
+            allocator.free(Av);
+
+            // Modified Gram-Schmidt orthogonalization
+            for (0..j + 1) |i| {
+                const v_i = V_data[i * n .. (i + 1) * n];
+                const h_ij = dot(T, w, v_i);
+                H[j * (m + 1) + i] = h_ij;
+
+                // w = w - h_ij × v_i
+                for (0..n) |k| {
+                    w[k] -= h_ij * v_i[k];
+                }
+            }
+
+            // Compute ||w||
+            const h_jp1 = norm2(T, w);
+            H[j * (m + 1) + j + 1] = h_jp1;
+
+            // Check for breakdown
+            if (@abs(h_jp1) < 1e-14) {
+                // Lucky breakdown: exact solution found
+                break;
+            }
+
+            // vⱼ₊₁ = w / ||w||
+            const v_jp1 = V_data[(j + 1) * n .. (j + 2) * n];
+            for (0..n) |k| {
+                v_jp1[k] = w[k] / h_jp1;
+            }
+
+            // Apply previous Givens rotations to H(:, j)
+            for (0..j) |i| {
+                const temp = cs[i] * H[j * (m + 1) + i] + sn[i] * H[j * (m + 1) + i + 1];
+                H[j * (m + 1) + i + 1] = -sn[i] * H[j * (m + 1) + i] + cs[i] * H[j * (m + 1) + i + 1];
+                H[j * (m + 1) + i] = temp;
+            }
+
+            // Compute new Givens rotation
+            const h_jj = H[j * (m + 1) + j];
+            const h_jp1j = H[j * (m + 1) + j + 1];
+            const rho = @sqrt(h_jj * h_jj + h_jp1j * h_jp1j);
+            cs[j] = h_jj / rho;
+            sn[j] = h_jp1j / rho;
+
+            // Apply to H
+            H[j * (m + 1) + j] = rho;
+            H[j * (m + 1) + j + 1] = 0;
+
+            // Apply to s
+            s[j + 1] = -sn[j] * s[j];
+            s[j] = cs[j] * s[j];
+
+            // Check convergence: |s[j+1]| = residual norm
+            if (@abs(s[j + 1]) < tol) {
+                // Converged within this restart
+                // Solve upper triangular system Hy = s
+                const y = try allocator.alloc(T, j + 1);
+                defer allocator.free(y);
+
+                var i: usize = j + 1;
+                while (i > 0) {
+                    i -= 1;
+                    var sum: T = s[i];
+                    for (i + 1..j + 1) |k| {
+                        sum -= H[k * (m + 1) + i] * y[k];
+                    }
+                    y[i] = sum / H[i * (m + 1) + i];
+                }
+
+                // Update x = x + V * y
+                for (0..j + 1) |k| {
+                    const v_k = V_data[k * n .. (k + 1) * n];
+                    for (0..n) |l| {
+                        x[l] += y[k] * v_k[l];
+                    }
+                }
+
+                converged = true;
+                break;
+            }
+        }
+
+        if (converged) break;
+
+        // End of restart: update x with current approximation
+        const y = try allocator.alloc(T, j);
+        defer allocator.free(y);
+
+        var i: usize = j;
+        while (i > 0) {
+            i -= 1;
+            var sum: T = s[i];
+            for (i + 1..j) |k| {
+                sum -= H[k * (m + 1) + i] * y[k];
+            }
+            y[i] = sum / H[i * (m + 1) + i];
+        }
+
+        // Update x = x + V * y
+        for (0..j) |k| {
+            const v_k = V_data[k * n .. (k + 1) * n];
+            for (0..n) |l| {
+                x[l] += y[k] * v_k[l];
+            }
+        }
+    }
+
+    // Compute final residual
+    const Ax = try A.matvec(allocator, x);
+    defer allocator.free(Ax);
+
+    var residual_norm: T = 0;
+    for (0..n) |i| {
+        const r = b[i] - Ax[i];
+        residual_norm += r * r;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    return SolverResult(T){
+        .x = x,
+        .iterations = total_iters,
+        .residual_norm = residual_norm,
+        .converged = converged,
+        .allocator = allocator,
+    };
+}
+
 /// Dot product: <x, y> = Σ xᵢyᵢ
 ///
 /// Time: O(n) | Space: O(1)
@@ -232,6 +497,17 @@ fn dot(comptime T: type, x: []const T, y: []const T) T {
         sum += x_i * y[i];
     }
     return sum;
+}
+
+/// Euclidean norm: ||x||₂ = √(Σ xᵢ²)
+///
+/// Time: O(n) | Space: O(1)
+fn norm2(comptime T: type, x: []const T) T {
+    var sum: T = 0;
+    for (x) |x_i| {
+        sum += x_i * x_i;
+    }
+    return @sqrt(sum);
 }
 
 // ============================================================================
@@ -505,4 +781,270 @@ test "CG: f32 precision" {
     try testing.expect(result.converged);
     try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f32, 4.0), result.x[1], 1e-5);
+}
+
+// ============================================================================
+// GMRES Tests
+// ============================================================================
+
+test "GMRES: 2×2 identity system" {
+    const allocator = testing.allocator;
+
+    // A = I (2×2 identity)
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [3, 5]ᵀ → solution x = [3, 5]ᵀ
+    const b = [_]f64{ 3.0, 5.0 };
+
+    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(3.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(5.0, result.x[1], 1e-9);
+}
+
+test "GMRES: 3×3 diagonal system" {
+    const allocator = testing.allocator;
+
+    // A = diag(2, 3, 4)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 4.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [6, 9, 12]ᵀ → solution x = [3, 3, 3]ᵀ
+    const b = [_]f64{ 6.0, 9.0, 12.0 };
+
+    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(3.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(3.0, result.x[1], 1e-9);
+    try testing.expectApproxEqAbs(3.0, result.x[2], 1e-9);
+}
+
+test "GMRES: 3×3 non-symmetric system" {
+    const allocator = testing.allocator;
+
+    // A = [3  1  0]    Non-symmetric
+    //     [1  2  1]
+    //     [0  1  3]
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 1, 1.0);
+    try coo.append(1, 0, 1.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(1, 2, 1.0);
+    try coo.append(2, 1, 1.0);
+    try coo.append(2, 2, 3.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [4, 4, 4]ᵀ → solution x = [1, 1, 1]ᵀ
+    // Verify: Ax = [3+1, 1+2+1, 1+3] = [4, 4, 4] ✓
+    const b = [_]f64{ 4.0, 4.0, 4.0 };
+
+    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(1.0, result.x[0], 1e-8);
+    try testing.expectApproxEqAbs(1.0, result.x[1], 1e-8);
+    try testing.expectApproxEqAbs(1.0, result.x[2], 1e-8);
+}
+
+test "GMRES: with initial guess" {
+    const allocator = testing.allocator;
+
+    // A = I (2×2 identity)
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 7.0, 9.0 };
+    const x0 = [_]f64{ 6.5, 8.5 }; // Close initial guess
+
+    var result = try gmres(f64, allocator, &A, &b, &x0, 1e-10, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(7.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(9.0, result.x[1], 1e-9);
+}
+
+test "GMRES: small restart size" {
+    const allocator = testing.allocator;
+
+    // A = I (3×3 identity)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 2.0, 3.0, 4.0 };
+
+    // Use restart=2 (smaller than matrix size)
+    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 2);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(2.0, result.x[0], 1e-8);
+    try testing.expectApproxEqAbs(3.0, result.x[1], 1e-8);
+    try testing.expectApproxEqAbs(4.0, result.x[2], 1e-8);
+}
+
+test "GMRES: 4×4 tridiagonal system" {
+    const allocator = testing.allocator;
+
+    // A = tridiag(-1, 3, -1)
+    // [3  -1   0   0]
+    // [-1  3  -1   0]
+    // [0  -1   3  -1]
+    // [0   0  -1   3]
+    var coo = sparse.COO(f64).init(allocator, 4, 4);
+    defer coo.deinit();
+
+    for (0..4) |i| {
+        try coo.append(i, i, 3.0);
+    }
+    for (0..3) |i| {
+        try coo.append(i, i + 1, -1.0);
+        try coo.append(i + 1, i, -1.0);
+    }
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
+
+    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 20, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+
+    // Verify Ax = b
+    const Ax = try A.matvec(allocator, result.x);
+    defer allocator.free(Ax);
+
+    for (Ax, 0..) |val, i| {
+        try testing.expectApproxEqAbs(b[i], val, 1e-8);
+    }
+}
+
+test "GMRES: dimension mismatch errors" {
+    const allocator = testing.allocator;
+
+    // Non-square matrix (2×3)
+    var coo = sparse.COO(f64).init(allocator, 2, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0 };
+
+    const result = gmres(f64, allocator, &A, &b, null, 1e-6, 10, 10);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "GMRES: b length mismatch" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0 }; // Wrong length
+
+    const result = gmres(f64, allocator, &A, &b, null, 1e-6, 10, 10);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "GMRES: x0 length mismatch" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0 };
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 }; // Wrong length
+
+    const result = gmres(f64, allocator, &A, &b, &x0, 1e-6, 10, 10);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "GMRES: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var coo = sparse.COO(f64).init(allocator, 3, 3);
+        defer coo.deinit();
+        try coo.append(0, 0, 2.0);
+        try coo.append(1, 1, 3.0);
+        try coo.append(2, 2, 4.0);
+
+        var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+        defer A.deinit();
+
+        const b = [_]f64{ 4.0, 6.0, 8.0 };
+
+        var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+        defer result.deinit();
+
+        try testing.expect(result.converged);
+    }
+}
+
+test "GMRES: f32 precision" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f32).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+
+    var A = try sparse.CSR(f32).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f32{ 6.0, 9.0 };
+
+    var result = try gmres(f32, allocator, &A, &b, null, 1e-6, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[1], 1e-5);
 }
