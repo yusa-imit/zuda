@@ -1002,6 +1002,67 @@ pub fn CSR(comptime T: type) type {
             return max_sum;
         }
 
+        /// Kronecker product (tensor product) A ⊗ B
+        ///
+        /// Produces a block matrix where each element A[i,j] is multiplied by the entire matrix B.
+        /// If A is m×n and B is p×q, result is (m*p)×(n*q) with nnz(A)*nnz(B) non-zeros.
+        ///
+        /// Use cases:
+        /// - Quantum computing (tensor products of quantum gates/states)
+        /// - Control theory (discrete-time systems, Kronecker sum)
+        /// - Graph theory (Kronecker graph products)
+        /// - Mixed models in statistics
+        ///
+        /// Time: O(nnz(A) × nnz(B) × log(nnz(A) × nnz(B))) | Space: O(nnz(A) × nnz(B))
+        pub fn kronecker(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            // Calculate result dimensions
+            const result_rows = self.rows * other.rows;
+            const result_cols = self.cols * other.cols;
+            const expected_nnz = self.nnz() * other.nnz();
+
+            // Build via COO intermediate
+            var coo = try COO(T).initCapacity(allocator, result_rows, result_cols, expected_nnz);
+            errdefer coo.deinit();
+
+            // Iterate through self's non-zeros
+            for (0..self.rows) |i| {
+                const row_start = self.row_ptr[i];
+                const row_end = self.row_ptr[i + 1];
+
+                for (row_start..row_end) |idx| {
+                    const j = self.col_indices[idx];
+                    const a_val = self.values[idx];
+
+                    // For each A[i,j], iterate through B
+                    for (0..other.rows) |k| {
+                        const b_row_start = other.row_ptr[k];
+                        const b_row_end = other.row_ptr[k + 1];
+
+                        for (b_row_start..b_row_end) |b_idx| {
+                            const l = other.col_indices[b_idx];
+                            const b_val = other.values[b_idx];
+
+                            // Result position: (i*p + k, j*q + l)
+                            const result_row = i * other.rows + k;
+                            const result_col = j * other.cols + l;
+                            const result_val = a_val * b_val;
+
+                            try coo.append(result_row, result_col, result_val);
+                        }
+                    }
+                }
+            }
+
+            // Sort COO before converting to CSR
+            try coo.sort();
+
+            // Convert COO to CSR
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
+        }
+
         /// Validate internal invariants
         ///
         /// Checks:
@@ -1687,6 +1748,67 @@ pub fn CSC(comptime T: type) type {
             }
 
             return max_sum;
+        }
+
+        /// Kronecker product (tensor product) A ⊗ B
+        ///
+        /// Produces a block matrix where each element A[i,j] is multiplied by the entire matrix B.
+        /// If A is m×n and B is p×q, result is (m*p)×(n*q) with nnz(A)*nnz(B) non-zeros.
+        ///
+        /// Use cases:
+        /// - Quantum computing (tensor products of quantum gates/states)
+        /// - Control theory (discrete-time systems, Kronecker sum)
+        /// - Graph theory (Kronecker graph products)
+        /// - Mixed models in statistics
+        ///
+        /// Time: O(nnz(A) × nnz(B) × log(nnz(A) × nnz(B))) | Space: O(nnz(A) × nnz(B))
+        pub fn kronecker(self: *const Self, allocator: Allocator, other: *const Self) !Self {
+            // Calculate result dimensions
+            const result_rows = self.rows * other.rows;
+            const result_cols = self.cols * other.cols;
+            const expected_nnz = self.nnz() * other.nnz();
+
+            // Build via COO intermediate
+            var coo = try COO(T).initCapacity(allocator, result_rows, result_cols, expected_nnz);
+            errdefer coo.deinit();
+
+            // Iterate through self's non-zeros (column-wise in CSC)
+            for (0..self.cols) |j| {
+                const col_start = self.col_ptr[j];
+                const col_end = self.col_ptr[j + 1];
+
+                for (col_start..col_end) |idx| {
+                    const i = self.row_indices[idx];
+                    const a_val = self.values[idx];
+
+                    // For each A[i,j], iterate through B
+                    for (0..other.cols) |l| {
+                        const b_col_start = other.col_ptr[l];
+                        const b_col_end = other.col_ptr[l + 1];
+
+                        for (b_col_start..b_col_end) |b_idx| {
+                            const k = other.row_indices[b_idx];
+                            const b_val = other.values[b_idx];
+
+                            // Result position: (i*p + k, j*q + l)
+                            const result_row = i * other.rows + k;
+                            const result_col = j * other.cols + l;
+                            const result_val = a_val * b_val;
+
+                            try coo.append(result_row, result_col, result_val);
+                        }
+                    }
+                }
+            }
+
+            // Sort COO before converting to CSC
+            try sortCOOByColumn(&coo);
+
+            // Convert COO to CSC
+            const result = try Self.fromCOO(allocator, &coo);
+            coo.deinit();
+
+            return result;
         }
 
         /// Validate internal invariants
@@ -4929,4 +5051,502 @@ test "CSC: validate valid matrix" {
 
     // Should pass validation
     try csc.validate();
+}
+
+// =============================================================================
+// Kronecker Product Tests (CSR and CSC)
+// =============================================================================
+
+test "CSR kronecker: identity matrices" {
+    // I_2 ⊗ I_2 should produce a 4×4 block diagonal matrix with 4 ones
+    // Result dimensions: (2*2) × (2*2) = 4×4
+    // nnz(result) = nnz(I_2) × nnz(I_2) = 2 × 2 = 4
+    //
+    // I_2 = [1  0]     I_2 ⊗ I_2 = [1  0  0  0]
+    //       [0  1]               [0  1  0  0]
+    //                           [0  0  1  0]
+    //                           [0  0  0  1]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 1.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 1.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.kronecker(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+
+    // Verify diagonal entries
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 1.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 1.0), result.get(2, 2));
+    try testing.expectEqual(@as(f64, 1.0), result.get(3, 3));
+
+    // Verify off-diagonal is zero
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 1));
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 3));
+}
+
+test "CSR kronecker: diagonal matrices" {
+    // A = diag([2, 3]), B = diag([4, 5])
+    // A ⊗ B should be a 4×4 sparse matrix with 4 non-zeros
+    // Result dimensions: (2*2) × (2*2) = 4×4
+    // nnz(result) = 2 × 2 = 4
+    //
+    // Expected result (block diagonal):
+    // [2*4   0    0    0  ]   [8  0  0  0]
+    // [ 0   2*5   0    0  ] = [0 10  0  0]
+    // [ 0    0   3*4   0  ]   [0  0 12  0]
+    // [ 0    0    0   3*5 ]   [0  0  0 15]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2.0);
+    try coo_a.append(1, 1, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 4.0);
+    try coo_b.append(1, 1, 5.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.kronecker(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+
+    // Verify diagonal entries
+    try testing.expectEqual(@as(f64, 8.0), result.get(0, 0));   // 2*4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2*5
+    try testing.expectEqual(@as(f64, 12.0), result.get(2, 2));  // 3*4
+    try testing.expectEqual(@as(f64, 15.0), result.get(3, 3));  // 3*5
+}
+
+test "CSR kronecker: general sparse matrices" {
+    // A = [1  0]    B = [2  0]
+    //     [0  3]        [0  4]
+    //
+    // A ⊗ B = [1*B  0*B]   [2  0  0  0]
+    //         [0*B  3*B] = [0  4  0  0]
+    //                     [0  0  6  0]
+    //                     [0  0  0 12]
+    //
+    // Result: 4×4, nnz = 2 × 2 = 4
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 2.0);
+    try coo_b.append(1, 1, 4.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.kronecker(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+
+    // Verify specific entries
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 0));   // 1×2
+    try testing.expectEqual(@as(f64, 4.0), result.get(1, 1));   // 1×4
+    try testing.expectEqual(@as(f64, 6.0), result.get(2, 2));   // 3×2
+    try testing.expectEqual(@as(f64, 12.0), result.get(3, 3));  // 3×4
+}
+
+test "CSR kronecker: single element matrix" {
+    // A = [3]      B = [1  0]
+    //               [0  2]
+    //
+    // A ⊗ B = [3*1  3*0]   [3  0]
+    //         [3*0  3*2] = [0  6]
+    //
+    // Result: 2×2, nnz = 1 × 2 = 2
+    var coo_a = COO(f64).init(testing.allocator, 1, 1);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 2.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.kronecker(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 2), result.rows);
+    try testing.expectEqual(@as(usize, 2), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+
+    // Verify entries
+    try testing.expectEqual(@as(f64, 3.0), result.get(0, 0));  // 3×1
+    try testing.expectEqual(@as(f64, 6.0), result.get(1, 1));  // 3×2
+}
+
+test "CSR kronecker: empty matrix (zero non-zeros)" {
+    // A = [0  0]    B = [1  0]
+    //     [0  0]        [0  2]
+    //
+    // A ⊗ B = all zeros
+    // Result: 4×4, nnz = 0 × 2 = 0
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 2.0);
+
+    var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.kronecker(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz is zero
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+
+    // All entries should be zero
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(3, 3));
+}
+
+test "CSR kronecker: integer type (i32)" {
+    // Verify generic support with i32
+    // A = [2]    B = [3]
+    // A ⊗ B = [6]
+    var coo_a = COO(i32).init(testing.allocator, 1, 1);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2);
+
+    var coo_b = COO(i32).init(testing.allocator, 1, 1);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 3);
+
+    var csr_a = try CSR(i32).fromCOO(testing.allocator, &coo_a);
+    defer csr_a.deinit();
+
+    var csr_b = try CSR(i32).fromCOO(testing.allocator, &coo_b);
+    defer csr_b.deinit();
+
+    var result = try csr_a.kronecker(testing.allocator, &csr_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 1), result.rows);
+    try testing.expectEqual(@as(usize, 1), result.cols);
+
+    // Verify result value
+    try testing.expectEqual(@as(i32, 6), result.get(0, 0));
+}
+
+test "CSR kronecker: memory safety check" {
+    // Run 10 iterations to detect memory leaks
+    for (0..10) |_| {
+        var coo_a = COO(f64).init(testing.allocator, 2, 2);
+        defer coo_a.deinit();
+        try coo_a.append(0, 0, 1.0);
+        try coo_a.append(1, 1, 2.0);
+
+        var coo_b = COO(f64).init(testing.allocator, 2, 2);
+        defer coo_b.deinit();
+        try coo_b.append(0, 0, 3.0);
+        try coo_b.append(1, 1, 4.0);
+
+        var csr_a = try CSR(f64).fromCOO(testing.allocator, &coo_a);
+        defer csr_a.deinit();
+
+        var csr_b = try CSR(f64).fromCOO(testing.allocator, &coo_b);
+        defer csr_b.deinit();
+
+        var result = try csr_a.kronecker(testing.allocator, &csr_b);
+        defer result.deinit();
+
+        // Verify basic properties
+        try testing.expectEqual(@as(usize, 4), result.rows);
+        try testing.expectEqual(@as(usize, 4), result.cols);
+        try testing.expectEqual(@as(usize, 4), result.nnz());
+    }
+}
+
+test "CSC kronecker: identity matrices" {
+    // I_2 ⊗ I_2 should produce a 4×4 block diagonal matrix with 4 ones
+    // Result dimensions: (2*2) × (2*2) = 4×4
+    // nnz(result) = nnz(I_2) × nnz(I_2) = 2 × 2 = 4
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 1.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 1.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.kronecker(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+
+    // Verify diagonal entries
+    try testing.expectEqual(@as(f64, 1.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 1.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 1.0), result.get(2, 2));
+    try testing.expectEqual(@as(f64, 1.0), result.get(3, 3));
+}
+
+test "CSC kronecker: diagonal matrices" {
+    // A = diag([2, 3]), B = diag([4, 5])
+    // A ⊗ B should be a 4×4 sparse matrix with 4 non-zeros
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2.0);
+    try coo_a.append(1, 1, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 4.0);
+    try coo_b.append(1, 1, 5.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.kronecker(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+
+    // Verify diagonal entries
+    try testing.expectEqual(@as(f64, 8.0), result.get(0, 0));   // 2*4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2*5
+    try testing.expectEqual(@as(f64, 12.0), result.get(2, 2));  // 3*4
+    try testing.expectEqual(@as(f64, 15.0), result.get(3, 3));  // 3*5
+}
+
+test "CSC kronecker: general sparse matrices" {
+    // A = [1  0]    B = [2  0]
+    //     [0  3]        [0  4]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 1.0);
+    try coo_a.append(1, 1, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 2.0);
+    try coo_b.append(1, 1, 4.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.kronecker(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 4), result.nnz());
+
+    // Verify specific entries
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 4.0), result.get(1, 1));
+    try testing.expectEqual(@as(f64, 6.0), result.get(2, 2));
+    try testing.expectEqual(@as(f64, 12.0), result.get(3, 3));
+}
+
+test "CSC kronecker: single element matrix" {
+    // A = [3]    B = [1  0]
+    //             [0  2]
+    var coo_a = COO(f64).init(testing.allocator, 1, 1);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 3.0);
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 2.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.kronecker(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 2), result.rows);
+    try testing.expectEqual(@as(usize, 2), result.cols);
+
+    // Verify nnz
+    try testing.expectEqual(@as(usize, 2), result.nnz());
+
+    // Verify entries
+    try testing.expectEqual(@as(f64, 3.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 6.0), result.get(1, 1));
+}
+
+test "CSC kronecker: empty matrix (zero non-zeros)" {
+    // A = [0  0]    B = [1  0]
+    //     [0  0]        [0  2]
+    var coo_a = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_a.deinit();
+
+    var coo_b = COO(f64).init(testing.allocator, 2, 2);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 1.0);
+    try coo_b.append(1, 1, 2.0);
+
+    var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.kronecker(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 4), result.rows);
+    try testing.expectEqual(@as(usize, 4), result.cols);
+
+    // Verify nnz is zero
+    try testing.expectEqual(@as(usize, 0), result.nnz());
+
+    // All entries should be zero
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));
+    try testing.expectEqual(@as(f64, 0.0), result.get(3, 3));
+}
+
+test "CSC kronecker: integer type (i32)" {
+    // Verify generic support with i32
+    var coo_a = COO(i32).init(testing.allocator, 1, 1);
+    defer coo_a.deinit();
+    try coo_a.append(0, 0, 2);
+
+    var coo_b = COO(i32).init(testing.allocator, 1, 1);
+    defer coo_b.deinit();
+    try coo_b.append(0, 0, 3);
+
+    var csc_a = try CSC(i32).fromCOO(testing.allocator, &coo_a);
+    defer csc_a.deinit();
+
+    var csc_b = try CSC(i32).fromCOO(testing.allocator, &coo_b);
+    defer csc_b.deinit();
+
+    var result = try csc_a.kronecker(testing.allocator, &csc_b);
+    defer result.deinit();
+
+    // Verify dimensions
+    try testing.expectEqual(@as(usize, 1), result.rows);
+    try testing.expectEqual(@as(usize, 1), result.cols);
+
+    // Verify result value
+    try testing.expectEqual(@as(i32, 6), result.get(0, 0));
+}
+
+test "CSC kronecker: memory safety check" {
+    // Run 10 iterations to detect memory leaks
+    for (0..10) |_| {
+        var coo_a = COO(f64).init(testing.allocator, 2, 2);
+        defer coo_a.deinit();
+        try coo_a.append(0, 0, 1.0);
+        try coo_a.append(1, 1, 2.0);
+
+        var coo_b = COO(f64).init(testing.allocator, 2, 2);
+        defer coo_b.deinit();
+        try coo_b.append(0, 0, 3.0);
+        try coo_b.append(1, 1, 4.0);
+
+        var csc_a = try CSC(f64).fromCOO(testing.allocator, &coo_a);
+        defer csc_a.deinit();
+
+        var csc_b = try CSC(f64).fromCOO(testing.allocator, &coo_b);
+        defer csc_b.deinit();
+
+        var result = try csc_a.kronecker(testing.allocator, &csc_b);
+        defer result.deinit();
+
+        // Verify basic properties
+        try testing.expectEqual(@as(usize, 4), result.rows);
+        try testing.expectEqual(@as(usize, 4), result.cols);
+        try testing.expectEqual(@as(usize, 4), result.nnz());
+    }
 }
