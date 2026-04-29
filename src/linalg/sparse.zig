@@ -933,6 +933,75 @@ pub fn CSR(comptime T: type) type {
             return @sqrt(sum_sq);
         }
 
+        /// Compute 1-norm (maximum absolute column sum)
+        ///
+        /// ||A||_1 = max_j sum_i |a_ij|
+        ///
+        /// For CSR format, we need to accumulate column sums across rows.
+        /// Uses HashMap to track column sums, then find maximum.
+        ///
+        /// Time: O(nnz) | Space: O(n) for column sum storage
+        pub fn norm1(self: *const Self, allocator: Allocator) !f64 {
+            if (self.nnz() == 0) return 0.0;
+
+            // Track column sums using HashMap
+            var col_sums = std.AutoHashMap(usize, f64).init(allocator);
+            defer col_sums.deinit();
+
+            // Accumulate column sums
+            for (self.col_indices, self.values) |col, val| {
+                const abs_val = @abs(@as(f64, @floatCast(val)));
+                const entry = try col_sums.getOrPut(col);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = abs_val;
+                } else {
+                    entry.value_ptr.* += abs_val;
+                }
+            }
+
+            // Find maximum column sum
+            var max_sum: f64 = 0.0;
+            var iter = col_sums.valueIterator();
+            while (iter.next()) |sum_ptr| {
+                if (sum_ptr.* > max_sum) {
+                    max_sum = sum_ptr.*;
+                }
+            }
+
+            return max_sum;
+        }
+
+        /// Compute infinity-norm (maximum absolute row sum)
+        ///
+        /// ||A||_inf = max_i sum_j |a_ij|
+        ///
+        /// For CSR format, this is efficient since data is already organized by row.
+        /// Simply sum absolute values within each row and track maximum.
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn normInf(self: *const Self) f64 {
+            if (self.nnz() == 0) return 0.0;
+
+            var max_sum: f64 = 0.0;
+
+            // For each row, sum absolute values
+            for (0..self.rows) |row| {
+                const start = self.row_ptr[row];
+                const end = self.row_ptr[row + 1];
+
+                var row_sum: f64 = 0.0;
+                for (start..end) |idx| {
+                    row_sum += @abs(@as(f64, @floatCast(self.values[idx])));
+                }
+
+                if (row_sum > max_sum) {
+                    max_sum = row_sum;
+                }
+            }
+
+            return max_sum;
+        }
+
         /// Validate internal invariants
         ///
         /// Checks:
@@ -1549,6 +1618,75 @@ pub fn CSC(comptime T: type) type {
                 sum_sq += val * val;
             }
             return @sqrt(sum_sq);
+        }
+
+        /// Compute 1-norm (maximum absolute column sum)
+        ///
+        /// ||A||_1 = max_j sum_i |a_ij|
+        ///
+        /// For CSC format, this is efficient since data is already organized by column.
+        /// Simply sum absolute values within each column and track maximum.
+        ///
+        /// Time: O(nnz) | Space: O(1)
+        pub fn norm1(self: *const Self) f64 {
+            if (self.nnz() == 0) return 0.0;
+
+            var max_sum: f64 = 0.0;
+
+            // For each column, sum absolute values
+            for (0..self.cols) |col| {
+                const start = self.col_ptr[col];
+                const end = self.col_ptr[col + 1];
+
+                var col_sum: f64 = 0.0;
+                for (start..end) |idx| {
+                    col_sum += @abs(@as(f64, @floatCast(self.values[idx])));
+                }
+
+                if (col_sum > max_sum) {
+                    max_sum = col_sum;
+                }
+            }
+
+            return max_sum;
+        }
+
+        /// Compute infinity-norm (maximum absolute row sum)
+        ///
+        /// ||A||_inf = max_i sum_j |a_ij|
+        ///
+        /// For CSC format, we need to accumulate row sums across columns.
+        /// Uses HashMap to track row sums, then find maximum.
+        ///
+        /// Time: O(nnz) | Space: O(m) for row sum storage
+        pub fn normInf(self: *const Self, allocator: Allocator) !f64 {
+            if (self.nnz() == 0) return 0.0;
+
+            // Track row sums using HashMap
+            var row_sums = std.AutoHashMap(usize, f64).init(allocator);
+            defer row_sums.deinit();
+
+            // Accumulate row sums
+            for (self.row_indices, self.values) |row, val| {
+                const abs_val = @abs(@as(f64, @floatCast(val)));
+                const entry = try row_sums.getOrPut(row);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = abs_val;
+                } else {
+                    entry.value_ptr.* += abs_val;
+                }
+            }
+
+            // Find maximum row sum
+            var max_sum: f64 = 0.0;
+            var iter = row_sums.valueIterator();
+            while (iter.next()) |sum_ptr| {
+                if (sum_ptr.* > max_sum) {
+                    max_sum = sum_ptr.*;
+                }
+            }
+
+            return max_sum;
         }
 
         /// Validate internal invariants
@@ -4227,6 +4365,502 @@ test "CSC utilities: memory safety check" {
         _ = csc.sparsity();
         _ = csc.normFrobenius();
     }
+}
+
+test "CSR norm1: general sparse matrix" {
+    // Matrix:
+    // [3  0  4]
+    // [0  2  0]
+    // [0  5  0]
+    // Column sums: |3|+|0|+|0| = 3, |0|+|2|+|5| = 7, |4|+|0|+|0| = 4
+    // norm1 = max(3, 7, 4) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSR norm1: identity matrix" {
+    // Identity matrix 4x4: each column sum = 1
+    // norm1 = max(1, 1, 1, 1) = 1
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 1.0), norm, 1e-10);
+}
+
+test "CSR norm1: diagonal matrix" {
+    // Diagonal matrix with values [2, 3, 5]
+    // Column sums: 2, 3, 5
+    // norm1 = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSR norm1: matrix with negative values" {
+    // Matrix:
+    // [-3   0   4]
+    // [ 0  -2   0]
+    // [ 0   5   0]
+    // Column sums: |−3| = 3, |−2|+|5| = 7, |4| = 4
+    // norm1 = max(3, 7, 4) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, -3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, -2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSR norm1: empty matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectEqual(@as(f64, 0.0), norm);
+}
+
+test "CSR norm1: single row matrix" {
+    // Matrix: [2  3  5]
+    // Column sums: 2, 3, 5
+    // norm1 = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 1, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(0, 1, 3.0);
+    try coo.append(0, 2, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSR norm1: single column matrix" {
+    // Matrix:
+    // [2]
+    // [3]
+    // [5]
+    // Column sum: 2 + 3 + 5 = 10
+    // norm1 = 10
+    var coo = COO(f64).init(testing.allocator, 3, 1);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 0, 3.0);
+    try coo.append(2, 0, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = try csr.norm1(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 10.0), norm, 1e-10);
+}
+
+test "CSR normInf: general sparse matrix" {
+    // Matrix:
+    // [3  0  4]
+    // [0  2  0]
+    // [0  5  0]
+    // Row sums: |3|+|0|+|4| = 7, |0|+|2|+|0| = 2, |0|+|5|+|0| = 5
+    // normInf = max(7, 2, 5) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSR normInf: identity matrix" {
+    // Identity matrix 4x4: each row sum = 1
+    // normInf = max(1, 1, 1, 1) = 1
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectApproxEqRel(@as(f64, 1.0), norm, 1e-10);
+}
+
+test "CSR normInf: diagonal matrix" {
+    // Diagonal matrix with values [2, 3, 5]
+    // Row sums: 2, 3, 5
+    // normInf = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSR normInf: matrix with negative values" {
+    // Matrix:
+    // [-3   0   4]
+    // [ 0  -2   0]
+    // [ 0   5   0]
+    // Row sums: |−3|+|4| = 7, |−2| = 2, |5| = 5
+    // normInf = max(7, 2, 5) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, -3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, -2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSR normInf: empty matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectEqual(@as(f64, 0.0), norm);
+}
+
+test "CSR normInf: single row matrix" {
+    // Matrix: [2  3  5]
+    // Row sum: 2 + 3 + 5 = 10
+    // normInf = 10
+    var coo = COO(f64).init(testing.allocator, 1, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(0, 1, 3.0);
+    try coo.append(0, 2, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectApproxEqRel(@as(f64, 10.0), norm, 1e-10);
+}
+
+test "CSR normInf: single column matrix" {
+    // Matrix:
+    // [2]
+    // [3]
+    // [5]
+    // Row sums: 2, 3, 5
+    // normInf = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 3, 1);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 0, 3.0);
+    try coo.append(2, 0, 5.0);
+
+    var csr = try CSR(f64).fromCOO(testing.allocator, &coo);
+    defer csr.deinit();
+
+    const norm = csr.normInf();
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSC norm1: general sparse matrix" {
+    // Matrix:
+    // [3  0  4]
+    // [0  2  0]
+    // [0  5  0]
+    // Column sums: 3, 7, 4
+    // norm1 = max(3, 7, 4) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSC norm1: identity matrix" {
+    // Identity matrix 4x4: each column sum = 1
+    // norm1 = max(1, 1, 1, 1) = 1
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectApproxEqRel(@as(f64, 1.0), norm, 1e-10);
+}
+
+test "CSC norm1: diagonal matrix" {
+    // Diagonal matrix with values [2, 3, 5]
+    // Column sums: 2, 3, 5
+    // norm1 = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSC norm1: matrix with negative values" {
+    // Matrix:
+    // [-3   0   4]
+    // [ 0  -2   0]
+    // [ 0   5   0]
+    // Column sums: 3, 7, 4
+    // norm1 = max(3, 7, 4) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, -3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, -2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSC norm1: empty matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectEqual(@as(f64, 0.0), norm);
+}
+
+test "CSC norm1: single row matrix" {
+    // Matrix: [2  3  5]
+    // Column sums: 2, 3, 5
+    // norm1 = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 1, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(0, 1, 3.0);
+    try coo.append(0, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSC norm1: single column matrix" {
+    // Matrix:
+    // [2]
+    // [3]
+    // [5]
+    // Column sum: 2 + 3 + 5 = 10
+    // norm1 = 10
+    var coo = COO(f64).init(testing.allocator, 3, 1);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 0, 3.0);
+    try coo.append(2, 0, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = csc.norm1();
+    try testing.expectApproxEqRel(@as(f64, 10.0), norm, 1e-10);
+}
+
+test "CSC normInf: general sparse matrix" {
+    // Matrix:
+    // [3  0  4]
+    // [0  2  0]
+    // [0  5  0]
+    // Row sums: 7, 2, 5
+    // normInf = max(7, 2, 5) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, 2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSC normInf: identity matrix" {
+    // Identity matrix 4x4: each row sum = 1
+    // normInf = max(1, 1, 1, 1) = 1
+    var coo = COO(f64).init(testing.allocator, 4, 4);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+    try coo.append(3, 3, 1.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 1.0), norm, 1e-10);
+}
+
+test "CSC normInf: diagonal matrix" {
+    // Diagonal matrix with values [2, 3, 5]
+    // Row sums: 2, 3, 5
+    // normInf = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
+}
+
+test "CSC normInf: matrix with negative values" {
+    // Matrix:
+    // [-3   0   4]
+    // [ 0  -2   0]
+    // [ 0   5   0]
+    // Row sums: 7, 2, 5
+    // normInf = max(7, 2, 5) = 7
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, -3.0);
+    try coo.append(0, 2, 4.0);
+    try coo.append(1, 1, -2.0);
+    try coo.append(2, 1, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 7.0), norm, 1e-10);
+}
+
+test "CSC normInf: empty matrix" {
+    var coo = COO(f64).init(testing.allocator, 3, 3);
+    defer coo.deinit();
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectEqual(@as(f64, 0.0), norm);
+}
+
+test "CSC normInf: single row matrix" {
+    // Matrix: [2  3  5]
+    // Row sum: 2 + 3 + 5 = 10
+    // normInf = 10
+    var coo = COO(f64).init(testing.allocator, 1, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(0, 1, 3.0);
+    try coo.append(0, 2, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 10.0), norm, 1e-10);
+}
+
+test "CSC normInf: single column matrix" {
+    // Matrix:
+    // [2]
+    // [3]
+    // [5]
+    // Row sums: 2, 3, 5
+    // normInf = max(2, 3, 5) = 5
+    var coo = COO(f64).init(testing.allocator, 3, 1);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 0, 3.0);
+    try coo.append(2, 0, 5.0);
+
+    var csc = try CSC(f64).fromCOO(testing.allocator, &coo);
+    defer csc.deinit();
+
+    const norm = try csc.normInf(testing.allocator);
+    try testing.expectApproxEqRel(@as(f64, 5.0), norm, 1e-10);
 }
 
 test "COO: validate valid matrix" {
