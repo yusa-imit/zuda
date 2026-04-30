@@ -12,6 +12,10 @@
 //!   - Krylov subspace method with orthogonalization
 //!   - Minimizes residual norm over Krylov subspace
 //!   - Memory: O(n × m) for restart size m
+//! - **BiCGSTAB** (Biconjugate Gradient Stabilized): For non-symmetric matrices
+//!   - Variant of BiCG with stabilized convergence
+//!   - Often faster than GMRES for moderate problems
+//!   - Memory: O(n) (no restart needed)
 //!
 //! Use cases:
 //! - Large-scale FEM/FDM simulations (> 10⁶ unknowns)
@@ -1229,6 +1233,523 @@ test "GMRES: f32 precision" {
     const b = [_]f32{ 6.0, 9.0 };
 
     var result = try gmres(f32, allocator, &A, &b, null, 1e-6, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[1], 1e-5);
+}
+
+// ============================================================================
+// BiCGSTAB (Biconjugate Gradient Stabilized)
+// ============================================================================
+
+/// BiCGSTAB solver for non-symmetric linear systems
+///
+/// Solves Ax = b where A is sparse and non-symmetric (or non-Hermitian).
+///
+/// Algorithm (van der Vorst, 1992):
+/// BiCGSTAB is a variant of BiCG (Biconjugate Gradient) that avoids irregular
+/// convergence patterns by using a local minimization strategy. It's often faster
+/// than GMRES for moderately difficult problems and uses less memory (no restart).
+///
+/// 1. Choose arbitrary r̂₀ (often r̂₀ = r₀ = b - Ax₀)
+/// 2. p₀ = r₀
+/// 3. For k = 0, 1, 2, ... until convergence:
+///    α = <r̂₀, rₖ> / <r̂₀, Apₖ>
+///    s = rₖ - α Apₖ
+///    ω = <As, s> / <As, As>
+///    xₖ₊₁ = xₖ + α pₖ + ω s
+///    rₖ₊₁ = s - ω As
+///    β = (α/ω) × (<r̂₀, rₖ₊₁> / <r̂₀, rₖ>)
+///    pₖ₊₁ = rₖ₊₁ + β (pₖ - ω Apₖ)
+///
+/// Convergence: ||rₖ|| < tol × ||r₀|| or k ≥ max_iter
+///
+/// Time: O(nnz × k) where k = iterations (typically k ≪ n)
+/// Space: O(n) for x, r, r̂, p, s, Ap, As vectors (7n total)
+///
+/// Advantages over GMRES:
+/// - Lower memory: O(n) vs O(n × m) for GMRES with restart m
+/// - No restart needed
+/// - Often faster convergence for moderate problems
+/// - Two matrix-vector products per iteration vs one for CG
+///
+/// Disadvantages:
+/// - Can stagnate or fail for very difficult problems
+/// - Less robust than GMRES for highly non-symmetric systems
+/// - Breakdown possible (though rare): ω ≈ 0 or <r̂₀, Apₖ> ≈ 0
+///
+/// Parameters:
+/// - A: Sparse CSR matrix (can be non-symmetric)
+/// - b: Right-hand side vector
+/// - x0: Initial guess (optional, can be null for zero init)
+/// - tol: Convergence tolerance (relative residual)
+/// - max_iter: Maximum iterations (0 = unlimited, use n)
+///
+/// Returns: SolverResult with solution, iterations, residual norm
+///
+/// Errors:
+/// - DimensionMismatch: A.rows ≠ A.cols or A.rows ≠ b.len or x0.len ≠ b.len
+/// - OutOfMemory: Allocation failure
+///
+/// Example:
+/// ```zig
+/// const A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+/// const b = [_]f64{ 1.0, 2.0, 3.0 };
+/// var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+/// defer result.deinit();
+/// ```
+pub fn bicgstab(
+    comptime T: type,
+    allocator: Allocator,
+    A: *const sparse.CSR(T),
+    b: []const T,
+    x0: ?[]const T,
+    tol: T,
+    max_iter: usize,
+) !SolverResult(T) {
+    const n = A.rows;
+
+    // Validate dimensions
+    if (A.rows != A.cols) return error.DimensionMismatch;
+    if (b.len != n) return error.DimensionMismatch;
+    if (x0) |x_init| {
+        if (x_init.len != n) return error.DimensionMismatch;
+    }
+
+    // Allocate solution vector
+    const x = try allocator.alloc(T, n);
+    errdefer allocator.free(x);
+
+    // Initialize x (copy x0 or zero)
+    if (x0) |x_init| {
+        @memcpy(x, x_init);
+    } else {
+        @memset(x, 0);
+    }
+
+    // Allocate work vectors
+    const r = try allocator.alloc(T, n);
+    defer allocator.free(r);
+    const r_hat = try allocator.alloc(T, n); // Shadow residual
+    defer allocator.free(r_hat);
+    const p = try allocator.alloc(T, n); // Search direction
+    defer allocator.free(p);
+    const s = try allocator.alloc(T, n); // Intermediate residual
+    defer allocator.free(s);
+    const Ap = try allocator.alloc(T, n); // A × p
+    defer allocator.free(Ap);
+    const As = try allocator.alloc(T, n); // A × s
+    defer allocator.free(As);
+
+    // Compute initial residual: r₀ = b - Ax₀
+    const Ax0 = try A.matvec(allocator, x);
+    defer allocator.free(Ax0);
+
+    var r_norm: T = 0;
+    for (0..n) |i| {
+        r[i] = b[i] - Ax0[i];
+        r_hat[i] = r[i]; // r̂₀ = r₀
+        p[i] = r[i]; // p₀ = r₀
+        r_norm += r[i] * r[i];
+    }
+    const r0_norm = @sqrt(r_norm);
+
+    // Check if already converged
+    if (r0_norm < tol) {
+        return SolverResult(T){
+            .x = x,
+            .iterations = 0,
+            .residual_norm = r0_norm,
+            .converged = true,
+            .allocator = allocator,
+        };
+    }
+
+    const tolerance = tol * r0_norm;
+    var rho: T = 1.0;
+    var alpha: T = 1.0;
+    var omega: T = 1.0;
+    var iter: usize = 0;
+
+    const actual_max_iter = if (max_iter == 0) n else max_iter;
+
+    while (iter < actual_max_iter) : (iter += 1) {
+        // ρₖ = <r̂₀, rₖ>
+        const rho_new = dot(T, r_hat, r);
+
+        // Check for breakdown: ρₖ ≈ 0
+        if (@abs(rho_new) < 1e-14) {
+            // BiCGSTAB breakdown (rare)
+            return SolverResult(T){
+                .x = x,
+                .iterations = iter,
+                .residual_norm = @sqrt(dot(T, r, r)),
+                .converged = false,
+                .allocator = allocator,
+            };
+        }
+
+        // β = (ρₖ / ρₖ₋₁) × (α / ω)
+        const beta = (rho_new / rho) * (alpha / omega);
+
+        // pₖ = rₖ + β (pₖ₋₁ - ω Apₖ₋₁)
+        for (0..n) |i| {
+            p[i] = r[i] + beta * (p[i] - omega * Ap[i]);
+        }
+
+        // Ap = A × pₖ
+        const Ap_temp = try A.matvec(allocator, p);
+        @memcpy(Ap, Ap_temp);
+        allocator.free(Ap_temp);
+
+        // α = ρₖ / <r̂₀, Ap>
+        const r_hat_Ap = dot(T, r_hat, Ap);
+        if (@abs(r_hat_Ap) < 1e-14) {
+            // Breakdown
+            return SolverResult(T){
+                .x = x,
+                .iterations = iter,
+                .residual_norm = @sqrt(dot(T, r, r)),
+                .converged = false,
+                .allocator = allocator,
+            };
+        }
+        alpha = rho_new / r_hat_Ap;
+
+        // s = rₖ - α Ap
+        for (0..n) |i| {
+            s[i] = r[i] - alpha * Ap[i];
+        }
+
+        // Check convergence on s (early termination possible)
+        const s_norm = @sqrt(dot(T, s, s));
+        if (s_norm < tolerance) {
+            // Update x: xₖ₊₁ = xₖ + α pₖ
+            for (0..n) |i| {
+                x[i] += alpha * p[i];
+            }
+            return SolverResult(T){
+                .x = x,
+                .iterations = iter + 1,
+                .residual_norm = s_norm,
+                .converged = true,
+                .allocator = allocator,
+            };
+        }
+
+        // As = A × s
+        const As_temp = try A.matvec(allocator, s);
+        @memcpy(As, As_temp);
+        allocator.free(As_temp);
+
+        // ω = <As, s> / <As, As>
+        const As_s = dot(T, As, s);
+        const As_As = dot(T, As, As);
+        if (As_As < 1e-14) {
+            // Breakdown
+            return SolverResult(T){
+                .x = x,
+                .iterations = iter,
+                .residual_norm = s_norm,
+                .converged = false,
+                .allocator = allocator,
+            };
+        }
+        omega = As_s / As_As;
+
+        // xₖ₊₁ = xₖ + α pₖ + ω s
+        for (0..n) |i| {
+            x[i] += alpha * p[i] + omega * s[i];
+        }
+
+        // rₖ₊₁ = s - ω As
+        for (0..n) |i| {
+            r[i] = s[i] - omega * As[i];
+        }
+
+        // Check convergence
+        const r_norm_new = @sqrt(dot(T, r, r));
+        if (r_norm_new < tolerance) {
+            return SolverResult(T){
+                .x = x,
+                .iterations = iter + 1,
+                .residual_norm = r_norm_new,
+                .converged = true,
+                .allocator = allocator,
+            };
+        }
+
+        rho = rho_new;
+    }
+
+    // Max iterations reached
+    return SolverResult(T){
+        .x = x,
+        .iterations = iter,
+        .residual_norm = @sqrt(dot(T, r, r)),
+        .converged = false,
+        .allocator = allocator,
+    };
+}
+
+// ============================================================================
+// BiCGSTAB Tests
+// ============================================================================
+
+test "BiCGSTAB: 2×2 identity matrix" {
+    const allocator = testing.allocator;
+
+    // A = I (identity)
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [5, 7]ᵀ → solution x = [5, 7]ᵀ
+    const b = [_]f64{ 5.0, 7.0 };
+
+    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(5.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(7.0, result.x[1], 1e-9);
+    try testing.expect(result.iterations <= 2); // Identity converges in 1-2 iterations
+}
+
+test "BiCGSTAB: 3×3 diagonal matrix" {
+    const allocator = testing.allocator;
+
+    // A = diag(2, 3, 4)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 4.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [4, 6, 8]ᵀ → solution x = [2, 2, 2]ᵀ
+    const b = [_]f64{ 4.0, 6.0, 8.0 };
+
+    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(2.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(2.0, result.x[1], 1e-9);
+    try testing.expectApproxEqAbs(2.0, result.x[2], 1e-9);
+}
+
+test "BiCGSTAB: 3×3 non-symmetric system" {
+    const allocator = testing.allocator;
+
+    // A = [4  1  0]    Non-symmetric matrix
+    //     [2  3  1]
+    //     [0  1  4]
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 4.0);
+    try coo.append(0, 1, 1.0);
+    try coo.append(1, 0, 2.0); // Note: A[1,0]=2 but A[0,1]=1 → non-symmetric
+    try coo.append(1, 1, 3.0);
+    try coo.append(1, 2, 1.0);
+    try coo.append(2, 1, 1.0);
+    try coo.append(2, 2, 4.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [5, 6, 5]ᵀ → solution x = [1, 1, 1]ᵀ
+    // Verify: Ax = [4+1, 2+3+1, 1+4] = [5, 6, 5] ✓
+    const b = [_]f64{ 5.0, 6.0, 5.0 };
+
+    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(1.0, result.x[0], 1e-8);
+    try testing.expectApproxEqAbs(1.0, result.x[1], 1e-8);
+    try testing.expectApproxEqAbs(1.0, result.x[2], 1e-8);
+}
+
+test "BiCGSTAB: with initial guess" {
+    const allocator = testing.allocator;
+
+    // A = I (2×2 identity)
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 5.0, 7.0 };
+    const x0 = [_]f64{ 4.5, 6.5 }; // Close initial guess
+
+    var result = try bicgstab(f64, allocator, &A, &b, &x0, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(5.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(7.0, result.x[1], 1e-9);
+}
+
+test "BiCGSTAB: tridiagonal system (4×4)" {
+    const allocator = testing.allocator;
+
+    // A = tridiag(-1, 3, -1) — diagonally dominant, non-symmetric variant
+    // [3  -1   0   0]
+    // [-1  3  -1   0]
+    // [0  -1   3  -1]
+    // [0   0  -1   3]
+    var coo = sparse.COO(f64).init(allocator, 4, 4);
+    defer coo.deinit();
+
+    // Diagonal
+    for (0..4) |i| {
+        try coo.append(i, i, 3.0);
+    }
+    // Upper diagonal
+    for (0..3) |i| {
+        try coo.append(i, i + 1, -1.0);
+    }
+    // Lower diagonal
+    for (0..3) |i| {
+        try coo.append(i + 1, i, -1.0);
+    }
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [2, 1, 1, 2]ᵀ
+    const b = [_]f64{ 2.0, 1.0, 1.0, 2.0 };
+
+    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    // Verify residual is small (exact solution may vary)
+    try testing.expect(result.residual_norm < 1e-8);
+}
+
+test "BiCGSTAB: max iterations limit" {
+    const allocator = testing.allocator;
+
+    // A = I (identity)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0, 3.0 };
+
+    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 1); // Only 1 iteration
+    defer result.deinit();
+
+    try testing.expect(result.iterations <= 1);
+}
+
+test "BiCGSTAB: non-square matrix error" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 2, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0 };
+
+    const result = bicgstab(f64, allocator, &A, &b, null, 1e-6, 10);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "BiCGSTAB: b length mismatch" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+    try coo.append(2, 2, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0 }; // Wrong length
+
+    const result = bicgstab(f64, allocator, &A, &b, null, 1e-6, 10);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "BiCGSTAB: x0 length mismatch" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 1.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0 };
+    const x0 = [_]f64{ 1.0, 2.0, 3.0 }; // Wrong length
+
+    const result = bicgstab(f64, allocator, &A, &b, &x0, 1e-6, 10);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "BiCGSTAB: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var coo = sparse.COO(f64).init(allocator, 3, 3);
+        defer coo.deinit();
+        try coo.append(0, 0, 2.0);
+        try coo.append(1, 1, 3.0);
+        try coo.append(2, 2, 4.0);
+
+        var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+        defer A.deinit();
+
+        const b = [_]f64{ 4.0, 6.0, 8.0 };
+
+        var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+        defer result.deinit();
+
+        try testing.expect(result.converged);
+    }
+}
+
+test "BiCGSTAB: f32 precision" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f32).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+
+    var A = try sparse.CSR(f32).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f32{ 6.0, 9.0 };
+
+    var result = try bicgstab(f32, allocator, &A, &b, null, 1e-6, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
