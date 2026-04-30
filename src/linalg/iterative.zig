@@ -312,18 +312,20 @@ pub fn conjugateGradient(
 ///
 /// Example:
 /// ```zig
-/// var result = try gmres(f64, allocator, &A, b, null, 1e-6, 100, 30);
+/// var result = try gmres(void, f64, allocator, &A, b, null, {}, 1e-6, 100, 30);
 /// defer result.deinit();
 /// if (result.converged) {
 ///     std.debug.print("Solution: {d}\n", .{result.x});
 /// }
 /// ```
 pub fn gmres(
+    comptime Precond: type,
     comptime T: type,
     allocator: Allocator,
     A: *const sparse.CSR(T),
     b: []const T,
     x0: ?[]const T,
+    preconditioner: if (Precond == void) void else ?*const Precond,
     tol: T,
     max_iter: usize,
     restart: usize,
@@ -408,11 +410,25 @@ pub fn gmres(
         while (j < m) : (j += 1) {
             total_iters += 1;
 
-            // w = A × vⱼ
+            // w = A × M⁻¹ × vⱼ (right preconditioning) or w = A × vⱼ (no preconditioning)
             const v_j = V_data[j * n .. (j + 1) * n];
-            const Av = try A.matvec(allocator, v_j);
-            @memcpy(w, Av);
-            allocator.free(Av);
+
+            if (Precond != void and preconditioner != null) {
+                // Apply preconditioner: z = M⁻¹vⱼ
+                const z = try allocator.alloc(T, n);
+                defer allocator.free(z);
+                try preconditioner.?.apply(v_j, z);
+
+                // Compute w = Az
+                const Av = try A.matvec(allocator, z);
+                @memcpy(w, Av);
+                allocator.free(Av);
+            } else {
+                // No preconditioning: w = Avⱼ
+                const Av = try A.matvec(allocator, v_j);
+                @memcpy(w, Av);
+                allocator.free(Av);
+            }
 
             // Modified Gram-Schmidt orthogonalization
             for (0..j + 1) |i| {
@@ -481,11 +497,35 @@ pub fn gmres(
                     y[i] = sum / H[i * (m + 1) + i];
                 }
 
-                // Update x = x + V * y
-                for (0..j + 1) |k| {
-                    const v_k = V_data[k * n .. (k + 1) * n];
+                // Update x = x + M⁻¹(V * y) for right preconditioning
+                if (Precond != void and preconditioner != null) {
+                    // Compute Vy first
+                    const Vy = try allocator.alloc(T, n);
+                    defer allocator.free(Vy);
+                    @memset(Vy, 0);
+                    for (0..j + 1) |k| {
+                        const v_k = V_data[k * n .. (k + 1) * n];
+                        for (0..n) |l| {
+                            Vy[l] += y[k] * v_k[l];
+                        }
+                    }
+
+                    // Apply preconditioner: z = M⁻¹(Vy)
+                    const z = try allocator.alloc(T, n);
+                    defer allocator.free(z);
+                    try preconditioner.?.apply(Vy, z);
+
+                    // Update x = x + z
                     for (0..n) |l| {
-                        x[l] += y[k] * v_k[l];
+                        x[l] += z[l];
+                    }
+                } else {
+                    // No preconditioning: x = x + Vy
+                    for (0..j + 1) |k| {
+                        const v_k = V_data[k * n .. (k + 1) * n];
+                        for (0..n) |l| {
+                            x[l] += y[k] * v_k[l];
+                        }
                     }
                 }
 
@@ -510,11 +550,35 @@ pub fn gmres(
             y[i] = sum / H[i * (m + 1) + i];
         }
 
-        // Update x = x + V * y
-        for (0..j) |k| {
-            const v_k = V_data[k * n .. (k + 1) * n];
+        // Update x = x + M⁻¹(V * y) for right preconditioning
+        if (Precond != void and preconditioner != null) {
+            // Compute Vy first
+            const Vy = try allocator.alloc(T, n);
+            defer allocator.free(Vy);
+            @memset(Vy, 0);
+            for (0..j) |k| {
+                const v_k = V_data[k * n .. (k + 1) * n];
+                for (0..n) |l| {
+                    Vy[l] += y[k] * v_k[l];
+                }
+            }
+
+            // Apply preconditioner: z = M⁻¹(Vy)
+            const z = try allocator.alloc(T, n);
+            defer allocator.free(z);
+            try preconditioner.?.apply(Vy, z);
+
+            // Update x = x + z
             for (0..n) |l| {
-                x[l] += y[k] * v_k[l];
+                x[l] += z[l];
+            }
+        } else {
+            // No preconditioning: x = x + Vy
+            for (0..j) |k| {
+                const v_k = V_data[k * n .. (k + 1) * n];
+                for (0..n) |l| {
+                    x[l] += y[k] * v_k[l];
+                }
             }
         }
     }
@@ -993,7 +1057,7 @@ test "GMRES: 2×2 identity system" {
     // b = [3, 5]ᵀ → solution x = [3, 5]ᵀ
     const b = [_]f64{ 3.0, 5.0 };
 
-    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+    var result = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 10, 10);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1017,7 +1081,7 @@ test "GMRES: 3×3 diagonal system" {
     // b = [6, 9, 12]ᵀ → solution x = [3, 3, 3]ᵀ
     const b = [_]f64{ 6.0, 9.0, 12.0 };
 
-    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+    var result = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 10, 10);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1049,7 +1113,7 @@ test "GMRES: 3×3 non-symmetric system" {
     // Verify: Ax = [3+1, 1+2+1, 1+3] = [4, 4, 4] ✓
     const b = [_]f64{ 4.0, 4.0, 4.0 };
 
-    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+    var result = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 10, 10);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1073,7 +1137,7 @@ test "GMRES: with initial guess" {
     const b = [_]f64{ 7.0, 9.0 };
     const x0 = [_]f64{ 6.5, 8.5 }; // Close initial guess
 
-    var result = try gmres(f64, allocator, &A, &b, &x0, 1e-10, 10, 10);
+    var result = try gmres(void, f64, allocator, &A, &b, &x0, {}, 1e-10, 10, 10);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1097,7 +1161,7 @@ test "GMRES: small restart size" {
     const b = [_]f64{ 2.0, 3.0, 4.0 };
 
     // Use restart=2 (smaller than matrix size)
-    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 2);
+    var result = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 10, 2);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1130,7 +1194,7 @@ test "GMRES: 4×4 tridiagonal system" {
 
     const b = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
 
-    var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 20, 10);
+    var result = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 20, 10);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1212,7 +1276,7 @@ test "GMRES: memory safety (10 iterations)" {
 
         const b = [_]f64{ 4.0, 6.0, 8.0 };
 
-        var result = try gmres(f64, allocator, &A, &b, null, 1e-10, 10, 10);
+        var result = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 10, 10);
         defer result.deinit();
 
         try testing.expect(result.converged);
@@ -1232,7 +1296,7 @@ test "GMRES: f32 precision" {
 
     const b = [_]f32{ 6.0, 9.0 };
 
-    var result = try gmres(f32, allocator, &A, &b, null, 1e-6, 10, 10);
+    var result = try gmres(void, f32, allocator, &A, &b, null, {}, 1e-6, 10, 10);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1297,15 +1361,17 @@ test "GMRES: f32 precision" {
 /// ```zig
 /// const A = try sparse.CSR(f64).fromCOO(allocator, &coo);
 /// const b = [_]f64{ 1.0, 2.0, 3.0 };
-/// var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+/// var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
 /// defer result.deinit();
 /// ```
 pub fn bicgstab(
+    comptime Precond: type,
     comptime T: type,
     allocator: Allocator,
     A: *const sparse.CSR(T),
     b: []const T,
     x0: ?[]const T,
+    preconditioner: if (Precond == void) void else ?*const Precond,
     tol: T,
     max_iter: usize,
 ) !SolverResult(T) {
@@ -1343,13 +1409,26 @@ pub fn bicgstab(
     const As = try allocator.alloc(T, n); // A × s
     defer allocator.free(As);
 
-    // Compute initial residual: r₀ = b - Ax₀
+    // Compute initial residual: r₀ = M⁻¹(b - Ax₀) for left precond or b - Ax₀
     const Ax0 = try A.matvec(allocator, x);
     defer allocator.free(Ax0);
 
+    // Compute b - Ax0
+    const raw_r = try allocator.alloc(T, n);
+    defer allocator.free(raw_r);
+    for (0..n) |i| {
+        raw_r[i] = b[i] - Ax0[i];
+    }
+
+    // Apply preconditioner if present
+    if (Precond != void and preconditioner != null) {
+        try preconditioner.?.apply(raw_r, r);
+    } else {
+        @memcpy(r, raw_r);
+    }
+
     var r_norm: T = 0;
     for (0..n) |i| {
-        r[i] = b[i] - Ax0[i];
         r_hat[i] = r[i]; // r̂₀ = r₀
         p[i] = r[i]; // p₀ = r₀
         r_norm += r[i] * r[i];
@@ -1399,9 +1478,13 @@ pub fn bicgstab(
             p[i] = r[i] + beta * (p[i] - omega * Ap[i]);
         }
 
-        // Ap = A × pₖ
+        // Ap = M⁻¹(A × pₖ) for left preconditioning or Ap = A × pₖ (no precond)
         const Ap_temp = try A.matvec(allocator, p);
-        @memcpy(Ap, Ap_temp);
+        if (Precond != void and preconditioner != null) {
+            try preconditioner.?.apply(Ap_temp, Ap);
+        } else {
+            @memcpy(Ap, Ap_temp);
+        }
         allocator.free(Ap_temp);
 
         // α = ρₖ / <r̂₀, Ap>
@@ -1439,9 +1522,13 @@ pub fn bicgstab(
             };
         }
 
-        // As = A × s
+        // As = M⁻¹(A × s) for left preconditioning or As = A × s (no precond)
         const As_temp = try A.matvec(allocator, s);
-        @memcpy(As, As_temp);
+        if (Precond != void and preconditioner != null) {
+            try preconditioner.?.apply(As_temp, As);
+        } else {
+            @memcpy(As, As_temp);
+        }
         allocator.free(As_temp);
 
         // ω = <As, s> / <As, As>
@@ -1513,7 +1600,7 @@ test "BiCGSTAB: 2×2 identity matrix" {
     // b = [5, 7]ᵀ → solution x = [5, 7]ᵀ
     const b = [_]f64{ 5.0, 7.0 };
 
-    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1538,7 +1625,7 @@ test "BiCGSTAB: 3×3 diagonal matrix" {
     // b = [4, 6, 8]ᵀ → solution x = [2, 2, 2]ᵀ
     const b = [_]f64{ 4.0, 6.0, 8.0 };
 
-    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1570,7 +1657,7 @@ test "BiCGSTAB: 3×3 non-symmetric system" {
     // Verify: Ax = [4+1, 2+3+1, 1+4] = [5, 6, 5] ✓
     const b = [_]f64{ 5.0, 6.0, 5.0 };
 
-    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1594,7 +1681,7 @@ test "BiCGSTAB: with initial guess" {
     const b = [_]f64{ 5.0, 7.0 };
     const x0 = [_]f64{ 4.5, 6.5 }; // Close initial guess
 
-    var result = try bicgstab(f64, allocator, &A, &b, &x0, 1e-10, 100);
+    var result = try bicgstab(void, f64, allocator, &A, &b, &x0, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1632,7 +1719,7 @@ test "BiCGSTAB: tridiagonal system (4×4)" {
     // b = [2, 1, 1, 2]ᵀ
     const b = [_]f64{ 2.0, 1.0, 1.0, 2.0 };
 
-    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -1655,7 +1742,7 @@ test "BiCGSTAB: max iterations limit" {
 
     const b = [_]f64{ 1.0, 2.0, 3.0 };
 
-    var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 1); // Only 1 iteration
+    var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 1); // Only 1 iteration
     defer result.deinit();
 
     try testing.expect(result.iterations <= 1);
@@ -1729,7 +1816,7 @@ test "BiCGSTAB: memory safety (10 iterations)" {
 
         const b = [_]f64{ 4.0, 6.0, 8.0 };
 
-        var result = try bicgstab(f64, allocator, &A, &b, null, 1e-10, 100);
+        var result = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
         defer result.deinit();
 
         try testing.expect(result.converged);
@@ -1749,10 +1836,268 @@ test "BiCGSTAB: f32 precision" {
 
     const b = [_]f32{ 6.0, 9.0 };
 
-    var result = try bicgstab(f32, allocator, &A, &b, null, 1e-6, 100);
+    var result = try bicgstab(void, f32, allocator, &A, &b, null, {}, 1e-6, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
     try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[1], 1e-5);
+}
+// Temporary file for preconditioned solver tests
+// Will be appended to iterative.zig
+
+test "GMRES with Jacobi preconditioner: 3×3 diagonal system" {
+    const allocator = testing.allocator;
+
+    // A = diag(10, 20, 30) — diagonally dominant, good for Jacobi
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 10.0);
+    try coo.append(1, 1, 20.0);
+    try coo.append(2, 2, 30.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [10, 40, 90]ᵀ → solution x = [1, 2, 3]ᵀ
+    const b = [_]f64{ 10.0, 40.0, 90.0 };
+
+    // Create Jacobi preconditioner
+    var M = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    var result = try gmres(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(1.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(2.0, result.x[1], 1e-9);
+    try testing.expectApproxEqAbs(3.0, result.x[2], 1e-9);
+}
+
+test "GMRES with ILU preconditioner: 3×3 tridiagonal system" {
+    const allocator = testing.allocator;
+
+    // Tridiagonal matrix (SPD-like structure)
+    // A = [4  -1   0]
+    //     [-1  4  -1]
+    //     [0  -1   4]
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 4.0);
+    try coo.append(0, 1, -1.0);
+    try coo.append(1, 0, -1.0);
+    try coo.append(1, 1, 4.0);
+    try coo.append(1, 2, -1.0);
+    try coo.append(2, 1, -1.0);
+    try coo.append(2, 2, 4.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [1, 2, 3]ᵀ
+    // Solution can be computed: Ax = b
+    // x ≈ [0.5, 0.75, 1.0] (approximate, computed externally)
+    const b = [_]f64{ 1.0, 2.0, 3.0 };
+
+    // Create ILU preconditioner
+    var M = try precond.ILUPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    var result = try gmres(precond.ILUPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 10, 10);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    // Verify by computing Ax and comparing with b
+    const Ax = try A.matvec(allocator, result.x);
+    defer allocator.free(Ax);
+
+    try testing.expectApproxEqAbs(b[0], Ax[0], 1e-8);
+    try testing.expectApproxEqAbs(b[1], Ax[1], 1e-8);
+    try testing.expectApproxEqAbs(b[2], Ax[2], 1e-8);
+}
+
+test "GMRES: preconditioner improves convergence" {
+    const allocator = testing.allocator;
+
+    // Ill-conditioned diagonal matrix: diag(1, 10, 100)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 1.0);
+    try coo.append(1, 1, 10.0);
+    try coo.append(2, 2, 100.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 10.0, 100.0 };
+
+    // Without preconditioner
+    var result_no_precond = try gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 100, 10);
+    defer result_no_precond.deinit();
+
+    // With Jacobi preconditioner (should converge in 1 iteration for diagonal)
+    var M = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    var result_precond = try gmres(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 100, 10);
+    defer result_precond.deinit();
+
+    // Both should converge
+    try testing.expect(result_no_precond.converged);
+    try testing.expect(result_precond.converged);
+
+    // Preconditioned should take fewer iterations (diagonal → 1 iteration with Jacobi)
+    try testing.expect(result_precond.iterations <= result_no_precond.iterations);
+}
+
+test "GMRES with preconditioner: memory safety" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 3.0);
+    try coo.append(2, 2, 4.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 2.0, 6.0, 12.0 };
+
+    var M = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    // Run 10 iterations to check for memory leaks
+    for (0..10) |_| {
+        var result = try gmres(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 10, 10);
+        defer result.deinit();
+    }
+}
+
+test "BiCGSTAB with Jacobi preconditioner: 3×3 diagonal system" {
+    const allocator = testing.allocator;
+
+    // A = diag(5, 10, 15)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 5.0);
+    try coo.append(1, 1, 10.0);
+    try coo.append(2, 2, 15.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [5, 20, 45]ᵀ → solution x = [1, 2, 3]ᵀ
+    const b = [_]f64{ 5.0, 20.0, 45.0 };
+
+    // Create Jacobi preconditioner
+    var M = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    var result = try bicgstab(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(1.0, result.x[0], 1e-9);
+    try testing.expectApproxEqAbs(2.0, result.x[1], 1e-9);
+    try testing.expectApproxEqAbs(3.0, result.x[2], 1e-9);
+}
+
+test "BiCGSTAB with ILU preconditioner: 3×3 non-symmetric system" {
+    const allocator = testing.allocator;
+
+    // Non-symmetric matrix
+    // A = [3  1  0]
+    //     [1  4  2]
+    //     [0  1  3]
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(0, 1, 1.0);
+    try coo.append(1, 0, 1.0);
+    try coo.append(1, 1, 4.0);
+    try coo.append(1, 2, 2.0);
+    try coo.append(2, 1, 1.0);
+    try coo.append(2, 2, 3.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 4.0, 11.0, 7.0 };
+
+    // Create ILU preconditioner
+    var M = try precond.ILUPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    var result = try bicgstab(precond.ILUPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+
+    // Verify Ax = b
+    const Ax = try A.matvec(allocator, result.x);
+    defer allocator.free(Ax);
+
+    try testing.expectApproxEqAbs(b[0], Ax[0], 1e-8);
+    try testing.expectApproxEqAbs(b[1], Ax[1], 1e-8);
+    try testing.expectApproxEqAbs(b[2], Ax[2], 1e-8);
+}
+
+test "BiCGSTAB: preconditioner improves convergence" {
+    const allocator = testing.allocator;
+
+    // Ill-conditioned diagonal: diag(2, 20, 200)
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 2.0);
+    try coo.append(1, 1, 20.0);
+    try coo.append(2, 2, 200.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 2.0, 40.0, 600.0 };
+
+    // Without preconditioner
+    var result_no_precond = try bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
+    defer result_no_precond.deinit();
+
+    // With Jacobi preconditioner
+    var M = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    var result_precond = try bicgstab(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 100);
+    defer result_precond.deinit();
+
+    // Both should converge
+    try testing.expect(result_no_precond.converged);
+    try testing.expect(result_precond.converged);
+
+    // Preconditioned should take fewer or equal iterations
+    try testing.expect(result_precond.iterations <= result_no_precond.iterations);
+}
+
+test "BiCGSTAB with preconditioner: memory safety" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    try coo.append(0, 0, 3.0);
+    try coo.append(1, 1, 4.0);
+    try coo.append(2, 2, 5.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 6.0, 12.0, 20.0 };
+
+    var M = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer M.deinit();
+
+    // Run 10 iterations to check for memory leaks
+    for (0..10) |_| {
+        var result = try bicgstab(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &M, 1e-10, 100);
+        defer result.deinit();
+    }
 }
