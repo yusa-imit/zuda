@@ -310,11 +310,10 @@ pub fn tspNearestNeighbor(
 /// Space: O(V) for tracking visits
 ///
 /// Returns: true if tour visits all vertices exactly once (plus return to start), false otherwise
-pub fn isValidTour(num_vertices: usize, tour: []const usize) !bool {
+pub fn isValidTour(allocator: Allocator, num_vertices: usize, tour: []const usize) !bool {
     if (tour.len != num_vertices + 1) return false;
     if (tour[0] != tour[tour.len - 1]) return false;
 
-    const allocator = std.heap.page_allocator;
     var visited = try allocator.alloc(bool, num_vertices);
     defer allocator.free(visited);
     @memset(visited, false);
@@ -365,7 +364,7 @@ test "tsp: single vertex" {
     var result = try tspMst(allocator, 1, &dist);
     defer result.deinit();
 
-    try std.testing.expect(try isValidTour(1, result.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 1, result.tour.items));
     try std.testing.expectEqual(@as(f64, 0.0), result.cost);
 }
 
@@ -380,7 +379,7 @@ test "tsp: triangle" {
     var result = try tspMst(allocator, 3, &dist);
     defer result.deinit();
 
-    try std.testing.expect(try isValidTour(3, result.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 3, result.tour.items));
     try std.testing.expectEqual(@as(usize, 4), result.tour.items.len); // 3 + 1
     // Optimal tour: 0→1→2→0 cost = 1+2+3 = 6, MST-based gives ≤12
     try std.testing.expect(result.cost <= 12.0);
@@ -398,7 +397,7 @@ test "tsp: square (4 vertices)" {
     var result = try tspMst(allocator, 4, &dist);
     defer result.deinit();
 
-    try std.testing.expect(try isValidTour(4, result.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 4, result.tour.items));
     // Optimal tour: perimeter = 4.0, MST-based gives ≤8.0
     try std.testing.expect(result.cost <= 8.0);
 }
@@ -414,7 +413,7 @@ test "tsp: complete graph K4" {
     var result = try tspMst(allocator, 4, &dist);
     defer result.deinit();
 
-    try std.testing.expect(try isValidTour(4, result.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 4, result.tour.items));
     try std.testing.expect(result.cost > 0.0);
 }
 
@@ -428,7 +427,7 @@ test "tsp: nearest neighbor heuristic" {
     var result = try tspNearestNeighbor(allocator, 3, &dist);
     defer result.deinit();
 
-    try std.testing.expect(try isValidTour(3, result.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 3, result.tour.items));
     try std.testing.expect(result.cost > 0.0);
 }
 
@@ -448,8 +447,8 @@ test "tsp: MST vs nearest neighbor comparison" {
     defer result_nn.deinit();
 
     // Both should be valid tours
-    try std.testing.expect(try isValidTour(4, result_mst.tour.items));
-    try std.testing.expect(try isValidTour(4, result_nn.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 4, result_mst.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 4, result_nn.tour.items));
 }
 
 test "tsp: large graph (stress test)" {
@@ -486,27 +485,29 @@ test "tsp: large graph (stress test)" {
     var result = try tspMst(allocator, 10, dist_slices);
     defer result.deinit();
 
-    try std.testing.expect(try isValidTour(10, result.tour.items));
+    try std.testing.expect(try isValidTour(allocator, 10, result.tour.items));
     try std.testing.expectEqual(@as(usize, 11), result.tour.items.len);
 }
 
 test "tsp: isValidTour detects invalid tours" {
+    const allocator = std.testing.allocator;
     // Missing vertex
     const tour1 = [_]usize{ 0, 1, 0 }; // Skips vertex 2
-    try std.testing.expect(!try isValidTour(3, &tour1));
+    try std.testing.expect(!try isValidTour(allocator, 3, &tour1));
 
     // Duplicate vertex
     const tour2 = [_]usize{ 0, 1, 1, 2, 0 };
-    try std.testing.expect(!try isValidTour(3, &tour2));
+    try std.testing.expect(!try isValidTour(allocator, 3, &tour2));
 
     // Doesn't return to start
     const tour3 = [_]usize{ 0, 1, 2 };
-    try std.testing.expect(!try isValidTour(3, &tour3));
+    try std.testing.expect(!try isValidTour(allocator, 3, &tour3));
 }
 
 test "tsp: isValidTour accepts valid tour" {
+    const allocator = std.testing.allocator;
     const tour = [_]usize{ 0, 1, 2, 0 };
-    try std.testing.expect(try isValidTour(3, &tour));
+    try std.testing.expect(try isValidTour(allocator, 3, &tour));
 }
 
 test "tsp: tourCost computation" {

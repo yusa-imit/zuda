@@ -190,7 +190,7 @@ pub fn RidgeRegression(comptime T: type) type {
             if (self.weights == null) {
                 self.weights = try self.allocator.alloc(T, self.n_features);
             }
-            try gaussianElimination(T, xtx, xty, self.weights.?, self.n_features);
+            try gaussianElimination(T, self.allocator, xtx, xty, self.weights.?, self.n_features);
 
             // Compute intercept: b = ȳ - w̄ᵀx̄
             var intercept: T = y_mean;
@@ -337,15 +337,15 @@ pub fn RidgeRegression(comptime T: type) type {
 /// Solve Aw = b using Gaussian elimination with partial pivoting
 ///
 /// **Time:** O(n³)
-/// **Space:** O(1) (in-place)
-fn gaussianElimination(comptime T: type, A: []T, b: []const T, x: []T, n: usize) !void {
+/// **Space:** O(n²) for augmented matrix
+fn gaussianElimination(comptime T: type, allocator: Allocator, A: []T, b: []const T, x: []T, n: usize) !void {
     // Create augmented matrix [A|b]
-    var aug = try std.heap.page_allocator.alloc(T, n * n);
-    defer std.heap.page_allocator.free(aug);
+    var aug = try allocator.alloc(T, n * n);
+    defer allocator.free(aug);
     @memcpy(aug, A);
 
-    var b_copy = try std.heap.page_allocator.alloc(T, n);
-    defer std.heap.page_allocator.free(b_copy);
+    var b_copy = try allocator.alloc(T, n);
+    defer allocator.free(b_copy);
     @memcpy(b_copy, b);
 
     // Forward elimination with partial pivoting
