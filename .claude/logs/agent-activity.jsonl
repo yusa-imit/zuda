@@ -278,3 +278,4 @@
 {"timestamp":"2026-04-29T16:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement CSR.kronecker() and CSC.kronecker() methods","project":"zuda"}
 {"timestamp":"2026-04-30T12:00:00Z","action":"direct_implementation","task":"Implement Conjugate Gradient iterative solver for sparse SPD systems","project":"zuda"}
 {"timestamp":"2026-04-30T15:00:00Z","action":"direct_implementation","task":"Implement GMRES iterative solver for general non-symmetric systems","project":"zuda"}
+{"timestamp":"2026-04-30T03:04:14Z","action":"feature","task":"Implement Jacobi and ILU(0) preconditioners for iterative solvers","project":"zuda"}
