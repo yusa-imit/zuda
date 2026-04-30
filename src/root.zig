@@ -701,6 +701,8 @@ pub const linalg = struct {
     pub const sparse = @import("linalg/sparse.zig");
     /// Iterative solvers — Conjugate Gradient, GMRES, BiCGSTAB
     pub const iterative = @import("linalg/iterative.zig");
+    /// Preconditioners for iterative solvers — Jacobi, ILU(0)
+    pub const preconditioner = @import("linalg/preconditioner.zig");
 };
 
 /// Statistics and data analysis
