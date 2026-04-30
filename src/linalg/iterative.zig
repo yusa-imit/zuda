@@ -31,6 +31,7 @@ const Allocator = mem.Allocator;
 const testing = std.testing;
 const math = std.math;
 const sparse = @import("sparse.zig");
+const precond = @import("preconditioner.zig");
 
 /// Result of an iterative solver
 pub fn SolverResult(comptime T: type) type {
@@ -52,29 +53,40 @@ pub fn SolverResult(comptime T: type) type {
     };
 }
 
-/// Conjugate Gradient (CG) solver for symmetric positive definite systems
+/// Preconditioned Conjugate Gradient (PCG) solver for symmetric positive definite systems
 ///
 /// Solves Ax = b where A is sparse, symmetric, and positive definite (SPD).
+/// Optionally accepts a preconditioner M to accelerate convergence by solving M⁻¹Ax = M⁻¹b.
 ///
-/// Algorithm (Hestenes & Stiefel, 1952):
+/// Algorithm (Hestenes & Stiefel, 1952 + preconditioning):
 /// 1. r₀ = b - Ax₀ (initial residual)
-/// 2. p₀ = r₀ (initial search direction)
-/// 3. For k = 0, 1, 2, ... until convergence:
-///    α = <rₖ, rₖ> / <pₖ, Apₖ>
+/// 2. z₀ = M⁻¹r₀ (apply preconditioner, or z₀ = r₀ if no preconditioner)
+/// 3. p₀ = z₀ (initial search direction)
+/// 4. For k = 0, 1, 2, ... until convergence:
+///    α = <rₖ, zₖ> / <pₖ, Apₖ>
 ///    xₖ₊₁ = xₖ + α pₖ
 ///    rₖ₊₁ = rₖ - α Apₖ
-///    β = <rₖ₊₁, rₖ₊₁> / <rₖ, rₖ>
-///    pₖ₊₁ = rₖ₊₁ + β pₖ
+///    zₖ₊₁ = M⁻¹rₖ₊₁
+///    β = <rₖ₊₁, zₖ₊₁> / <rₖ, zₖ>
+///    pₖ₊₁ = zₖ₊₁ + β pₖ
+///
+/// Preconditioning benefits:
+/// - Reduces condition number: κ(M⁻¹A) << κ(A)
+/// - Faster convergence: fewer iterations needed
+/// - Common preconditioners: Jacobi (diagonal), ILU(0), incomplete Cholesky
 ///
 /// Convergence: ||rₖ|| < tol × ||r₀|| or k ≥ max_iter
 ///
-/// Time: O(nnz × k) where k = iterations (typically k ≪ n)
-/// Space: O(n) for x, r, p, Ap vectors
+/// Time: O(nnz × k) + O(apply_precond × k) where k = iterations (typically k ≪ n)
+/// Space: O(n) for x, r, z, p, Ap vectors
 ///
 /// Parameters:
+/// - Precond: Preconditioner type with `apply(*const Self, r: []const T, z: []T) !void` method
+///   Set to `void` for no preconditioning (default CG)
 /// - A: Sparse CSR matrix (must be SPD, not validated!)
 /// - b: Right-hand side vector
 /// - x0: Initial guess (optional, can be null for zero init)
+/// - preconditioner: Preconditioner instance (null for no preconditioning)
 /// - tol: Convergence tolerance (relative residual)
 /// - max_iter: Maximum iterations (0 = unlimited, use n)
 ///
@@ -84,20 +96,27 @@ pub fn SolverResult(comptime T: type) type {
 /// - DimensionMismatch: A.rows ≠ A.cols or A.rows ≠ b.len or x0.len ≠ b.len
 /// - OutOfMemory: Allocation failure
 ///
-/// Example:
+/// Example (no preconditioner):
 /// ```zig
-/// var result = try conjugateGradient(f64, allocator, &A, b, null, 1e-6, 1000);
+/// var result = try conjugateGradient(void, f64, allocator, &A, b, null, null, 1e-6, 1000);
 /// defer result.deinit();
-/// if (result.converged) {
-///     std.debug.print("Solution: {d}\n", .{result.x});
-/// }
+/// ```
+///
+/// Example (with Jacobi preconditioner):
+/// ```zig
+/// var jacobi = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+/// defer jacobi.deinit();
+/// var result = try conjugateGradient(precond.JacobiPreconditioner(f64), f64, allocator, &A, b, null, &jacobi, 1e-6, 1000);
+/// defer result.deinit();
 /// ```
 pub fn conjugateGradient(
+    comptime Precond: type,
     comptime T: type,
     allocator: Allocator,
     A: *const sparse.CSR(T),
     b: []const T,
     x0: ?[]const T,
+    preconditioner: if (Precond == void) void else ?*const Precond,
     tol: T,
     max_iter: usize,
 ) !SolverResult(T) {
@@ -113,12 +132,15 @@ pub fn conjugateGradient(
     // Determine actual max iterations (0 means n)
     const max_iters = if (max_iter == 0) n else max_iter;
 
-    // Allocate workspace: x, r, p, Ap
+    // Allocate workspace: x, r, z (preconditioned residual), p, Ap
     const x = try allocator.alloc(T, n);
     errdefer allocator.free(x);
 
     const r = try allocator.alloc(T, n);
     errdefer allocator.free(r);
+
+    const z = try allocator.alloc(T, n);
+    errdefer allocator.free(z);
 
     const p = try allocator.alloc(T, n);
     errdefer allocator.free(p);
@@ -141,21 +163,33 @@ pub fn conjugateGradient(
         r_i.* = b[i] - Ax[i];
     }
 
-    // Initial search direction: p₀ = r₀
-    @memcpy(p, r);
+    // Apply preconditioner: z₀ = M⁻¹r₀
+    if (Precond != void) {
+        if (preconditioner) |M| {
+            try M.apply(r, z);
+        } else {
+            @memcpy(z, r); // No preconditioner
+        }
+    } else {
+        @memcpy(z, r); // No preconditioner
+    }
 
-    // Initial residual norm
-    var r_norm_sq = dot(T, r, r);
-    const r0_norm = @sqrt(r_norm_sq);
+    // Initial search direction: p₀ = z₀
+    @memcpy(p, z);
+
+    // Initial residual norm and <r₀, z₀>
+    const r0_norm = norm2(T, r);
     const threshold = tol * r0_norm;
+    var rz_dot = dot(T, r, z);
 
     var k: usize = 0;
     while (k < max_iters) : (k += 1) {
         // Check convergence: ||rₖ|| < tol × ||r₀||
-        const r_norm = @sqrt(r_norm_sq);
+        const r_norm = norm2(T, r);
         if (r_norm < threshold) {
             // Converged
             allocator.free(r);
+            allocator.free(z);
             allocator.free(p);
             allocator.free(Ap);
             return SolverResult(T){
@@ -172,22 +206,23 @@ pub fn conjugateGradient(
         @memcpy(Ap, Ap_temp);
         allocator.free(Ap_temp);
 
-        // α = <rₖ, rₖ> / <pₖ, Apₖ>
+        // α = <rₖ, zₖ> / <pₖ, Apₖ>
         const pAp = dot(T, p, Ap);
         if (@abs(pAp) < 1e-14) {
             // Numerical breakdown (should not happen for SPD matrices)
             allocator.free(r);
+            allocator.free(z);
             allocator.free(p);
             allocator.free(Ap);
             return SolverResult(T){
                 .x = x,
                 .iterations = k,
-                .residual_norm = @sqrt(r_norm_sq),
+                .residual_norm = r_norm,
                 .converged = false,
                 .allocator = allocator,
             };
         }
-        const alpha = r_norm_sq / pAp;
+        const alpha = rz_dot / pAp;
 
         // xₖ₊₁ = xₖ + α pₖ
         for (x, 0..) |*x_i, i| {
@@ -199,29 +234,41 @@ pub fn conjugateGradient(
             r_i.* -= alpha * Ap[i];
         }
 
-        // <rₖ₊₁, rₖ₊₁>
-        const r_norm_sq_new = dot(T, r, r);
-
-        // β = <rₖ₊₁, rₖ₊₁> / <rₖ, rₖ>
-        const beta = r_norm_sq_new / r_norm_sq;
-
-        // pₖ₊₁ = rₖ₊₁ + β pₖ
-        for (p, 0..) |*p_i, i| {
-            p_i.* = r[i] + beta * p_i.*;
+        // Apply preconditioner: zₖ₊₁ = M⁻¹rₖ₊₁
+        if (Precond != void) {
+            if (preconditioner) |M| {
+                try M.apply(r, z);
+            } else {
+                @memcpy(z, r);
+            }
+        } else {
+            @memcpy(z, r);
         }
 
-        r_norm_sq = r_norm_sq_new;
+        // <rₖ₊₁, zₖ₊₁>
+        const rz_dot_new = dot(T, r, z);
+
+        // β = <rₖ₊₁, zₖ₊₁> / <rₖ, zₖ>
+        const beta = rz_dot_new / rz_dot;
+
+        // pₖ₊₁ = zₖ₊₁ + β pₖ
+        for (p, 0..) |*p_i, i| {
+            p_i.* = z[i] + beta * p_i.*;
+        }
+
+        rz_dot = rz_dot_new;
     }
 
     // Max iterations reached without convergence
     allocator.free(r);
+    allocator.free(z);
     allocator.free(p);
     allocator.free(Ap);
 
     return SolverResult(T){
         .x = x,
         .iterations = k,
-        .residual_norm = @sqrt(r_norm_sq),
+        .residual_norm = norm2(T, r),
         .converged = false,
         .allocator = allocator,
     };
@@ -529,7 +576,7 @@ test "CG: 2×2 SPD identity system" {
     // b = [1, 2]ᵀ → solution x = [1, 2]ᵀ
     const b = [_]f64{ 1.0, 2.0 };
 
-    var result = try conjugateGradient(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -554,7 +601,7 @@ test "CG: 3×3 SPD diagonal system" {
     // b = [4, 6, 8]ᵀ → solution x = [2, 2, 2]ᵀ
     const b = [_]f64{ 4.0, 6.0, 8.0 };
 
-    var result = try conjugateGradient(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -586,7 +633,7 @@ test "CG: 3×3 SPD general system" {
     // Verify: Ax = [4+1, 1+3+1, 1+4] = [5, 5, 5] ✓
     const b = [_]f64{ 5.0, 5.0, 5.0 };
 
-    var result = try conjugateGradient(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -610,7 +657,7 @@ test "CG: with initial guess" {
     const b = [_]f64{ 5.0, 7.0 };
     const x0 = [_]f64{ 4.0, 6.0 }; // Close initial guess
 
-    var result = try conjugateGradient(f64, allocator, &A, &b, &x0, 1e-10, 100);
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, &x0, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -650,7 +697,7 @@ test "CG: large sparse tridiagonal system (5×5)" {
     // b = [1, 0, 0, 0, 1]ᵀ
     const b = [_]f64{ 1.0, 0.0, 0.0, 0.0, 1.0 };
 
-    var result = try conjugateGradient(f64, allocator, &A, &b, null, 1e-10, 100);
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
@@ -681,7 +728,7 @@ test "CG: max iterations limit" {
     const b = [_]f64{ 1.0, 2.0, 3.0 };
 
     // Force early termination with max_iter = 1
-    var result = try conjugateGradient(f64, allocator, &A, &b, null, 1e-10, 1);
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 1);
     defer result.deinit();
 
     try testing.expect(result.iterations == 1);
@@ -701,7 +748,7 @@ test "CG: dimension mismatch errors" {
 
     const b = [_]f64{ 1.0, 2.0 };
 
-    const result = conjugateGradient(f64, allocator, &A, &b, null, 1e-6, 100);
+    const result = conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-6, 100);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -718,7 +765,7 @@ test "CG: b length mismatch" {
 
     const b = [_]f64{1.0}; // Wrong length
 
-    const result = conjugateGradient(f64, allocator, &A, &b, null, 1e-6, 100);
+    const result = conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-6, 100);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -736,7 +783,7 @@ test "CG: x0 length mismatch" {
     const b = [_]f64{ 1.0, 2.0 };
     const x0 = [_]f64{1.0}; // Wrong length
 
-    const result = conjugateGradient(f64, allocator, &A, &b, &x0, 1e-6, 100);
+    const result = conjugateGradient(void, f64, allocator, &A, &b, &x0, {}, 1e-6, 100);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -755,7 +802,7 @@ test "CG: memory safety (10 iterations)" {
 
         const b = [_]f64{ 2.0, 3.0, 4.0 };
 
-        var result = try conjugateGradient(f64, allocator, &A, &b, null, 1e-10, 100);
+        var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
         defer result.deinit();
 
         try testing.expect(result.converged);
@@ -775,12 +822,152 @@ test "CG: f32 precision" {
 
     const b = [_]f32{ 3.0, 4.0 };
 
-    var result = try conjugateGradient(f32, allocator, &A, &b, null, 1e-6, 100);
+    var result = try conjugateGradient(void, f32, allocator, &A, &b, null, {}, 1e-6, 100);
     defer result.deinit();
 
     try testing.expect(result.converged);
     try testing.expectApproxEqAbs(@as(f32, 3.0), result.x[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f32, 4.0), result.x[1], 1e-5);
+}
+
+// ============================================================================
+// Preconditioned CG Tests
+// ============================================================================
+
+test "PCG: with Jacobi preconditioner" {
+    const allocator = testing.allocator;
+
+    // A = [4  1]  SPD matrix
+    //     [1  3]
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 4.0);
+    try coo.append(0, 1, 1.0);
+    try coo.append(1, 0, 1.0);
+    try coo.append(1, 1, 3.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [9, 8]ᵀ → solution x = [2, 2]ᵀ
+    // Verify: Ax = [4*2+1*2, 1*2+3*2] = [10, 8] ✗ Let me recalculate
+    // Ax = [4*2+1*2, 1*2+3*2] = [8+2, 2+6] = [10, 8] ✗
+    // For x = [2, 2]: Ax = [8+2, 2+6] = [10, 8]
+    // So b should be [10, 8] for x = [2, 2]
+    const b = [_]f64{ 10.0, 8.0 };
+
+    // Create Jacobi preconditioner
+    var jacobi = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer jacobi.deinit();
+
+    var result = try conjugateGradient(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &jacobi, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+    try testing.expectApproxEqAbs(2.0, result.x[0], 1e-8);
+    try testing.expectApproxEqAbs(2.0, result.x[1], 1e-8);
+}
+
+test "PCG: with ILU(0) preconditioner" {
+    const allocator = testing.allocator;
+
+    // A = tridiag(-1, 3, -1) - SPD matrix
+    // [3  -1   0]
+    // [-1  3  -1]
+    // [0  -1   3]
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    for (0..3) |i| {
+        try coo.append(i, i, 3.0);
+    }
+    for (0..2) |i| {
+        try coo.append(i, i + 1, -1.0);
+        try coo.append(i + 1, i, -1.0);
+    }
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    // b = [1, 1, 1]ᵀ
+    const b = [_]f64{ 1.0, 1.0, 1.0 };
+
+    // Create ILU(0) preconditioner
+    var ilu = try precond.ILUPreconditioner(f64).init(allocator, &A);
+    defer ilu.deinit();
+
+    var result = try conjugateGradient(precond.ILUPreconditioner(f64), f64, allocator, &A, &b, null, &ilu, 1e-10, 100);
+    defer result.deinit();
+
+    try testing.expect(result.converged);
+
+    // Verify Ax = b
+    const Ax = try A.matvec(allocator, result.x);
+    defer allocator.free(Ax);
+
+    for (Ax, 0..) |val, i| {
+        try testing.expectApproxEqAbs(b[i], val, 1e-8);
+    }
+}
+
+test "PCG: convergence faster than unpreconditioned CG" {
+    const allocator = testing.allocator;
+
+    // A = diag(1, 2, 3, 4, 5) - ill-conditioned
+    var coo = sparse.COO(f64).init(allocator, 5, 5);
+    defer coo.deinit();
+    for (0..5) |i| {
+        try coo.append(i, i, @as(f64, @floatFromInt(i + 1)));
+    }
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+
+    // Unpreconditioned CG
+    var result_cg = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-10, 100);
+    defer result_cg.deinit();
+
+    // Preconditioned CG with Jacobi
+    var jacobi = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+    defer jacobi.deinit();
+
+    var result_pcg = try conjugateGradient(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &jacobi, 1e-10, 100);
+    defer result_pcg.deinit();
+
+    // Both should converge
+    try testing.expect(result_cg.converged);
+    try testing.expect(result_pcg.converged);
+
+    // PCG should converge in fewer or equal iterations
+    // For diagonal matrices, Jacobi preconditioning solves in 1 iteration
+    try testing.expect(result_pcg.iterations <= result_cg.iterations);
+    try testing.expectEqual(@as(usize, 1), result_pcg.iterations);
+}
+
+test "PCG: memory safety (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var coo = sparse.COO(f64).init(allocator, 3, 3);
+        defer coo.deinit();
+        try coo.append(0, 0, 2.0);
+        try coo.append(1, 1, 3.0);
+        try coo.append(2, 2, 4.0);
+
+        var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+        defer A.deinit();
+
+        const b = [_]f64{ 4.0, 6.0, 8.0 };
+
+        var jacobi = try precond.JacobiPreconditioner(f64).init(allocator, &A);
+        defer jacobi.deinit();
+
+        var result = try conjugateGradient(precond.JacobiPreconditioner(f64), f64, allocator, &A, &b, null, &jacobi, 1e-10, 100);
+        defer result.deinit();
+
+        try testing.expect(result.converged);
+    }
 }
 
 // ============================================================================
