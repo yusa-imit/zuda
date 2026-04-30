@@ -281,3 +281,4 @@
 {"timestamp":"2026-04-30T03:04:14Z","action":"feature","task":"Implement Jacobi and ILU(0) preconditioners for iterative solvers","project":"zuda"}
 {"timestamp":"2026-04-30T07:05:39Z","action":"feature","task":"Integrate preconditioners with CG solver","project":"zuda","files_changed":1,"lines_added":230,"tests_added":4}
 {"timestamp":"2026-04-30T07:10:00Z","action":"feature","task":"Implement BiCGSTAB iterative solver for non-symmetric systems","project":"zuda","module":"linalg/iterative.zig","tests_added":11,"lines_added":521}
+{"timestamp":"2026-05-01T00:00:00Z","action":"direct_implementation","task":"Integrate preconditioners with GMRES and BiCGSTAB solvers","project":"zuda"}
