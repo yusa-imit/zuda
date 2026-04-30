@@ -26,11 +26,9 @@ pub const Edit = struct {
 
 /// Compute Levenshtein distance
 /// Time: O(m*n) | Space: O(m*n)
-pub fn distance(a: []const u8, b: []const u8) !usize {
+pub fn distance(allocator: Allocator, a: []const u8, b: []const u8) !usize {
     if (a.len == 0) return b.len;
     if (b.len == 0) return a.len;
-
-    const allocator = std.heap.page_allocator;
     const m = a.len;
     const n = b.len;
 
@@ -74,15 +72,13 @@ pub fn distance(a: []const u8, b: []const u8) !usize {
 
 /// Compute edit distance with space optimization
 /// Time: O(m*n) | Space: O(min(m,n))
-pub fn distanceOptimized(a: []const u8, b: []const u8) !usize {
+pub fn distanceOptimized(allocator: Allocator, a: []const u8, b: []const u8) !usize {
     if (a.len == 0) return b.len;
     if (b.len == 0) return a.len;
 
     // Use shorter sequence for space optimization
     const shorter = if (a.len <= b.len) a else b;
     const longer = if (a.len <= b.len) b else a;
-
-    const allocator = std.heap.page_allocator;
     const n = shorter.len;
 
     var prev = try allocator.alloc(usize, n + 1);
@@ -253,10 +249,10 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
 
 /// Compute similarity ratio (0.0 to 1.0, where 1.0 is identical)
 /// Time: O(m*n) | Space: O(min(m,n))
-pub fn similarity(a: []const u8, b: []const u8) !f64 {
+pub fn similarity(allocator: Allocator, a: []const u8, b: []const u8) !f64 {
     if (a.len == 0 and b.len == 0) return 1.0;
 
-    const dist = try distanceOptimized(a, b);
+    const dist = try distanceOptimized(allocator, a, b);
     const max_len = @max(a.len, b.len);
 
     return 1.0 - (@as(f64, @floatFromInt(dist)) / @as(f64, @floatFromInt(max_len)));
@@ -265,8 +261,8 @@ pub fn similarity(a: []const u8, b: []const u8) !f64 {
 /// Check if two strings are within a given edit distance threshold
 /// Time: O(m*n) early termination possible | Space: O(n)
 /// Returns true if distance <= threshold
-pub fn withinThreshold(a: []const u8, b: []const u8, threshold: usize) !bool {
-    const dist = try distanceOptimized(a, b);
+pub fn withinThreshold(allocator: Allocator, a: []const u8, b: []const u8, threshold: usize) !bool {
+    const dist = try distanceOptimized(allocator, a, b);
     return dist <= threshold;
 }
 
@@ -275,18 +271,18 @@ pub fn withinThreshold(a: []const u8, b: []const u8, threshold: usize) !bool {
 // ============================================================================
 
 test "Edit distance: empty strings" {
-    try std.testing.expectEqual(0, try distance("", ""));
-    try std.testing.expectEqual(3, try distance("abc", ""));
-    try std.testing.expectEqual(3, try distance("", "abc"));
+    try std.testing.expectEqual(0, try distance(std.testing.allocator, "", ""));
+    try std.testing.expectEqual(3, try distance(std.testing.allocator, "abc", ""));
+    try std.testing.expectEqual(3, try distance(std.testing.allocator, "", "abc"));
 
-    try std.testing.expectEqual(0, try distanceOptimized("", ""));
-    try std.testing.expectEqual(3, try distanceOptimized("abc", ""));
+    try std.testing.expectEqual(0, try distanceOptimized(std.testing.allocator, "", ""));
+    try std.testing.expectEqual(3, try distanceOptimized(std.testing.allocator, "abc", ""));
 }
 
 test "Edit distance: identical strings" {
     const s = "hello";
-    try std.testing.expectEqual(0, try distance(s, s));
-    try std.testing.expectEqual(0, try distanceOptimized(s, s));
+    try std.testing.expectEqual(0, try distance(std.testing.allocator, s, s));
+    try std.testing.expectEqual(0, try distanceOptimized(std.testing.allocator, s, s));
 
     const result = try distanceWithEdits(std.testing.allocator, s, s);
     defer std.testing.allocator.free(result.edits);
@@ -294,35 +290,35 @@ test "Edit distance: identical strings" {
 }
 
 test "Edit distance: single character difference" {
-    try std.testing.expectEqual(1, try distance("cat", "bat")); // Substitute
-    try std.testing.expectEqual(1, try distance("cat", "cats")); // Insert
-    try std.testing.expectEqual(1, try distance("cats", "cat")); // Delete
+    try std.testing.expectEqual(1, try distance(std.testing.allocator, "cat", "bat")); // Substitute
+    try std.testing.expectEqual(1, try distance(std.testing.allocator, "cat", "cats")); // Insert
+    try std.testing.expectEqual(1, try distance(std.testing.allocator, "cats", "cat")); // Delete
 
-    try std.testing.expectEqual(1, try distanceOptimized("cat", "bat"));
-    try std.testing.expectEqual(1, try distanceOptimized("cat", "cats"));
+    try std.testing.expectEqual(1, try distanceOptimized(std.testing.allocator, "cat", "bat"));
+    try std.testing.expectEqual(1, try distanceOptimized(std.testing.allocator, "cat", "cats"));
 }
 
 test "Edit distance: classic examples" {
     // kitten -> sitting: 3 (k->s, e->i, insert g)
-    try std.testing.expectEqual(3, try distance("kitten", "sitting"));
-    try std.testing.expectEqual(3, try distanceOptimized("kitten", "sitting"));
+    try std.testing.expectEqual(3, try distance(std.testing.allocator, "kitten", "sitting"));
+    try std.testing.expectEqual(3, try distanceOptimized(std.testing.allocator, "kitten", "sitting"));
 
     // saturday -> sunday: 3
-    try std.testing.expectEqual(3, try distance("saturday", "sunday"));
-    try std.testing.expectEqual(3, try distanceOptimized("saturday", "sunday"));
+    try std.testing.expectEqual(3, try distance(std.testing.allocator, "saturday", "sunday"));
+    try std.testing.expectEqual(3, try distanceOptimized(std.testing.allocator, "saturday", "sunday"));
 
     // rosettacode -> raisethysword: 8
-    try std.testing.expectEqual(8, try distance("rosettacode", "raisethysword"));
+    try std.testing.expectEqual(8, try distance(std.testing.allocator, "rosettacode", "raisethysword"));
 }
 
 test "Edit distance: completely different strings" {
-    try std.testing.expectEqual(3, try distance("abc", "xyz"));
-    try std.testing.expectEqual(3, try distanceOptimized("abc", "xyz"));
+    try std.testing.expectEqual(3, try distance(std.testing.allocator, "abc", "xyz"));
+    try std.testing.expectEqual(3, try distanceOptimized(std.testing.allocator, "abc", "xyz"));
 }
 
 test "Edit distance: one is substring of other" {
-    try std.testing.expectEqual(3, try distance("test", "testing")); // Insert 'i', 'n', 'g'
-    try std.testing.expectEqual(3, try distanceOptimized("test", "testing"));
+    try std.testing.expectEqual(3, try distance(std.testing.allocator, "test", "testing")); // Insert 'i', 'n', 'g'
+    try std.testing.expectEqual(3, try distanceOptimized(std.testing.allocator, "test", "testing"));
 }
 
 test "Edit distance: with edits reconstruction" {
@@ -344,30 +340,30 @@ test "Edit distance: with edits reconstruction" {
 }
 
 test "Edit distance: similarity ratio" {
-    try std.testing.expectApproxEqAbs(1.0, try similarity("test", "test"), 0.001);
-    try std.testing.expectApproxEqAbs(0.0, try similarity("abcd", "efgh"), 0.001);
+    try std.testing.expectApproxEqAbs(1.0, try similarity(std.testing.allocator, "test", "test"), 0.001);
+    try std.testing.expectApproxEqAbs(0.0, try similarity(std.testing.allocator, "abcd", "efgh"), 0.001);
 
-    const sim = try similarity("kitten", "sitting");
+    const sim = try similarity(std.testing.allocator, "kitten", "sitting");
     try std.testing.expect(sim > 0.5 and sim < 0.7); // ~57%
 }
 
 test "Edit distance: threshold check" {
-    try std.testing.expect(try withinThreshold("test", "test", 0));
-    try std.testing.expect(try withinThreshold("test", "testing", 3));
-    try std.testing.expect(!try withinThreshold("test", "testing", 1));
+    try std.testing.expect(try withinThreshold(std.testing.allocator, "test", "test", 0));
+    try std.testing.expect(try withinThreshold(std.testing.allocator, "test", "testing", 3));
+    try std.testing.expect(!try withinThreshold(std.testing.allocator, "test", "testing", 1));
 }
 
 test "Edit distance: case sensitivity" {
-    try std.testing.expectEqual(1, try distance("Test", "test")); // Only first char differs
-    try std.testing.expectEqual(1, try distance("Test", "Fest"));
+    try std.testing.expectEqual(1, try distance(std.testing.allocator, "Test", "test")); // Only first char differs
+    try std.testing.expectEqual(1, try distance(std.testing.allocator, "Test", "Fest"));
 }
 
 test "Edit distance: longer strings" {
     const a = "The quick brown fox jumps over the lazy dog";
     const b = "The quick brown fox jumped over the lazy dog";
 
-    try std.testing.expectEqual(2, try distance(a, b)); // s->ed (substitute + insert)
-    try std.testing.expectEqual(2, try distanceOptimized(a, b));
+    try std.testing.expectEqual(2, try distance(std.testing.allocator, a, b)); // s->ed (substitute + insert)
+    try std.testing.expectEqual(2, try distanceOptimized(std.testing.allocator, a, b));
 }
 
 test "Edit distance: consumer use case - fuzzy command matching (zr)" {
@@ -377,21 +373,21 @@ test "Edit distance: consumer use case - fuzzy command matching (zr)" {
     const typo2 = "buidl"; // 2 edits
     const typo3 = "buil"; // 1 edit (delete d)
 
-    try std.testing.expectEqual(2, try distance(command, typo1));
-    try std.testing.expectEqual(2, try distance(command, typo2));
-    try std.testing.expectEqual(1, try distance(command, typo3));
+    try std.testing.expectEqual(2, try distance(std.testing.allocator, command, typo1));
+    try std.testing.expectEqual(2, try distance(std.testing.allocator, command, typo2));
+    try std.testing.expectEqual(1, try distance(std.testing.allocator, command, typo3));
 
     // Should suggest "build" for all of these within threshold 2
-    try std.testing.expect(try withinThreshold(command, typo1, 2));
-    try std.testing.expect(try withinThreshold(command, typo2, 2));
-    try std.testing.expect(try withinThreshold(command, typo3, 2));
+    try std.testing.expect(try withinThreshold(std.testing.allocator, command, typo1, 2));
+    try std.testing.expect(try withinThreshold(std.testing.allocator, command, typo2, 2));
+    try std.testing.expect(try withinThreshold(std.testing.allocator, command, typo3, 2));
 }
 
 test "Edit distance: transpositions not optimized" {
     // Note: Standard Levenshtein doesn't optimize for transpositions
     // "ab" -> "ba" requires 2 substitutions, not 1 transposition
     // (Damerau-Levenshtein would handle this as 1 operation)
-    try std.testing.expectEqual(2, try distance("ab", "ba"));
+    try std.testing.expectEqual(2, try distance(std.testing.allocator, "ab", "ba"));
 }
 
 test "Edit distance: unicode aware (bytes)" {
@@ -400,7 +396,7 @@ test "Edit distance: unicode aware (bytes)" {
     const b = "cafe";
 
     // 'é' is 2 bytes in UTF-8, so distance > 1
-    const dist = try distance(a, b);
+    const dist = try distance(std.testing.allocator, a, b);
     try std.testing.expect(dist >= 1);
 }
 
@@ -420,8 +416,8 @@ test "Edit distance: space optimization correctness" {
         b[i] = 'a' + @as(u8, @intCast(random.intRangeAtMost(u8, 0, 25)));
     }
 
-    const dist1 = try distance(a, b);
-    const dist2 = try distanceOptimized(a, b);
+    const dist1 = try distance(std.testing.allocator, a, b);
+    const dist2 = try distanceOptimized(std.testing.allocator, a, b);
 
     try std.testing.expectEqual(dist1, dist2);
 }
@@ -430,6 +426,6 @@ test "Edit distance: performance on moderate strings" {
     const a = "AGGTACGTACGTTACGATCGATCGATCGATCGATCGATCG";
     const b = "ACGTACGTTACGATCGATCGATCGATCGATCGATCGATCG";
 
-    const dist = try distanceOptimized(a, b);
+    const dist = try distanceOptimized(std.heap.page_allocator, a, b);
     try std.testing.expect(dist <= 5); // Should be small
 }

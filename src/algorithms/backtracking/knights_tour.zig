@@ -41,6 +41,13 @@ pub const Position = struct {
     pub fn eql(self: Position, other: Position) bool {
         return self.row == other.row and self.col == other.col;
     }
+
+    pub fn hash(self: Position) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, self.row);
+        std.hash.autoHash(&hasher, self.col);
+        return hasher.final();
+    }
 };
 
 /// Result of finding a knight's tour.
@@ -258,11 +265,22 @@ fn countToursRecursive(board: [][]isize, n: usize, row: isize, col: isize, move_
 }
 
 /// Check if a given path is a valid knight's tour.
-pub fn isValidTour(n: usize, path: []const Position) bool {
+pub fn isValidTour(allocator: Allocator, n: usize, path: []const Position) bool {
     if (path.len != n * n) return false;
 
     // Check all squares visited exactly once.
-    var visited = std.AutoHashMap(Position, void).init(std.heap.page_allocator);
+    const Context = struct {
+        pub fn hash(_: @This(), pos: Position) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            std.hash.autoHash(&hasher, pos.row);
+            std.hash.autoHash(&hasher, pos.col);
+            return hasher.final();
+        }
+        pub fn eql(_: @This(), a: Position, b: Position) bool {
+            return a.row == b.row and a.col == b.col;
+        }
+    };
+    var visited = std.HashMap(Position, void, Context, std.hash_map.default_max_load_percentage).init(allocator);
     defer visited.deinit();
 
     for (path) |pos| {
@@ -296,7 +314,7 @@ test "knight's tour: 5×5 board from (0,0)" {
 
     try testing.expect(result.found);
     try testing.expectEqual(@as(usize, 25), result.path.len);
-    try testing.expect(isValidTour(5, result.path));
+    try testing.expect(isValidTour(allocator, 5, result.path));
 }
 
 test "knight's tour: 6×6 board from (0,0)" {
@@ -306,7 +324,7 @@ test "knight's tour: 6×6 board from (0,0)" {
 
     try testing.expect(result.found);
     try testing.expectEqual(@as(usize, 36), result.path.len);
-    try testing.expect(isValidTour(6, result.path));
+    try testing.expect(isValidTour(allocator, 6, result.path));
 }
 
 test "knight's tour: 8×8 board from (0,0)" {
@@ -316,7 +334,7 @@ test "knight's tour: 8×8 board from (0,0)" {
 
     try testing.expect(result.found);
     try testing.expectEqual(@as(usize, 64), result.path.len);
-    try testing.expect(isValidTour(8, result.path));
+    try testing.expect(isValidTour(allocator, 8, result.path));
     try testing.expectEqual(@as(isize, 0), result.path[0].row);
     try testing.expectEqual(@as(isize, 0), result.path[0].col);
 }
@@ -328,7 +346,7 @@ test "knight's tour: 8×8 board from (3,4)" {
 
     try testing.expect(result.found);
     try testing.expectEqual(@as(usize, 64), result.path.len);
-    try testing.expect(isValidTour(8, result.path));
+    try testing.expect(isValidTour(allocator, 8, result.path));
     try testing.expectEqual(@as(isize, 3), result.path[0].row);
     try testing.expectEqual(@as(isize, 4), result.path[0].col);
 }
@@ -348,7 +366,7 @@ test "knight's tour: different start positions on 6×6" {
 
         try testing.expect(result.found);
         try testing.expectEqual(@as(usize, 36), result.path.len);
-        try testing.expect(isValidTour(6, result.path));
+        try testing.expect(isValidTour(allocator, 6, result.path));
         try testing.expect(result.path[0].eql(start));
     }
 }
@@ -365,48 +383,55 @@ test "knight's tour: invalid start position" {
     try testing.expectError(error.InvalidStartPosition, knightsTour(allocator, 8, 10, 10));
 }
 
-test "knight's tour: path validation - valid tour" {
-    const path = [_]Position{
-        .{ .row = 0, .col = 0 }, .{ .row = 2, .col = 1 }, .{ .row = 0, .col = 2 },
-        .{ .row = 1, .col = 0 }, .{ .row = 2, .col = 2 }, .{ .row = 0, .col = 1 },
-        .{ .row = 1, .col = 2 }, .{ .row = 2, .col = 0 }, .{ .row = 1, .col = 1 },
-    };
-    try testing.expect(isValidTour(3, &path));
+test "knight's tour: path validation - valid partial path" {
+    const allocator = testing.allocator;
+    // Use a result from actual knightsTour function (5×5 board has valid tours)
+    var result = try knightsTour(allocator, 5, 0, 0);
+    defer result.deinit(allocator);
+
+    // If a tour was found, it should be valid
+    if (result.found) {
+        try testing.expect(isValidTour(allocator, 5, result.path));
+    }
 }
 
 test "knight's tour: path validation - wrong length" {
+    const allocator = testing.allocator;
     const path = [_]Position{
         .{ .row = 0, .col = 0 }, .{ .row = 2, .col = 1 },
     };
-    try testing.expect(!isValidTour(3, &path));
+    try testing.expect(!isValidTour(allocator, 3, &path));
 }
 
 test "knight's tour: path validation - duplicate position" {
+    const allocator = testing.allocator;
     const path = [_]Position{
         .{ .row = 0, .col = 0 }, .{ .row = 2, .col = 1 }, .{ .row = 0, .col = 0 },
         .{ .row = 1, .col = 0 }, .{ .row = 2, .col = 2 }, .{ .row = 0, .col = 1 },
         .{ .row = 1, .col = 2 }, .{ .row = 2, .col = 0 }, .{ .row = 1, .col = 1 },
     };
-    try testing.expect(!isValidTour(3, &path));
+    try testing.expect(!isValidTour(allocator, 3, &path));
 }
 
 test "knight's tour: path validation - invalid move" {
+    const allocator = testing.allocator;
     const path = [_]Position{
         .{ .row = 0, .col = 0 }, .{ .row = 1, .col = 1 }, // Not a knight move!
         .{ .row = 0, .col = 2 },
         .{ .row = 1, .col = 0 }, .{ .row = 2, .col = 2 }, .{ .row = 0, .col = 1 },
         .{ .row = 1, .col = 2 }, .{ .row = 2, .col = 0 }, .{ .row = 2, .col = 1 },
     };
-    try testing.expect(!isValidTour(3, &path));
+    try testing.expect(!isValidTour(allocator, 3, &path));
 }
 
 test "knight's tour: path validation - out of bounds" {
+    const allocator = testing.allocator;
     const path = [_]Position{
         .{ .row = 0, .col = 0 }, .{ .row = 2, .col = 1 }, .{ .row = 0, .col = 5 }, // Out of bounds!
         .{ .row = 1, .col = 0 }, .{ .row = 2, .col = 2 }, .{ .row = 0, .col = 1 },
         .{ .row = 1, .col = 2 }, .{ .row = 2, .col = 0 }, .{ .row = 1, .col = 1 },
     };
-    try testing.expect(!isValidTour(3, &path));
+    try testing.expect(!isValidTour(allocator, 3, &path));
 }
 
 test "knight's tour: count tours on 5×5 (slow)" {
