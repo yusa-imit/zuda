@@ -36,20 +36,19 @@ const Allocator = std.mem.Allocator;
 /// Space complexity: O(n×m) for full DP, O(m) for optimized, O(n×m) for recursive memo
 ///
 /// Reference: LeetCode #10 (Regular Expression Matching)
-pub fn isMatch(s: []const u8, p: []const u8) bool {
+pub fn isMatch(allocator: Allocator, s: []const u8, p: []const u8) !bool {
     const n = s.len;
     const m = p.len;
 
     // dp[i][j] = true if s[0..i] matches p[0..j]
-    // Allocate 2D DP table using page allocator
-    const allocator = std.heap.page_allocator;
-    var dp = allocator.alloc([]bool, n + 1) catch unreachable;
+    // Allocate 2D DP table
+    var dp = try allocator.alloc([]bool, n + 1);
     defer allocator.free(dp);
 
     // Initialize DP table
     var i: usize = 0;
     while (i <= n) : (i += 1) {
-        dp[i] = allocator.alloc(bool, m + 1) catch unreachable;
+        dp[i] = try allocator.alloc(bool, m + 1);
         var j: usize = 0;
         while (j <= m) : (j += 1) {
             dp[i][j] = false;
@@ -113,15 +112,14 @@ pub fn isMatch(s: []const u8, p: []const u8) bool {
 ///
 /// Time: O(n×m)
 /// Space: O(m)
-pub fn isMatchOptimized(s: []const u8, p: []const u8) bool {
+pub fn isMatchOptimized(allocator: Allocator, s: []const u8, p: []const u8) !bool {
     const n = s.len;
     const m = p.len;
 
     // Use two rows: previous and current
-    const allocator = std.heap.page_allocator;
-    var prev = allocator.alloc(bool, m + 1) catch unreachable;
+    var prev = try allocator.alloc(bool, m + 1);
     defer allocator.free(prev);
-    var curr = allocator.alloc(bool, m + 1) catch unreachable;
+    var curr = try allocator.alloc(bool, m + 1);
     defer allocator.free(curr);
 
     // Initialize rows
@@ -248,158 +246,180 @@ fn isMatchHelper(s: []const u8, p: []const u8, i: usize, j: usize, memo: [][]i8)
 // ============================================================================
 
 test "regex matching - basic examples" {
+    const allocator = testing.allocator;
+
     // Example 1: "aa" vs "a"
-    try testing.expect(!isMatch("aa", "a"));
+    try testing.expect(!try isMatch(allocator, "aa", "a"));
 
     // Example 2: "aa" vs "a*"
-    try testing.expect(isMatch("aa", "a*"));
+    try testing.expect(try isMatch(allocator, "aa", "a*"));
 
     // Example 3: "ab" vs ".*"
-    try testing.expect(isMatch("ab", ".*"));
+    try testing.expect(try isMatch(allocator, "ab", ".*"));
 }
 
 test "regex matching - empty string and pattern" {
+    const allocator = testing.allocator;
+
     // Empty string matches empty pattern
-    try testing.expect(isMatch("", ""));
+    try testing.expect(try isMatch(allocator, "", ""));
 
     // Empty string doesn't match non-empty pattern (unless pattern can match empty)
-    try testing.expect(!isMatch("", "a"));
+    try testing.expect(!try isMatch(allocator, "", "a"));
 
     // Empty string can match pattern with '*'
-    try testing.expect(isMatch("", "a*"));
-    try testing.expect(isMatch("", "a*b*"));
-    try testing.expect(isMatch("", ".*"));
+    try testing.expect(try isMatch(allocator, "", "a*"));
+    try testing.expect(try isMatch(allocator, "", "a*b*"));
+    try testing.expect(try isMatch(allocator, "", ".*"));
 }
 
 test "regex matching - single character" {
+    const allocator = testing.allocator;
+
     // Exact match
-    try testing.expect(isMatch("a", "a"));
+    try testing.expect(try isMatch(allocator, "a", "a"));
 
     // '.' matches any character
-    try testing.expect(isMatch("a", "."));
+    try testing.expect(try isMatch(allocator, "a", "."));
 
     // Mismatch
-    try testing.expect(!isMatch("a", "b"));
+    try testing.expect(!try isMatch(allocator, "a", "b"));
 
     // Pattern longer than string
-    try testing.expect(!isMatch("a", "ab"));
+    try testing.expect(!try isMatch(allocator, "a", "ab"));
 }
 
 test "regex matching - dot wildcard" {
+    const allocator = testing.allocator;
+
     // '.' matches any single character
-    try testing.expect(isMatch("a", "."));
-    try testing.expect(isMatch("ab", ".."));
-    try testing.expect(isMatch("abc", "..."));
+    try testing.expect(try isMatch(allocator, "a", "."));
+    try testing.expect(try isMatch(allocator, "ab", ".."));
+    try testing.expect(try isMatch(allocator, "abc", "..."));
 
     // '.' doesn't match empty
-    try testing.expect(!isMatch("", "."));
+    try testing.expect(!try isMatch(allocator, "", "."));
 
     // '.' doesn't match multiple characters (unless with '*')
-    try testing.expect(!isMatch("aa", "."));
+    try testing.expect(!try isMatch(allocator, "aa", "."));
 }
 
 test "regex matching - star quantifier" {
+    const allocator = testing.allocator;
+
     // '*' matches zero occurrences
-    try testing.expect(isMatch("", "a*"));
-    try testing.expect(isMatch("b", "a*b"));
+    try testing.expect(try isMatch(allocator, "", "a*"));
+    try testing.expect(try isMatch(allocator, "b", "a*b"));
 
     // '*' matches one occurrence
-    try testing.expect(isMatch("a", "a*"));
-    try testing.expect(isMatch("ab", "a*b"));
+    try testing.expect(try isMatch(allocator, "a", "a*"));
+    try testing.expect(try isMatch(allocator, "ab", "a*b"));
 
     // '*' matches multiple occurrences
-    try testing.expect(isMatch("aa", "a*"));
-    try testing.expect(isMatch("aaa", "a*"));
-    try testing.expect(isMatch("aaab", "a*b"));
+    try testing.expect(try isMatch(allocator, "aa", "a*"));
+    try testing.expect(try isMatch(allocator, "aaa", "a*"));
+    try testing.expect(try isMatch(allocator, "aaab", "a*b"));
 
     // Multiple '*' in pattern
-    try testing.expect(isMatch("aab", "a*b*"));
-    try testing.expect(isMatch("aabb", "a*b*"));
+    try testing.expect(try isMatch(allocator, "aab", "a*b*"));
+    try testing.expect(try isMatch(allocator, "aabb", "a*b*"));
 }
 
 test "regex matching - dot-star combination" {
+    const allocator = testing.allocator;
+
     // '.*' matches zero or more of any character
-    try testing.expect(isMatch("", ".*"));
-    try testing.expect(isMatch("a", ".*"));
-    try testing.expect(isMatch("ab", ".*"));
-    try testing.expect(isMatch("abc", ".*"));
+    try testing.expect(try isMatch(allocator, "", ".*"));
+    try testing.expect(try isMatch(allocator, "a", ".*"));
+    try testing.expect(try isMatch(allocator, "ab", ".*"));
+    try testing.expect(try isMatch(allocator, "abc", ".*"));
 
     // '.*' in middle of pattern
-    try testing.expect(isMatch("abc", "a.*c"));
-    try testing.expect(isMatch("ac", "a.*c"));
-    try testing.expect(isMatch("abbbbc", "a.*c"));
+    try testing.expect(try isMatch(allocator, "abc", "a.*c"));
+    try testing.expect(try isMatch(allocator, "ac", "a.*c"));
+    try testing.expect(try isMatch(allocator, "abbbbc", "a.*c"));
 }
 
 test "regex matching - complex patterns" {
+    const allocator = testing.allocator;
+
     // "aab" vs "c*a*b"
-    try testing.expect(isMatch("aab", "c*a*b"));
+    try testing.expect(try isMatch(allocator, "aab", "c*a*b"));
 
     // "mississippi" vs "mis*is*p*."
-    try testing.expect(!isMatch("mississippi", "mis*is*p*."));
+    try testing.expect(!try isMatch(allocator, "mississippi", "mis*is*p*."));
 
     // "mississippi" vs "mis*is*ip*."
-    try testing.expect(isMatch("mississippi", "mis*is*ip*."));
+    try testing.expect(try isMatch(allocator, "mississippi", "mis*is*ip*."));
 
     // Mixed wildcards and literals
-    try testing.expect(isMatch("aaa", "a*a"));
-    try testing.expect(isMatch("aaa", "ab*a*c*a"));
+    try testing.expect(try isMatch(allocator, "aaa", "a*a"));
+    try testing.expect(try isMatch(allocator, "aaa", "ab*a*c*a"));
 }
 
 test "regex matching - edge cases" {
+    const allocator = testing.allocator;
+
     // Pattern longer than string (no match)
-    try testing.expect(!isMatch("a", "ab"));
-    try testing.expect(!isMatch("ab", "abc"));
+    try testing.expect(!try isMatch(allocator, "a", "ab"));
+    try testing.expect(!try isMatch(allocator, "ab", "abc"));
 
     // Pattern can match due to '*'
-    try testing.expect(isMatch("a", "ab*"));
-    try testing.expect(isMatch("a", "a.*"));
+    try testing.expect(try isMatch(allocator, "a", "ab*"));
+    try testing.expect(try isMatch(allocator, "a", "a.*"));
 
     // String longer than pattern (no match unless pattern has wildcards)
-    try testing.expect(!isMatch("ab", "a"));
+    try testing.expect(!try isMatch(allocator, "ab", "a"));
     // "a*" means zero or more 'a', so "ab" doesn't match (has 'b')
-    try testing.expect(!isMatch("ab", "a*"));
+    try testing.expect(!try isMatch(allocator, "ab", "a*"));
     // But "ab" matches "a*b" (zero or more 'a' followed by 'b')
-    try testing.expect(isMatch("ab", "a*b"));
+    try testing.expect(try isMatch(allocator, "ab", "a*b"));
     // And "ab" matches ".*" (any sequence)
-    try testing.expect(isMatch("ab", ".*"));
+    try testing.expect(try isMatch(allocator, "ab", ".*"));
 
     // All wildcards
-    try testing.expect(isMatch("abcdefg", ".*"));
+    try testing.expect(try isMatch(allocator, "abcdefg", ".*"));
 }
 
 test "regex matching - star at beginning" {
+    const allocator = testing.allocator;
+
     // Invalid patterns (star must have preceding element)
     // In our implementation, we handle this gracefully
     // Real regex engines would reject these patterns
 
     // Valid patterns with star at position 1
-    try testing.expect(isMatch("", "a*"));
-    try testing.expect(isMatch("aa", "a*"));
+    try testing.expect(try isMatch(allocator, "", "a*"));
+    try testing.expect(try isMatch(allocator, "aa", "a*"));
 }
 
 test "regex matching - backtracking scenarios" {
+    const allocator = testing.allocator;
+
     // Requires backtracking to find correct match
-    try testing.expect(isMatch("aaa", "a*a"));
-    try testing.expect(isMatch("aaa", "ab*a*c*a"));
-    try testing.expect(!isMatch("aaa", "aaaa"));
+    try testing.expect(try isMatch(allocator, "aaa", "a*a"));
+    try testing.expect(try isMatch(allocator, "aaa", "ab*a*c*a"));
+    try testing.expect(!try isMatch(allocator, "aaa", "aaaa"));
 
     // Complex backtracking
-    try testing.expect(isMatch("aaaab", "a*ab"));
-    try testing.expect(isMatch("bbbba", ".*a*a"));
+    try testing.expect(try isMatch(allocator, "aaaab", "a*ab"));
+    try testing.expect(try isMatch(allocator, "bbbba", ".*a*a"));
 }
 
 test "regex matching - optimized variant" {
+    const allocator = testing.allocator;
+
     // Test space-optimized version with same cases
-    try testing.expect(isMatchOptimized("aa", "a*"));
-    try testing.expect(isMatchOptimized("ab", ".*"));
-    try testing.expect(isMatchOptimized("aab", "c*a*b"));
-    try testing.expect(!isMatchOptimized("aa", "a"));
-    try testing.expect(isMatchOptimized("", "a*b*c*"));
+    try testing.expect(try isMatchOptimized(allocator, "aa", "a*"));
+    try testing.expect(try isMatchOptimized(allocator, "ab", ".*"));
+    try testing.expect(try isMatchOptimized(allocator, "aab", "c*a*b"));
+    try testing.expect(!try isMatchOptimized(allocator, "aa", "a"));
+    try testing.expect(try isMatchOptimized(allocator, "", "a*b*c*"));
 
     // Large string
     const s = "a" ** 100;
     const p = "a*";
-    try testing.expect(isMatchOptimized(s, p));
+    try testing.expect(try isMatchOptimized(allocator, s, p));
 }
 
 test "regex matching - recursive variant" {
@@ -431,8 +451,8 @@ test "regex matching - consistency across variants" {
     };
 
     for (test_cases) |tc| {
-        const result1 = isMatch(tc.s, tc.p);
-        const result2 = isMatchOptimized(tc.s, tc.p);
+        const result1 = try isMatch(allocator, tc.s, tc.p);
+        const result2 = try isMatchOptimized(allocator, tc.s, tc.p);
         const result3 = try isMatchRecursive(allocator, tc.s, tc.p);
 
         try testing.expectEqual(result1, result2);
