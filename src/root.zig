@@ -730,6 +730,7 @@ pub const stats = struct {
         pub const ChiSquared = @import("stats/distributions/chi_squared.zig").ChiSquared;
         pub const StudentT = @import("stats/distributions/student_t.zig").StudentT;
         pub const FDistribution = @import("stats/distributions/f_distribution.zig").FDistribution;
+        pub const MultivariateNormal = @import("stats/distributions/multivariate_normal.zig").MultivariateNormal;
     };
 
     /// Random number generation — PCG64, Xoshiro256**, shuffle, choice, multinomial
