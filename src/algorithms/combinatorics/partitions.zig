@@ -30,7 +30,7 @@
 //! const partitions = @import("zuda").algorithms.combinatorics.partitions;
 //!
 //! // Count partitions of 5 into 2 parts: {4+1, 3+2} = 2 ways
-//! const count = try partitions.countPartitions(u32, 5, 2);
+//! const count = try partitions.countPartitions(u32, allocator, 5, 2);
 //!
 //! // Generate all partitions of 4: [4], [3,1], [2,2], [2,1,1], [1,1,1,1]
 //! var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -62,17 +62,17 @@ const testing = std.testing;
 /// Returns the count of partitions, or error.Overflow if result exceeds type T.
 ///
 /// Time: O(n×k) | Space: O(k) (rolling array optimization)
-pub fn countPartitions(comptime T: type, n: T, k: T) !T {
+pub fn countPartitions(comptime T: type, allocator: Allocator, n: T, k: T) !T {
     if (n < 0 or k < 0) return error.NegativeInput;
     if (k == 0) return if (n == 0) 1 else 0;
     if (k > n) return 0;
     if (k == 1 or k == n) return 1;
 
     // Rolling array: keep only current and previous row
-    var prev = try std.heap.page_allocator.alloc(T, @intCast(k + 1));
-    defer std.heap.page_allocator.free(prev);
-    var curr = try std.heap.page_allocator.alloc(T, @intCast(k + 1));
-    defer std.heap.page_allocator.free(curr);
+    var prev = try allocator.alloc(T, @intCast(k + 1));
+    defer allocator.free(prev);
+    var curr = try allocator.alloc(T, @intCast(k + 1));
+    defer allocator.free(curr);
 
     @memset(prev, 0);
     @memset(curr, 0);
@@ -176,14 +176,14 @@ fn generatePartitionsHelper(
 /// Bell numbers grow very rapidly: B(10) = 115,975
 ///
 /// Time: O(n²) | Space: O(n)
-pub fn bellNumber(comptime T: type, n: T) !T {
+pub fn bellNumber(comptime T: type, allocator: Allocator, n: T) !T {
     if (n < 0) return error.NegativeInput;
     if (n == 0) return 1;
 
     // Use Bell triangle: B[i][j] where B[i][0] = B[i-1][i-1]
     // and B[i][j] = B[i-1][j-1] + B[i][j-1]
-    var triangle = try std.heap.page_allocator.alloc(T, @intCast(n + 1));
-    defer std.heap.page_allocator.free(triangle);
+    var triangle = try allocator.alloc(T, @intCast(n + 1));
+    defer allocator.free(triangle);
 
     triangle[0] = 1;
 
@@ -277,26 +277,26 @@ pub fn multinomial(comptime T: type, parts: []const T) !T {
 // ============================================================================
 
 test "countPartitions: basic cases" {
-    try testing.expectEqual(@as(u32, 1), try countPartitions(u32, 0, 0));
-    try testing.expectEqual(@as(u32, 0), try countPartitions(u32, 5, 0));
-    try testing.expectEqual(@as(u32, 0), try countPartitions(u32, 3, 5)); // k > n
-    try testing.expectEqual(@as(u32, 1), try countPartitions(u32, 5, 1)); // [5]
-    try testing.expectEqual(@as(u32, 1), try countPartitions(u32, 5, 5)); // [1,1,1,1,1]
+    try testing.expectEqual(@as(u32, 1), try countPartitions(u32, testing.allocator, 0, 0));
+    try testing.expectEqual(@as(u32, 0), try countPartitions(u32, testing.allocator, 5, 0));
+    try testing.expectEqual(@as(u32, 0), try countPartitions(u32, testing.allocator, 3, 5)); // k > n
+    try testing.expectEqual(@as(u32, 1), try countPartitions(u32, testing.allocator, 5, 1)); // [5]
+    try testing.expectEqual(@as(u32, 1), try countPartitions(u32, testing.allocator, 5, 5)); // [1,1,1,1,1]
 }
 
 test "countPartitions: partitions of 5 into 2 parts" {
     // {4+1, 3+2} = 2 ways
-    try testing.expectEqual(@as(u32, 2), try countPartitions(u32, 5, 2));
+    try testing.expectEqual(@as(u32, 2), try countPartitions(u32, testing.allocator, 5, 2));
 }
 
 test "countPartitions: partitions of 6 into 3 parts" {
     // {4+1+1, 3+2+1, 2+2+2} = 3 ways
-    try testing.expectEqual(@as(u32, 3), try countPartitions(u32, 6, 3));
+    try testing.expectEqual(@as(u32, 3), try countPartitions(u32, testing.allocator, 6, 3));
 }
 
 test "countPartitions: partitions of 10 into 4 parts" {
     // Multiple ways, verify count
-    const count = try countPartitions(u32, 10, 4);
+    const count = try countPartitions(u32, testing.allocator, 10, 4);
     try testing.expect(count > 0);
 }
 
@@ -363,20 +363,20 @@ test "generatePartitions: n=5" {
 }
 
 test "bellNumber: small values" {
-    try testing.expectEqual(@as(u32, 1), try bellNumber(u32, 0)); // B(0) = 1
-    try testing.expectEqual(@as(u32, 1), try bellNumber(u32, 1)); // B(1) = 1
-    try testing.expectEqual(@as(u32, 2), try bellNumber(u32, 2)); // B(2) = 2
-    try testing.expectEqual(@as(u32, 5), try bellNumber(u32, 3)); // B(3) = 5
-    try testing.expectEqual(@as(u32, 15), try bellNumber(u32, 4)); // B(4) = 15
-    try testing.expectEqual(@as(u32, 52), try bellNumber(u32, 5)); // B(5) = 52
+    try testing.expectEqual(@as(u32, 1), try bellNumber(u32, testing.allocator, 0)); // B(0) = 1
+    try testing.expectEqual(@as(u32, 1), try bellNumber(u32, testing.allocator, 1)); // B(1) = 1
+    try testing.expectEqual(@as(u32, 2), try bellNumber(u32, testing.allocator, 2)); // B(2) = 2
+    try testing.expectEqual(@as(u32, 5), try bellNumber(u32, testing.allocator, 3)); // B(3) = 5
+    try testing.expectEqual(@as(u32, 15), try bellNumber(u32, testing.allocator, 4)); // B(4) = 15
+    try testing.expectEqual(@as(u32, 52), try bellNumber(u32, testing.allocator, 5)); // B(5) = 52
 }
 
 test "bellNumber: B(6) = 203" {
-    try testing.expectEqual(@as(u32, 203), try bellNumber(u32, 6));
+    try testing.expectEqual(@as(u32, 203), try bellNumber(u32, testing.allocator, 6));
 }
 
 test "bellNumber: B(10) = 115975" {
-    try testing.expectEqual(@as(u64, 115975), try bellNumber(u64, 10));
+    try testing.expectEqual(@as(u64, 115975), try bellNumber(u64, testing.allocator, 10));
 }
 
 test "derangements: small values" {
@@ -422,8 +422,8 @@ test "multinomial: four groups" {
 }
 
 test "countPartitions: negative input error" {
-    try testing.expectError(error.NegativeInput, countPartitions(i32, -5, 2));
-    try testing.expectError(error.NegativeInput, countPartitions(i32, 5, -2));
+    try testing.expectError(error.NegativeInput, countPartitions(i32, testing.allocator, -5, 2));
+    try testing.expectError(error.NegativeInput, countPartitions(i32, testing.allocator, 5, -2));
 }
 
 test "generatePartitions: negative input error" {
@@ -432,7 +432,7 @@ test "generatePartitions: negative input error" {
 }
 
 test "bellNumber: negative input error" {
-    try testing.expectError(error.NegativeInput, bellNumber(i32, -1));
+    try testing.expectError(error.NegativeInput, bellNumber(i32, testing.allocator, -1));
 }
 
 test "derangements: negative input error" {
@@ -457,16 +457,16 @@ test "partitions: memory safety" {
 
 test "partitions: type variants" {
     // u8
-    try testing.expectEqual(@as(u8, 2), try countPartitions(u8, 5, 2));
-    try testing.expectEqual(@as(u8, 1), try bellNumber(u8, 0));
+    try testing.expectEqual(@as(u8, 2), try countPartitions(u8, testing.allocator, 5, 2));
+    try testing.expectEqual(@as(u8, 1), try bellNumber(u8, testing.allocator, 0));
     try testing.expectEqual(@as(u8, 2), try derangements(u8, 3));
 
     // u16
-    try testing.expectEqual(@as(u16, 3), try countPartitions(u16, 6, 3));
-    try testing.expectEqual(@as(u16, 52), try bellNumber(u16, 5));
+    try testing.expectEqual(@as(u16, 3), try countPartitions(u16, testing.allocator, 6, 3));
+    try testing.expectEqual(@as(u16, 52), try bellNumber(u16, testing.allocator, 5));
     try testing.expectEqual(@as(u16, 44), try derangements(u16, 5));
 
     // u64
-    try testing.expectEqual(@as(u64, 1), try bellNumber(u64, 0));
+    try testing.expectEqual(@as(u64, 1), try bellNumber(u64, testing.allocator, 0));
     try testing.expectEqual(@as(u64, 1334961), try derangements(u64, 10));
 }

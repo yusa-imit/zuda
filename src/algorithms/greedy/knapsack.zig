@@ -23,23 +23,25 @@ pub const Item = struct {
 ///
 /// Example:
 /// ```zig
+/// const allocator = std.heap.page_allocator;
 /// const items = [_]Item{
 ///     .{ .value = 60, .weight = 10, .id = 0 },
 ///     .{ .value = 100, .weight = 20, .id = 1 },
 ///     .{ .value = 120, .weight = 30, .id = 2 },
 /// };
-/// const value = fractionalKnapsack(&items, 50);
+/// const value = try fractionalKnapsack(allocator, &items, 50);
 /// // value = 240 (all of item 1, all of item 0, 2/3 of item 2)
 /// ```
 pub fn fractionalKnapsack(
+    allocator: std.mem.Allocator,
     items: []const Item,
     capacity: f64,
-) f64 {
+) !f64 {
     if (items.len == 0 or capacity <= 0) return 0;
 
     // Sort by value-to-weight ratio (descending)
-    const sorted = std.heap.page_allocator.alloc(Item, items.len) catch return 0;
-    defer std.heap.page_allocator.free(sorted);
+    const sorted = try allocator.alloc(Item, items.len);
+    defer allocator.free(sorted);
     @memcpy(sorted, items);
 
     std.mem.sort(Item, sorted, {}, greaterByRatio);
@@ -166,7 +168,7 @@ test "fractional knapsack - basic case" {
     };
     const capacity = 50.0;
 
-    const value = fractionalKnapsack(&items, capacity);
+    const value = try fractionalKnapsack(testing.allocator, &items, capacity);
 
     // Expected: item 1 (100), item 0 (60), 2/3 of item 2 (80) = 240
     try testing.expectApproxEqAbs(@as(f64, 240), value, 0.01);
@@ -196,13 +198,13 @@ test "fractional knapsack - zero capacity" {
     const items = [_]Item{
         .{ .value = 60, .weight = 10, .id = 0 },
     };
-    const value = fractionalKnapsack(&items, 0);
+    const value = try fractionalKnapsack(testing.allocator, &items, 0);
     try testing.expectEqual(@as(f64, 0), value);
 }
 
 test "fractional knapsack - empty items" {
     const items: []const Item = &.{};
-    const value = fractionalKnapsack(items, 100);
+    const value = try fractionalKnapsack(testing.allocator, items, 100);
     try testing.expectEqual(@as(f64, 0), value);
 }
 
@@ -213,7 +215,7 @@ test "fractional knapsack - large capacity" {
     };
     const capacity = 1000.0;
 
-    const value = fractionalKnapsack(&items, capacity);
+    const value = try fractionalKnapsack(testing.allocator, &items, capacity);
     // Should take all items
     try testing.expectEqual(@as(f64, 160), value);
 }
@@ -224,7 +226,7 @@ test "fractional knapsack - single item fits" {
     };
     const capacity = 100.0;
 
-    const value = fractionalKnapsack(&items, capacity);
+    const value = try fractionalKnapsack(testing.allocator, &items, capacity);
     try testing.expectEqual(@as(f64, 100), value);
 }
 
@@ -234,7 +236,7 @@ test "fractional knapsack - single item partial" {
     };
     const capacity = 25.0;
 
-    const value = fractionalKnapsack(&items, capacity);
+    const value = try fractionalKnapsack(testing.allocator, &items, capacity);
     try testing.expectEqual(@as(f64, 50), value); // Half the value
 }
 
