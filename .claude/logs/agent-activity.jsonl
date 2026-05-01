@@ -283,3 +283,5 @@
 {"timestamp":"2026-04-30T07:10:00Z","action":"feature","task":"Implement BiCGSTAB iterative solver for non-symmetric systems","project":"zuda","module":"linalg/iterative.zig","tests_added":11,"lines_added":521}
 {"timestamp":"2026-05-01T00:00:00Z","action":"direct_implementation","task":"Integrate preconditioners with GMRES and BiCGSTAB solvers","project":"zuda"}
 {"timestamp":"2026-05-01T00:00:00Z","action":"direct_implementation","task":"Fix allocator-first violations (Session 441)","project":"zuda","files_changed":2,"violations_fixed":4}
+{"timestamp":"2026-05-01T00:00:00Z","action":"code_refactor","module":"regex_matching","task":"Fix allocator-first violations in regex_matching (2 functions)","project":"zuda"}
+{"timestamp":"2026-05-01T00:15:00Z","action":"code_refactor","module":"knapsack","task":"Fix allocator-first violations in knapsack (4 functions)","project":"zuda"}
