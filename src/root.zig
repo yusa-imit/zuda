@@ -716,6 +716,9 @@ pub const stats = struct {
     /// Correlation and linear regression — Pearson, Spearman, OLS
     pub const correlation = @import("stats/correlation.zig");
 
+    /// Linear regression and curve fitting — OLS, polynomial fit, R-squared, residuals
+    pub const regression = @import("stats/regression.zig");
+
     /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
