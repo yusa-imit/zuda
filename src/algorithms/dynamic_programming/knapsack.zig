@@ -16,10 +16,9 @@ pub const Item = struct {
 
 /// 0/1 Knapsack: Each item can be taken at most once
 /// Time: O(n*W) | Space: O(n*W) where W is capacity
-pub fn zeroOne(items: []const Item, capacity: usize) !usize {
+pub fn zeroOne(allocator: Allocator, items: []const Item, capacity: usize) !usize {
     if (items.len == 0 or capacity == 0) return 0;
 
-    const allocator = std.heap.page_allocator;
     const n = items.len;
 
     // dp[i][w] = max value using first i items with capacity w
@@ -53,10 +52,9 @@ pub fn zeroOne(items: []const Item, capacity: usize) !usize {
 
 /// 0/1 Knapsack with space optimization
 /// Time: O(n*W) | Space: O(W)
-pub fn zeroOneOptimized(items: []const Item, capacity: usize) !usize {
+pub fn zeroOneOptimized(allocator: Allocator, items: []const Item, capacity: usize) !usize {
     if (items.len == 0 or capacity == 0) return 0;
 
-    const allocator = std.heap.page_allocator;
     const dp = try allocator.alloc(usize, capacity + 1);
     defer allocator.free(dp);
 
@@ -129,10 +127,9 @@ pub fn zeroOneWithItems(allocator: Allocator, items: []const Item, capacity: usi
 
 /// Unbounded Knapsack: Each item can be taken unlimited times
 /// Time: O(n*W) | Space: O(W)
-pub fn unbounded(items: []const Item, capacity: usize) !usize {
+pub fn unbounded(allocator: Allocator, items: []const Item, capacity: usize) !usize {
     if (items.len == 0 or capacity == 0) return 0;
 
-    const allocator = std.heap.page_allocator;
     const dp = try allocator.alloc(usize, capacity + 1);
     defer allocator.free(dp);
 
@@ -249,11 +246,10 @@ pub fn fractional(allocator: Allocator, items: []const Item, capacity: usize) !f
 
 /// Bounded Knapsack: Each item can be taken up to a limited count
 /// Time: O(n*W*K) where K is max count | Space: O(W)
-pub fn bounded(items: []const Item, counts: []const usize, capacity: usize) !usize {
+pub fn bounded(allocator: Allocator, items: []const Item, counts: []const usize, capacity: usize) !usize {
     if (items.len == 0 or capacity == 0) return 0;
     std.debug.assert(items.len == counts.len);
 
-    const allocator = std.heap.page_allocator;
     const dp = try allocator.alloc(usize, capacity + 1);
     defer allocator.free(dp);
 
@@ -279,26 +275,29 @@ pub fn bounded(items: []const Item, counts: []const usize, capacity: usize) !usi
 // ============================================================================
 
 test "Knapsack: 0/1 empty" {
+    const allocator = std.testing.allocator;
     const items: []const Item = &[_]Item{};
-    try std.testing.expectEqual(0, try zeroOne(items, 10));
-    try std.testing.expectEqual(0, try zeroOneOptimized(items, 10));
+    try std.testing.expectEqual(0, try zeroOne(allocator, items, 10));
+    try std.testing.expectEqual(0, try zeroOneOptimized(allocator, items, 10));
 
-    const result = try zeroOneWithItems(std.testing.allocator, items, 10);
-    defer std.testing.allocator.free(result.selected);
+    const result = try zeroOneWithItems(allocator, items, 10);
+    defer allocator.free(result.selected);
     try std.testing.expectEqual(0, result.value);
 }
 
 test "Knapsack: 0/1 zero capacity" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(2, 3),
         Item.init(3, 4),
     };
 
-    try std.testing.expectEqual(0, try zeroOne(&items, 0));
-    try std.testing.expectEqual(0, try zeroOneOptimized(&items, 0));
+    try std.testing.expectEqual(0, try zeroOne(allocator, &items, 0));
+    try std.testing.expectEqual(0, try zeroOneOptimized(allocator, &items, 0));
 }
 
 test "Knapsack: 0/1 classic example" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(2, 3), // value/weight = 1.5
         Item.init(3, 4), // value/weight = 1.33
@@ -307,17 +306,18 @@ test "Knapsack: 0/1 classic example" {
     };
     const capacity = 8;
 
-    // Optimal: items 0 and 3 (weight 7, value 9)
-    try std.testing.expectEqual(9, try zeroOne(&items, capacity));
-    try std.testing.expectEqual(9, try zeroOneOptimized(&items, capacity));
+    // Optimal: items 1 and 3 (weight 8, value 10)
+    try std.testing.expectEqual(10, try zeroOne(allocator, &items, capacity));
+    try std.testing.expectEqual(10, try zeroOneOptimized(allocator, &items, capacity));
 
-    const result = try zeroOneWithItems(std.testing.allocator, &items, capacity);
-    defer std.testing.allocator.free(result.selected);
-    try std.testing.expectEqual(9, result.value);
+    const result = try zeroOneWithItems(allocator, &items, capacity);
+    defer allocator.free(result.selected);
+    try std.testing.expectEqual(10, result.value);
     try std.testing.expect(result.selected[0] or result.selected[1] or result.selected[2] or result.selected[3]);
 }
 
 test "Knapsack: 0/1 all items fit" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(1, 2),
         Item.init(2, 3),
@@ -326,18 +326,20 @@ test "Knapsack: 0/1 all items fit" {
     const capacity = 10;
 
     // All items fit: total value = 9
-    try std.testing.expectEqual(9, try zeroOne(&items, capacity));
-    try std.testing.expectEqual(9, try zeroOneOptimized(&items, capacity));
+    try std.testing.expectEqual(9, try zeroOne(allocator, &items, capacity));
+    try std.testing.expectEqual(9, try zeroOneOptimized(allocator, &items, capacity));
 }
 
 test "Knapsack: 0/1 single item" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{Item.init(5, 10)};
 
-    try std.testing.expectEqual(10, try zeroOne(&items, 10));
-    try std.testing.expectEqual(0, try zeroOne(&items, 4)); // Doesn't fit
+    try std.testing.expectEqual(10, try zeroOne(allocator, &items, 10));
+    try std.testing.expectEqual(0, try zeroOne(allocator, &items, 4)); // Doesn't fit
 }
 
 test "Knapsack: unbounded example" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(2, 3),
         Item.init(3, 4),
@@ -346,25 +348,27 @@ test "Knapsack: unbounded example" {
     const capacity = 8;
 
     // Unbounded: take item 0 four times (weight 8, value 12)
-    const value = try unbounded(&items, capacity);
+    const value = try unbounded(allocator, &items, capacity);
     try std.testing.expect(value >= 12);
 }
 
 test "Knapsack: unbounded with counts" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(2, 3),
         Item.init(3, 4),
     };
     const capacity = 6;
 
-    const result = try unboundedWithCounts(std.testing.allocator, &items, capacity);
-    defer std.testing.allocator.free(result.counts);
+    const result = try unboundedWithCounts(allocator, &items, capacity);
+    defer allocator.free(result.counts);
 
     // Should take item 0 three times (value 9) or item 1 twice (value 8)
     try std.testing.expect(result.value >= 8);
 }
 
 test "Knapsack: fractional" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(10, 60), // ratio 6.0
         Item.init(20, 100), // ratio 5.0
@@ -375,11 +379,12 @@ test "Knapsack: fractional" {
     // Take all of item 0 (10kg, 60), all of item 1 (20kg, 100),
     // and 20kg of item 2 (20/30 * 120 = 80)
     // Total: 240
-    const value = try fractional(std.testing.allocator, &items, capacity);
+    const value = try fractional(allocator, &items, capacity);
     try std.testing.expectApproxEqAbs(240.0, value, 0.01);
 }
 
 test "Knapsack: fractional vs 0/1 difference" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(10, 60),
         Item.init(20, 100),
@@ -387,14 +392,15 @@ test "Knapsack: fractional vs 0/1 difference" {
     };
     const capacity = 50;
 
-    const frac = try fractional(std.testing.allocator, &items, capacity);
-    const int = try zeroOneOptimized(&items, capacity);
+    const frac = try fractional(allocator, &items, capacity);
+    const int = try zeroOneOptimized(allocator, &items, capacity);
 
     // Fractional should be >= integer solution
     try std.testing.expect(frac >= @as(f64, @floatFromInt(int)));
 }
 
 test "Knapsack: bounded" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(2, 3),
         Item.init(3, 4),
@@ -403,7 +409,7 @@ test "Knapsack: bounded" {
     const capacity = 7;
 
     // Optimal: 2x item 0 + 1x item 1 = weight 7, value 10
-    try std.testing.expectEqual(10, try bounded(&items, &counts, capacity));
+    try std.testing.expectEqual(10, try bounded(allocator, &items, &counts, capacity));
 }
 
 test "Knapsack: 0/1 large example" {
@@ -417,11 +423,12 @@ test "Knapsack: 0/1 large example" {
     }
 
     const capacity = 200;
-    const value = try zeroOneOptimized(items, capacity);
+    const value = try zeroOneOptimized(allocator, items, capacity);
     try std.testing.expect(value > 0);
 }
 
 test "Knapsack: space optimization correctness" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(1, 1),
         Item.init(3, 4),
@@ -430,13 +437,14 @@ test "Knapsack: space optimization correctness" {
     };
     const capacity = 7;
 
-    const v1 = try zeroOne(&items, capacity);
-    const v2 = try zeroOneOptimized(&items, capacity);
+    const v1 = try zeroOne(allocator, &items, capacity);
+    const v2 = try zeroOneOptimized(allocator, &items, capacity);
 
     try std.testing.expectEqual(v1, v2);
 }
 
 test "Knapsack: identical items 0/1" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(3, 5),
         Item.init(3, 5),
@@ -445,20 +453,22 @@ test "Knapsack: identical items 0/1" {
     const capacity = 6;
 
     // Can only take 2 items (0/1 constraint)
-    try std.testing.expectEqual(10, try zeroOneOptimized(&items, capacity));
+    try std.testing.expectEqual(10, try zeroOneOptimized(allocator, &items, capacity));
 }
 
 test "Knapsack: identical items unbounded" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(3, 5),
     };
     const capacity = 9;
 
     // Can take 3 items
-    try std.testing.expectEqual(15, try unbounded(&items, capacity));
+    try std.testing.expectEqual(15, try unbounded(allocator, &items, capacity));
 }
 
 test "Knapsack: selection tracking" {
+    const allocator = std.testing.allocator;
     const items = [_]Item{
         Item.init(5, 10),
         Item.init(4, 8),
@@ -467,8 +477,8 @@ test "Knapsack: selection tracking" {
     };
     const capacity = 10;
 
-    const result = try zeroOneWithItems(std.testing.allocator, &items, capacity);
-    defer std.testing.allocator.free(result.selected);
+    const result = try zeroOneWithItems(allocator, &items, capacity);
+    defer allocator.free(result.selected);
 
     // Verify selected items don't exceed capacity
     var total_weight: usize = 0;
