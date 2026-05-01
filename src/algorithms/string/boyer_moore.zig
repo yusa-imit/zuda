@@ -49,7 +49,7 @@ pub fn BoyerMoore(comptime T: type) type {
             const good_suffix = try allocator.alloc(usize, pattern.len);
             errdefer allocator.free(good_suffix);
 
-            try computeGoodSuffix(pattern, good_suffix);
+            try computeGoodSuffix(allocator, pattern, good_suffix);
 
             return .{
                 .allocator = allocator,
@@ -170,7 +170,7 @@ pub fn BoyerMoore(comptime T: type) type {
         }
 
         /// Compute good suffix table
-        fn computeGoodSuffix(pattern: []const T, good_suffix: []usize) !void {
+        fn computeGoodSuffix(allocator: Allocator, pattern: []const T, good_suffix: []usize) !void {
             const m = pattern.len;
 
             // Initialize with pattern length (no match)
@@ -182,8 +182,8 @@ pub fn BoyerMoore(comptime T: type) type {
             var i: usize = m;
             var j: usize = m + 1;
             var border: std.ArrayList(usize) = .{};
-            defer border.deinit(std.heap.page_allocator);
-            try border.appendNTimes(std.heap.page_allocator, 0, m + 1);
+            defer border.deinit(allocator);
+            try border.appendNTimes(allocator, 0, m + 1);
 
             border.items[i - 1] = j;
 

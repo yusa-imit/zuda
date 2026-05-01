@@ -294,11 +294,13 @@ pub fn ttest_ind(
 ///
 /// Example:
 /// ```zig
-/// const result = try ttest_rel(f64, before_data, after_data, 0.05);
+/// const alloc = std.heap.page_allocator;
+/// const result = try ttest_rel(f64, alloc, before_data, after_data, 0.05);
 /// // Tests if after differs from before at α=0.05
 /// ```
 pub fn ttest_rel(
     comptime T: type,
+    alloc: std.mem.Allocator,
     before: NDArray_type(T, 1),
     after: NDArray_type(T, 1),
     alpha: T,
@@ -309,9 +311,8 @@ pub fn ttest_rel(
     if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
 
     // Compute differences: d = before - after
-    const page_allocator = std.heap.page_allocator;
-    const diffs = try page_allocator.alloc(T, n);
-    defer page_allocator.free(diffs);
+    const diffs = try alloc.alloc(T, n);
+    defer alloc.free(diffs);
 
     var before_iter = before.iterator();
     var after_iter = after.iterator();
@@ -323,7 +324,7 @@ pub fn ttest_rel(
     }
 
     // Create NDArray for differences
-    var diff_array = try NDArray_type(T, 1).fromSlice(page_allocator, &[_]usize{n}, diffs, .row_major);
+    var diff_array = try NDArray_type(T, 1).fromSlice(alloc, &[_]usize{n}, diffs, .row_major);
     defer diff_array.deinit();
 
     // Compute mean of differences
@@ -1019,7 +1020,7 @@ test "ttest_rel: no change (before == after, t≈0, p≈1, reject=false)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expectApproxEqAbs(0.0, result.statistic, 1e-10);
     try testing.expectApproxEqAbs(1.0, result.p_value, 1e-10);
     try testing.expect(result.reject == false);
@@ -1034,7 +1035,7 @@ test "ttest_rel: after > before (t<0, p<0.05, reject=true)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expect(result.statistic < 0.0); // d = before - after = negative
     try testing.expect(result.p_value < 0.05);
     try testing.expect(result.reject == true);
@@ -1049,7 +1050,7 @@ test "ttest_rel: after < before (t>0, p<0.05, reject=true)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expect(result.statistic > 0.0); // d = before - after = positive
     try testing.expect(result.p_value < 0.05);
     try testing.expect(result.reject == true);
@@ -1064,7 +1065,7 @@ test "ttest_rel: single pair (n=1, df=0) errors" {
     defer after.deinit();
 
     // With single pair and ddof=1, variance calculation fails (n-ddof=0)
-    const result = ttest_rel(f64, before, after, 0.05);
+    const result = ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expectError(NDArray_type(f64, 1).Error.CapacityExceeded, result);
 }
 
@@ -1076,7 +1077,7 @@ test "ttest_rel: two pairs (n=2, df=1)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expectApproxEqAbs(1.0, result.df, 1e-10);
 }
 
@@ -1093,7 +1094,7 @@ test "ttest_rel: many pairs (n=100)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{100}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expectApproxEqAbs(99.0, result.df, 1e-10);
 }
 
@@ -1105,7 +1106,7 @@ test "ttest_rel: f32 precision" {
     var after = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f32, before, after, 0.05);
+    const result = try ttest_rel(f32, allocator, before, after, 0.05);
     try testing.expect(!math.isNan(result.statistic));
 }
 
@@ -1122,8 +1123,8 @@ test "ttest_rel: alpha=0.01 vs alpha=0.05" {
     var after2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &after_data, .row_major);
     defer after2.deinit();
 
-    const result_005 = try ttest_rel(f64, before1, after1, 0.05);
-    const result_001 = try ttest_rel(f64, before2, after2, 0.01);
+    const result_005 = try ttest_rel(f64, allocator, before1, after1, 0.05);
+    const result_001 = try ttest_rel(f64, allocator, before2, after2, 0.01);
 
     // Same p-value but different rejection decisions
     try testing.expectApproxEqAbs(result_005.p_value, result_001.p_value, 1e-10);
@@ -1144,7 +1145,7 @@ test "ttest_rel: error on mismatched lengths" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = ttest_rel(f64, before, after, 0.05);
+    const result = ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expectError(error.UnequalLengths, result);
 }
 
@@ -1156,7 +1157,7 @@ test "ttest_rel: error on invalid alpha (alpha=0)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = ttest_rel(f64, before, after, 0.0);
+    const result = ttest_rel(f64, allocator, before, after, 0.0);
     try testing.expectError(error.InvalidParameter, result);
 }
 
@@ -1168,7 +1169,7 @@ test "ttest_rel: error on invalid alpha (alpha=1)" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = ttest_rel(f64, before, after, 1.0);
+    const result = ttest_rel(f64, allocator, before, after, 1.0);
     try testing.expectError(error.InvalidParameter, result);
 }
 
@@ -1180,7 +1181,7 @@ test "ttest_rel: df = n-1" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{7}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expectApproxEqAbs(6.0, result.df, 1e-10);
 }
 
@@ -1192,7 +1193,7 @@ test "ttest_rel: p_value in [0, 1]" {
     var after = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &after_data, .row_major);
     defer after.deinit();
 
-    const result = try ttest_rel(f64, before, after, 0.05);
+    const result = try ttest_rel(f64, allocator, before, after, 0.05);
     try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
 }
 
@@ -1209,8 +1210,8 @@ test "ttest_rel: symmetry - swapping before/after negates t-statistic" {
     var after2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &before_data, .row_major);
     defer after2.deinit();
 
-    const result1 = try ttest_rel(f64, before1, after1, 0.05);
-    const result2 = try ttest_rel(f64, before2, after2, 0.05);
+    const result1 = try ttest_rel(f64, allocator, before1, after1, 0.05);
+    const result2 = try ttest_rel(f64, allocator, before2, after2, 0.05);
 
     try testing.expectApproxEqAbs(result1.statistic, -result2.statistic, 1e-10);
     try testing.expectApproxEqAbs(result1.p_value, result2.p_value, 1e-10);

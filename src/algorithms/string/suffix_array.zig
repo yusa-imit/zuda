@@ -87,9 +87,9 @@ pub fn buildSuffixArray(comptime T: type, text: []const T, allocator: Allocator)
     var k: usize = 1;
     while (k < n) : (k *= 2) {
         // Count sort by second half (rank[i + k])
-        try countingSort(sa, rank, tmp, n, k);
+        try countingSort(allocator, sa, rank, tmp, n, k);
         // Count sort by first half (rank[i])
-        try countingSort(sa, rank, tmp, n, 0);
+        try countingSort(allocator, sa, rank, tmp, n, 0);
         
         // Update ranks based on new order
         @memcpy(tmp, rank);
@@ -123,7 +123,7 @@ pub fn buildSuffixArray(comptime T: type, text: []const T, allocator: Allocator)
 }
 
 /// Helper: counting sort for suffix array construction
-fn countingSort(sa: []usize, rank: []const usize, tmp: []usize, n: usize, k: usize) !void {
+fn countingSort(allocator: Allocator, sa: []usize, rank: []const usize, tmp: []usize, n: usize, k: usize) !void {
     const max_rank = blk: {
         var max: usize = 0;
         for (rank) |r| {
@@ -131,10 +131,10 @@ fn countingSort(sa: []usize, rank: []const usize, tmp: []usize, n: usize, k: usi
         }
         break :blk max + 1;
     };
-    
+
     // Count array
-    var count = try std.heap.page_allocator.alloc(usize, max_rank);
-    defer std.heap.page_allocator.free(count);
+    var count = try allocator.alloc(usize, max_rank);
+    defer allocator.free(count);
     @memset(count, 0);
     
     // Count occurrences

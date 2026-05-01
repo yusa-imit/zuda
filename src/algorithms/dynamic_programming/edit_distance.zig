@@ -426,6 +426,6 @@ test "Edit distance: performance on moderate strings" {
     const a = "AGGTACGTACGTTACGATCGATCGATCGATCGATCGATCG";
     const b = "ACGTACGTTACGATCGATCGATCGATCGATCGATCGATCG";
 
-    const dist = try distanceOptimized(std.heap.page_allocator, a, b);
+    const dist = try distanceOptimized(std.testing.allocator, a, b);
     try std.testing.expect(dist <= 5); // Should be small
 }
