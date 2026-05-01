@@ -1,4 +1,56 @@
-## Latest Session (Session 440, 2026-05-01) — STABILIZATION MODE
+## Latest Session (Session 444, 2026-05-01) — FEATURE MODE
+- **Mode**: Feature (Session 444)
+- **Type**: Scientific computing enhancement - multivariate statistics
+- **Module**: stats/distributions/multivariate_normal.zig (NEW)
+- **Feature**: Implemented Multivariate Normal Distribution N(μ, Σ) for correlated Gaussian modeling
+- **Implementation**:
+  * Cholesky decomposition Σ = LLᵀ for efficient PDF/sampling computation
+  * pdf(): O(n²) probability density via Mahalanobis distance with forward substitution
+  * logpdf(): Numerically stable log-probability (avoids underflow for extreme probabilities)
+  * sample(): O(n²) sampling via L·z where z ~ N(0,I) using Box-Muller transform
+  * mahalanobis(): Distance metric √((x-μ)ᵀΣ⁻¹(x-μ)) in covariance units
+  * init(): O(n³) for Cholesky decomposition and log-determinant computation
+- **Use Cases**:
+  * Gaussian processes and Bayesian inference (prior/posterior distributions)
+  * Financial modeling (correlated asset returns, portfolio risk)
+  * Spatial statistics (geospatial correlation modeling)
+  * Machine learning (correlated feature distributions, mixture models)
+- **Tests**: 11 comprehensive tests, all passing
+  * 1D case (reduces to univariate normal)
+  * 2D independent (diagonal covariance, uncorrelated variables)
+  * 2D correlated (full covariance matrix)
+  * 3D general case
+  * Monte Carlo sampling verification (10k samples, empirical mean matches theoretical)
+  * Error handling (dimension mismatch, not positive definite, singular matrix)
+  * f32 precision support
+  * Memory safety (10 iterations with testing.allocator)
+- **Files Changed**: 2 (+489 lines)
+  * src/stats/distributions/multivariate_normal.zig (NEW, 368 lines)
+  * src/root.zig (+1 line, export MultivariateNormal)
+- **Test Status**: All tests passing (exit code 0)
+- **Commits**: cf91413 (MVN implementation), 3a25075 (activity log)
+- **Next Priority**: Continue scientific computing enhancements (multivariate t-distribution, Wishart, etc.) or optimization work
+
+## Previous Session (Session 443, 2026-05-01) — FEATURE MODE
+- **Mode**: Feature (Session 443)
+- **Type**: Code quality refactoring - allocator-first compliance (COMPLETED)
+- **Modules**: 7 files (greedy, combinatorics, string, stats)
+- **Changes**:
+  * greedy/coin_change.zig: Fixed greedyCoinChange(), canMakeChange(), minimumCoins() (11 test calls)
+  * greedy/knapsack.zig: Fixed fractionalKnapsack() (6 test calls)
+  * combinatorics/partitions.zig: Fixed countPartitions(), bellNumber() (13 test calls)
+  * string/suffix_array.zig: Fixed countingSort() helper (2 usages)
+  * string/boyer_moore.zig: Fixed computeGoodSuffix() helper (2 usages)
+  * dynamic_programming/edit_distance.zig: Fixed 1 test call
+  * stats/hypothesis.zig: Fixed ttest_rel() (13 test calls, used 'alloc' param name to avoid shadowing)
+- **Impact**: Removed ALL 25 remaining hardcoded std.heap.page_allocator usages
+- **Rationale**: Library code must never hardcode allocators (embedded systems, leak detection, custom strategies)
+- **Test Status**: All tests passing (exit code 0)
+- **Commits**: c0b909d (greedy+combinatorics), d1b3461 (string+stats), 4f979db (activity log)
+- **Violations Remaining**: 0 (down from 25 in Session 441) ✅ COMPLETE
+- **Next Priority**: Scientific computing enhancements OR Phase 1 containers per PRD
+
+## Previous Session (Session 440, 2026-05-01) — STABILIZATION MODE
 - **Mode**: Stabilization (Session 440, every 5th session)
 - **Status**: ✅ ALL SYSTEMS GREEN (with code quality improvements)
 - **CI Status**: Last run on main - SUCCESS (2026-04-30T15:07:32Z)
