@@ -722,6 +722,9 @@ pub const stats = struct {
     /// Time series analysis — moving averages, autocorrelation, differencing, seasonal decomposition
     pub const time_series = @import("stats/time_series.zig");
 
+    /// Bayesian inference — conjugate priors, credible intervals, Bayes factors
+    pub const bayesian = @import("stats/bayesian.zig");
+
     /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
