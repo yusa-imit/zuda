@@ -719,6 +719,9 @@ pub const stats = struct {
     /// Linear regression and curve fitting — OLS, polynomial fit, R-squared, residuals
     pub const regression = @import("stats/regression.zig");
 
+    /// Time series analysis — moving averages, autocorrelation, differencing, seasonal decomposition
+    pub const time_series = @import("stats/time_series.zig");
+
     /// Probability distributions — Uniform, Normal, Exponential, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
     pub const distributions = struct {
         pub const Uniform = @import("stats/distributions/uniform.zig").Uniform;
