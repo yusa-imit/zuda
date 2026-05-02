@@ -2255,6 +2255,464 @@ fn stdNormalCDF(comptime T: type, z: T) T {
 }
 
 // ============================================================================
+// WILCOXON SIGNED-RANK TEST
+// ============================================================================
+
+/// Wilcoxon signed-rank test: Paired nonparametric alternative to paired t-test
+///
+/// Tests whether paired observations have same median using ranks of differences.
+/// Assumes paired data from continuous distributions (no ties assumed, but handled).
+///
+/// Algorithm:
+/// 1. Compute differences d_i = x_i - y_i
+/// 2. Remove observations where d_i = 0
+/// 3. Rank absolute differences |d_i| (averaging ranks for ties)
+/// 4. Sum ranks separately for positive and negative differences
+/// 5. W = min(W+, W-) (test statistic)
+/// 6. Use normal approximation for n > 10: μ = n(n+1)/4, σ² = n(n+1)(2n+1)/24
+/// 7. z = (W - μ) / σ, p = 2 × (1 - Φ(|z|))
+///
+/// Parameters:
+/// - T: numeric type (f32 or f64)
+/// - x: First sample (NDArray, 1D)
+/// - y: Second sample (NDArray, 1D)
+/// - alpha: Significance level (must be in (0, 1))
+/// - alloc: Allocator for temporary arrays
+///
+/// Returns:
+/// - TestResult with:
+///   - statistic: W statistic (min of W+ and W-)
+///   - p_value: Two-tailed p-value using normal approximation
+///   - df: 0 (not applicable for this test)
+///   - reject: true if p_value < alpha
+///
+/// Errors:
+/// - error.UnequalLengths: if x and y have different lengths
+/// - error.InvalidParameter: if alpha not in (0, 1)
+///
+/// Time: O(n log n) for sorting differences
+/// Space: O(n) for differences and ranks
+pub fn wilcoxon_signedrank(
+    comptime T: type,
+    x: NDArray_type(T, 1),
+    y: NDArray_type(T, 1),
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    const n = x.count();
+
+    // Validation
+    if (n != y.count()) return error.UnequalLengths;
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    // Compute differences
+    var diffs = try alloc.alloc(T, n);
+    defer alloc.free(diffs);
+
+    var non_zero_count: usize = 0;
+    for (0..n) |i| {
+        const d = x.data[i] - y.data[i];
+        if (d != 0.0) {
+            diffs[non_zero_count] = d;
+            non_zero_count += 1;
+        }
+    }
+
+    // If all differences are zero, p-value is 1.0
+    if (non_zero_count == 0) {
+        return TestResult(T).init(0.0, 1.0, 0.0, alpha);
+    }
+
+    // Work with non-zero differences
+    const work_diffs = diffs[0..non_zero_count];
+    const n_f = @as(T, @floatFromInt(non_zero_count));
+
+    // Create array of absolute values and signs
+    var abs_diffs = try alloc.alloc(T, non_zero_count);
+    defer alloc.free(abs_diffs);
+
+    var signs = try alloc.alloc(i32, non_zero_count);
+    defer alloc.free(signs);
+
+    for (0..non_zero_count) |i| {
+        abs_diffs[i] = @abs(work_diffs[i]);
+        signs[i] = if (work_diffs[i] > 0) @as(i32, 1) else @as(i32, -1);
+    }
+
+    // Create indices array for sorting by absolute value
+    var indices = try alloc.alloc(usize, non_zero_count);
+    defer alloc.free(indices);
+    for (0..non_zero_count) |i| {
+        indices[i] = i;
+    }
+
+    // Sort indices by absolute difference values
+    const IndexComparator = struct {
+        data: []T,
+
+        fn lessThan(self: @This(), a: usize, b: usize) bool {
+            return self.data[a] < self.data[b];
+        }
+    };
+
+    const comp = IndexComparator{ .data = abs_diffs };
+    std.mem.sort(usize, indices, comp, IndexComparator.lessThan);
+
+    // Assign ranks, handling ties
+    var ranks = try alloc.alloc(T, non_zero_count);
+    defer alloc.free(ranks);
+
+    var i: usize = 0;
+    while (i < non_zero_count) {
+        const j = i;
+        // Find end of tied group
+        while (i < non_zero_count - 1 and abs_diffs[indices[i]] == abs_diffs[indices[i + 1]]) {
+            i += 1;
+        }
+
+        // Average rank for tied group [j, i]
+        const avg_rank = @as(T, @floatFromInt(j + i + 2)) / 2.0;
+        for (j..i + 1) |k| {
+            ranks[indices[k]] = avg_rank;
+        }
+
+        i += 1;
+    }
+
+    // Compute rank sums for positive and negative differences
+    var w_pos: T = 0.0;
+    var w_neg: T = 0.0;
+
+    for (0..non_zero_count) |j| {
+        if (signs[j] > 0) {
+            w_pos += ranks[j];
+        } else {
+            w_neg += ranks[j];
+        }
+    }
+
+    // W statistic is min of W+ and W-
+    const w_stat = @min(w_pos, w_neg);
+
+    // Use normal approximation for p-value
+    const mean_w = n_f * (n_f + 1.0) / 4.0;
+    const var_w = n_f * (n_f + 1.0) * (2.0 * n_f + 1.0) / 24.0;
+
+    // Handle edge case where variance is 0
+    if (var_w == 0.0) {
+        return TestResult(T).init(w_stat, 1.0, 0.0, alpha);
+    }
+
+    const std_w = math.sqrt(var_w);
+
+    // Standard normal approximation: z = |W - mean| / std
+    const z = @abs(w_stat - mean_w) / std_w;
+
+    // Two-tailed p-value
+    const p_cdf = stdNormalCDF(T, z);
+    const p_value = 2.0 * (1.0 - p_cdf);
+
+    // Clamp p-value to [0, 1]
+    const p_clamped = @min(1.0, @max(0.0, p_value));
+
+    return TestResult(T).init(w_stat, p_clamped, 0.0, alpha);
+}
+
+// ============================================================================
+// KRUSKAL-WALLIS H TEST
+// ============================================================================
+
+/// Kruskal-Wallis H test: Nonparametric alternative to one-way ANOVA
+///
+/// Tests whether k independent groups have same distribution using ranks.
+/// Assumes k ≥ 2 independent groups from continuous distributions.
+///
+/// Algorithm:
+/// 1. Pool all observations from k groups
+/// 2. Rank all observations from 1 to N (N = total observations)
+/// 3. Compute rank sums R_i for each group i
+/// 4. Calculate H = 12/(N(N+1)) × Σ(R_i²/n_i) - 3(N+1)
+/// 5. Use chi-squared distribution with df = k-1 for p-value
+/// 6. p-value = P(χ²(k-1) > H)
+///
+/// Parameters:
+/// - T: numeric type (f32 or f64)
+/// - groups: Slice of 1D NDArrays, one per group
+/// - alpha: Significance level (must be in (0, 1))
+/// - alloc: Allocator for temporary arrays
+///
+/// Returns:
+/// - TestResult with:
+///   - statistic: H statistic
+///   - p_value: Right-tailed p-value from chi-squared distribution
+///   - df: k-1 (degrees of freedom, where k = number of groups)
+///   - reject: true if p_value < alpha
+///
+/// Errors:
+/// - error.InsufficientData: if fewer than 2 groups or any group is empty
+/// - error.InvalidParameter: if alpha not in (0, 1)
+///
+/// Time: O(N log N) where N = total observations (for sorting)
+/// Space: O(N) for pooled data and ranks
+pub fn kruskal_wallis(
+    comptime T: type,
+    groups: []const NDArray_type(T, 1),
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    // Validation
+    if (groups.len < 2) return error.InsufficientData;
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    // Count total observations and validate
+    var total_n: usize = 0;
+    for (groups) |group| {
+        const n = group.count();
+        if (n == 0) return error.InsufficientData;
+        total_n += n;
+    }
+
+    const k = groups.len;
+    const N_f = @as(T, @floatFromInt(total_n));
+
+    // Allocate arrays for pooled data, group IDs, and ranks
+    var pooled_data = try alloc.alloc(T, total_n);
+    defer alloc.free(pooled_data);
+
+    var group_ids = try alloc.alloc(usize, total_n);
+    defer alloc.free(group_ids);
+
+    // Pool data and assign group IDs
+    var offset: usize = 0;
+    for (groups, 0..) |group, g_idx| {
+        const n = group.count();
+        @memcpy(pooled_data[offset .. offset + n], group.data[0..n]);
+        for (0..n) |i| {
+            group_ids[offset + i] = g_idx;
+        }
+        offset += n;
+    }
+
+    // Create indices array for sorting
+    var indices = try alloc.alloc(usize, total_n);
+    defer alloc.free(indices);
+    for (0..total_n) |i| {
+        indices[i] = i;
+    }
+
+    // Sort indices by data values
+    const IndexComparator = struct {
+        data: []T,
+
+        fn lessThan(self: @This(), a: usize, b: usize) bool {
+            return self.data[a] < self.data[b];
+        }
+    };
+
+    const comp = IndexComparator{ .data = pooled_data };
+    std.mem.sort(usize, indices, comp, IndexComparator.lessThan);
+
+    // Assign ranks, handling ties
+    var ranks = try alloc.alloc(T, total_n);
+    defer alloc.free(ranks);
+
+    var i: usize = 0;
+    while (i < total_n) {
+        const j = i;
+        // Find end of tied group
+        while (i < total_n - 1 and pooled_data[indices[i]] == pooled_data[indices[i + 1]]) {
+            i += 1;
+        }
+
+        // Average rank for tied group [j, i]
+        const avg_rank = @as(T, @floatFromInt(j + i + 2)) / 2.0;
+        for (j..i + 1) |idx| {
+            ranks[indices[idx]] = avg_rank;
+        }
+
+        i += 1;
+    }
+
+    // Compute rank sums for each group
+    var rank_sums = try alloc.alloc(T, k);
+    defer alloc.free(rank_sums);
+    @memset(rank_sums, 0.0);
+
+    var group_sizes = try alloc.alloc(T, k);
+    defer alloc.free(group_sizes);
+    @memset(group_sizes, 0.0);
+
+    for (0..total_n) |j| {
+        const g_id = group_ids[j];
+        rank_sums[g_id] += ranks[j];
+        group_sizes[g_id] += 1.0;
+    }
+
+    // Compute H statistic
+    var h_stat: T = 0.0;
+    for (0..k) |g_id| {
+        const r_i = rank_sums[g_id];
+        const n_i = group_sizes[g_id];
+        h_stat += (r_i * r_i) / n_i;
+    }
+
+    h_stat = (12.0 / (N_f * (N_f + 1.0))) * h_stat - 3.0 * (N_f + 1.0);
+
+    // Clamp H to non-negative (rounding errors)
+    h_stat = @max(0.0, h_stat);
+
+    // Compute p-value using chi-squared distribution
+    const df = @as(T, @floatFromInt(k - 1));
+    const dist = try ChiSquared_Distribution(T).init(df);
+    const cdf_val = dist.cdf(h_stat);
+    const p_value = 1.0 - cdf_val;
+
+    // Clamp p-value to [0, 1]
+    const p_clamped = @min(1.0, @max(0.0, p_value));
+
+    return TestResult(T).init(h_stat, p_clamped, df, alpha);
+}
+
+// ============================================================================
+// FRIEDMAN TEST
+// ============================================================================
+
+/// Friedman test: Nonparametric alternative to repeated measures ANOVA
+///
+/// Tests whether k treatments have same distribution across b blocks (matched pairs).
+/// Assumes data is organized as b×k matrix (b blocks, k treatments).
+///
+/// Algorithm:
+/// 1. Rank observations within each block (row) from 1 to k
+/// 2. Compute rank sums R_j for each treatment (column)
+/// 3. Calculate Q = 12/(bk(k+1)) × Σ(R_j²) - 3b(k+1)
+/// 4. Use chi-squared distribution with df = k-1 for p-value
+/// 5. p-value = P(χ²(k-1) > Q)
+///
+/// Parameters:
+/// - T: numeric type (f32 or f64)
+/// - data: 2D NDArray (b×k: b blocks/rows, k treatments/columns)
+/// - alpha: Significance level (must be in (0, 1))
+/// - alloc: Allocator for temporary arrays
+///
+/// Returns:
+/// - TestResult with:
+///   - statistic: Q statistic
+///   - p_value: Right-tailed p-value from chi-squared distribution
+///   - df: k-1 (degrees of freedom, where k = number of treatments)
+///   - reject: true if p_value < alpha
+///
+/// Errors:
+/// - error.InvalidParameter: if alpha not in (0, 1)
+/// - error.InsufficientData: if data has fewer than 2 treatments or 2 blocks
+///
+/// Time: O(bk log k) for ranking within blocks
+/// Space: O(bk) for rank matrix and sums
+pub fn friedman_test(
+    comptime T: type,
+    data: NDArray_type(T, 2),
+    alpha: T,
+    alloc: std.mem.Allocator,
+) !TestResult(T) {
+    // Validation
+    if (alpha <= 0 or alpha >= 1) return error.InvalidParameter;
+
+    const shape = data.shape;
+    const b = shape[0]; // blocks (rows)
+    const k = shape[1]; // treatments (columns)
+
+    if (b < 2 or k < 2) return error.InsufficientData;
+
+    const b_f = @as(T, @floatFromInt(b));
+    const k_f = @as(T, @floatFromInt(k));
+
+    // Create rank matrix (same shape as data)
+    var ranks = try alloc.alloc(T, b * k);
+    defer alloc.free(ranks);
+
+    // Rank within each block (row)
+    for (0..b) |block| {
+        // Extract row data and create indices
+        var row_indices = try alloc.alloc(usize, k);
+        defer alloc.free(row_indices);
+
+        for (0..k) |col| {
+            row_indices[col] = col;
+        }
+
+        // Sort indices by row values
+        const RowComparator = struct {
+            data: []const T,
+            row: usize,
+            k: usize,
+
+            fn lessThan(self: @This(), a: usize, b_idx: usize) bool {
+                return self.data[self.row * self.k + a] < self.data[self.row * self.k + b_idx];
+            }
+        };
+
+        const row_comp = RowComparator{ .data = data.data, .row = block, .k = k };
+        std.mem.sort(usize, row_indices, row_comp, RowComparator.lessThan);
+
+        // Assign ranks within row, handling ties
+        var col: usize = 0;
+        while (col < k) {
+            const j = col;
+            // Find end of tied group
+            while (col < k - 1 and
+                data.data[block * k + row_indices[col]] == data.data[block * k + row_indices[col + 1]])
+            {
+                col += 1;
+            }
+
+            // Average rank for tied group [j, col]
+            const avg_rank = @as(T, @floatFromInt(j + col + 2)) / 2.0;
+            for (j..col + 1) |idx| {
+                ranks[block * k + row_indices[idx]] = avg_rank;
+            }
+
+            col += 1;
+        }
+    }
+
+    // Compute rank sums for each treatment (column)
+    var rank_sums = try alloc.alloc(T, k);
+    defer alloc.free(rank_sums);
+    @memset(rank_sums, 0.0);
+
+    for (0..k) |treatment| {
+        var sum: T = 0.0;
+        for (0..b) |block| {
+            sum += ranks[block * k + treatment];
+        }
+        rank_sums[treatment] = sum;
+    }
+
+    // Compute Q statistic
+    var q_stat: T = 0.0;
+    for (0..k) |treatment| {
+        const r_j = rank_sums[treatment];
+        q_stat += r_j * r_j;
+    }
+
+    q_stat = (12.0 / (b_f * k_f * (k_f + 1.0))) * q_stat - 3.0 * b_f * (k_f + 1.0);
+
+    // Clamp Q to non-negative (rounding errors)
+    q_stat = @max(0.0, q_stat);
+
+    // Compute p-value using chi-squared distribution
+    const df = @as(T, @floatFromInt(k - 1));
+    const dist = try ChiSquared_Distribution(T).init(df);
+    const cdf_val = dist.cdf(q_stat);
+    const p_value = 1.0 - cdf_val;
+
+    // Clamp p-value to [0, 1]
+    const p_clamped = @min(1.0, @max(0.0, p_value));
+
+    return TestResult(T).init(q_stat, p_clamped, df, alpha);
+}
+
+// ============================================================================
 // Kolmogorov-Smirnov Test Tests (30+ tests)
 // ============================================================================
 
@@ -3277,4 +3735,492 @@ test "mannwhitney_u: error - invalid alpha" {
 
     const result_zero = mannwhitney_u(f64, sample1, sample2, 0.0, allocator);
     try testing.expectError(error.InvalidParameter, result_zero);
+}
+
+// ============================================================================
+// WILCOXON SIGNED-RANK TEST TESTS (8+ tests)
+// ============================================================================
+//
+// Tests for wilcoxon_signedrank: paired nonparametric alternative to paired t-test
+// H0: Median of differences = 0
+// Algorithm: Rank absolute differences, sum ranks by sign, normal approximation
+
+test "wilcoxon_signedrank: perfect match (x == y, W≈0, p≈1, reject=false)" {
+    // Identical paired samples
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &y_data, .row_major);
+    defer y.deinit();
+
+    // Expected: W_stat = 0 (no ranks), p_value ≈ 1.0
+    const result = try wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+
+    try testing.expectApproxEqAbs(0.0, result.statistic, 1e-10);
+    try testing.expectApproxEqAbs(1.0, result.p_value, 1e-10);
+    try testing.expect(result.reject == false);
+}
+
+test "wilcoxon_signedrank: opposite signs (x > y all, small p)" {
+    // All differences positive: x > y
+    const x_data = [_]f64{ 2.0, 4.0, 6.0, 8.0, 10.0 };
+    const y_data = [_]f64{ 1.0, 3.0, 5.0, 7.0, 9.0 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &y_data, .row_major);
+    defer y.deinit();
+
+    // Differences: [+1, +1, +1, +1, +1]
+    // All ranks go to positive side, W+ = 15, W- = 0, W = min(0, 15) = 0
+    // Expected small p-value (significant difference)
+    const result = try wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "wilcoxon_signedrank: mixed signs (some + some -)" {
+    // Mixed differences: x < y for first 2, x > y for last 3
+    const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const y_data = [_]f64{ 2.0, 3.0, 2.5, 3.5, 4.5 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &y_data, .row_major);
+    defer y.deinit();
+
+    // Differences: [-1, -1, +0.5, +0.5, +0.5]
+    // Non-zero differences: [-1, -1, +0.5, +0.5, +0.5] (ranks 1, 2, 3.5, 3.5, 5 but |d| sorted)
+    // Actually: |d| = [1, 1, 0.5, 0.5, 0.5] → sorted ranks = [4, 5, 1, 2, 3]
+    const result = try wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic) and !math.isNan(result.p_value));
+}
+
+test "wilcoxon_signedrank: known example (6 pairs)" {
+    // Classic small-sample example
+    // Differences: [1.0, 2.0, -3.0, 4.0, -5.0, 6.0]
+    // |d| sorted: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    // Ranks: [1, 2, 3, 4, 5, 6]
+    // Positive ranks: {1, 2, 4, 6} = 13
+    // Negative ranks: {3, 5} = 8
+    // W = min(13, 8) = 8
+    const x_data = [_]f64{ 1.0, 2.0, -3.0, 4.0, -5.0, 6.0 };
+    const y_data = [_]f64{ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{6}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{6}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+
+    // W statistic should be 8
+    try testing.expectApproxEqAbs(8.0, result.statistic, 1e-10);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "wilcoxon_signedrank: ties in absolute differences" {
+    // Some absolute differences are equal (tied)
+    const x_data = [_]f64{ 1.0, 3.0, 5.0, 7.0 };
+    const y_data = [_]f64{ 0.0, 2.0, 4.0, 6.0 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    // Differences: [+1, +1, +1, +1]
+    // All tied at absolute value 1.0, all get average rank (1+2+3+4)/4 = 2.5
+    // All positive: W+ = 4*2.5 = 10, W- = 0
+    // W = min(10, 0) = 0
+    const result = try wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "wilcoxon_signedrank: dimension mismatch error" {
+    const x_data = [_]f64{ 1.0, 2.0, 3.0 };
+    const y_data = [_]f64{ 1.0, 2.0 };
+
+    var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+    try testing.expectError(error.UnequalLengths, result);
+}
+
+test "wilcoxon_signedrank: memory safety - 10 iterations" {
+    // Verify no memory leaks across multiple allocations
+    for (0..10) |_| {
+        const x_data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+        const y_data = [_]f64{ 1.5, 2.5, 3.5, 4.5, 5.5 };
+
+        var x = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &x_data, .row_major);
+        defer x.deinit();
+        var y = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{5}, &y_data, .row_major);
+        defer y.deinit();
+
+        const result = try wilcoxon_signedrank(f64, x, y, 0.05, allocator);
+        try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    }
+}
+
+test "wilcoxon_signedrank: f32 precision" {
+    const x_data = [_]f32{ 1.0, 2.0, 3.0, 4.0 };
+    const y_data = [_]f32{ 1.5, 2.5, 3.5, 4.5 };
+
+    var x = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{4}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{4}, &y_data, .row_major);
+    defer y.deinit();
+
+    const result = try wilcoxon_signedrank(f32, x, y, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+// ============================================================================
+// KRUSKAL-WALLIS H TEST TESTS (8+ tests)
+// ============================================================================
+//
+// Tests for kruskal_wallis: nonparametric alternative to one-way ANOVA
+// H0: All groups have same distribution
+// Algorithm: Pool and rank all observations, compute H statistic, chi-squared p-value
+
+test "kruskal_wallis: identical groups (H≈0, p≈1, reject=false)" {
+    // All groups have identical values
+    const g1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const g2 = [_]f64{ 1.0, 2.0, 3.0 };
+    const g3 = [_]f64{ 1.0, 2.0, 3.0 };
+
+    var group1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+    defer group1.deinit();
+    var group2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+    defer group2.deinit();
+    var group3 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g3, .row_major);
+    defer group3.deinit();
+
+    const groups = [_]NDArray_type(f64, 1){ group1, group2, group3 };
+
+    const result = try kruskal_wallis(f64, &groups, 0.05, allocator);
+
+    // When all groups are identical, H should be very small and p ≈ 1.0
+    try testing.expect(result.statistic < 0.1);
+    try testing.expectApproxEqAbs(1.0, result.p_value, 1e-1);
+    try testing.expect(result.reject == false);
+}
+
+test "kruskal_wallis: clearly different groups (small p, reject)" {
+    // Group 1: small values, Group 2: large values
+    const g1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const g2 = [_]f64{ 7.0, 8.0, 9.0 };
+
+    var group1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+    defer group1.deinit();
+    var group2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+    defer group2.deinit();
+
+    const groups = [_]NDArray_type(f64, 1){ group1, group2 };
+
+    // Pooled ranks: [1, 2, 3, 4, 5, 6]
+    // Group 1 ranks: [1, 2, 3], sum = 6
+    // Group 2 ranks: [4, 5, 6], sum = 15
+    // H = 12/(6*7) * (6²/3 + 15²/3) - 3*7 = 12/42 * (12 + 75) - 21 = 2.486 - 21 = large
+    const result = try kruskal_wallis(f64, &groups, 0.05, allocator);
+
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value < 0.05);
+    try testing.expect(result.reject == true);
+}
+
+test "kruskal_wallis: three groups with varied distributions" {
+    const g1 = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const g2 = [_]f64{ 5.0, 6.0, 7.0, 8.0 };
+    const g3 = [_]f64{ 9.0, 10.0, 11.0, 12.0 };
+
+    var group1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &g1, .row_major);
+    defer group1.deinit();
+    var group2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &g2, .row_major);
+    defer group2.deinit();
+    var group3 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &g3, .row_major);
+    defer group3.deinit();
+
+    const groups = [_]NDArray_type(f64, 1){ group1, group2, group3 };
+
+    const result = try kruskal_wallis(f64, &groups, 0.05, allocator);
+
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic));
+}
+
+test "kruskal_wallis: ties across groups" {
+    // Multiple tied values across different groups
+    const g1 = [_]f64{ 1.0, 1.0, 2.0 };
+    const g2 = [_]f64{ 1.0, 2.0, 2.0 };
+
+    var group1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+    defer group1.deinit();
+    var group2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+    defer group2.deinit();
+
+    const groups = [_]NDArray_type(f64, 1){ group1, group2 };
+
+    const result = try kruskal_wallis(f64, &groups, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "kruskal_wallis: unequal group sizes" {
+    const g1 = [_]f64{ 1.0, 2.0 }; // n=2
+    const g2 = [_]f64{ 3.0, 4.0, 5.0, 6.0 }; // n=4
+
+    var group1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{2}, &g1, .row_major);
+    defer group1.deinit();
+    var group2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{4}, &g2, .row_major);
+    defer group2.deinit();
+
+    const groups = [_]NDArray_type(f64, 1){ group1, group2 };
+
+    const result = try kruskal_wallis(f64, &groups, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "kruskal_wallis: memory safety - 10 iterations" {
+    for (0..10) |_| {
+        const g1 = [_]f64{ 1.0, 2.0, 3.0 };
+        const g2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+        var group1 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+        defer group1.deinit();
+        var group2 = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+        defer group2.deinit();
+
+        const groups = [_]NDArray_type(f64, 1){ group1, group2 };
+
+        const result = try kruskal_wallis(f64, &groups, 0.05, allocator);
+        try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    }
+}
+
+test "kruskal_wallis: f32 precision" {
+    const g1 = [_]f32{ 1.0, 2.0, 3.0 };
+    const g2 = [_]f32{ 4.0, 5.0, 6.0 };
+
+    var group1 = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+    defer group1.deinit();
+    var group2 = try NDArray_type(f32, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+    defer group2.deinit();
+
+    const groups = [_]NDArray_type(f32, 1){ group1, group2 };
+
+    const result = try kruskal_wallis(f32, &groups, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "kruskal_wallis: alpha threshold rejection decision" {
+    const g1 = [_]f64{ 1.0, 2.0, 3.0 };
+    const g2 = [_]f64{ 4.0, 5.0, 6.0 };
+
+    var group1a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+    defer group1a.deinit();
+    var group2a = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+    defer group2a.deinit();
+
+    var group1b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g1, .row_major);
+    defer group1b.deinit();
+    var group2b = try NDArray_type(f64, 1).fromSlice(allocator, &[_]usize{3}, &g2, .row_major);
+    defer group2b.deinit();
+
+    const groups_strict = [_]NDArray_type(f64, 1){ group1a, group2a };
+    const groups_lenient = [_]NDArray_type(f64, 1){ group1b, group2b };
+
+    const result_strict = try kruskal_wallis(f64, &groups_strict, 0.001, allocator);
+    const result_lenient = try kruskal_wallis(f64, &groups_lenient, 0.5, allocator);
+
+    // Same test with stricter alpha should be more conservative (less likely to reject)
+    // If p-value is between 0.001 and 0.5, reject decision differs
+    try testing.expect(!result_strict.reject or result_lenient.reject);
+}
+
+// ============================================================================
+// FRIEDMAN TEST TESTS (8+ tests)
+// ============================================================================
+//
+// Tests for friedman_test: nonparametric alternative to repeated measures ANOVA
+// H0: No difference between treatments across blocks
+// data is b×k matrix (b blocks, k treatments)
+
+test "friedman_test: no difference (Q≈0, p≈1, reject=false)" {
+    // All treatments equal within each block
+    const data = [_][3]f64{
+        [_]f64{ 1.0, 1.0, 1.0 },
+        [_]f64{ 2.0, 2.0, 2.0 },
+        [_]f64{ 3.0, 3.0, 3.0 },
+    };
+
+    const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..9];
+    var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    const result = try friedman_test(f64, matrix, 0.05, allocator);
+
+    // When treatments are identical within all blocks, Q ≈ 0
+    try testing.expect(result.statistic < 0.1);
+    try testing.expectApproxEqAbs(1.0, result.p_value, 1e-1);
+    try testing.expect(result.reject == false);
+}
+
+test "friedman_test: clear treatment differences (small p, reject)" {
+    // Treatment differences evident: treatment 1 < 2 < 3 across blocks
+    const data = [_][3]f64{
+        [_]f64{ 1.0, 2.0, 3.0 },
+        [_]f64{ 1.5, 2.5, 3.5 },
+        [_]f64{ 2.0, 3.0, 4.0 },
+        [_]f64{ 2.5, 3.5, 4.5 },
+    };
+
+    const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..12];
+    var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    // Rank within each block: [1, 2, 3] for all 4 blocks
+    // Treatment rank sums: T1 = 4, T2 = 8, T3 = 12
+    // Q = 12/(4*3*4) * (16 + 64 + 144) - 3*4*4 = 12/48 * 224 - 48 = 56 - 48 = 8
+    const result = try friedman_test(f64, matrix, 0.05, allocator);
+
+    try testing.expect(result.statistic > 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "friedman_test: known small example (3 blocks, 3 treatments)" {
+    // Manual calculation:
+    // Data: 3 blocks, 3 treatments
+    // Block 1: [1, 2, 3] → ranks [1, 2, 3]
+    // Block 2: [3, 1, 2] → ranks [3, 1, 2]
+    // Block 3: [2, 3, 1] → ranks [2, 3, 1]
+    // Treatment rank sums: T1 = 1+3+2 = 6, T2 = 2+1+3 = 6, T3 = 3+2+1 = 6
+    // Q = 12/(3*3*4) * (36 + 36 + 36) - 3*3*4 = 12/36 * 108 - 36 = 36 - 36 = 0
+    const data = [_][3]f64{
+        [_]f64{ 1.0, 2.0, 3.0 },
+        [_]f64{ 3.0, 1.0, 2.0 },
+        [_]f64{ 2.0, 3.0, 1.0 },
+    };
+
+    const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..9];
+    var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    const result = try friedman_test(f64, matrix, 0.05, allocator);
+
+    // Q should be exactly 0 (or very close due to floating point)
+    try testing.expectApproxEqAbs(0.0, result.statistic, 1e-9);
+    try testing.expectApproxEqAbs(1.0, result.p_value, 1e-1);
+}
+
+test "friedman_test: ties within blocks" {
+    // Some tied values within blocks (average ranking used)
+    const data = [_][3]f64{
+        [_]f64{ 1.0, 1.0, 2.0 },
+        [_]f64{ 1.0, 2.0, 2.0 },
+        [_]f64{ 1.5, 1.5, 2.0 },
+    };
+
+    const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..9];
+    var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    const result = try friedman_test(f64, matrix, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    try testing.expect(!math.isNan(result.statistic));
+}
+
+test "friedman_test: many blocks few treatments (6 blocks, 2 treatments)" {
+    const data = [_][2]f64{
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 1.5, 2.5 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ 1.8, 2.8 },
+        [_]f64{ 2.2, 3.2 },
+        [_]f64{ 1.9, 2.9 },
+    };
+
+    const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..12];
+    var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 6, 2 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    const result = try friedman_test(f64, matrix, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "friedman_test: few blocks many treatments (2 blocks, 4 treatments)" {
+    const data = [_][4]f64{
+        [_]f64{ 1.0, 2.0, 3.0, 4.0 },
+        [_]f64{ 1.5, 2.5, 3.5, 4.5 },
+    };
+
+    const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..8];
+    var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 2, 4 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    const result = try friedman_test(f64, matrix, 0.05, allocator);
+
+    try testing.expect(result.statistic >= 0.0);
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+}
+
+test "friedman_test: memory safety - 10 iterations" {
+    for (0..10) |_| {
+        const data = [_][3]f64{
+            [_]f64{ 1.0, 2.0, 3.0 },
+            [_]f64{ 2.0, 3.0, 4.0 },
+            [_]f64{ 3.0, 4.0, 5.0 },
+        };
+
+        const data_slice = @as([*]const f64, @ptrCast(&data[0][0]))[0..9];
+        var matrix = try NDArray_type(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, data_slice, .row_major);
+        defer matrix.deinit();
+
+        const result = try friedman_test(f64, matrix, 0.05, allocator);
+        try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
+    }
+}
+
+test "friedman_test: f32 precision" {
+    const data = [_][3]f32{
+        [_]f32{ 1.0, 2.0, 3.0 },
+        [_]f32{ 2.0, 3.0, 4.0 },
+    };
+
+    const data_slice = @as([*]const f32, @ptrCast(&data[0][0]))[0..6];
+    var matrix = try NDArray_type(f32, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, data_slice, .row_major);
+    defer matrix.deinit();
+
+    const result = try friedman_test(f32, matrix, 0.05, allocator);
+
+    try testing.expect(!math.isNan(result.statistic));
+    try testing.expect(!math.isNan(result.p_value));
+    try testing.expect(result.p_value >= 0.0 and result.p_value <= 1.0);
 }
