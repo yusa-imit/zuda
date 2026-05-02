@@ -292,3 +292,5 @@
 {"timestamp":"2026-05-02T07:10:50Z","action":"feature","module":"signal/fft.zig","task":"Implemented FFT (Cooley-Tukey algorithm) for signal processing","project":"zuda","tests":14,"status":"complete"}
 {"timestamp":"2026-05-02T07:15:00Z","action":"self","agent_type":"orchestrator","task":"Fix CI failure - FFT API parameter order in benchmarks and examples","project":"zuda"}
 {"timestamp":"2026-05-03T09:00:00Z","action":"direct_implementation","agent_type":"orchestrator","task":"Implement Bayesian inference module with conjugate priors (Beta-Binomial, Gamma-Poisson, Normal-Normal)","project":"zuda"}
+{"timestamp":"2026-05-03T12:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for nonparametric hypothesis tests (Wilcoxon, Kruskal-Wallis, Friedman)","project":"zuda"}
+{"timestamp":"2026-05-03T12:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement nonparametric hypothesis tests (Wilcoxon signed-rank, Kruskal-Wallis H, Friedman)","project":"zuda"}
