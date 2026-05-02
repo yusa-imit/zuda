@@ -229,14 +229,14 @@ test "cross-module: signal FFT + stats → frequency domain analysis" {
     }
 
     // Compute FFT
-    const fft_result = try zuda.signal.fft.fft(f64, signal, allocator);
+    const fft_result = try zuda.signal.fft.fft(f64, allocator, signal);
     defer allocator.free(fft_result);
 
     // Convert to magnitudes
     var magnitudes = try allocator.alloc(f64, n);
     defer allocator.free(magnitudes);
     for (0..n) |i| {
-        magnitudes[i] = @sqrt(fft_result[i].re * fft_result[i].re + fft_result[i].im * fft_result[i].im);
+        magnitudes[i] = @sqrt(fft_result[i].real * fft_result[i].real + fft_result[i].imag * fft_result[i].imag);
     }
 
     // Compute statistics on frequency domain using NDArray
@@ -344,7 +344,7 @@ test "cross-module: Full pipeline → data → FFT → filtering → stats analy
         complex_signal[i] = Complex.init(signal_array.data[i], 0.0);
     }
 
-    const fft_result = try zuda.signal.fft.fft(f64, complex_signal, allocator);
+    const fft_result = try zuda.signal.fft.fft(f64, allocator, complex_signal);
     defer allocator.free(fft_result);
 
     // Step 3: Filter (zero out high frequency components > n/4)
@@ -353,7 +353,7 @@ test "cross-module: Full pipeline → data → FFT → filtering → stats analy
     }
 
     // Step 4: Inverse FFT
-    const ifft_result = try zuda.signal.fft.ifft(f64, fft_result, allocator);
+    const ifft_result = try zuda.signal.fft.ifft(f64, allocator, fft_result);
     defer allocator.free(ifft_result);
 
     // Step 5: Extract real part and compute statistics
@@ -361,7 +361,7 @@ test "cross-module: Full pipeline → data → FFT → filtering → stats analy
     defer filtered_array.deinit();
 
     for (0..n) |i| {
-        filtered_array.data[i] = ifft_result[i].re;
+        filtered_array.data[i] = ifft_result[i].real;
     }
 
     const mean = zuda.stats.descriptive.mean(f64, filtered_array);

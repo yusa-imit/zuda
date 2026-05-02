@@ -113,7 +113,7 @@ pub fn WelchResult(comptime T: type) type {
 /// // result.frequencies: [0, 0.25, 0.5]
 /// // result.power: [power values at each frequency]
 /// ```
-pub fn periodogram(comptime T: type, signal: []const T, fs: T, allocator: Allocator) (Allocator.Error || error{ InvalidLength, EmptyArray, InvalidParameter })!PeriodogramResult(T) {
+pub fn periodogram(comptime T: type, signal: []const T, fs: T, allocator: Allocator) (Allocator.Error || error{ InvalidLength, EmptyArray, InvalidParameter, InvalidSize, NotPowerOfTwo })!PeriodogramResult(T) {
     // Input validation
     if (signal.len == 0) {
         return error.EmptyArray;
@@ -128,7 +128,7 @@ pub fn periodogram(comptime T: type, signal: []const T, fs: T, allocator: Alloca
     }
 
     // Compute real FFT of the signal
-    const fft_result = try fft_module.rfft(T, signal, allocator);
+    const fft_result = try fft_module.rfft(T, allocator, signal);
     defer allocator.free(fft_result);
 
     // Allocate output arrays
@@ -319,10 +319,11 @@ pub fn welch(comptime T: type, signal: []const T, fs: T, nperseg: usize, noverla
 
         // Compute FFT of windowed segment
         // segment_len is guaranteed to be power of 2, so rfft won't fail
-        const fft_result = fft_module.rfft(T, segment, allocator) catch |e| {
+        const fft_result = fft_module.rfft(T, allocator, segment) catch |e| {
             return switch (e) {
                 error.OutOfMemory => error.OutOfMemory,
-                error.InvalidLength => unreachable, // segment_len is always power of 2
+                error.InvalidSize => unreachable, // segment is never empty
+                error.NotPowerOfTwo => unreachable, // segment_len is always power of 2
             };
         };
         defer allocator.free(fft_result);

@@ -114,7 +114,7 @@ pub fn fft2(comptime T: type, signal2d: NDArray(Complex(T), 2), allocator: Alloc
         }
 
         // Compute FFT of row
-        const row_spectrum = try fft(T, row_buf, allocator);
+        const row_spectrum = try fft(T, allocator, row_buf);
         defer allocator.free(row_spectrum);
 
         // Store result back in result array
@@ -135,7 +135,7 @@ pub fn fft2(comptime T: type, signal2d: NDArray(Complex(T), 2), allocator: Alloc
         }
 
         // Compute FFT of column
-        const col_spectrum = try fft(T, col_buf, allocator);
+        const col_spectrum = try fft(T, allocator, col_buf);
         defer allocator.free(col_spectrum);
 
         // Store result back
@@ -198,7 +198,7 @@ pub fn ifft2(comptime T: type, spectrum2d: NDArray(Complex(T), 2), allocator: Al
         }
 
         // Compute IFFT of row
-        const row_time = try ifft(T, row_buf, allocator);
+        const row_time = try ifft(T, allocator, row_buf);
         defer allocator.free(row_time);
 
         // Store result back
@@ -219,7 +219,7 @@ pub fn ifft2(comptime T: type, spectrum2d: NDArray(Complex(T), 2), allocator: Al
         }
 
         // Compute IFFT of column
-        const col_time = try ifft(T, col_buf, allocator);
+        const col_time = try ifft(T, allocator, col_buf);
         defer allocator.free(col_time);
 
         // Store result back

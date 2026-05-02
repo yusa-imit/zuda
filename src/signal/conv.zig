@@ -207,7 +207,7 @@ pub fn correlate(comptime T: type, allocator: Allocator, a: []const T, b: []cons
 /// defer allocator.free(result);
 /// // result ≈ [1, 3, 5, 3] (same as direct convolve)
 /// ```
-pub fn fftconvolve(comptime T: type, allocator: Allocator, a: []const T, b: []const T) (Allocator.Error || error{InvalidLength})![]T {
+pub fn fftconvolve(comptime T: type, allocator: Allocator, a: []const T, b: []const T) (Allocator.Error || error{InvalidLength, InvalidSize, NotPowerOfTwo})![]T {
     const output_len = if (a.len == 0 or b.len == 0) 0 else a.len + b.len - 1;
 
     if (output_len == 0) {
@@ -240,9 +240,9 @@ pub fn fftconvolve(comptime T: type, allocator: Allocator, a: []const T, b: []co
     }
 
     // Compute FFTs
-    const a_spectrum = try fft_mod.fft(T, a_fft, allocator);
+    const a_spectrum = try fft_mod.fft(T, allocator, a_fft);
     defer allocator.free(a_spectrum);
-    const b_spectrum = try fft_mod.fft(T, b_fft, allocator);
+    const b_spectrum = try fft_mod.fft(T, allocator, b_fft);
     defer allocator.free(b_spectrum);
 
     // Pointwise multiplication in frequency domain
@@ -253,13 +253,13 @@ pub fn fftconvolve(comptime T: type, allocator: Allocator, a: []const T, b: []co
     }
 
     // Inverse FFT
-    const time_domain = try fft_mod.ifft(T, product, allocator);
+    const time_domain = try fft_mod.ifft(T, allocator, product);
     defer allocator.free(time_domain);
 
     // Extract real part and trim to output_len
     const output = try allocator.alloc(T, output_len);
     for (0..output_len) |i| {
-        output[i] = time_domain[i].re;
+        output[i] = time_domain[i].real;
     }
 
     return output;
