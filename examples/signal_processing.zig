@@ -56,7 +56,7 @@ pub fn main() !void {
     std.debug.print("Part 2: Frequency Domain Analysis\n", .{});
     std.debug.print("-" ** 50 ++ "\n", .{});
 
-    const fft_result = try fft.rfft(f64, signal_data, allocator);
+    const fft_result = try fft.rfft(f64, allocator, signal_data);
     defer allocator.free(fft_result);
 
     // Compute power spectral density (magnitude squared)
@@ -64,7 +64,7 @@ pub fn main() !void {
     defer allocator.free(psd);
 
     for (fft_result, 0..) |c, i| {
-        psd[i] = c.re * c.re + c.im * c.im;
+        psd[i] = c.real * c.real + c.imag * c.imag;
     }
 
     // Find dominant frequencies
@@ -154,14 +154,14 @@ pub fn main() !void {
         w.* = signal_data[i] * hann;
     }
 
-    const windowed_fft = try fft.rfft(f64, windowed, allocator);
+    const windowed_fft = try fft.rfft(f64, allocator, windowed);
     defer allocator.free(windowed_fft);
 
     var windowed_psd = try allocator.alloc(f64, windowed_fft.len);
     defer allocator.free(windowed_psd);
 
     for (windowed_fft, 0..) |c, i| {
-        windowed_psd[i] = c.re * c.re + c.im * c.im;
+        windowed_psd[i] = c.real * c.real + c.imag * c.imag;
     }
 
     // Compare spectral leakage (ratio of peak to average)

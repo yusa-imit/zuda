@@ -200,7 +200,7 @@ pub fn main() !void {
         }
 
         var timer = try std.time.Timer.start();
-        const result = try fft.fft(f64, signal.items, allocator);
+        const result = try fft.fft(f64, allocator, signal.items);
         defer allocator.free(result);
         const elapsed_ns = timer.read();
         const time_us = @as(f64, @floatFromInt(elapsed_ns)) / 1_000.0;
@@ -220,7 +220,7 @@ pub fn main() !void {
         }
 
         var timer = try std.time.Timer.start();
-        const result = try fft.fft(f64, signal.items, allocator);
+        const result = try fft.fft(f64, allocator, signal.items);
         defer allocator.free(result);
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
