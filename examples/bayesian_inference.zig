@@ -30,7 +30,7 @@ pub fn main() !void {
     var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
     const random = rng.random();
 
-    const data_dist = Normal(f64){ .mu = true_mu, .sigma = true_sigma };
+    const data_dist = Normal(f64){ .mean = true_mu, .std = true_sigma };
     for (0..n_obs) |_| {
         const sample = data_dist.sample(random);
         observations.appendAssumeCapacity(sample);
@@ -74,8 +74,8 @@ pub fn main() !void {
 
     for (0..n_iterations) |iter| {
         // Propose new parameters
-        const proposal_mu_dist = Normal(f64){ .mu = current_mu, .sigma = proposal_std_mu };
-        const proposal_sigma_dist = Normal(f64){ .mu = current_sigma, .sigma = proposal_std_sigma };
+        const proposal_mu_dist = Normal(f64){ .mean = current_mu, .std = proposal_std_mu };
+        const proposal_sigma_dist = Normal(f64){ .mean = current_sigma, .std = proposal_std_sigma };
 
         const proposed_mu = proposal_mu_dist.sample(random);
         var proposed_sigma = proposal_sigma_dist.sample(random);
@@ -182,7 +182,7 @@ pub fn main() !void {
 /// Compute log posterior: log p(μ, σ | X) = log p(X | μ, σ) + log p(μ) + log p(σ)
 fn logPosterior(mu: f64, sigma: f64, observations: []const f64) f64 {
     // Prior for μ: Normal(0, 10)
-    const prior_mu = Normal(f64){ .mu = 0.0, .sigma = 10.0 };
+    const prior_mu = Normal(f64){ .mean = 0.0, .std = 10.0 };
     const log_prior_mu = prior_mu.logpdf(mu);
 
     // Prior for σ: Uniform(0.1, 10)
@@ -191,7 +191,7 @@ fn logPosterior(mu: f64, sigma: f64, observations: []const f64) f64 {
 
     // Likelihood: product of Normal(μ, σ) for each observation
     var log_likelihood: f64 = 0.0;
-    const likelihood_dist = Normal(f64){ .mu = mu, .sigma = sigma };
+    const likelihood_dist = Normal(f64){ .mean = mu, .std = sigma };
     for (observations) |x| {
         log_likelihood += likelihood_dist.logpdf(x);
     }
