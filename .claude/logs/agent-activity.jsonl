@@ -299,3 +299,4 @@
 {"timestamp":"2026-05-03T11:08:03Z","action":"ci_fix","issue":"Normal distribution field names in example","files":["examples/bayesian_inference.zig"],"project":"zuda"}
 {"timestamp":"2026-05-04T00:00:00Z","action":"direct_implementation","task":"Implement discrete distributions (Poisson, Binomial)","project":"zuda"}
 {"timestamp":"2026-05-04T00:00:00Z","action":"implementation","module":"stats/distributions.zig","task":"Implement Gamma distribution with Lanczos logGamma and regularized incomplete gamma","project":"zuda"}
+{"timestamp":"2026-05-04T12:00:00Z","action":"feature","module":"stats/distributions.zig","task":"Implement Beta distribution with logBeta and regularizedBetaI helpers","project":"zuda"}
