@@ -302,6 +302,213 @@ pub fn Exponential(comptime T: type) type {
 }
 
 // ============================================================================
+// Gamma Distribution
+// ============================================================================
+
+/// Gamma distribution Gamma(α, β)
+///
+/// A continuous probability distribution commonly used in Bayesian statistics,
+/// queuing theory, and as a conjugate prior for precision parameters.
+///
+/// Probability density function (PDF):
+///   f(x) = (β^α / Γ(α)) × x^(α-1) × e^(-βx) for x > 0
+///
+/// Parameters:
+///   - shape (α): Shape parameter (α > 0)
+///   - rate (β): Rate parameter (β > 0)
+///
+/// Special cases:
+///   - Exponential(λ) = Gamma(1, λ)
+///   - Chi-squared(k) = Gamma(k/2, 1/2)
+///
+/// Time: O(1) for pdf/cdf/sample (with numerical approximations)
+pub fn Gamma(comptime T: type) type {
+    return struct {
+        shape: T, // α
+        rate: T, // β
+
+        const Self = @This();
+
+        /// Create a gamma distribution with given shape and rate parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(shape: T, rate: T) DistributionError!Self {
+            if (shape <= 0.0 or rate <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(shape) or !math.isFinite(rate)) return error.InvalidParameter;
+            return Self{ .shape = shape, .rate = rate };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (β^α / Γ(α)) × x^(α-1) × e^(-βx)
+        ///
+        /// Uses log-space computation for numerical stability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            // log f(x) = α×log(β) - log(Γ(α)) + (α-1)×log(x) - β×x
+            const log_pdf = self.shape * @log(self.rate) - logGamma(self.shape) + (self.shape - 1.0) * @log(x) - self.rate * x;
+            return @exp(log_pdf);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// P(X ≤ x) = γ(α, βx) / Γ(α)
+        ///
+        /// Uses regularized lower incomplete gamma function
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            // Regularized lower incomplete gamma: P(α, βx)
+            return regularizedGammaP(self.shape, self.rate * x);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search on CDF
+        ///
+        /// Time: O(log(1/ε)) for tolerance ε | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Use bisection on CDF
+            // Start with mean as initial guess, then bracket
+            var low: T = 0.0;
+            var high: T = self.mean() * 10.0; // Upper bound well above mean
+
+            // Ensure high bracket is large enough
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+            }
+
+            const tolerance = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (@abs(cdf_mid - p) < tolerance) {
+                    return mid;
+                }
+
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+
+                if (high - low < tolerance) {
+                    return (low + high) / 2.0;
+                }
+            }
+
+            return (low + high) / 2.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses Marsaglia & Tsang's method for shape ≥ 1
+        /// Uses Ahrens-Dieter acceptance-rejection for shape < 1
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            if (self.shape >= 1.0) {
+                // Marsaglia & Tsang (2000) method for α ≥ 1
+                const d = self.shape - 1.0 / 3.0;
+                const c = 1.0 / @sqrt(9.0 * d);
+
+                while (true) {
+                    var x: T = undefined;
+                    var v: T = undefined;
+
+                    // Generate x from N(0,1) and v = (1 + cx)³
+                    while (true) {
+                        const uniform1 = rng.float(T);
+                        const uniform2 = rng.float(T);
+                        x = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2); // Box-Muller
+                        v = 1.0 + c * x;
+                        if (v > 0.0) break;
+                    }
+
+                    v = v * v * v;
+                    const u = rng.float(T);
+
+                    // Squeeze acceptance
+                    if (u < 1.0 - 0.0331 * x * x * x * x) {
+                        return d * v / self.rate;
+                    }
+
+                    // Full acceptance test
+                    if (@log(u) < 0.5 * x * x + d * (1.0 - v + @log(v))) {
+                        return d * v / self.rate;
+                    }
+                }
+            } else {
+                // Ahrens-Dieter acceptance-rejection for α < 1
+                // Generate Gamma(α+1, β) then multiply by U^(1/α)
+                const e = math.e;
+                const alpha_plus_1 = self.shape + 1.0;
+
+                while (true) {
+                    const uniform1 = rng.float(T);
+                    const uniform2 = rng.float(T);
+                    const uniform3 = rng.float(T);
+
+                    if (uniform1 <= e / (e + alpha_plus_1)) {
+                        const xi = std.math.pow(T, (e + alpha_plus_1) * uniform2 / e, 1.0 / alpha_plus_1);
+                        if (uniform3 <= @exp(-xi)) {
+                            const gamma_sample = xi * std.math.pow(T, uniform1, 1.0 / self.shape);
+                            return gamma_sample / self.rate;
+                        }
+                    } else {
+                        const xi = -@log((e + alpha_plus_1) * (1.0 - uniform2) / (alpha_plus_1 * e));
+                        if (uniform3 <= std.math.pow(T, xi, alpha_plus_1 - 1.0)) {
+                            const gamma_sample = xi * std.math.pow(T, uniform1, 1.0 / self.shape);
+                            return gamma_sample / self.rate;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Log probability density function at x
+        ///
+        /// log f(x) = α×log(β) - log(Γ(α)) + (α-1)×log(x) - β×x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return self.shape * @log(self.rate) - logGamma(self.shape) + (self.shape - 1.0) * @log(x) - self.rate * x;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = α / β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.shape / self.rate;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = α / β²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.shape / (self.rate * self.rate);
+        }
+    };
+}
+
+// ============================================================================
 // Poisson Distribution
 // ============================================================================
 
@@ -606,6 +813,111 @@ fn logBinomialCoeff(comptime T: type, n: u64, k: u64) T {
 // ============================================================================
 // Helper Functions (Special Functions)
 // ============================================================================
+
+/// Log gamma function: log(Γ(x))
+///
+/// Uses Lanczos approximation for numerical stability
+///
+/// Time: O(1) | Space: O(1)
+fn logGamma(x: anytype) @TypeOf(x) {
+    const T = @TypeOf(x);
+
+    // Lanczos coefficients for g=7, n=9
+    const lanczos_g: T = 7.0;
+    const lanczos_coef = [_]T{
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    };
+
+    if (x < 0.5) {
+        // Use reflection formula: Γ(1-x)Γ(x) = π/sin(πx)
+        // log(Γ(x)) = log(π) - log(sin(πx)) - log(Γ(1-x))
+        return @log(math.pi) - @log(@abs(@sin(math.pi * x))) - logGamma(1.0 - x);
+    }
+
+    const z = x - 1.0;
+    var base = lanczos_coef[0];
+    for (1..lanczos_coef.len) |i| {
+        base += lanczos_coef[i] / (z + @as(T, @floatFromInt(i)));
+    }
+
+    const t = z + lanczos_g + 0.5;
+    const log_sqrt_2pi: T = 0.5 * @log(2.0 * math.pi);
+
+    return log_sqrt_2pi + @log(base) - t + (z + 0.5) * @log(t);
+}
+
+/// Regularized lower incomplete gamma function: P(a,x) = γ(a,x)/Γ(a)
+///
+/// Uses series expansion for x < a+1, continued fraction for x ≥ a+1
+///
+/// Time: O(1) with finite iterations | Space: O(1)
+fn regularizedGammaP(a: anytype, x: anytype) @TypeOf(a) {
+    const T = @TypeOf(a);
+
+    if (x <= 0.0) return 0.0;
+    if (x == math.inf(T)) return 1.0;
+
+    const max_iterations = 200;
+    const tolerance = 1e-10;
+
+    if (x < a + 1.0) {
+        // Use series expansion: P(a,x) = e^(-x) x^a Σ(Γ(a)/Γ(a+1+n) x^n)
+        var ap = a;
+        var del = 1.0 / a;
+        var sum = del;
+
+        for (0..max_iterations) |_| {
+            ap += 1.0;
+            del *= x / ap;
+            sum += del;
+            if (@abs(del) < @abs(sum) * tolerance) {
+                const log_result = a * @log(x) - x - logGamma(a) + @log(sum);
+                return @exp(log_result);
+            }
+        }
+
+        // If not converged, return current approximation
+        const log_result = a * @log(x) - x - logGamma(a) + @log(sum);
+        return @exp(log_result);
+    } else {
+        // Use continued fraction: Q(a,x) = e^(-x) x^a × CF
+        // P(a,x) = 1 - Q(a,x)
+
+        var b: T = x + 1.0 - a;
+        var c: T = 1.0 / (1.0e-30); // Large number
+        var d: T = 1.0 / b;
+        var h: T = d;
+
+        for (1..max_iterations + 1) |i| {
+            const i_f = @as(T, @floatFromInt(i));
+            const an = -i_f * (i_f - a);
+            b += 2.0;
+            d = an * d + b;
+            if (@abs(d) < 1.0e-30) d = 1.0e-30;
+            c = b + an / c;
+            if (@abs(c) < 1.0e-30) c = 1.0e-30;
+            d = 1.0 / d;
+            const del = d * c;
+            h *= del;
+            if (@abs(del - 1.0) < tolerance) {
+                const log_result = a * @log(x) - x - logGamma(a) + @log(h);
+                return 1.0 - @exp(log_result);
+            }
+        }
+
+        // If not converged, return current approximation
+        const log_result = a * @log(x) - x - logGamma(a) + @log(h);
+        return 1.0 - @exp(log_result);
+    }
+}
 
 /// Error function (erf) using rational approximation
 ///
@@ -969,6 +1281,172 @@ test "Exponential distribution: f32 precision" {
     try expectEqual(@as(f32, 2.0), dist.pdf(0.0));
 }
 
+test "Gamma distribution: init" {
+    const dist = try Gamma(f64).init(2.0, 3.0);
+    try expectEqual(2.0, dist.shape);
+    try expectEqual(3.0, dist.rate);
+
+    // Invalid shape (≤ 0)
+    try expectError(error.InvalidParameter, Gamma(f64).init(0.0, 1.0));
+    try expectError(error.InvalidParameter, Gamma(f64).init(-1.0, 1.0));
+
+    // Invalid rate (≤ 0)
+    try expectError(error.InvalidParameter, Gamma(f64).init(1.0, 0.0));
+    try expectError(error.InvalidParameter, Gamma(f64).init(1.0, -1.0));
+
+    // Invalid (non-finite)
+    try expectError(error.InvalidParameter, Gamma(f64).init(math.inf(f64), 1.0));
+    try expectError(error.InvalidParameter, Gamma(f64).init(1.0, math.inf(f64)));
+}
+
+test "Gamma distribution: pdf" {
+    // Gamma(2, 3): shape=2, rate=3
+    const dist = try Gamma(f64).init(2.0, 3.0);
+
+    // pdf(x) = (3^2 / Γ(2)) × x^1 × e^(-3x)
+    // Γ(2) = 1, so pdf(x) = 9x × e^(-3x)
+    // pdf(1) = 9 × e^(-3) ≈ 0.4480836
+    try expectApproxEqRel(0.4480836, dist.pdf(1.0), 1e-6);
+
+    // pdf(0) = 0 for shape > 1
+    try expectEqual(0.0, dist.pdf(0.0));
+
+    // pdf(x < 0) = 0
+    try expectEqual(0.0, dist.pdf(-1.0));
+
+    // Exponential special case: Gamma(1, λ) = Exponential(λ)
+    const exp_as_gamma = try Gamma(f64).init(1.0, 2.0);
+    const exp_dist = try Exponential(f64).init(2.0);
+    try expectApproxEqRel(exp_dist.pdf(0.5), exp_as_gamma.pdf(0.5), 1e-10);
+}
+
+test "Gamma distribution: cdf" {
+    const dist = try Gamma(f64).init(2.0, 1.0);
+
+    // cdf(0) = 0
+    try expectEqual(0.0, dist.cdf(0.0));
+
+    // cdf(∞) = 1 (test at large value)
+    try expectApproxEqRel(1.0, dist.cdf(100.0), 1e-5);
+
+    // For Gamma(2, 1), cdf(2) = 1 - 3e^(-2) ≈ 0.5940
+    try expectApproxEqRel(0.5940, dist.cdf(2.0), 1e-3);
+
+    // cdf(x < 0) = 0
+    try expectEqual(0.0, dist.cdf(-1.0));
+}
+
+test "Gamma distribution: quantile" {
+    const dist = try Gamma(f64).init(2.0, 1.0);
+
+    // quantile(0) = 0
+    try expectEqual(0.0, try dist.quantile(0.0));
+
+    // quantile(1) = ∞
+    try expectEqual(math.inf(f64), try dist.quantile(1.0));
+
+    // quantile(0.5) should be near median
+    const median = try dist.quantile(0.5);
+    try expectApproxEqRel(0.5, dist.cdf(median), 1e-6);
+
+    // Roundtrip: cdf(quantile(p)) ≈ p
+    const p1 = 0.25;
+    const q1 = try dist.quantile(p1);
+    try expectApproxEqRel(p1, dist.cdf(q1), 1e-6);
+
+    const p2 = 0.75;
+    const q2 = try dist.quantile(p2);
+    try expectApproxEqRel(p2, dist.cdf(q2), 1e-6);
+
+    // Invalid probabilities
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Gamma distribution: sample mean validation" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    // Gamma(2, 3): mean = 2/3 ≈ 0.6667
+    const dist = try Gamma(f64).init(2.0, 3.0);
+
+    const n = 10000;
+    var sum: f64 = 0.0;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 0.0); // All samples non-negative
+        sum += x;
+    }
+
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(0.6667, sample_mean, 0.05); // Mean = α/β
+
+    // Test variance: Var = α/β² = 2/9 ≈ 0.2222
+    sum = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    const variance = (sum_sq / @as(f64, @floatFromInt(n))) - (mean * mean);
+    try expectApproxEqAbs(0.2222, variance, 0.02);
+}
+
+test "Gamma distribution: sample with shape < 1" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    // Gamma(0.5, 2.0): shape < 1 tests Ahrens-Dieter method
+    const dist = try Gamma(f64).init(0.5, 2.0);
+
+    const n = 5000;
+    var sum: f64 = 0.0;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 0.0);
+        sum += x;
+    }
+
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    // Mean = α/β = 0.5/2.0 = 0.25
+    try expectApproxEqAbs(0.25, sample_mean, 0.03);
+}
+
+test "Gamma distribution: logpdf" {
+    const dist = try Gamma(f64).init(2.0, 3.0);
+
+    // logpdf(1) = log(pdf(1))
+    try expectApproxEqRel(@log(dist.pdf(1.0)), dist.logpdf(1.0), 1e-10);
+
+    // logpdf(0) = -∞ for shape > 1
+    try expectEqual(-math.inf(f64), dist.logpdf(0.0));
+
+    // logpdf(x < 0) = -∞
+    try expectEqual(-math.inf(f64), dist.logpdf(-1.0));
+}
+
+test "Gamma distribution: mean and variance" {
+    const dist = try Gamma(f64).init(2.0, 3.0);
+
+    // Mean = α/β = 2/3
+    try expectApproxEqRel(2.0 / 3.0, dist.mean(), 1e-10);
+
+    // Variance = α/β² = 2/9
+    try expectApproxEqRel(2.0 / 9.0, dist.variance(), 1e-10);
+}
+
+test "Gamma distribution: f32 precision" {
+    const dist = try Gamma(f32).init(2.0, 1.0);
+
+    // pdf(1) for Gamma(2, 1) = e^(-1) ≈ 0.3679
+    try expectApproxEqRel(@as(f32, 0.3679), dist.pdf(1.0), 1e-3);
+
+    // Mean = 2/1 = 2
+    try expectEqual(@as(f32, 2.0), dist.mean());
+}
+
 test "Poisson distribution: init" {
     const dist = try Poisson(f64).init(3.0);
     try expectEqual(3.0, dist.rate);
@@ -1192,6 +1670,9 @@ test "distributions: memory safety" {
 
         const exp = try Exponential(f64).init(1.0);
         _ = exp.pdf(0.5);
+
+        const gamma = try Gamma(f64).init(2.0, 1.0);
+        _ = gamma.pdf(1.0);
 
         const poisson = try Poisson(f64).init(3.0);
         _ = poisson.pmf(2);
