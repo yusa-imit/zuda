@@ -294,3 +294,4 @@
 {"timestamp":"2026-05-03T09:00:00Z","action":"direct_implementation","agent_type":"orchestrator","task":"Implement Bayesian inference module with conjugate priors (Beta-Binomial, Gamma-Poisson, Normal-Normal)","project":"zuda"}
 {"timestamp":"2026-05-03T12:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for nonparametric hypothesis tests (Wilcoxon, Kruskal-Wallis, Friedman)","project":"zuda"}
 {"timestamp":"2026-05-03T12:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement nonparametric hypothesis tests (Wilcoxon signed-rank, Kruskal-Wallis H, Friedman)","project":"zuda"}
+{"timestamp":"2026-05-03T09:05:00Z","action":"direct","task":"Implement Shapiro-Wilk and Anderson-Darling normality tests","project":"zuda"}
