@@ -509,6 +509,151 @@ pub fn Gamma(comptime T: type) type {
 }
 
 // ============================================================================
+// Beta Distribution
+// ============================================================================
+
+/// Beta distribution Beta(α, β)
+///
+/// Probability density function (PDF):
+///   f(x) = (x^(α-1) × (1-x)^(β-1)) / B(α,β)
+///   where B(α,β) = Γ(α)Γ(β)/Γ(α+β) is the beta function
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = I_x(α, β) (regularized incomplete beta function)
+///
+/// Parameters:
+///   - alpha (α): Shape parameter (α > 0)
+///   - beta (β): Shape parameter (β > 0)
+///
+/// Domain: x ∈ [0, 1]
+///
+/// Time: O(1) for all operations
+pub fn Beta(comptime T: type) type {
+    return struct {
+        alpha: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a beta distribution with given shape parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta_param: T) DistributionError!Self {
+            if (alpha <= 0.0 or beta_param <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(alpha) or !math.isFinite(beta_param)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta = beta_param };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (x^(α-1) × (1-x)^(β-1)) / B(α,β)
+        ///
+        /// Uses log-space computation for numerical stability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return 0.0;
+            if (x == 0.0) return if (self.alpha < 1.0) math.inf(T) else if (self.alpha == 1.0) self.beta else 0.0;
+            if (x == 1.0) return if (self.beta < 1.0) math.inf(T) else if (self.beta == 1.0) self.alpha else 0.0;
+
+            // f(x) = exp(log f(x)) = exp((α-1)log(x) + (β-1)log(1-x) - log B(α,β))
+            const log_pdf = (self.alpha - 1.0) * @log(x) +
+                (self.beta - 1.0) * @log(1.0 - x) -
+                logBeta(self.alpha, self.beta);
+            return @exp(log_pdf);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = I_x(α, β) (regularized incomplete beta function)
+        ///
+        /// Time: O(1) with finite iterations | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= 1.0) return 1.0;
+            return regularizedBetaI(self.alpha, self.beta, x);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Uses bisection search on the CDF
+        ///
+        /// Time: O(log(1/ε)) where ε is tolerance | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+
+            // Bisection search on [0, 1]
+            const tolerance = 1e-10;
+            var left: T = 0.0;
+            var right: T = 1.0;
+            var mid: T = 0.5;
+
+            for (0..100) |_| {
+                mid = (left + right) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (@abs(cdf_mid - p) < tolerance) break;
+
+                if (cdf_mid < p) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+
+            return mid;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses rejection sampling with Gamma variates: if X ~ Gamma(α,1), Y ~ Gamma(β,1), then X/(X+Y) ~ Beta(α,β)
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Generate two gamma variates
+            const gamma_alpha = Gamma(T){ .shape = self.alpha, .rate = 1.0 };
+            const gamma_beta = Gamma(T){ .shape = self.beta, .rate = 1.0 };
+
+            const x = gamma_alpha.sample(rng);
+            const y = gamma_beta.sample(rng);
+
+            // Return X/(X+Y)
+            return x / (x + y);
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x) = (α-1)log(x) + (β-1)log(1-x) - log B(α,β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0 or x >= 1.0) return -math.inf(T);
+
+            return (self.alpha - 1.0) * @log(x) +
+                (self.beta - 1.0) * @log(1.0 - x) -
+                logBeta(self.alpha, self.beta);
+        }
+
+        /// Mean of the distribution (α / (α+β))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.alpha / (self.alpha + self.beta);
+        }
+
+        /// Variance of the distribution (αβ / ((α+β)²(α+β+1)))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const sum = self.alpha + self.beta;
+            return (self.alpha * self.beta) / (sum * sum * (sum + 1.0));
+        }
+    };
+}
+
+// ============================================================================
 // Poisson Distribution
 // ============================================================================
 
@@ -917,6 +1062,81 @@ fn regularizedGammaP(a: anytype, x: anytype) @TypeOf(a) {
         const log_result = a * @log(x) - x - logGamma(a) + @log(h);
         return 1.0 - @exp(log_result);
     }
+}
+
+/// Log beta function: log(B(a,b)) = log(Γ(a)) + log(Γ(b)) - log(Γ(a+b))
+///
+/// Time: O(1) | Space: O(1)
+fn logBeta(a: anytype, b: anytype) @TypeOf(a) {
+    return logGamma(a) + logGamma(b) - logGamma(a + b);
+}
+
+/// Regularized incomplete beta function: I_x(a,b) = B_x(a,b) / B(a,b)
+///
+/// Uses continued fraction expansion (Lentz's algorithm)
+///
+/// Time: O(1) with finite iterations | Space: O(1)
+fn regularizedBetaI(a: anytype, b: anytype, x: anytype) @TypeOf(a) {
+    const T = @TypeOf(a);
+
+    if (x <= 0.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+
+    // Use symmetry relation if beneficial: I_x(a,b) = 1 - I_(1-x)(b,a)
+    if (x > (a + 1.0) / (a + b + 2.0)) {
+        return 1.0 - regularizedBetaI(b, a, 1.0 - x);
+    }
+
+    // Compute continued fraction using Lentz's algorithm
+    const max_iterations = 200;
+    const tolerance = 1e-10;
+
+    // log(x^a (1-x)^b / a / B(a,b))
+    const log_bt = a * @log(x) + b * @log(1.0 - x) - logBeta(a, b) - @log(a);
+    const bt = @exp(log_bt);
+
+    // Continued fraction coefficients
+    var f: T = 1.0;
+    var c: T = 1.0;
+    var d: T = 0.0;
+
+    for (0..max_iterations) |m| {
+        const m_f = @as(T, @floatFromInt(m));
+
+        // Even step (2m)
+        var aa: T = undefined;
+        if (m == 0) {
+            aa = 1.0;
+        } else {
+            const num = m_f * (b - m_f) * x;
+            const den = (a + 2.0 * m_f - 1.0) * (a + 2.0 * m_f);
+            aa = num / den;
+        }
+
+        d = 1.0 + aa * d;
+        if (@abs(d) < 1.0e-30) d = 1.0e-30;
+        c = 1.0 + aa / c;
+        if (@abs(c) < 1.0e-30) c = 1.0e-30;
+        d = 1.0 / d;
+        f *= d * c;
+
+        // Odd step (2m+1)
+        const num = -(a + m_f) * (a + b + m_f) * x;
+        const den = (a + 2.0 * m_f) * (a + 2.0 * m_f + 1.0);
+        aa = num / den;
+
+        d = 1.0 + aa * d;
+        if (@abs(d) < 1.0e-30) d = 1.0e-30;
+        c = 1.0 + aa / c;
+        if (@abs(c) < 1.0e-30) c = 1.0e-30;
+        d = 1.0 / d;
+        const delta = d * c;
+        f *= delta;
+
+        if (@abs(delta - 1.0) < tolerance) break;
+    }
+
+    return bt * f;
 }
 
 /// Error function (erf) using rational approximation
@@ -1447,6 +1667,147 @@ test "Gamma distribution: f32 precision" {
     try expectEqual(@as(f32, 2.0), dist.mean());
 }
 
+test "Beta distribution: init" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+    try expectEqual(2.0, dist.alpha);
+    try expectEqual(5.0, dist.beta);
+
+    // Invalid parameters (≤ 0)
+    try expectError(error.InvalidParameter, Beta(f64).init(0.0, 5.0));
+    try expectError(error.InvalidParameter, Beta(f64).init(2.0, -1.0));
+
+    // Invalid (non-finite)
+    try expectError(error.InvalidParameter, Beta(f64).init(math.nan(f64), 5.0));
+    try expectError(error.InvalidParameter, Beta(f64).init(2.0, math.inf(f64)));
+}
+
+test "Beta distribution: pdf" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+
+    // Beta(2, 5): pdf(0.5) = (0.5^1 × 0.5^4) / B(2,5) ≈ 1.875
+    // B(2,5) = Γ(2)Γ(5)/Γ(7) = 1!×4!/6! = 24/720 = 1/30
+    // pdf(0.5) = (0.5 × 0.0625) / (1/30) = 0.03125 × 30 = 0.9375
+    // Actually: pdf(x) = x^(α-1)(1-x)^(β-1)/B(α,β) = x^1(1-x)^4/B(2,5)
+    // pdf(0.5) = 0.5 × (0.5)^4 / (1/30) = 0.5 × 0.0625 × 30 = 0.9375
+    try expectApproxEqRel(0.9375, dist.pdf(0.2), 1e-10);
+
+    // pdf outside [0,1] = 0
+    try expectEqual(0.0, dist.pdf(-0.1));
+    try expectEqual(0.0, dist.pdf(1.1));
+
+    // Uniform distribution: Beta(1, 1) has constant pdf = 1
+    const uniform_beta = try Beta(f64).init(1.0, 1.0);
+    try expectApproxEqRel(1.0, uniform_beta.pdf(0.5), 1e-10);
+}
+
+test "Beta distribution: cdf" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+
+    // CDF(0) = 0, CDF(1) = 1
+    try expectEqual(0.0, dist.cdf(0.0));
+    try expectEqual(1.0, dist.cdf(1.0));
+
+    // CDF should be monotonically increasing
+    const cdf_02 = dist.cdf(0.2);
+    const cdf_05 = dist.cdf(0.5);
+    const cdf_08 = dist.cdf(0.8);
+    try testing.expect(cdf_02 < cdf_05);
+    try testing.expect(cdf_05 < cdf_08);
+
+    // CDF values should be in [0, 1]
+    try testing.expect(cdf_05 >= 0.0 and cdf_05 <= 1.0);
+}
+
+test "Beta distribution: quantile" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+
+    // quantile(0) = 0, quantile(1) = 1
+    try expectApproxEqAbs(0.0, try dist.quantile(0.0), 1e-10);
+    try expectApproxEqAbs(1.0, try dist.quantile(1.0), 1e-10);
+
+    // Roundtrip: quantile(cdf(x)) ≈ x
+    const x = 0.3;
+    const p = dist.cdf(x);
+    const x_reconstructed = try dist.quantile(p);
+    try expectApproxEqAbs(x, x_reconstructed, 1e-6);
+
+    // Median should be < mean for α < β (right-skewed)
+    const median = try dist.quantile(0.5);
+    try testing.expect(median < dist.mean());
+
+    // Invalid probability
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Beta distribution: sample" {
+    var prng = std.Random.DefaultPrng.init(33333);
+    const rng = prng.random();
+
+    const dist = try Beta(f64).init(2.0, 5.0);
+
+    // Generate 1000 samples and check mean ≈ α/(α+β) = 2/7 ≈ 0.286
+    var sum: f64 = 0.0;
+    const n = 1000;
+
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 0.0 and x <= 1.0); // In [0, 1]
+        sum += x;
+    }
+
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const expected_mean = dist.mean(); // 2/(2+5) = 0.286
+    try expectApproxEqAbs(expected_mean, sample_mean, 0.05);
+}
+
+test "Beta distribution: mean and variance" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+
+    // Mean = α/(α+β) = 2/7 ≈ 0.286
+    try expectApproxEqRel(2.0 / 7.0, dist.mean(), 1e-10);
+
+    // Variance = αβ/((α+β)²(α+β+1)) = 2×5/(7²×8) = 10/392 ≈ 0.0255
+    const expected_var = (2.0 * 5.0) / (7.0 * 7.0 * 8.0);
+    try expectApproxEqRel(expected_var, dist.variance(), 1e-10);
+}
+
+test "Beta distribution: special cases" {
+    // Uniform: Beta(1, 1)
+    const uniform = try Beta(f64).init(1.0, 1.0);
+    try expectEqual(0.5, uniform.mean());
+    try expectApproxEqRel(1.0 / 12.0, uniform.variance(), 1e-10);
+
+    // Symmetric: Beta(3, 3)
+    const symmetric = try Beta(f64).init(3.0, 3.0);
+    try expectEqual(0.5, symmetric.mean()); // α = β → mean = 0.5
+}
+
+test "Beta distribution: logpdf" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+
+    const x = 0.3;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+
+    // logpdf(x) ≈ log(pdf(x))
+    try expectApproxEqRel(@log(pdf_val), logpdf_val, 1e-10);
+
+    // logpdf outside (0,1) = -inf
+    try expectEqual(-math.inf(f64), dist.logpdf(0.0));
+    try expectEqual(-math.inf(f64), dist.logpdf(1.0));
+}
+
+test "Beta distribution: f32 precision" {
+    const dist = try Beta(f32).init(2.0, 5.0);
+
+    // Mean = 2/7 ≈ 0.286
+    try expectApproxEqRel(@as(f32, 2.0 / 7.0), dist.mean(), 1e-5);
+
+    // pdf(0.2) ≈ 0.9375
+    try expectApproxEqRel(@as(f32, 0.9375), dist.pdf(0.2), 1e-3);
+}
+
 test "Poisson distribution: init" {
     const dist = try Poisson(f64).init(3.0);
     try expectEqual(3.0, dist.rate);
@@ -1673,6 +2034,9 @@ test "distributions: memory safety" {
 
         const gamma = try Gamma(f64).init(2.0, 1.0);
         _ = gamma.pdf(1.0);
+
+        const beta = try Beta(f64).init(2.0, 5.0);
+        _ = beta.pdf(0.3);
 
         const poisson = try Poisson(f64).init(3.0);
         _ = poisson.pmf(2);
