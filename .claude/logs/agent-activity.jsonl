@@ -297,3 +297,4 @@
 {"timestamp":"2026-05-03T09:05:00Z","action":"direct","task":"Implement Shapiro-Wilk and Anderson-Darling normality tests","project":"zuda"}
 {"timestamp":"2026-05-03T03:30:00Z","action":"direct_implementation","task":"Implement Normal/Uniform/Exponential distributions with PDF/CDF/quantile/sample","project":"zuda","files_changed":2,"lines_added":687,"tests_added":21}
 {"timestamp":"2026-05-03T11:08:03Z","action":"ci_fix","issue":"Normal distribution field names in example","files":["examples/bayesian_inference.zig"],"project":"zuda"}
+{"timestamp":"2026-05-04T00:00:00Z","action":"direct_implementation","task":"Implement discrete distributions (Poisson, Binomial)","project":"zuda"}
