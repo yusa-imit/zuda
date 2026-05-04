@@ -654,6 +654,128 @@ pub fn Beta(comptime T: type) type {
 }
 
 // ============================================================================
+// Chi-Squared Distribution
+// ============================================================================
+
+/// Chi-squared distribution χ²(k)
+///
+/// A special case of Gamma distribution: χ²(k) = Gamma(k/2, 1/2)
+///
+/// Probability density function (PDF):
+///   f(x) = (1/(2^(k/2) × Γ(k/2))) × x^(k/2 - 1) × e^(-x/2)  for x ≥ 0
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = P(a, x/2) / Γ(a)  where a = k/2, P is lower incomplete gamma
+///
+/// Parameters:
+///   - k (degrees of freedom): Must be positive integer
+///
+/// Use cases:
+///   - Goodness-of-fit tests
+///   - Independence tests in contingency tables
+///   - Variance estimation in normal populations
+///   - Sum of squared standard normals: if Z_i ~ N(0,1), then Σ Z_i² ~ χ²(k)
+///
+/// Time: O(1) for all operations
+pub fn ChiSquared(comptime T: type) type {
+    return struct {
+        k: T, // degrees of freedom (stored as float for Gamma compatibility)
+        gamma_dist: Gamma(T),
+
+        const Self = @This();
+
+        /// Create a chi-squared distribution with k degrees of freedom
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(k: u64) DistributionError!Self {
+            if (k == 0) return error.InvalidParameter;
+
+            const k_f = @as(T, @floatFromInt(k));
+
+            // χ²(k) = Gamma(k/2, 1/2)
+            const alpha = k_f / 2.0; // shape
+            const beta = 0.5; // rate
+
+            const gamma_dist = try Gamma(T).init(alpha, beta);
+
+            return Self{
+                .k = k_f,
+                .gamma_dist = gamma_dist,
+            };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (1/(2^(k/2) × Γ(k/2))) × x^(k/2 - 1) × e^(-x/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return self.gamma_dist.pdf(x);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = P(X ≤ x)
+        ///
+        /// Uses regularized lower incomplete gamma function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return self.gamma_dist.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search on CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            return try self.gamma_dist.quantile(p);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// χ²(k) is the sum of k independent squared standard normals
+        /// Implemented via Gamma(k/2, 1/2) sampling
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.gamma_dist.sample(rng);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// More numerically stable than log(pdf(x)) for extreme values
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            return self.gamma_dist.logpdf(x);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = k (degrees of freedom)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.k;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = 2k
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return 2.0 * self.k;
+        }
+    };
+}
+
+// ============================================================================
 // Poisson Distribution
 // ============================================================================
 
@@ -2016,6 +2138,156 @@ test "Binomial distribution: f32 precision" {
     try expectApproxEqRel(@as(f32, 0.2461), dist.pmf(5), 1e-3);
 }
 
+test "ChiSquared distribution: init" {
+    const dist = try ChiSquared(f64).init(5);
+    try expectEqual(5.0, dist.k);
+
+    // Invalid k = 0
+    try expectError(error.InvalidParameter, ChiSquared(f64).init(0));
+}
+
+test "ChiSquared distribution: pdf" {
+    const dist = try ChiSquared(f64).init(2);
+
+    // χ²(2) at x=2: f(2) = 0.5 × e^(-1) ≈ 0.1839
+    // For k=2: f(x) = (1/2) × e^(-x/2)
+    const expected = 0.5 * @exp(-1.0);
+    try expectApproxEqRel(expected, dist.pdf(2.0), 1e-10);
+
+    // PDF at x=0 for k=2 should be 0.5
+    try expectApproxEqRel(0.5, dist.pdf(0.0), 1e-10);
+
+    // Negative x should return 0
+    try expectEqual(0.0, dist.pdf(-1.0));
+}
+
+test "ChiSquared distribution: pdf k=1 case" {
+    const dist = try ChiSquared(f64).init(1);
+
+    // χ²(1) at x=1: f(1) = (1/sqrt(2π)) × e^(-0.5) ≈ 0.2420
+    // This is sum of one squared N(0,1), so at x=1: f(1) = 1/(sqrt(2π×1)) × e^(-1/2)
+    const expected = 1.0 / @sqrt(2.0 * math.pi) * @exp(-0.5);
+    try expectApproxEqRel(expected, dist.pdf(1.0), 1e-4);
+}
+
+test "ChiSquared distribution: cdf" {
+    const dist = try ChiSquared(f64).init(2);
+
+    // CDF at x=0 should be 0
+    try expectEqual(0.0, dist.cdf(0.0));
+
+    // χ²(2) has CDF: F(x) = 1 - e^(-x/2)
+    // F(2) = 1 - e^(-1) ≈ 0.6321
+    const expected_cdf2 = 1.0 - @exp(-1.0);
+    try expectApproxEqRel(expected_cdf2, dist.cdf(2.0), 1e-10);
+
+    // F(4) = 1 - e^(-2) ≈ 0.8647
+    const expected_cdf4 = 1.0 - @exp(-2.0);
+    try expectApproxEqRel(expected_cdf4, dist.cdf(4.0), 1e-10);
+
+    // Monotonicity check
+    try testing.expect(dist.cdf(1.0) < dist.cdf(2.0));
+    try testing.expect(dist.cdf(2.0) < dist.cdf(4.0));
+}
+
+test "ChiSquared distribution: quantile" {
+    const dist = try ChiSquared(f64).init(2);
+
+    // quantile(0.0) should be 0
+    try expectApproxEqAbs(0.0, try dist.quantile(0.0), 1e-6);
+
+    // For χ²(2), median is approximately 1.386
+    const median = try dist.quantile(0.5);
+    try expectApproxEqAbs(1.386, median, 0.01);
+
+    // Roundtrip: cdf(quantile(p)) ≈ p
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    try expectApproxEqRel(p, dist.cdf(q), 1e-6);
+
+    // Invalid probability
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ChiSquared distribution: sample" {
+    var prng = std.Random.DefaultPrng.init(33333);
+    const rng = prng.random();
+
+    const dist = try ChiSquared(f64).init(10);
+
+    // Generate 1000 samples and check mean ≈ k = 10
+    var sum: f64 = 0.0;
+    const n = 1000;
+
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 0.0); // χ² is always non-negative
+        sum += x;
+    }
+
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(10.0, sample_mean, 1.0); // Mean = k = 10, allow ±1 for sampling variation
+}
+
+test "ChiSquared distribution: mean and variance" {
+    const dist = try ChiSquared(f64).init(7);
+
+    // Mean = k = 7
+    try expectEqual(7.0, dist.mean());
+
+    // Variance = 2k = 14
+    try expectEqual(14.0, dist.variance());
+}
+
+test "ChiSquared distribution: relationship to Gamma" {
+    // χ²(k) should equal Gamma(k/2, 1/2)
+    const dist_chi2 = try ChiSquared(f64).init(6);
+    const dist_gamma = try Gamma(f64).init(3.0, 0.5); // k=6 → α=3, β=0.5
+
+    const x = 4.0;
+
+    // PDF should match
+    try expectApproxEqRel(dist_gamma.pdf(x), dist_chi2.pdf(x), 1e-10);
+
+    // CDF should match
+    try expectApproxEqRel(dist_gamma.cdf(x), dist_chi2.cdf(x), 1e-10);
+
+    // Mean should match
+    try expectApproxEqRel(dist_gamma.mean(), dist_chi2.mean(), 1e-10);
+
+    // Variance should match
+    try expectApproxEqRel(dist_gamma.variance(), dist_chi2.variance(), 1e-10);
+}
+
+test "ChiSquared distribution: logpdf" {
+    const dist = try ChiSquared(f64).init(5);
+
+    const x = 3.0;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+
+    // log(pdf(x)) should equal logpdf(x)
+    try expectApproxEqRel(@log(pdf_val), logpdf_val, 1e-10);
+
+    // Negative x should return -inf
+    try expectEqual(-math.inf(f64), dist.logpdf(-1.0));
+}
+
+test "ChiSquared distribution: f32 precision" {
+    const dist = try ChiSquared(f32).init(4);
+
+    // PDF at x=2 for χ²(4)
+    const pdf_val = dist.pdf(2.0);
+    try testing.expect(pdf_val > 0.0);
+
+    // Mean = 4
+    try expectEqual(@as(f32, 4.0), dist.mean());
+
+    // Variance = 8
+    try expectEqual(@as(f32, 8.0), dist.variance());
+}
+
 test "distributions: memory safety" {
     const allocator = testing.allocator;
     _ = allocator;
@@ -2043,5 +2315,8 @@ test "distributions: memory safety" {
 
         const binomial = try Binomial(f64).init(10, 0.5);
         _ = binomial.pmf(5);
+
+        const chi2 = try ChiSquared(f64).init(5);
+        _ = chi2.pdf(2.0);
     }
 }
