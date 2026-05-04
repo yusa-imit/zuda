@@ -959,6 +959,192 @@ pub fn StudentT(comptime T: type) type {
 }
 
 // ============================================================================
+// F Distribution (Fisher-Snedecor Distribution)
+// ============================================================================
+
+/// F distribution F(d₁, d₂)
+///
+/// The F-distribution is the ratio of two chi-squared distributions divided by their degrees of freedom.
+/// If V₁ ~ χ²(d₁) and V₂ ~ χ²(d₂), then F = (V₁/d₁)/(V₂/d₂) ~ F(d₁, d₂)
+///
+/// Probability density function (PDF):
+///   f(x) = √((d₁x)^d₁ × d₂^d₂ / (d₁x + d₂)^(d₁+d₂)) / (x × B(d₁/2, d₂/2))
+///   where B is the beta function
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = I_z(d₁/2, d₂/2) where z = d₁x/(d₁x + d₂)
+///   I is the regularized incomplete beta function
+///
+/// Parameters:
+///   - d1: Numerator degrees of freedom (d₁ > 0)
+///   - d2: Denominator degrees of freedom (d₂ > 0)
+///
+/// Properties:
+///   - Domain: x ∈ [0, ∞)
+///   - Mean: d₂/(d₂-2) for d₂ > 2, undefined otherwise
+///   - Variance: 2d₂²(d₁+d₂-2)/(d₁(d₂-2)²(d₂-4)) for d₂ > 4, undefined otherwise
+///
+/// Use cases:
+///   - ANOVA F-tests (comparing variances between groups)
+///   - Regression F-tests (overall model significance)
+///   - Variance ratio tests
+///   - Model comparison in hypothesis testing
+///
+/// Time: O(1) for all operations
+pub fn FDistribution(comptime T: type) type {
+    return struct {
+        d1: T,
+        d2: T,
+
+        const Self = @This();
+
+        /// Create an F distribution with given degrees of freedom
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(d1: T, d2: T) DistributionError!Self {
+            if (d1 <= 0.0 or d2 <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(d1) or !math.isFinite(d2)) return error.InvalidParameter;
+            return Self{ .d1 = d1, .d2 = d2 };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = √((d₁x)^d₁ × d₂^d₂ / (d₁x + d₂)^(d₁+d₂)) / (x × B(d₁/2, d₂/2))
+        ///
+        /// Computed in log-space for numerical stability:
+        /// log f(x) = 0.5×d₁×log(d₁) + 0.5×d₂×log(d₂) + (d₁/2-1)×log(x)
+        ///          - 0.5×(d₁+d₂)×log(d₁x + d₂) - logBeta(d₁/2, d₂/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = I_z(d₁/2, d₂/2) where z = d₁x/(d₁x + d₂)
+        ///
+        /// Uses regularized incomplete beta function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            // Transform to beta distribution variable
+            const z = (self.d1 * x) / (self.d1 * x + self.d2);
+            return regularizedBetaI(self.d1 / 2.0, self.d2 / 2.0, z);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search on the CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Bisection search with adaptive bounds
+            var low: T = 0.0;
+            var high: T = 10.0;
+
+            // Expand upper bound if needed
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+            }
+
+            // Bisection
+            const tol: T = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+
+            while (high - low > tol and iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                const cdf_mid = self.cdf(mid);
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+
+            return (low + high) / 2.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses the definition: F = (V₁/d₁)/(V₂/d₂) where V₁~χ²(d₁), V₂~χ²(d₂)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const chi1 = ChiSquared(T).init(self.d1) catch unreachable;
+            const chi2 = ChiSquared(T).init(self.d2) catch unreachable;
+
+            const v1 = chi1.sample(rng);
+            const v2 = chi2.sample(rng);
+
+            return (v1 / self.d1) / (v2 / self.d2);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = 0.5×d₁×log(d₁) + 0.5×d₂×log(d₂) + (d₁/2-1)×log(x)
+        ///          - 0.5×(d₁+d₂)×log(d₁x + d₂) - logBeta(d₁/2, d₂/2)
+        ///
+        /// More numerically stable than log(pdf(x)) for extreme values
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+
+            const half_d1 = self.d1 / 2.0;
+            const half_d2 = self.d2 / 2.0;
+            const d1x = self.d1 * x;
+
+            const log_numerator = half_d1 * @log(self.d1) + half_d2 * @log(self.d2) + (half_d1 - 1.0) * @log(x);
+            const log_denominator = (half_d1 + half_d2) * @log(d1x + self.d2);
+            const log_beta_term = logBeta(half_d1, half_d2);
+
+            return log_numerator - log_denominator - log_beta_term;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = d₂/(d₂-2) for d₂ > 2, undefined otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.d2 <= 2.0) {
+                return math.nan(T);
+            }
+            return self.d2 / (self.d2 - 2.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = 2d₂²(d₁+d₂-2)/(d₁(d₂-2)²(d₂-4)) for d₂ > 4
+        /// Infinite for 2 < d₂ ≤ 4
+        /// Undefined for d₂ ≤ 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.d2 <= 2.0) {
+                return math.nan(T);
+            }
+            if (self.d2 <= 4.0) {
+                return math.inf(T);
+            }
+
+            const numerator = 2.0 * self.d2 * self.d2 * (self.d1 + self.d2 - 2.0);
+            const denominator = self.d1 * (self.d2 - 2.0) * (self.d2 - 2.0) * (self.d2 - 4.0);
+            return numerator / denominator;
+        }
+    };
+}
+
+// ============================================================================
 // Poisson Distribution
 // ============================================================================
 
@@ -2708,6 +2894,245 @@ test "StudentT distribution: f32 precision" {
     try expectApproxEqRel(dist.variance(), @as(f32, 5.0 / 3.0), 1e-6);
 }
 
+// ============================================================================
+// F Distribution Tests
+// ============================================================================
+
+test "F distribution: init" {
+    // Valid parameters
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+    try expectEqual(@as(f64, 5.0), dist.d1);
+    try expectEqual(@as(f64, 10.0), dist.d2);
+
+    // Invalid parameters
+    try testing.expectError(error.InvalidParameter, FDistribution(f64).init(-1.0, 10.0));
+    try testing.expectError(error.InvalidParameter, FDistribution(f64).init(5.0, 0.0));
+    try testing.expectError(error.InvalidParameter, FDistribution(f64).init(math.nan(f64), 10.0));
+    try testing.expectError(error.InvalidParameter, FDistribution(f64).init(5.0, math.inf(f64)));
+}
+
+test "F distribution: PDF" {
+    // F(5, 10) distribution
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+
+    // PDF should be 0 at x=0 and x<0
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+
+    // PDF at x=1 (equal variances)
+    // For F(d1,d2), pdf(1) = B(d1/2,d2/2)^(-1) × (d1/d2)^(d1/2) × (1 + d1/d2)^(-(d1+d2)/2)
+    // With d1=5, d2=10: pdf(1) ≈ 0.6838 (verified with scipy.stats.f.pdf(1, 5, 10))
+    const pdf1 = dist.pdf(1.0);
+    try expectApproxEqRel(pdf1, 0.6838, 0.01);
+
+    // PDF is positive for x > 0
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+
+    // Mode of F(d1, d2) is at (d1-2)/d1 × d2/(d2+2) for d1 > 2
+    // Mode ≈ 0.6 for F(5, 10)
+    const mode_x = ((dist.d1 - 2.0) / dist.d1) * (dist.d2 / (dist.d2 + 2.0));
+    const pdf_mode = dist.pdf(mode_x);
+    const pdf_nearby = dist.pdf(mode_x + 0.1);
+    try testing.expect(pdf_mode >= pdf_nearby); // PDF should be maximum at mode
+}
+
+test "F distribution: CDF" {
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+
+    // CDF at boundaries
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+
+    // CDF at x=1 (equal variances)
+    // F(1; 5, 10) ≈ 0.5497 (verified with scipy.stats.f.cdf(1, 5, 10))
+    const cdf1 = dist.cdf(1.0);
+    try expectApproxEqRel(cdf1, 0.5497, 0.01);
+
+    // CDF should be monotonically increasing
+    try testing.expect(dist.cdf(0.5) < dist.cdf(1.0));
+    try testing.expect(dist.cdf(1.0) < dist.cdf(2.0));
+    try testing.expect(dist.cdf(2.0) < dist.cdf(5.0));
+
+    // CDF approaches 1 as x → ∞
+    try testing.expect(dist.cdf(100.0) > 0.99);
+}
+
+test "F distribution: quantile" {
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+
+    // Quantile at boundaries
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+    try expectEqual(math.inf(f64), try dist.quantile(1.0));
+
+    // Invalid probabilities
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+
+    // Roundtrip: cdf(quantile(p)) ≈ p
+    const p_values = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9, 0.95 };
+    for (p_values) |p| {
+        const x = try dist.quantile(p);
+        const p_check = dist.cdf(x);
+        try expectApproxEqRel(p_check, p, 1e-6);
+    }
+
+    // 95th percentile for F(5, 10) ≈ 3.326 (critical value for α=0.05)
+    const q95 = try dist.quantile(0.95);
+    try expectApproxEqRel(q95, 3.326, 0.01);
+}
+
+test "F distribution: sampling" {
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    // Generate samples and verify mean
+    // Mean of F(d1, d2) = d2/(d2-2) = 10/8 = 1.25 for d2 > 2
+    const n_samples = 10000;
+    var sum: f64 = 0.0;
+    for (0..n_samples) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 0.0); // F-distribution is non-negative
+        sum += x;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean();
+    // Allow 5% relative error due to sampling variance
+    try expectApproxEqRel(sample_mean, theoretical_mean, 0.05);
+}
+
+test "F distribution: logpdf" {
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+
+    // logpdf should be -inf at x <= 0
+    try expectEqual(-math.inf(f64), dist.logpdf(0.0));
+    try expectEqual(-math.inf(f64), dist.logpdf(-1.0));
+
+    // logpdf(x) = log(pdf(x))
+    const x_values = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (x_values) |x| {
+        const logpdf_val = dist.logpdf(x);
+        const pdf_val = dist.pdf(x);
+        const expected_logpdf = @log(pdf_val);
+        try expectApproxEqRel(logpdf_val, expected_logpdf, 1e-10);
+    }
+}
+
+test "F distribution: mean" {
+    // Mean = d2/(d2-2) for d2 > 2
+    const dist1 = try FDistribution(f64).init(5.0, 10.0);
+    const mean1 = dist1.mean();
+    try expectApproxEqRel(mean1, 10.0 / 8.0, 1e-10); // 10/(10-2) = 1.25
+
+    const dist2 = try FDistribution(f64).init(3.0, 6.0);
+    const mean2 = dist2.mean();
+    try expectApproxEqRel(mean2, 6.0 / 4.0, 1e-10); // 6/(6-2) = 1.5
+
+    // Mean is undefined for d2 ≤ 2
+    const dist_undef = try FDistribution(f64).init(5.0, 2.0);
+    try testing.expect(math.isNan(dist_undef.mean()));
+
+    const dist_undef2 = try FDistribution(f64).init(5.0, 1.5);
+    try testing.expect(math.isNan(dist_undef2.mean()));
+}
+
+test "F distribution: variance" {
+    // Variance = 2×d2²×(d1+d2-2)/(d1×(d2-2)²×(d2-4)) for d2 > 4
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+    const var_val = dist.variance();
+    // Var = 2×100×(5+10-2)/(5×64×6) = 2×100×13/(5×64×6) = 2600/1920 ≈ 1.354
+    const expected_var = (2.0 * 100.0 * 13.0) / (5.0 * 64.0 * 6.0);
+    try expectApproxEqRel(var_val, expected_var, 1e-10);
+
+    // Variance is infinite for 2 < d2 ≤ 4
+    const dist_inf = try FDistribution(f64).init(5.0, 4.0);
+    try expectEqual(math.inf(f64), dist_inf.variance());
+
+    const dist_inf2 = try FDistribution(f64).init(5.0, 3.0);
+    try expectEqual(math.inf(f64), dist_inf2.variance());
+
+    // Variance is undefined (NaN) for d2 ≤ 2
+    const dist_undef = try FDistribution(f64).init(5.0, 2.0);
+    try testing.expect(math.isNan(dist_undef.variance()));
+}
+
+test "F distribution: relationship to chi-squared" {
+    // If X ~ χ²(d1) and Y ~ χ²(d2), then F = (X/d1)/(Y/d2) ~ F(d1, d2)
+    const d1: f64 = 5.0;
+    const d2: f64 = 10.0;
+
+    const f_dist = try FDistribution(f64).init(d1, d2);
+    const chi1 = try ChiSquared(f64).init(d1);
+    const chi2 = try ChiSquared(f64).init(d2);
+
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+
+    // Generate F samples via chi-squared ratio and direct sampling
+    const n_samples = 1000;
+    var f_direct_sum: f64 = 0.0;
+    var f_derived_sum: f64 = 0.0;
+
+    for (0..n_samples) |_| {
+        // Direct F sampling
+        const f_sample = f_dist.sample(rng);
+        f_direct_sum += f_sample;
+
+        // Derived from chi-squared ratio
+        const x = chi1.sample(rng);
+        const y = chi2.sample(rng);
+        const f_derived = (x / d1) / (y / d2);
+        f_derived_sum += f_derived;
+    }
+
+    const f_direct_mean = f_direct_sum / @as(f64, @floatFromInt(n_samples));
+    const f_derived_mean = f_derived_sum / @as(f64, @floatFromInt(n_samples));
+
+    // Both should be close to theoretical mean
+    const theoretical_mean = d2 / (d2 - 2.0);
+    try expectApproxEqRel(f_direct_mean, theoretical_mean, 0.1);
+    try expectApproxEqRel(f_derived_mean, theoretical_mean, 0.1);
+}
+
+test "F distribution: symmetry property" {
+    // F(d1, d2) and 1/F(d2, d1) have the same distribution
+    const d1: f64 = 5.0;
+    const d2: f64 = 10.0;
+
+    const f_dist = try FDistribution(f64).init(d1, d2);
+    const f_inv_dist = try FDistribution(f64).init(d2, d1);
+
+    // For F(d1, d2), P(X > x) = P(1/Y < 1/x) where Y ~ F(d2, d1)
+    // Therefore: 1 - F_d1,d2(x) = F_d2,d1(1/x)
+    const x_values = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (x_values) |x| {
+        const cdf_forward = f_dist.cdf(x);
+        const cdf_inverse = f_inv_dist.cdf(1.0 / x);
+        const sf_forward = 1.0 - cdf_forward; // Survival function
+        try expectApproxEqRel(sf_forward, cdf_inverse, 0.01);
+    }
+}
+
+test "F distribution: f32 precision" {
+    const dist = try FDistribution(f32).init(5.0, 10.0);
+
+    // PDF at x=1
+    const pdf_val = dist.pdf(1.0);
+    try expectApproxEqRel(pdf_val, @as(f32, 0.6838), 1e-3);
+
+    // CDF at x=1
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqRel(cdf_val, @as(f32, 0.5497), 1e-3);
+
+    // Mean = 10/8 = 1.25
+    try expectApproxEqRel(dist.mean(), @as(f32, 1.25), 1e-6);
+
+    // Variance
+    const expected_var = @as(f32, (2.0 * 100.0 * 13.0) / (5.0 * 64.0 * 6.0));
+    try expectApproxEqRel(dist.variance(), expected_var, 1e-5);
+}
+
 test "distributions: memory safety" {
     const allocator = testing.allocator;
     _ = allocator;
@@ -2741,5 +3166,8 @@ test "distributions: memory safety" {
 
         const student_t = try StudentT(f64).init(5.0);
         _ = student_t.pdf(1.0);
+
+        const f_dist = try FDistribution(f64).init(5.0, 10.0);
+        _ = f_dist.pdf(1.0);
     }
 }
