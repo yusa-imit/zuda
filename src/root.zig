@@ -725,7 +725,7 @@ pub const stats = struct {
     /// Bayesian inference — conjugate priors, credible intervals, Bayes factors
     pub const bayesian = @import("stats/bayesian.zig");
 
-    /// Probability distributions — Uniform, Normal, Exponential, Laplace, Poisson, Binomial, Bernoulli, Geometric, Gamma, Beta, ChiSquared, StudentT, F, etc.
+    /// Probability distributions — Normal, Uniform, Exponential, Laplace, Weibull, Gamma, Beta, ChiSquared, StudentT, F, Poisson, Binomial
     pub const distributions = @import("stats/distributions.zig");
 
     /// Random number generation — PCG64, Xoshiro256**, shuffle, choice, multinomial

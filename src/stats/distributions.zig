@@ -3345,6 +3345,198 @@ pub fn Laplace(comptime T: type) type {
     };
 }
 
+/// Weibull distribution — continuous distribution for reliability and survival analysis
+///
+/// The Weibull distribution is a continuous probability distribution with shape parameter k
+/// and scale parameter λ. It generalizes the exponential distribution and is widely used
+/// in reliability engineering, survival analysis, and extreme value theory.
+///
+/// Parameters:
+/// - shape (k > 0): determines the distribution's form (k < 1: decreasing hazard, k = 1: constant, k > 1: increasing)
+/// - scale (λ > 0): stretches or compresses the distribution
+///
+/// Special cases:
+/// - k = 1: Exponential distribution with rate 1/λ
+/// - k = 2: Rayleigh distribution
+/// - k = 3.4: approximates Normal distribution
+///
+/// Domain: [0, ∞)
+///
+/// Use cases:
+/// - Reliability engineering (time-to-failure modeling)
+/// - Survival analysis (time-to-event data)
+/// - Wind speed distribution
+/// - Extreme value analysis
+pub fn Weibull(comptime T: type) type {
+    return struct {
+        shape: T,
+        scale: T,
+
+        const Self = @This();
+
+        /// Create a Weibull distribution with given shape and scale parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(shape: T, scale: T) DistributionError!Self {
+            if (shape <= 0.0) return error.InvalidParameter;
+            if (scale <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(shape) or !math.isFinite(scale)) return error.InvalidParameter;
+            return Self{ .shape = shape, .scale = scale };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (k/λ)(x/λ)^(k-1) × exp(-(x/λ)^k) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            if (x == 0.0) {
+                // PDF at x=0: k < 1 → ∞, k = 1 → 1/λ, k > 1 → 0
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return 1.0 / self.scale;
+                return 0.0;
+            }
+
+            const x_scaled = x / self.scale;
+            const x_pow_k = math.pow(T, x_scaled, self.shape);
+            const x_pow_k_minus_1 = math.pow(T, x_scaled, self.shape - 1.0);
+
+            return (self.shape / self.scale) * x_pow_k_minus_1 * @exp(-x_pow_k);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 - exp(-(x/λ)^k) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            const x_scaled = x / self.scale;
+            const x_pow_k = math.pow(T, x_scaled, self.shape);
+            return 1.0 - @exp(-x_pow_k);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = λ × (-ln(1-p))^(1/k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            return self.scale * math.pow(T, -@log(1.0 - p), 1.0 / self.shape);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method via quantile function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return try self.quantile(u) catch unreachable; // u is always valid probability
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = ln(k/λ) + (k-1)×ln(x/λ) - (x/λ)^k
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            if (x == 0.0) {
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return -@log(self.scale);
+                return -math.inf(T);
+            }
+
+            const x_scaled = x / self.scale;
+            const log_x_scaled = @log(x_scaled);
+            const x_pow_k = math.pow(T, x_scaled, self.shape);
+
+            return @log(self.shape / self.scale) + (self.shape - 1.0) * log_x_scaled - x_pow_k;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = λΓ(1 + 1/k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const gamma_val = @exp(logGamma(1.0 + 1.0 / self.shape));
+            return self.scale * gamma_val;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = λ²[Γ(1 + 2/k) - Γ²(1 + 1/k)]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const gamma_1_plus_1_over_k = @exp(logGamma(1.0 + 1.0 / self.shape));
+            const gamma_1_plus_2_over_k = @exp(logGamma(1.0 + 2.0 / self.shape));
+            return self.scale * self.scale * (gamma_1_plus_2_over_k - gamma_1_plus_1_over_k * gamma_1_plus_1_over_k);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = λ((k-1)/k)^(1/k) for k > 1, otherwise 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.shape <= 1.0) return 0.0;
+            return self.scale * math.pow(T, (self.shape - 1.0) / self.shape, 1.0 / self.shape);
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = λ(ln 2)^(1/k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.scale * math.pow(T, @log(2.0), 1.0 / self.shape);
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = exp(-(x/λ)^k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            const x_scaled = x / self.scale;
+            const x_pow_k = math.pow(T, x_scaled, self.shape);
+            return @exp(-x_pow_k);
+        }
+
+        /// Hazard function (failure rate)
+        ///
+        /// h(x) = (k/λ)(x/λ)^(k-1)
+        ///
+        /// Describes instantaneous failure rate at time x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn hazard(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            if (x == 0.0) {
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return 1.0 / self.scale;
+                return 0.0;
+            }
+
+            const x_scaled = x / self.scale;
+            const x_pow_k_minus_1 = math.pow(T, x_scaled, self.shape - 1.0);
+            return (self.shape / self.scale) * x_pow_k_minus_1;
+        }
+    };
+}
+
 // ============================================================================
 // Tests - Laplace Distribution
 // ============================================================================
@@ -3637,5 +3829,357 @@ test "Laplace: memory safety" {
         _ = dist.pdf(0.5);
         _ = dist.cdf(0.5);
         _ = try dist.quantile(0.25);
+    }
+}
+
+// ============================================================================
+// Tests - Weibull Distribution
+// ============================================================================
+
+test "Weibull: init with valid parameters" {
+    // Valid Weibull distribution
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.shape);
+    try testing.expectEqual(@as(f64, 1.0), dist.scale);
+}
+
+test "Weibull: init with invalid parameters" {
+    // Negative shape
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(-1.0, 1.0));
+
+    // Zero shape
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(0.0, 1.0));
+
+    // Negative scale
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(2.0, -1.0));
+
+    // Zero scale
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(2.0, 0.0));
+
+    // Infinite parameters
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(math.inf(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(1.0, math.inf(f64)));
+
+    // NaN parameters
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(math.nan(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Weibull(f64).init(1.0, math.nan(f64)));
+}
+
+test "Weibull: pdf at mode for k=2 (Rayleigh)" {
+    // Weibull(k=2, λ=1) is Rayleigh distribution
+    // Mode at λ/√2 ≈ 0.7071
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    const mode_x = dist.mode();
+    try expectApproxEqRel(mode_x, 0.7071067811865476, 1e-10);
+
+    // PDF at mode should be maximum
+    const pdf_mode = dist.pdf(mode_x);
+    const pdf_before = dist.pdf(mode_x - 0.1);
+    const pdf_after = dist.pdf(mode_x + 0.1);
+    try testing.expect(pdf_mode > pdf_before);
+    try testing.expect(pdf_mode > pdf_after);
+}
+
+test "Weibull: pdf for k=1 (exponential)" {
+    // Weibull(k=1, λ=2) = Exponential(rate=1/2)
+    // PDF: f(x) = (1/2)exp(-x/2)
+    const dist = try Weibull(f64).init(1.0, 2.0);
+
+    // At x=0: f(0) = 1/λ = 0.5
+    try expectApproxEqRel(dist.pdf(0.0), 0.5, 1e-10);
+
+    // At x=2: f(2) = 0.5 × exp(-1) ≈ 0.18394
+    try expectApproxEqRel(dist.pdf(2.0), 0.5 * @exp(-1.0), 1e-10);
+
+    // At x=4: f(4) = 0.5 × exp(-2) ≈ 0.06767
+    try expectApproxEqRel(dist.pdf(4.0), 0.5 * @exp(-2.0), 1e-10);
+}
+
+test "Weibull: pdf negative x returns 0" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-10.0));
+}
+
+test "Weibull: cdf at median is 0.5" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    const median_val = dist.median();
+    try expectApproxEqRel(dist.cdf(median_val), 0.5, 1e-10);
+}
+
+test "Weibull: cdf boundary values" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // At x=0: CDF = 0
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+
+    // At large x: CDF → 1
+    try expectApproxEqRel(dist.cdf(10.0), 1.0, 1e-10);
+
+    // Negative x: CDF = 0
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "Weibull: cdf manual calculation k=2, λ=1" {
+    // Weibull(k=2, λ=1): F(x) = 1 - exp(-x²)
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // At x=1: F(1) = 1 - exp(-1) ≈ 0.6321
+    try expectApproxEqRel(dist.cdf(1.0), 1.0 - @exp(-1.0), 1e-10);
+
+    // At x=√2: F(√2) = 1 - exp(-2) ≈ 0.8647
+    const sqrt2 = @sqrt(2.0);
+    try expectApproxEqRel(dist.cdf(sqrt2), 1.0 - @exp(-2.0), 1e-10);
+}
+
+test "Weibull: cdf monotonicity" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // CDF should be strictly increasing
+    var x: f64 = 0.0;
+    var prev_cdf = dist.cdf(x);
+
+    while (x <= 5.0) : (x += 0.5) {
+        const curr_cdf = dist.cdf(x);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "Weibull: quantile at median" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    const q_50 = try dist.quantile(0.5);
+    // Median: λ(ln 2)^(1/k) = 1 × (ln 2)^0.5 ≈ 0.8326
+    try expectApproxEqRel(q_50, math.pow(f64, @log(2.0), 0.5), 1e-10);
+}
+
+test "Weibull: quantile roundtrip with CDF" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // For various probabilities, quantile(p) should give x such that cdf(x) ≈ p
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const x = try dist.quantile(p);
+        const p_back = dist.cdf(x);
+        try expectApproxEqRel(p_back, p, 1e-9);
+    }
+}
+
+test "Weibull: quantile error handling" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // Invalid probabilities
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+
+    // Edge cases
+    try testing.expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "Weibull: quantile manual calculation k=2, λ=1" {
+    // Weibull(k=2, λ=1): Q(p) = √(-ln(1-p))
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // At p=0.5: Q(0.5) = √(ln 2) ≈ 0.8326
+    try expectApproxEqRel(try dist.quantile(0.5), @sqrt(@log(2.0)), 1e-10);
+
+    // At p=0.9: Q(0.9) = √(-ln 0.1) ≈ 1.5174
+    try expectApproxEqRel(try dist.quantile(0.9), @sqrt(-@log(0.1)), 1e-10);
+}
+
+test "Weibull: sample mean validation" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    // Weibull(k=2, λ=1): E[X] = Γ(1.5) ≈ 0.8862
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    const expected_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+
+    // Sample mean should be close to theoretical mean (within 5% for 10K samples)
+    try expectApproxEqRel(sample_mean, expected_mean, 0.05);
+}
+
+test "Weibull: sample variance validation" {
+    var prng = std.Random.DefaultPrng.init(67890);
+    const rng = prng.random();
+
+    // Weibull(k=2, λ=1): Var(X) = 1 × [Γ(2) - Γ²(1.5)] ≈ 0.2146
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    const expected_var = dist.variance();
+    const expected_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const sample_var = (sum_sq / @as(f64, @floatFromInt(n))) - (sample_mean * sample_mean);
+
+    // Sample variance should be close to theoretical variance (within 10% for 10K samples)
+    _ = expected_mean;
+    try expectApproxEqRel(sample_var, expected_var, 0.10);
+}
+
+test "Weibull: samples non-negative" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // All samples should be non-negative
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 0.0);
+    }
+}
+
+test "Weibull: logpdf consistency with log(pdf)" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    const x_vals = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (x_vals) |x| {
+        const log_pdf_val = dist.logpdf(x);
+        const pdf_val = dist.pdf(x);
+        const log_pdf_from_pdf = @log(pdf_val);
+
+        try expectApproxEqRel(log_pdf_val, log_pdf_from_pdf, 1e-10);
+    }
+}
+
+test "Weibull: mean calculation" {
+    // Weibull(k=1, λ=2) = Exponential(rate=0.5): E[X] = λ = 2
+    const dist1 = try Weibull(f64).init(1.0, 2.0);
+    try expectApproxEqRel(dist1.mean(), 2.0, 1e-10);
+
+    // Weibull(k=2, λ=1): E[X] = Γ(1.5) = √π/2 ≈ 0.8862
+    const dist2 = try Weibull(f64).init(2.0, 1.0);
+    try expectApproxEqRel(dist2.mean(), @sqrt(math.pi) / 2.0, 1e-10);
+}
+
+test "Weibull: variance calculation" {
+    // Weibull(k=1, λ=2) = Exponential(rate=0.5): Var(X) = λ² = 4
+    const dist = try Weibull(f64).init(1.0, 2.0);
+    try expectApproxEqRel(dist.variance(), 4.0, 1e-10);
+}
+
+test "Weibull: mode calculation" {
+    // k < 1: mode = 0
+    const dist1 = try Weibull(f64).init(0.5, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist1.mode());
+
+    // k = 1: mode = 0
+    const dist2 = try Weibull(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist2.mode());
+
+    // k = 2, λ = 1: mode = (1/2)^0.5 ≈ 0.7071
+    const dist3 = try Weibull(f64).init(2.0, 1.0);
+    try expectApproxEqRel(dist3.mode(), 1.0 / @sqrt(2.0), 1e-10);
+}
+
+test "Weibull: median calculation" {
+    // Weibull(k=2, λ=1): Median = (ln 2)^0.5 ≈ 0.8326
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    try expectApproxEqRel(dist.median(), @sqrt(@log(2.0)), 1e-10);
+}
+
+test "Weibull: survival function" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // S(x) = 1 - F(x)
+    const x_vals = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (x_vals) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-10);
+    }
+}
+
+test "Weibull: survival function direct formula k=2, λ=1" {
+    // S(x) = exp(-x²)
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    try expectApproxEqRel(dist.sf(1.0), @exp(-1.0), 1e-10);
+    try expectApproxEqRel(dist.sf(2.0), @exp(-4.0), 1e-10);
+}
+
+test "Weibull: hazard function for k=1 (constant)" {
+    // Exponential distribution has constant hazard rate = 1/λ
+    const dist = try Weibull(f64).init(1.0, 2.0);
+
+    // Hazard should be constant at 0.5
+    try expectApproxEqRel(dist.hazard(0.0), 0.5, 1e-10);
+    try expectApproxEqRel(dist.hazard(1.0), 0.5, 1e-10);
+    try expectApproxEqRel(dist.hazard(2.0), 0.5, 1e-10);
+}
+
+test "Weibull: hazard function for k=2 (increasing)" {
+    // Rayleigh distribution has increasing hazard rate
+    const dist = try Weibull(f64).init(2.0, 1.0);
+
+    // Hazard increases with x
+    const h0 = dist.hazard(0.5);
+    const h1 = dist.hazard(1.0);
+    const h2 = dist.hazard(2.0);
+
+    try testing.expect(h1 > h0);
+    try testing.expect(h2 > h1);
+}
+
+test "Weibull: special case k=1 matches Exponential" {
+    // Weibull(k=1, λ=2) should match Exponential(rate=1/2)
+    const weibull_dist = try Weibull(f64).init(1.0, 2.0);
+    const exp_dist = try Exponential(f64).init(0.5); // rate = 1/λ
+
+    const x_vals = [_]f64{ 0.5, 1.0, 2.0, 4.0 };
+    for (x_vals) |x| {
+        // PDF should match
+        try expectApproxEqRel(weibull_dist.pdf(x), exp_dist.pdf(x), 1e-10);
+
+        // CDF should match
+        try expectApproxEqRel(weibull_dist.cdf(x), exp_dist.cdf(x), 1e-10);
+    }
+
+    // Mean should match
+    try expectApproxEqRel(weibull_dist.mean(), exp_dist.mean(), 1e-10);
+
+    // Variance should match
+    try expectApproxEqRel(weibull_dist.variance(), exp_dist.variance(), 1e-10);
+}
+
+test "Weibull: f32 precision support" {
+    const dist = try Weibull(f32).init(2.0, 1.0);
+
+    _ = dist.pdf(0.5);
+    _ = dist.cdf(0.5);
+    _ = try dist.quantile(0.25);
+    _ = dist.mean();
+    _ = dist.variance();
+}
+
+test "Weibull: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    // No allocation in Weibull distribution, just verify init/usage
+    for (0..10) |_| {
+        const dist = try Weibull(f64).init(2.0, 1.0);
+        _ = dist.pdf(0.5);
+        _ = dist.cdf(0.5);
+        _ = try dist.quantile(0.25);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.hazard(1.0);
     }
 }
