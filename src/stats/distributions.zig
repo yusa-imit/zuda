@@ -3169,5 +3169,473 @@ test "distributions: memory safety" {
 
         const f_dist = try FDistribution(f64).init(5.0, 10.0);
         _ = f_dist.pdf(1.0);
+
+        const laplace = try Laplace(f64).init(0.0, 1.0);
+        _ = laplace.pdf(0.5);
+    }
+}
+
+// ============================================================================
+// Laplace (Double Exponential) Distribution
+// ============================================================================
+
+/// Laplace (Double Exponential) distribution Laplace(μ, b)
+///
+/// Probability density function (PDF):
+///   f(x) = (1/(2b)) × exp(-|x-μ|/b)
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = 0.5 × exp((x-μ)/b)           if x < μ
+///   F(x) = 1 - 0.5 × exp(-(x-μ)/b)     if x ≥ μ
+///
+/// Parameters:
+///   - location (μ): Location parameter (-∞ to +∞)
+///   - scale (b): Scale parameter (b > 0)
+///
+/// Properties:
+///   - Mean = μ
+///   - Variance = 2b²
+///   - Mode = μ
+///   - Symmetric around μ
+///   - Heavier tails than Normal distribution
+///
+/// Applications:
+///   - Lasso regression (Laplace prior on coefficients)
+///   - Differential privacy (Laplace mechanism)
+///   - Robust statistics (heavy-tailed alternative to Normal)
+///   - Signal processing (modeling noise)
+///
+/// Time: O(1) for all operations
+pub fn Laplace(comptime T: type) type {
+    return struct {
+        location: T,
+        scale: T,
+
+        const Self = @This();
+
+        /// Create a Laplace distribution with given location and scale
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(location: T, scale: T) DistributionError!Self {
+            if (scale <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(location) or !math.isFinite(scale)) return error.InvalidParameter;
+            return Self{ .location = location, .scale = scale };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (1/(2b)) × exp(-|x-μ|/b)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const diff = @abs(x - self.location);
+            return (1.0 / (2.0 * self.scale)) * @exp(-diff / self.scale);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = P(X ≤ x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.location) {
+                // x < μ: F(x) = 0.5 × exp((x-μ)/b)
+                return 0.5 * @exp((x - self.location) / self.scale);
+            } else {
+                // x ≥ μ: F(x) = 1 - 0.5 × exp(-(x-μ)/b)
+                return 1.0 - 0.5 * @exp(-(x - self.location) / self.scale);
+            }
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Uses closed-form inversion of CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            if (p < 0.5) {
+                // Left tail: x = μ + b × ln(2p)
+                return self.location + self.scale * @log(2.0 * p);
+            } else {
+                // Right tail: x = μ - b × ln(2(1-p))
+                return self.location - self.scale * @log(2.0 * (1.0 - p));
+            }
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method: X = μ - b × sgn(U - 0.5) × ln(1 - 2|U - 0.5|)
+        /// where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return try self.quantile(u) catch unreachable; // u is always valid probability
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = -ln(2b) - |x-μ|/b
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const diff = @abs(x - self.location);
+            return -@log(2.0 * self.scale) - diff / self.scale;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.location;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = 2b²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return 2.0 * self.scale * self.scale;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = μ (peak at location)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.location;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = μ (symmetric distribution)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.location;
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = 1 - F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Mean absolute deviation (MAD)
+        ///
+        /// MAD = b (scale parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mad(self: Self) T {
+            return self.scale;
+        }
+    };
+}
+
+// ============================================================================
+// Tests - Laplace Distribution
+// ============================================================================
+
+test "Laplace: init with valid parameters" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.location);
+    try testing.expectEqual(@as(f64, 1.0), dist.scale);
+
+    const dist2 = try Laplace(f64).init(5.0, 2.5);
+    try testing.expectEqual(@as(f64, 5.0), dist2.location);
+    try testing.expectEqual(@as(f64, 2.5), dist2.scale);
+}
+
+test "Laplace: init with invalid parameters" {
+    // Negative scale
+    try testing.expectError(error.InvalidParameter, Laplace(f64).init(0.0, -1.0));
+
+    // Zero scale
+    try testing.expectError(error.InvalidParameter, Laplace(f64).init(0.0, 0.0));
+
+    // Infinite location
+    try testing.expectError(error.InvalidParameter, Laplace(f64).init(math.inf(f64), 1.0));
+
+    // NaN scale
+    try testing.expectError(error.InvalidParameter, Laplace(f64).init(0.0, math.nan(f64)));
+}
+
+test "Laplace: pdf at location (mode)" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // At mode x = μ = 0: f(0) = 1/(2b) = 1/2 = 0.5
+    const pdf_at_mode = dist.pdf(0.0);
+    try expectApproxEqRel(pdf_at_mode, 0.5, 1e-10);
+
+    // With scale b = 2: f(0) = 1/(2×2) = 0.25
+    const dist2 = try Laplace(f64).init(0.0, 2.0);
+    try expectApproxEqRel(dist2.pdf(0.0), 0.25, 1e-10);
+}
+
+test "Laplace: pdf symmetry around location" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // f(μ + x) = f(μ - x) for any x
+    const x_values = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (x_values) |x| {
+        const pdf_pos = dist.pdf(x);
+        const pdf_neg = dist.pdf(-x);
+        try expectApproxEqRel(pdf_pos, pdf_neg, 1e-10);
+    }
+
+    // For shifted distribution μ = 5
+    const dist2 = try Laplace(f64).init(5.0, 1.0);
+    for (x_values) |x| {
+        const pdf_pos = dist2.pdf(5.0 + x);
+        const pdf_neg = dist2.pdf(5.0 - x);
+        try expectApproxEqRel(pdf_pos, pdf_neg, 1e-10);
+    }
+}
+
+test "Laplace: pdf manual calculation" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // At x = 1: f(1) = (1/2) × exp(-1) ≈ 0.1839
+    const pdf_1 = dist.pdf(1.0);
+    const expected_1 = 0.5 * @exp(-1.0);
+    try expectApproxEqRel(pdf_1, expected_1, 1e-10);
+
+    // At x = -2: f(-2) = (1/2) × exp(-2) ≈ 0.0677
+    const pdf_minus2 = dist.pdf(-2.0);
+    const expected_minus2 = 0.5 * @exp(-2.0);
+    try expectApproxEqRel(pdf_minus2, expected_minus2, 1e-10);
+}
+
+test "Laplace: cdf at median" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // At median x = μ = 0: F(0) = 0.5
+    const cdf_median = dist.cdf(0.0);
+    try expectApproxEqRel(cdf_median, 0.5, 1e-10);
+
+    // For shifted distribution μ = 3.5
+    const dist2 = try Laplace(f64).init(3.5, 2.0);
+    try expectApproxEqRel(dist2.cdf(3.5), 0.5, 1e-10);
+}
+
+test "Laplace: cdf boundary values" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // CDF should approach 0 as x → -∞
+    try expectApproxEqRel(dist.cdf(-10.0), 0.0, 1e-3);
+
+    // CDF should approach 1 as x → +∞
+    try expectApproxEqRel(dist.cdf(10.0), 1.0, 1e-3);
+
+    // Monotonicity: F(x1) < F(x2) for x1 < x2
+    try testing.expect(dist.cdf(-1.0) < dist.cdf(0.0));
+    try testing.expect(dist.cdf(0.0) < dist.cdf(1.0));
+}
+
+test "Laplace: cdf manual calculation" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // At x = -1 (left tail): F(-1) = 0.5 × exp(-1) ≈ 0.1839
+    const cdf_minus1 = dist.cdf(-1.0);
+    const expected_minus1 = 0.5 * @exp(-1.0);
+    try expectApproxEqRel(cdf_minus1, expected_minus1, 1e-10);
+
+    // At x = 1 (right tail): F(1) = 1 - 0.5 × exp(-1) ≈ 0.8161
+    const cdf_1 = dist.cdf(1.0);
+    const expected_1 = 1.0 - 0.5 * @exp(-1.0);
+    try expectApproxEqRel(cdf_1, expected_1, 1e-10);
+
+    // Verify symmetry: F(μ + x) = 1 - F(μ - x)
+    try expectApproxEqRel(cdf_1, 1.0 - cdf_minus1, 1e-10);
+}
+
+test "Laplace: quantile at p=0.5 (median)" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // Median: q(0.5) = μ = 0
+    const q_median = try dist.quantile(0.5);
+    try expectApproxEqRel(q_median, 0.0, 1e-10);
+
+    // For shifted distribution
+    const dist2 = try Laplace(f64).init(5.0, 2.0);
+    const q_median2 = try dist2.quantile(0.5);
+    try expectApproxEqRel(q_median2, 5.0, 1e-10);
+}
+
+test "Laplace: quantile roundtrip with cdf" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // For various probabilities, cdf(quantile(p)) should equal p
+    const p_values = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (p_values) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-8);
+    }
+}
+
+test "Laplace: quantile manual calculation" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // At p = 0.25 (left tail): q = μ + b × ln(2×0.25) = 0 + ln(0.5) ≈ -0.6931
+    const q_25 = try dist.quantile(0.25);
+    const expected_25 = @log(0.5);
+    try expectApproxEqRel(q_25, expected_25, 1e-10);
+
+    // At p = 0.75 (right tail): q = μ - b × ln(2×0.25) = 0 - ln(0.5) ≈ 0.6931
+    const q_75 = try dist.quantile(0.75);
+    const expected_75 = -@log(0.5);
+    try expectApproxEqRel(q_75, expected_75, 1e-10);
+
+    // Symmetry: q(0.75) = -q(0.25)
+    try expectApproxEqRel(q_75, -q_25, 1e-10);
+}
+
+test "Laplace: quantile error handling" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // Invalid probabilities
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.5));
+
+    // Boundary cases
+    const q_0 = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q_0));
+
+    const q_1 = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q_1));
+}
+
+test "Laplace: sampling mean validation" {
+    const dist = try Laplace(f64).init(5.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    // Sample 10000 values and verify sample mean ≈ theoretical mean
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const sample = dist.sample(rng);
+        sum += sample;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+
+    // Sample mean should be close to μ = 5.0
+    // Use larger tolerance due to sampling variability
+    try expectApproxEqRel(sample_mean, 5.0, 0.05);
+}
+
+test "Laplace: sampling variance validation" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    // Sample values and compute variance
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const sample = dist.sample(rng);
+        sum += sample;
+        sum_sq += sample * sample;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const sample_var = (sum_sq / @as(f64, @floatFromInt(n))) - (sample_mean * sample_mean);
+
+    // Theoretical variance = 2b² = 2×1² = 2.0
+    try expectApproxEqRel(sample_var, 2.0, 0.1);
+}
+
+test "Laplace: logpdf consistency with log(pdf)" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    const x_values = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (x_values) |x| {
+        const logpdf_val = dist.logpdf(x);
+        const log_of_pdf = @log(dist.pdf(x));
+        try expectApproxEqRel(logpdf_val, log_of_pdf, 1e-10);
+    }
+}
+
+test "Laplace: mean, variance, mode, median" {
+    const dist = try Laplace(f64).init(3.0, 1.5);
+
+    // Mean = μ = 3.0
+    try expectApproxEqRel(dist.mean(), 3.0, 1e-10);
+
+    // Variance = 2b² = 2×1.5² = 4.5
+    try expectApproxEqRel(dist.variance(), 4.5, 1e-10);
+
+    // Mode = μ = 3.0
+    try expectApproxEqRel(dist.mode(), 3.0, 1e-10);
+
+    // Median = μ = 3.0
+    try expectApproxEqRel(dist.median(), 3.0, 1e-10);
+
+    // MAD = b = 1.5
+    try expectApproxEqRel(dist.mad(), 1.5, 1e-10);
+}
+
+test "Laplace: survival function" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+
+    // S(x) = 1 - F(x)
+    const x_values = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (x_values) |x| {
+        const sf_val = dist.sf(x);
+        const expected = 1.0 - dist.cdf(x);
+        try expectApproxEqRel(sf_val, expected, 1e-10);
+    }
+}
+
+test "Laplace: comparison with Normal (heavier tails)" {
+    const laplace = try Laplace(f64).init(0.0, 1.0);
+    const normal = try Normal(f64).init(0.0, @sqrt(2.0)); // Same variance
+
+    // At x = 3 (tail), Laplace should have higher density
+    const laplace_tail = laplace.pdf(3.0);
+    const normal_tail = normal.pdf(3.0);
+    try testing.expect(laplace_tail > normal_tail);
+
+    // Laplace has heavier tails than Normal with same variance
+}
+
+test "Laplace: f32 precision" {
+    const dist = try Laplace(f32).init(0.0, 1.0);
+
+    // PDF at mode
+    try expectApproxEqRel(dist.pdf(0.0), @as(f32, 0.5), 1e-6);
+
+    // CDF at median
+    try expectApproxEqRel(dist.cdf(0.0), @as(f32, 0.5), 1e-6);
+
+    // Mean and variance
+    try expectApproxEqRel(dist.mean(), @as(f32, 0.0), 1e-6);
+    try expectApproxEqRel(dist.variance(), @as(f32, 2.0), 1e-6);
+}
+
+test "Laplace: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    // No allocation in Laplace distribution, just verify init/usage
+    for (0..10) |_| {
+        const dist = try Laplace(f64).init(0.0, 1.0);
+        _ = dist.pdf(0.5);
+        _ = dist.cdf(0.5);
+        _ = try dist.quantile(0.25);
     }
 }
