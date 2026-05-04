@@ -1,4 +1,47 @@
-## Latest Session (Session 460, 2026-05-04) — STABILIZATION MODE
+## Latest Session (Session 461, 2026-05-04) — FEATURE MODE
+- **Mode**: Feature (Session 461)
+- **Type**: Scientific computing enhancement - Student's t-distribution
+- **Module**: stats/distributions.zig (UPDATED)
+- **Feature**: Implemented Student's t(ν) continuous distribution for hypothesis testing
+- **Distribution Implemented**:
+  * Student's t(ν): Symmetric distribution with heavy tails - O(1) for all operations
+    - Parameters: ν (degrees of freedom, ν > 0)
+    - PDF: f(x) = Γ((ν+1)/2) / (√(νπ)Γ(ν/2)) × (1 + x²/ν)^(-(ν+1)/2)
+    - CDF: Via regularized incomplete beta function I_z(ν/2, 0.5) with z = ν/(ν + x²)
+    - Quantile: Inverse CDF via bisection search on CDF
+    - Sample: T = Z/√(V/ν) where Z~N(0,1), V~χ²(ν) (definition)
+    - logpdf(), mean() = 0 (ν>1), variance() = ν/(ν-2) (ν>2)
+    - Properties: symmetric around 0, heavier tails than normal, approaches N(0,1) as ν→∞
+- **Key Properties**:
+  * Symmetric around x=0 (mode, mean, median all at 0 for ν>1)
+  * Heavier tails than normal → more robust to outliers
+  * As ν→∞, converges to standard normal N(0,1)
+  * Mean undefined for ν≤1, variance infinite for ν≤2
+- **Implementation Strategy**:
+  * PDF computed in log-space using logGamma for numerical stability
+  * CDF uses regularizedBetaI (existing helper) with transformation
+  * Sampling uses definition: T = Z/√(V/ν) leveraging existing Normal and ChiSquared
+  * Quantile via bisection with adaptive bounds expansion
+- **Tests**: 16 comprehensive tests, 80 total (all passing)
+  * Init: parameter validation (ν>0, finite)
+  * PDF: mode at x=0, symmetry (-x vs +x), convergence to N(0,1) for large ν
+  * CDF: median at 0.5, symmetry property, boundary values
+  * Quantile: roundtrip cdf(quantile(p))≈p, error handling
+  * Sampling: mean validation (0), variance validation (ν/(ν-2)) with 10000 samples
+  * logpdf: consistency with log(pdf)
+  * mean: 0 for ν>1, NaN for ν≤1
+  * variance: ν/(ν-2) for ν>2, ∞ for 1<ν≤2, NaN for ν≤1
+  * Convergence: t(100) ≈ N(0,1) within 1% for PDF and CDF
+  * f32 precision support
+- **Use Cases**: t-tests (one/two sample, paired), confidence intervals with unknown variance, robust regression, small sample hypothesis testing
+- **Files Changed**: 1 (+423 lines) - src/stats/distributions.zig (2322 → 2745 lines)
+- **Commits**: e976401 (Student-t distribution), 6a64d65 (activity log)
+- **Distribution Status**: 9 total (7 continuous + 2 discrete) ✅
+  * Continuous: Normal, Uniform, Exponential, Gamma, Beta, ChiSquared, StudentT
+  * Discrete: Poisson, Binomial
+- **Next Priority**: Remaining distributions (F-distribution) to complete standard set OR other Phase 8 stats modules
+
+## Previous Session (Session 460, 2026-05-04) — STABILIZATION MODE
 - **Mode**: Stabilization (Session 460, every 5th session)
 - **Status**: ✅ ALL SYSTEMS GREEN
 - **CI Status**: Last run on main - SUCCESS (2026-05-04T03:04:00Z)
