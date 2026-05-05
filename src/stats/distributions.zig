@@ -1716,6 +1716,7 @@ const expectApproxEqRel = testing.expectApproxEqRel;
 const expectApproxEqAbs = testing.expectApproxEqAbs;
 const expectEqual = testing.expectEqual;
 const expectError = testing.expectError;
+const expect = testing.expect;
 
 test "Normal distribution: init" {
     const dist = try Normal(f64).init(0.0, 1.0);
@@ -4635,5 +4636,496 @@ test "Pareto: memory safety" {
         _ = dist.mode();
         _ = dist.median();
         _ = dist.sf(2.0);
+    }
+}
+
+// ============================================================================
+// LogNormal Distribution
+// ============================================================================
+
+/// LogNormal(μ, σ) — Log-normal distribution for right-skewed positive data
+///
+/// A continuous probability distribution where log(X) ~ Normal(μ, σ).
+/// Used for modeling positive random variables that are products of many
+/// independent random factors (multiplicative process).
+///
+/// Properties:
+/// - Domain: (0, ∞)
+/// - Parameters: μ (location), σ > 0 (scale)
+/// - Mean: exp(μ + σ²/2)
+/// - Variance: [exp(σ²) - 1] × exp(2μ + σ²)
+/// - Mode: exp(μ - σ²)
+/// - Median: exp(μ)
+///
+/// Use cases:
+/// - Finance: stock prices, income distribution, option pricing
+/// - Biology: species abundance, growth rates, cell sizes
+/// - Environmental: pollutant concentrations, particle sizes
+/// - Engineering: time to failure, reliability analysis
+/// - Economics: wealth distribution, company sizes
+///
+/// Parameters:
+///   - mu (μ): Location parameter of underlying normal (-∞ to +∞)
+///   - sigma (σ): Scale parameter of underlying normal (σ > 0)
+///
+/// Time: O(1) for all operations
+pub fn LogNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a log-normal distribution with given parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (1 / (x σ √(2π))) × exp(-(ln(x)-μ)²/(2σ²))  for x > 0
+        ///      = 0                                             for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            const log_x = @log(x);
+            const z = (log_x - self.mu) / self.sigma;
+            const norm_factor = 1.0 / (x * self.sigma * @sqrt(2.0 * math.pi));
+            return norm_factor * @exp(-0.5 * z * z);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = Φ((ln(x) - μ) / σ)  for x > 0
+        ///      = 0                    for x ≤ 0
+        ///
+        /// where Φ is the standard normal CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            const log_x = @log(x);
+            const z = (log_x - self.mu) / (self.sigma * @sqrt(2.0));
+            return 0.5 * (1.0 + erf(z));
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = exp(μ + σ × Φ⁻¹(p))
+        ///
+        /// where Φ⁻¹ is the inverse standard normal CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Use inverse error function approximation for standard normal quantile
+            const z = erfInv(2.0 * p - 1.0) * @sqrt(2.0);
+            return @exp(self.mu + self.sigma * z);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses: if Z ~ N(μ, σ²), then X = exp(Z) ~ LogNormal(μ, σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Sample from Normal(μ, σ²), then exponentiate
+            const uniform1 = rng.float(T);
+            const uniform2 = rng.float(T);
+
+            // Box-Muller transform for standard normal
+            const z = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2);
+
+            // Scale and shift, then exponentiate
+            return @exp(self.mu + self.sigma * z);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = -log(x) - log(σ√(2π)) - (ln(x)-μ)²/(2σ²)
+        ///
+        /// More numerically stable than log(pdf(x)) for extreme values
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+
+            const log_x = @log(x);
+            const z = (log_x - self.mu) / self.sigma;
+            return -log_x - @log(self.sigma * @sqrt(2.0 * math.pi)) - 0.5 * z * z;
+        }
+
+        /// Survival function (complementary CDF) - P(X > x)
+        ///
+        /// S(x) = 1 - F(x) = 1 - Φ((ln(x) - μ) / σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+
+            const log_x = @log(x);
+            const z = (log_x - self.mu) / (self.sigma * @sqrt(2.0));
+            return 0.5 * (1.0 - erf(z));
+        }
+
+        /// Expected value (mean)
+        ///
+        /// E[X] = exp(μ + σ²/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @exp(self.mu + 0.5 * self.sigma * self.sigma);
+        }
+
+        /// Variance
+        ///
+        /// Var(X) = [exp(σ²) - 1] × exp(2μ + σ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const sigma_sq = self.sigma * self.sigma;
+            return (@exp(sigma_sq) - 1.0) * @exp(2.0 * self.mu + sigma_sq);
+        }
+
+        /// Mode (most probable value)
+        ///
+        /// mode = exp(μ - σ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return @exp(self.mu - self.sigma * self.sigma);
+        }
+
+        /// Median (50th percentile)
+        ///
+        /// median = exp(μ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return @exp(self.mu);
+        }
+    };
+}
+
+// ============================================================================
+// LogNormal Distribution Tests
+// ============================================================================
+
+test "LogNormal: init with valid parameters" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    try expectEqual(0.0, dist.mu);
+    try expectEqual(1.0, dist.sigma);
+}
+
+test "LogNormal: init with zero sigma fails" {
+    try expectError(error.InvalidParameter, LogNormal(f64).init(0.0, 0.0));
+}
+
+test "LogNormal: init with negative sigma fails" {
+    try expectError(error.InvalidParameter, LogNormal(f64).init(0.0, -1.0));
+}
+
+test "LogNormal: init with infinite mu fails" {
+    try expectError(error.InvalidParameter, LogNormal(f64).init(math.inf(f64), 1.0));
+}
+
+test "LogNormal: init with NaN sigma fails" {
+    try expectError(error.InvalidParameter, LogNormal(f64).init(0.0, math.nan(f64)));
+}
+
+test "LogNormal: pdf at mode is maximum" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    const mode = dist.mode();
+
+    // PDF should be higher at mode than at nearby points
+    const pdf_mode = dist.pdf(mode);
+    const pdf_lower = dist.pdf(mode * 0.9);
+    const pdf_upper = dist.pdf(mode * 1.1);
+
+    try expect(pdf_mode > pdf_lower);
+    try expect(pdf_mode > pdf_upper);
+}
+
+test "LogNormal: pdf for negative x is zero" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    try expectEqual(0.0, dist.pdf(-1.0));
+    try expectEqual(0.0, dist.pdf(0.0));
+}
+
+test "LogNormal: pdf manual calculation" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    // For LogNormal(0, 1) at x=1: f(1) = 1/(1×1×√(2π)) × exp(0) = 1/√(2π) ≈ 0.3989
+    const pdf_at_1 = dist.pdf(1.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try expectApproxEqRel(pdf_at_1, expected, 1e-10);
+}
+
+test "LogNormal: cdf at median is 0.5" {
+    const dist = try LogNormal(f64).init(1.5, 0.5);
+    const median = dist.median();
+    const cdf_median = dist.cdf(median);
+    try expectApproxEqRel(cdf_median, 0.5, 1e-10);
+}
+
+test "LogNormal: cdf for negative x is zero" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    try expectEqual(0.0, dist.cdf(-1.0));
+    try expectEqual(0.0, dist.cdf(0.0));
+}
+
+test "LogNormal: cdf is monotonic" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    const cdf1 = dist.cdf(0.5);
+    const cdf2 = dist.cdf(1.0);
+    const cdf3 = dist.cdf(2.0);
+    const cdf4 = dist.cdf(5.0);
+
+    try expect(cdf1 < cdf2);
+    try expect(cdf2 < cdf3);
+    try expect(cdf3 < cdf4);
+}
+
+test "LogNormal: cdf manual calculation" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    // For LogNormal(0, 1) at x=exp(1): cdf(e) = Φ((ln(e)-0)/1) = Φ(1) ≈ 0.8413
+    const e = @exp(1.0);
+    const cdf_at_e = dist.cdf(e);
+    const expected = 0.8413447460685429; // Φ(1)
+    try expectApproxEqRel(cdf_at_e, expected, 1e-10);
+}
+
+test "LogNormal: quantile at p=0.5 equals median" {
+    const dist = try LogNormal(f64).init(1.0, 0.5);
+    const q = try dist.quantile(0.5);
+    const median = dist.median();
+    try expectApproxEqRel(q, median, 1e-10);
+}
+
+test "LogNormal: quantile roundtrip with cdf" {
+    const dist = try LogNormal(f64).init(0.5, 1.5);
+
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-9);
+    }
+}
+
+test "LogNormal: quantile error handling" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "LogNormal: quantile at p=0 is 0" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try expectEqual(0.0, q);
+}
+
+test "LogNormal: quantile at p=1 is infinity" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "LogNormal: quantile manual calculation" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    // For LogNormal(0, 1): Q(0.5) = exp(0 + 1×Φ⁻¹(0.5)) = exp(0) = 1
+    const q_median = try dist.quantile(0.5);
+    try expectApproxEqRel(q_median, 1.0, 1e-10);
+}
+
+test "LogNormal: sample produces positive values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(x > 0.0);
+    }
+}
+
+test "LogNormal: sample mean validation" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try LogNormal(f64).init(0.0, 0.5);
+    const expected_mean = dist.mean();
+
+    const n = 10000;
+    var sum: f64 = 0.0;
+    for (0..n) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+
+    // Within 5% of theoretical mean (log-normal has high variance)
+    try expectApproxEqRel(sample_mean, expected_mean, 0.05);
+}
+
+test "LogNormal: sample variance validation" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const dist = try LogNormal(f64).init(0.0, 0.5);
+    const expected_mean = dist.mean();
+    const expected_variance = dist.variance();
+
+    const n = 10000;
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const sample_variance = sum_sq / @as(f64, @floatFromInt(n)) - sample_mean * sample_mean;
+
+    // Mean and variance within 10% (log-normal has heavy tail)
+    try expectApproxEqRel(sample_mean, expected_mean, 0.1);
+    try expectApproxEqRel(sample_variance, expected_variance, 0.15);
+}
+
+test "LogNormal: logpdf consistency with log(pdf)" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        const logpdf_val = dist.logpdf(x);
+        const pdf_val = dist.pdf(x);
+        const log_pdf_val = @log(pdf_val);
+
+        try expectApproxEqRel(logpdf_val, log_pdf_val, 1e-10);
+    }
+}
+
+test "LogNormal: logpdf for negative x is -inf" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    const logpdf_neg = dist.logpdf(-1.0);
+    try expect(math.isInf(logpdf_neg));
+    try expect(logpdf_neg < 0.0);
+}
+
+test "LogNormal: survival function consistency with 1 - cdf" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-10);
+    }
+}
+
+test "LogNormal: sf for negative x is 1" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    try expectEqual(1.0, dist.sf(-1.0));
+    try expectEqual(1.0, dist.sf(0.0));
+}
+
+test "LogNormal: mean formula" {
+    const dist = try LogNormal(f64).init(1.0, 0.5);
+    const mean_val = dist.mean();
+    // E[X] = exp(μ + σ²/2) = exp(1.0 + 0.25/2) = exp(1.125)
+    const expected = @exp(1.0 + 0.5 * 0.5 / 2.0);
+    try expectApproxEqRel(mean_val, expected, 1e-10);
+}
+
+test "LogNormal: variance formula" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    const var_val = dist.variance();
+    // Var(X) = [exp(σ²) - 1] × exp(2μ + σ²) = [exp(1) - 1] × exp(0 + 1) = [e - 1] × e
+    const sigma_sq = 1.0;
+    const expected = (@exp(sigma_sq) - 1.0) * @exp(2.0 * 0.0 + sigma_sq);
+    try expectApproxEqRel(var_val, expected, 1e-10);
+}
+
+test "LogNormal: mode formula" {
+    const dist = try LogNormal(f64).init(1.0, 0.5);
+    const mode_val = dist.mode();
+    // mode = exp(μ - σ²) = exp(1.0 - 0.25) = exp(0.75)
+    const expected = @exp(1.0 - 0.5 * 0.5);
+    try expectApproxEqRel(mode_val, expected, 1e-10);
+}
+
+test "LogNormal: median formula" {
+    const dist = try LogNormal(f64).init(1.5, 2.0);
+    const median_val = dist.median();
+    // median = exp(μ) = exp(1.5)
+    const expected = @exp(1.5);
+    try expectApproxEqRel(median_val, expected, 1e-10);
+}
+
+test "LogNormal: median < mean < mode relationship" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    const mode_val = dist.mode();
+    const median_val = dist.median();
+    const mean_val = dist.mean();
+
+    // For log-normal: mode < median < mean (right-skewed)
+    try expect(mode_val < median_val);
+    try expect(median_val < mean_val);
+}
+
+test "LogNormal: standard log-normal special case" {
+    // LogNormal(0, 1) is the "standard" log-normal
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+
+    try expectApproxEqRel(dist.median(), 1.0, 1e-10);
+    try expectApproxEqRel(dist.mode(), @exp(-1.0), 1e-10);
+}
+
+test "LogNormal: f32 precision support" {
+    const dist = try LogNormal(f32).init(0.0, 1.0);
+
+    _ = dist.pdf(1.5);
+    _ = dist.cdf(2.0);
+    _ = try dist.quantile(0.5);
+    _ = dist.mean();
+    _ = dist.variance();
+    _ = dist.mode();
+    _ = dist.median();
+    _ = dist.logpdf(1.0);
+    _ = dist.sf(2.0);
+}
+
+test "LogNormal: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    // No allocation in LogNormal distribution, just verify init/usage
+    for (0..10) |_| {
+        const dist = try LogNormal(f64).init(0.0, 1.0);
+        _ = dist.pdf(1.0);
+        _ = dist.cdf(1.0);
+        _ = try dist.quantile(0.5);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.mode();
+        _ = dist.median();
+        _ = dist.logpdf(1.0);
+        _ = dist.sf(1.0);
     }
 }
