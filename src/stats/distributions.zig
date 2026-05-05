@@ -5129,3 +5129,433 @@ test "LogNormal: memory safety" {
         _ = dist.sf(1.0);
     }
 }
+
+// ============================================================================
+// Cauchy Distribution
+// ============================================================================
+
+/// Cauchy distribution (Lorentz distribution) with location x₀ and scale γ
+///
+/// Probability density function (PDF):
+///   f(x) = 1 / (πγ[1 + ((x-x₀)/γ)²])
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = (1/π) × arctan((x-x₀)/γ) + 1/2
+///
+/// Parameters:
+///   - x0 (x₀): Location parameter (median, mode) (-∞ to +∞)
+///   - gamma (γ): Scale parameter (half-width at half-maximum, γ > 0)
+///
+/// Properties:
+///   - Mean: undefined (infinite variance prevents mean from existing)
+///   - Variance: undefined (infinite)
+///   - Mode: x₀
+///   - Median: x₀
+///   - Heavy-tailed distribution (heavier than Student's t)
+///   - Stable distribution (sum of Cauchy RVs is Cauchy)
+///   - Ratio of two independent standard normals ~ Cauchy(0,1)
+///
+/// Use cases:
+///   - Resonance phenomena in physics (Lorentzian profile)
+///   - Ratio of two normal random variables
+///   - Modeling outlier-prone data
+///   - Spectral line broadening
+///   - Robust statistics (median-based inference)
+///
+/// Time: O(1) for all operations
+pub fn Cauchy(comptime T: type) type {
+    return struct {
+        x0: T, // location (median, mode)
+        gamma: T, // scale (half-width at half-maximum)
+
+        const Self = @This();
+
+        /// Create a Cauchy distribution with given location and scale
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(x0: T, gamma: T) DistributionError!Self {
+            if (gamma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(x0) or !math.isFinite(gamma)) return error.InvalidParameter;
+            return Self{ .x0 = x0, .gamma = gamma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = 1 / (πγ[1 + ((x-x₀)/γ)²])
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.x0) / self.gamma;
+            return 1.0 / (math.pi * self.gamma * (1.0 + z * z));
+        }
+
+        /// Log probability density function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.x0) / self.gamma;
+            // log(pdf) = -log(π) - log(γ) - log(1 + z²)
+            return -@log(math.pi) - @log(self.gamma) - @log(1.0 + z * z);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = (1/π) × arctan((x-x₀)/γ) + 1/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.x0) / self.gamma;
+            return (1.0 / math.pi) * math.atan(z) + 0.5;
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Q(p) = x₀ + γ × tan(π(p - 1/2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            // Q(p) = x₀ + γ × tan(π(p - 1/2))
+            return self.x0 + self.gamma * @tan(math.pi * (p - 0.5));
+        }
+
+        /// Generate random sample using inverse transform method
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self) T {
+            // Use inverse transform: X = Q(U) where U ~ Uniform(0,1)
+            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
+            const u = prng.random().float(T);
+            // Avoid boundary cases for tan
+            const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
+            return self.x0 + self.gamma * @tan(math.pi * (safe_u - 0.5));
+        }
+
+        /// Survival function (complementary CDF)
+        ///
+        /// S(x) = 1 - F(x) = 1/2 - (1/π) × arctan((x-x₀)/γ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Mean (expected value) - undefined for Cauchy distribution
+        ///
+        /// The Cauchy distribution has no defined mean (infinite variance)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Variance - undefined for Cauchy distribution
+        ///
+        /// The Cauchy distribution has infinite variance
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Mode (most likely value)
+        ///
+        /// Mode = x₀ (location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.x0;
+        }
+
+        /// Median (50th percentile)
+        ///
+        /// Median = x₀ (location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.x0;
+        }
+    };
+}
+
+// ============================================================================
+// Cauchy Distribution Tests
+// ============================================================================
+
+test "Cauchy: init with valid parameters" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.x0);
+    try testing.expectEqual(1.0, dist.gamma);
+
+    const dist2 = try Cauchy(f64).init(2.5, 0.5);
+    try testing.expectEqual(2.5, dist2.x0);
+    try testing.expectEqual(0.5, dist2.gamma);
+}
+
+test "Cauchy: init rejects invalid parameters" {
+    // Negative scale
+    try testing.expectError(error.InvalidParameter, Cauchy(f64).init(0.0, -1.0));
+
+    // Zero scale
+    try testing.expectError(error.InvalidParameter, Cauchy(f64).init(0.0, 0.0));
+
+    // Infinite parameters
+    try testing.expectError(error.InvalidParameter, Cauchy(f64).init(math.inf(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Cauchy(f64).init(0.0, math.inf(f64)));
+
+    // NaN parameters
+    try testing.expectError(error.InvalidParameter, Cauchy(f64).init(math.nan(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Cauchy(f64).init(0.0, math.nan(f64)));
+}
+
+test "Cauchy: PDF properties" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // PDF at mode (x₀) should be maximum = 1/(πγ)
+    const pdf_mode = dist.pdf(0.0);
+    try testing.expectApproxEqRel(1.0 / math.pi, pdf_mode, 1e-10);
+
+    // PDF is symmetric around x₀
+    const pdf_left = dist.pdf(-2.0);
+    const pdf_right = dist.pdf(2.0);
+    try testing.expectApproxEqRel(pdf_left, pdf_right, 1e-10);
+
+    // PDF at x₀ ± γ should be half of maximum
+    const pdf_hwhm = dist.pdf(1.0);
+    try testing.expectApproxEqRel(pdf_mode / 2.0, pdf_hwhm, 1e-10);
+}
+
+test "Cauchy: PDF manual calculation" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // Standard Cauchy at x=1: f(1) = 1/(π(1+1²)) = 1/(2π)
+    const pdf_1 = dist.pdf(1.0);
+    try testing.expectApproxEqRel(1.0 / (2.0 * math.pi), pdf_1, 1e-10);
+
+    // Non-standard Cauchy(2, 0.5) at x=2.5:
+    // z = (2.5-2)/0.5 = 1
+    // f(2.5) = 1/(π×0.5×(1+1)) = 1/π ≈ 0.318310
+    const dist2 = try Cauchy(f64).init(2.0, 0.5);
+    const pdf_2 = dist2.pdf(2.5);
+    try testing.expectApproxEqRel(1.0 / math.pi, pdf_2, 1e-6);
+}
+
+test "Cauchy: CDF properties" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // CDF at median should be 0.5
+    const cdf_median = dist.cdf(0.0);
+    try testing.expectApproxEqRel(0.5, cdf_median, 1e-10);
+
+    // CDF is symmetric around x₀
+    const cdf_left = dist.cdf(-2.0);
+    const cdf_right = dist.cdf(2.0);
+    try testing.expectApproxEqRel(cdf_left, 1.0 - cdf_right, 1e-10);
+
+    // CDF approaches 0 as x → -∞
+    const cdf_neg_large = dist.cdf(-100.0);
+    try testing.expect(cdf_neg_large < 0.01);
+
+    // CDF approaches 1 as x → +∞
+    const cdf_pos_large = dist.cdf(100.0);
+    try testing.expect(cdf_pos_large > 0.99);
+}
+
+test "Cauchy: CDF manual calculation" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // Standard Cauchy at x=1:
+    // F(1) = (1/π)arctan(1) + 1/2 = (1/π)(π/4) + 1/2 = 1/4 + 1/2 = 3/4
+    const cdf_1 = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.75, cdf_1, 1e-10);
+
+    // Standard Cauchy at x=-1:
+    // F(-1) = (1/π)arctan(-1) + 1/2 = (1/π)(-π/4) + 1/2 = -1/4 + 1/2 = 1/4
+    const cdf_neg1 = dist.cdf(-1.0);
+    try testing.expectApproxEqRel(0.25, cdf_neg1, 1e-10);
+}
+
+test "Cauchy: quantile properties" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // Median (p=0.5) should equal x₀
+    const q_median = try dist.quantile(0.5);
+    try testing.expectApproxEqRel(0.0, q_median, 1e-10);
+
+    // Quantile at p=0.75 should equal 1 for standard Cauchy
+    // Q(0.75) = tan(π(0.75-0.5)) = tan(π/4) = 1
+    const q_75 = try dist.quantile(0.75);
+    try testing.expectApproxEqRel(1.0, q_75, 1e-10);
+
+    // Quantile at p=0.25 should equal -1
+    const q_25 = try dist.quantile(0.25);
+    try testing.expectApproxEqRel(-1.0, q_25, 1e-10);
+
+    // Boundary cases
+    const q_0 = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q_0));
+
+    const q_1 = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q_1));
+}
+
+test "Cauchy: quantile error handling" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // Invalid probabilities
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Cauchy: quantile-CDF roundtrip" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    const test_probs = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const p_back = dist.cdf(q);
+        try testing.expectApproxEqRel(p, p_back, 1e-8);
+    }
+}
+
+test "Cauchy: sampling produces values in reasonable range" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // Cauchy has heavy tails, but median should be near x₀
+    var count_near_median: usize = 0;
+    const n_samples = 1000;
+
+    for (0..n_samples) |_| {
+        const x = dist.sample();
+        // Check at least some samples are within [-10, 10]
+        // (about 93.5% should be within this range)
+        if (x >= -10.0 and x <= 10.0) {
+            count_near_median += 1;
+        }
+    }
+
+    // At least 80% should be within [-10, 10] (conservative check)
+    const ratio = @as(f64, @floatFromInt(count_near_median)) / @as(f64, @floatFromInt(n_samples));
+    try testing.expect(ratio >= 0.80);
+}
+
+test "Cauchy: logpdf consistency with log(pdf)" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    const test_x = [_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 };
+    for (test_x) |x| {
+        const log_pdf = dist.logpdf(x);
+        const pdf = dist.pdf(x);
+        try testing.expectApproxEqRel(@log(pdf), log_pdf, 1e-10);
+    }
+}
+
+test "Cauchy: survival function consistency" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    const test_x = [_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 };
+    for (test_x) |x| {
+        const sf = dist.sf(x);
+        const cdf = dist.cdf(x);
+        try testing.expectApproxEqRel(1.0 - cdf, sf, 1e-10);
+    }
+}
+
+test "Cauchy: mean is undefined (NaN)" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Cauchy: variance is infinite" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "Cauchy: mode equals location parameter" {
+    const dist = try Cauchy(f64).init(2.5, 1.0);
+    const m = dist.mode();
+    try testing.expectEqual(2.5, m);
+}
+
+test "Cauchy: median equals location parameter" {
+    const dist = try Cauchy(f64).init(-1.5, 0.5);
+    const m = dist.median();
+    try testing.expectEqual(-1.5, m);
+}
+
+test "Cauchy: ratio of normals property" {
+    // The ratio Z = X/Y where X,Y ~ N(0,1) follows Cauchy(0,1)
+    // We can verify this by checking that samples from ratio match Cauchy quantiles
+    const allocator = testing.allocator;
+
+    const n_samples = 10000;
+    const samples = try allocator.alloc(f64, n_samples);
+    defer allocator.free(samples);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const rand = prng.random();
+
+    // Generate ratio samples
+    for (samples) |*s| {
+        // Box-Muller for standard normal
+        const uniform1 = rand.float(f64);
+        const uniform2 = rand.float(f64);
+        const x = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2);
+        const y = @sqrt(-2.0 * @log(uniform1)) * @sin(2.0 * math.pi * uniform2);
+        s.* = x / y; // Ratio ~ Cauchy(0,1)
+    }
+
+    // Sort samples to compute empirical quantiles
+    std.mem.sort(f64, samples, {}, std.sort.asc(f64));
+
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+
+    // Check empirical quantiles match theoretical quantiles
+    const test_probs = [_]f64{ 0.25, 0.5, 0.75 };
+    for (test_probs) |p| {
+        const idx = @as(usize, @intFromFloat(p * @as(f64, @floatFromInt(n_samples))));
+        const empirical_q = samples[@min(idx, n_samples - 1)];
+        const theoretical_q = try dist.quantile(p);
+        // Looser tolerance due to sampling variability
+        try testing.expectApproxEqRel(theoretical_q, empirical_q, 0.1);
+    }
+}
+
+test "Cauchy: f32 precision support" {
+    const dist = try Cauchy(f32).init(0.0, 1.0);
+
+    _ = dist.pdf(1.5);
+    _ = dist.cdf(2.0);
+    _ = try dist.quantile(0.5);
+    _ = dist.mean();
+    _ = dist.variance();
+    _ = dist.mode();
+    _ = dist.median();
+    _ = dist.logpdf(1.0);
+    _ = dist.sf(2.0);
+}
+
+test "Cauchy: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    // No allocation in Cauchy distribution, just verify init/usage
+    for (0..10) |_| {
+        const dist = try Cauchy(f64).init(0.0, 1.0);
+        _ = dist.pdf(1.0);
+        _ = dist.cdf(1.0);
+        _ = try dist.quantile(0.5);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.mode();
+        _ = dist.median();
+        _ = dist.logpdf(1.0);
+        _ = dist.sf(1.0);
+    }
+}
