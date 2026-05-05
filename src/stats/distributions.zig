@@ -4183,3 +4183,457 @@ test "Weibull: memory safety" {
         _ = dist.hazard(1.0);
     }
 }
+
+// ============================================================================
+// Pareto Distribution (Type I)
+// ============================================================================
+
+/// Pareto distribution (Type I) Pareto(x_m, α)
+///
+/// Probability density function (PDF):
+///   f(x) = (α × x_m^α) / x^(α+1)  for x ≥ x_m
+///        = 0                       for x < x_m
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = 1 - (x_m / x)^α
+///
+/// Quantile function (inverse CDF):
+///   Q(p) = x_m / (1-p)^(1/α)
+///
+/// Parameters:
+///   - x_m: Scale parameter (minimum value, x_m > 0)
+///   - alpha (α): Shape parameter (tail index, α > 0)
+///
+/// Properties:
+///   - Domain: [x_m, ∞)
+///   - Mean: α×x_m/(α-1) for α > 1, undefined otherwise
+///   - Variance: (x_m²×α) / ((α-1)²(α-2)) for α > 2, undefined otherwise
+///   - Mode: x_m (always at minimum)
+///   - Heavy tail: larger α → lighter tail, smaller α → heavier tail
+///
+/// Use cases:
+///   - Income/wealth distribution (Pareto principle: 80/20 rule)
+///   - City population sizes
+///   - File sizes, earthquake magnitudes
+///   - Any phenomenon following power-law distribution
+///
+/// Time: O(1) for all operations
+pub fn Pareto(comptime T: type) type {
+    return struct {
+        x_m: T, // scale (minimum value)
+        alpha: T, // shape (tail index)
+
+        const Self = @This();
+
+        /// Create a Pareto distribution with given scale and shape
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(x_m: T, alpha: T) DistributionError!Self {
+            if (x_m <= 0.0) return error.InvalidParameter;
+            if (alpha <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(x_m) or !math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .x_m = x_m, .alpha = alpha };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (α × x_m^α) / x^(α+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.x_m) return 0.0;
+            // Use log-space for numerical stability
+            // log(pdf) = log(α) + α×log(x_m) - (α+1)×log(x)
+            const log_pdf = @log(self.alpha) + self.alpha * @log(self.x_m) - (self.alpha + 1.0) * @log(x);
+            return @exp(log_pdf);
+        }
+
+        /// Log probability density function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.x_m) return -math.inf(T);
+            return @log(self.alpha) + self.alpha * @log(self.x_m) - (self.alpha + 1.0) * @log(x);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 - (x_m/x)^α
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.x_m) return 0.0;
+            return 1.0 - math.pow(T, self.x_m / x, self.alpha);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Q(p) = x_m / (1-p)^(1/α)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.x_m;
+            if (p == 1.0) return math.inf(T);
+            // Q(p) = x_m / (1-p)^(1/α)
+            return self.x_m / math.pow(T, 1.0 - p, 1.0 / self.alpha);
+        }
+
+        /// Generate random sample using inverse transform method
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self) T {
+            // Use inverse transform: X = Q(U) where U ~ Uniform(0,1)
+            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
+            const u = prng.random().float(T);
+            // Avoid quantile error handling in hot path
+            return self.x_m / math.pow(T, 1.0 - u, 1.0 / self.alpha);
+        }
+
+        /// Survival function (complementary CDF)
+        ///
+        /// S(x) = 1 - F(x) = (x_m/x)^α
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < self.x_m) return 1.0;
+            return math.pow(T, self.x_m / x, self.alpha);
+        }
+
+        /// Mean (expected value)
+        ///
+        /// E[X] = α×x_m/(α-1) for α > 1, undefined otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.alpha <= 1.0) return math.nan(T);
+            return (self.alpha * self.x_m) / (self.alpha - 1.0);
+        }
+
+        /// Variance
+        ///
+        /// Var(X) = (x_m²×α) / ((α-1)²(α-2)) for α > 2, undefined otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.alpha <= 2.0) {
+                if (self.alpha <= 1.0) return math.nan(T);
+                return math.inf(T); // Infinite variance for 1 < α ≤ 2
+            }
+            const numerator = self.x_m * self.x_m * self.alpha;
+            const denominator = (self.alpha - 1.0) * (self.alpha - 1.0) * (self.alpha - 2.0);
+            return numerator / denominator;
+        }
+
+        /// Mode (most likely value)
+        ///
+        /// Mode = x_m (always at minimum)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.x_m;
+        }
+
+        /// Median
+        ///
+        /// Median = x_m × 2^(1/α)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.x_m * math.pow(T, 2.0, 1.0 / self.alpha);
+        }
+    };
+}
+
+// ============================================================================
+// Tests: Pareto Distribution
+// ============================================================================
+
+test "Pareto: initialization with valid parameters" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+    try expectEqual(@as(f64, 1.0), dist.x_m);
+    try expectEqual(@as(f64, 2.0), dist.alpha);
+}
+
+test "Pareto: initialization errors" {
+    // Negative scale
+    try expectError(error.InvalidParameter, Pareto(f64).init(-1.0, 2.0));
+
+    // Zero scale
+    try expectError(error.InvalidParameter, Pareto(f64).init(0.0, 2.0));
+
+    // Negative shape
+    try expectError(error.InvalidParameter, Pareto(f64).init(1.0, -1.0));
+
+    // Infinite scale
+    try expectError(error.InvalidParameter, Pareto(f64).init(math.inf(f64), 2.0));
+
+    // NaN shape
+    try expectError(error.InvalidParameter, Pareto(f64).init(1.0, math.nan(f64)));
+}
+
+test "Pareto: PDF at mode (x_m)" {
+    // PDF is maximized at x_m
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    // PDF(x_m) = α / x_m = 2.0 / 1.0 = 2.0
+    try expectApproxEqRel(dist.pdf(1.0), 2.0, 1e-10);
+}
+
+test "Pareto: PDF below x_m returns 0" {
+    const dist = try Pareto(f64).init(2.0, 1.5);
+
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(1.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(1.99));
+}
+
+test "Pareto: PDF manual calculation" {
+    // Pareto(x_m=1, α=2): PDF(x) = 2/x³
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    try expectApproxEqRel(dist.pdf(1.0), 2.0, 1e-10);
+    try expectApproxEqRel(dist.pdf(2.0), 2.0 / 8.0, 1e-10); // 2/2³ = 0.25
+    try expectApproxEqRel(dist.pdf(4.0), 2.0 / 64.0, 1e-10); // 2/4³ = 0.03125
+}
+
+test "Pareto: CDF at boundaries" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    // CDF at x_m should be 0
+    try expectEqual(@as(f64, 0.0), dist.cdf(1.0));
+
+    // CDF approaches 1 as x → ∞
+    try expectApproxEqRel(dist.cdf(100.0), 1.0, 1e-3);
+}
+
+test "Pareto: CDF manual calculation" {
+    // Pareto(x_m=1, α=2): CDF(x) = 1 - (1/x)²
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    try expectApproxEqRel(dist.cdf(2.0), 1.0 - 0.25, 1e-10); // 1 - 1/4 = 0.75
+    try expectApproxEqRel(dist.cdf(4.0), 1.0 - 0.0625, 1e-10); // 1 - 1/16 = 0.9375
+}
+
+test "Pareto: CDF monotonicity" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    const x1 = dist.cdf(1.5);
+    const x2 = dist.cdf(2.0);
+    const x3 = dist.cdf(3.0);
+
+    try testing.expect(x2 > x1);
+    try testing.expect(x3 > x2);
+}
+
+test "Pareto: quantile at median" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    // Median = x_m × 2^(1/α) = 1 × 2^0.5 ≈ 1.414
+    const q_median = try dist.quantile(0.5);
+    try expectApproxEqRel(q_median, @sqrt(2.0), 1e-10);
+}
+
+test "Pareto: quantile roundtrip with CDF" {
+    const dist = try Pareto(f64).init(2.0, 1.5);
+
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const x = try dist.quantile(p);
+        const p_back = dist.cdf(x);
+        try expectApproxEqRel(p_back, p, 1e-10);
+    }
+}
+
+test "Pareto: quantile error handling" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    // Probability out of range
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+
+    // Boundary cases
+    try expectEqual(dist.x_m, try dist.quantile(0.0));
+    try expectEqual(math.inf(f64), try dist.quantile(1.0));
+}
+
+test "Pareto: quantile manual calculation" {
+    // Pareto(x_m=1, α=2): Q(p) = 1/(1-p)^0.5
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    // Q(0.75) = 1/(0.25)^0.5 = 2
+    try expectApproxEqRel(try dist.quantile(0.75), 2.0, 1e-10);
+
+    // Q(0.9) = 1/(0.1)^0.5 ≈ 3.162
+    try expectApproxEqRel(try dist.quantile(0.9), @sqrt(10.0), 1e-10);
+}
+
+test "Pareto: sampling mean validation" {
+    const dist = try Pareto(f64).init(1.0, 3.0);
+
+    var sum: f64 = 0.0;
+    const n_samples = 10000;
+    for (0..n_samples) |_| {
+        sum += dist.sample();
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n_samples));
+
+    // Theoretical mean = α×x_m/(α-1) = 3×1/2 = 1.5
+    const theoretical_mean = dist.mean();
+    try expectApproxEqRel(sample_mean, theoretical_mean, 0.05); // 5% tolerance
+}
+
+test "Pareto: sampling variance validation" {
+    const dist = try Pareto(f64).init(1.0, 4.0);
+
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n_samples = 10000;
+    for (0..n_samples) |_| {
+        const x = dist.sample();
+        sum += x;
+        sum_sq += x * x;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n_samples));
+    const sample_variance = (sum_sq / @as(f64, @floatFromInt(n_samples))) - (sample_mean * sample_mean);
+
+    // Theoretical variance = (x_m²×α) / ((α-1)²(α-2)) = 16/(9×2) = 8/9 ≈ 0.889
+    const theoretical_variance = dist.variance();
+    try expectApproxEqRel(sample_variance, theoretical_variance, 0.1); // 10% tolerance
+}
+
+test "Pareto: sampling produces values ≥ x_m" {
+    const dist = try Pareto(f64).init(2.0, 1.5);
+
+    for (0..100) |_| {
+        const x = dist.sample();
+        try testing.expect(x >= dist.x_m);
+    }
+}
+
+test "Pareto: survival function consistency" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    // S(x) = 1 - F(x)
+    const x_vals = [_]f64{ 1.5, 2.0, 3.0, 5.0 };
+    for (x_vals) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-10);
+    }
+}
+
+test "Pareto: survival function direct formula" {
+    // Pareto(x_m=1, α=2): S(x) = (1/x)²
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    try expectApproxEqRel(dist.sf(2.0), 0.25, 1e-10);
+    try expectApproxEqRel(dist.sf(4.0), 0.0625, 1e-10);
+}
+
+test "Pareto: mean for α > 1" {
+    // Pareto(x_m=1, α=2): mean = 2×1/(2-1) = 2
+    const dist = try Pareto(f64).init(1.0, 2.0);
+    try expectApproxEqRel(dist.mean(), 2.0, 1e-10);
+
+    // Pareto(x_m=2, α=3): mean = 3×2/(3-1) = 3
+    const dist2 = try Pareto(f64).init(2.0, 3.0);
+    try expectApproxEqRel(dist2.mean(), 3.0, 1e-10);
+}
+
+test "Pareto: mean undefined for α ≤ 1" {
+    const dist = try Pareto(f64).init(1.0, 0.5);
+    try testing.expect(math.isNan(dist.mean()));
+
+    const dist2 = try Pareto(f64).init(1.0, 1.0);
+    try testing.expect(math.isNan(dist2.mean()));
+}
+
+test "Pareto: variance for α > 2" {
+    // Pareto(x_m=1, α=3): var = 1×3/((3-1)²×(3-2)) = 3/(4×1) = 0.75
+    const dist = try Pareto(f64).init(1.0, 3.0);
+    try expectApproxEqRel(dist.variance(), 0.75, 1e-10);
+}
+
+test "Pareto: variance infinite for 1 < α ≤ 2" {
+    const dist = try Pareto(f64).init(1.0, 1.5);
+    try expectEqual(math.inf(f64), dist.variance());
+
+    const dist2 = try Pareto(f64).init(1.0, 2.0);
+    try expectEqual(math.inf(f64), dist2.variance());
+}
+
+test "Pareto: variance undefined for α ≤ 1" {
+    const dist = try Pareto(f64).init(1.0, 0.8);
+    try testing.expect(math.isNan(dist.variance()));
+}
+
+test "Pareto: mode always at x_m" {
+    const dist = try Pareto(f64).init(2.5, 1.8);
+    try expectEqual(dist.x_m, dist.mode());
+}
+
+test "Pareto: median calculation" {
+    // Pareto(x_m=1, α=2): median = 1 × 2^0.5 = √2
+    const dist = try Pareto(f64).init(1.0, 2.0);
+    try expectApproxEqRel(dist.median(), @sqrt(2.0), 1e-10);
+
+    // Pareto(x_m=3, α=1): median = 3 × 2^1 = 6
+    const dist2 = try Pareto(f64).init(3.0, 1.0);
+    try expectApproxEqRel(dist2.median(), 6.0, 1e-10);
+}
+
+test "Pareto: logpdf consistency" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+
+    const x_vals = [_]f64{ 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        const logpdf_val = dist.logpdf(x);
+        const pdf_val = dist.pdf(x);
+        try expectApproxEqRel(logpdf_val, @log(pdf_val), 1e-10);
+    }
+}
+
+test "Pareto: 80/20 rule demonstration" {
+    // Classic Pareto: 80% of wealth owned by top 20%
+    // Use α ≈ 1.161 (log(5)/log(4)) for exact 80/20
+    const alpha = @log(5.0) / @log(4.0);
+    const dist = try Pareto(f64).init(1.0, alpha);
+
+    // Top 20% means CDF(threshold) = 0.8
+    const threshold = try dist.quantile(0.8);
+
+    // Check that survival function at threshold is 20%
+    const top_20_percent = dist.sf(threshold);
+    try expectApproxEqRel(top_20_percent, 0.2, 1e-10);
+}
+
+test "Pareto: f32 precision support" {
+    const dist = try Pareto(f32).init(1.0, 2.0);
+
+    _ = dist.pdf(1.5);
+    _ = dist.cdf(2.0);
+    _ = try dist.quantile(0.5);
+    _ = dist.mean();
+    _ = dist.variance();
+    _ = dist.mode();
+    _ = dist.median();
+}
+
+test "Pareto: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    // No allocation in Pareto distribution, just verify init/usage
+    for (0..10) |_| {
+        const dist = try Pareto(f64).init(1.0, 2.0);
+        _ = dist.pdf(2.0);
+        _ = dist.cdf(2.0);
+        _ = try dist.quantile(0.5);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.mode();
+        _ = dist.median();
+        _ = dist.sf(2.0);
+    }
+}
