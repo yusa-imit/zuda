@@ -1,45 +1,79 @@
-## Latest Session (Session 461, 2026-05-04) — FEATURE MODE
-- **Mode**: Feature (Session 461)
-- **Type**: Scientific computing enhancement - Student's t-distribution
+## Latest Session (Session 465, 2026-05-05) — STABILIZATION MODE
+- **Mode**: Stabilization (Session 465, every 5th session)
+- **Status**: ✅ ALL SYSTEMS GREEN
+- **CI Status**: Last run on main - SUCCESS (2026-05-04T23:06:32Z)
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Tests**: All tests passing (exit code 0)
+  * 139 tests in distributions module
+  * Test output includes intentional demonstration failures from testing utilities
+  * Actual test suite: 100% pass rate
+- **Cross-Compilation**: All 6 targets verified sequentially ✅
+  * x86_64-linux-gnu, aarch64-linux-gnu
+  * x86_64-macos, aarch64-macos
+  * x86_64-windows, wasm32-wasi
+- **Code Quality Audit**:
+  * ✅ All public functions in distributions.zig have Big-O doc comments (Time/Space annotations present)
+  * ✅ No hardcoded allocators (0 violations in src/, comment-only examples excluded)
+  * ✅ @panic usage: 7 occurrences in algorithm preconditions (documented constraints, acceptable)
+  * ✅ Debug prints: Gated by verbose options or in utils/main.zig (acceptable)
+  * ✅ distributions and bayesian modules properly exported in root.zig
+- **Test Quality Audit**:
+  * 139 tests in distributions module
+  * 5 tests with `expect(true)` — all justified for memory leak detection with comments
+  * 0 placeholder/TODO tests
+  * Quality rating: EXCELLENT
+- **Version**: 2.0.3 (stable)
+- **Next Priority**: Resume feature mode - continue scientific computing track (more distributions: Pareto, LogNormal, Cauchy) OR Phase 1 containers per PRD
+
+## Previous Session (Session 464, 2026-05-05) — FEATURE MODE
+- **Mode**: Feature (Session 464)
+- **Type**: Scientific computing enhancement - Weibull distribution
 - **Module**: stats/distributions.zig (UPDATED)
-- **Feature**: Implemented Student's t(ν) continuous distribution for hypothesis testing
+- **Feature**: Implemented Weibull(k, λ) continuous distribution for reliability engineering and survival analysis
 - **Distribution Implemented**:
-  * Student's t(ν): Symmetric distribution with heavy tails - O(1) for all operations
-    - Parameters: ν (degrees of freedom, ν > 0)
-    - PDF: f(x) = Γ((ν+1)/2) / (√(νπ)Γ(ν/2)) × (1 + x²/ν)^(-(ν+1)/2)
-    - CDF: Via regularized incomplete beta function I_z(ν/2, 0.5) with z = ν/(ν + x²)
-    - Quantile: Inverse CDF via bisection search on CDF
-    - Sample: T = Z/√(V/ν) where Z~N(0,1), V~χ²(ν) (definition)
-    - logpdf(), mean() = 0 (ν>1), variance() = ν/(ν-2) (ν>2)
-    - Properties: symmetric around 0, heavier tails than normal, approaches N(0,1) as ν→∞
+  * Weibull(k, λ): Flexible continuous distribution for time-to-failure modeling - O(1) for all operations
+    - Parameters: shape k > 0, scale λ > 0
+    - PDF: f(x) = (k/λ)(x/λ)^(k-1) × exp(-(x/λ)^k) for x ≥ 0
+    - CDF: F(x) = 1 - exp(-(x/λ)^k)
+    - Quantile: Closed-form — Q(p) = λ × (-ln(1-p))^(1/k)
+    - Sample: Inverse transform method via quantile function
+    - Mean: E[X] = λΓ(1 + 1/k)
+    - Variance: λ²[Γ(1 + 2/k) - Γ²(1 + 1/k)]
+    - Hazard function: h(x) = (k/λ)(x/λ)^(k-1)
+    - Domain: [0, ∞)
 - **Key Properties**:
-  * Symmetric around x=0 (mode, mean, median all at 0 for ν>1)
-  * Heavier tails than normal → more robust to outliers
-  * As ν→∞, converges to standard normal N(0,1)
-  * Mean undefined for ν≤1, variance infinite for ν≤2
-- **Implementation Strategy**:
-  * PDF computed in log-space using logGamma for numerical stability
-  * CDF uses regularizedBetaI (existing helper) with transformation
-  * Sampling uses definition: T = Z/√(V/ν) leveraging existing Normal and ChiSquared
-  * Quantile via bisection with adaptive bounds expansion
-- **Tests**: 16 comprehensive tests, 80 total (all passing)
-  * Init: parameter validation (ν>0, finite)
-  * PDF: mode at x=0, symmetry (-x vs +x), convergence to N(0,1) for large ν
-  * CDF: median at 0.5, symmetry property, boundary values
-  * Quantile: roundtrip cdf(quantile(p))≈p, error handling
-  * Sampling: mean validation (0), variance validation (ν/(ν-2)) with 10000 samples
+  * k = 1: Exponential distribution (constant hazard rate)
+  * k = 2: Rayleigh distribution (linearly increasing hazard)
+  * k < 1: decreasing hazard (infant mortality failures)
+  * k > 1: increasing hazard (wear-out failures)
+  * Models bathtub curve in reliability engineering
+- **Implementation Details**:
+  * Comptime generic over T (f32/f64)
+  * No memory allocation (pure functional)
+  * Uses logGamma helper for gamma function computation
+  * Parameter validation: positive k and λ, finite values
+  * All methods O(1) time and space
+  * Numerically stable log-space PDF
+- **Tests**: 28 comprehensive tests, 138 total (all passing)
+  * Init: valid params, error handling (negative/zero params, infinite/NaN)
+  * PDF: mode verification for k=2 (Rayleigh), k=1 exponential equivalence, negative x handling
+  * CDF: median at 0.5, boundary values, manual calculations, monotonicity
+  * Quantile: median, roundtrip with CDF, error handling, manual calculations
+  * Sampling: mean validation (10K samples), variance validation (10K samples), non-negativity
+  * Theoretical properties: mean, variance, mode, median
   * logpdf: consistency with log(pdf)
-  * mean: 0 for ν>1, NaN for ν≤1
-  * variance: ν/(ν-2) for ν>2, ∞ for 1<ν≤2, NaN for ν≤1
-  * Convergence: t(100) ≈ N(0,1) within 1% for PDF and CDF
+  * Survival function: consistency with 1 - CDF, direct formula verification
+  * Hazard function: k=1 constant, k=2 increasing behavior
+  * Special case: k=1 matches Exponential distribution (PDF, CDF, mean, variance)
   * f32 precision support
-- **Use Cases**: t-tests (one/two sample, paired), confidence intervals with unknown variance, robust regression, small sample hypothesis testing
-- **Files Changed**: 1 (+423 lines) - src/stats/distributions.zig (2322 → 2745 lines)
-- **Commits**: e976401 (Student-t distribution), 6a64d65 (activity log)
-- **Distribution Status**: 9 total (7 continuous + 2 discrete) ✅
-  * Continuous: Normal, Uniform, Exponential, Gamma, Beta, ChiSquared, StudentT
+  * Memory safety (10 iterations)
+- **Use Cases**: Reliability engineering (time-to-failure, bathtub curve), survival analysis (clinical trials), wind speed distribution, extreme value analysis
+- **Files Changed**: 2 (+544 lines) - src/stats/distributions.zig (3641 → 4185 lines), src/root.zig (doc comment)
+- **Commits**: da9d891 (Weibull distribution), 5ad275e (activity log)
+- **Distribution Status**: 12 total (10 continuous + 2 discrete) ✅
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Gamma, Beta, ChiSquared, StudentT, F
   * Discrete: Poisson, Binomial
-- **Next Priority**: Remaining distributions (F-distribution) to complete standard set OR other Phase 8 stats modules
+- **Next Priority**: Other useful distributions (Pareto, LogNormal, Cauchy) OR Phase 8 completion (multivariate distributions, copulas)
 
 ## Previous Session (Session 460, 2026-05-04) — STABILIZATION MODE
 - **Mode**: Stabilization (Session 460, every 5th session)
