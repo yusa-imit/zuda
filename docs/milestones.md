@@ -3,16 +3,58 @@
 ## Current Status
 
 - **Latest release**: v1.19.1 (2026-03-22) — CI Stability Fixes
-- **Current phase**: v2.0 Track (Phase 7) — Scientific Computing Platform
-- **Tests**: 234 tests passing (100%) — 160 BLAS + 114 decomposition tests
+- **Current phase**: v2.0 Track (Phase 8) — Statistics & Random Complete
+- **Tests**: 2967 tests passing (100%)
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Target**: Scientific computing platform (NDArray, linear algebra, stats, FFT, numerical methods, optimization)
-- **Next Milestone**: v1.20.0 — Advanced Linear Algebra (solvers, pseudo-inverse, matrix properties)
+- **v2.0 Progress**: Phases 7-11 complete (Linear Algebra ✅, Statistics ✅, Signal Processing ✅, Numerical Methods ✅, Optimization ✅)
+- **Next Milestone**: v1.21.0 — Phase 8 Statistics Completion (covariance matrix, cross-correlation)
 
 ---
 
 ## Active Milestones
+
+### v1.21.0 — Phase 8 Statistics Completion ✅ COMPLETE
+
+Complete Phase 8 (Statistics & Random) with remaining correlation functions.
+
+**Context**: v1.20.0 completed Phase 7 (Linear Algebra). Phase 8 had most components implemented (distributions, descriptive stats, hypothesis tests, regression, random) but was missing covariance matrix and cross-correlation.
+
+**Target**: Implement missing correlation/covariance functions to complete Phase 8 PRD requirements
+
+**Categories**:
+- [x] **covarianceMatrix(X)** — Covariance matrix for n×p data matrix ✅
+  - [x] Input: NDArray(T, 2) of shape (n_samples × n_features)
+  - [x] Returns: symmetric positive semi-definite (n_features × n_features) matrix
+  - [x] Formula: C = (1/(n-1)) * (X - mean(X))^T @ (X - mean(X))
+  - [x] Diagonal entries are variances, off-diagonal are covariances
+  - [x] Tests: 6 tests (uncorrelated features, perfect correlation, 3×3 matrix, f32 precision, edge cases)
+  - [x] Time: O(n·p²) | Space: O(p²)
+  - **Use case**: Multivariate statistics, PCA preprocessing, portfolio variance
+  - **File**: `src/stats/correlation.zig`
+- [x] **crossCorrelation(x, y)** — Cross-correlation between two 1D signals ✅
+  - [x] Input: two slices (can be different lengths, any numeric type)
+  - [x] Returns: array of length len(x) + len(y) - 1
+  - [x] Formula: (x ⋆ y)[lag] = Σ_i x[i] * y[i+lag]
+  - [x] Center element (index len(y)-1) corresponds to zero lag
+  - [x] Tests: 8 tests (autocorrelation, different lengths, unit impulse, zero signal, integer types, f32, edge cases)
+  - [x] Time: O(n·m) | Space: O(n+m)
+  - **Use case**: Signal similarity, template matching, time series alignment
+  - **File**: `src/stats/correlation.zig`
+
+**Success Criteria**: ✅ **ACHIEVED** — Both functions implemented with 14 comprehensive tests, Phase 8 now 100% complete per PRD
+
+**Phase 8 Final Status**:
+- Descriptive Stats: mean, median, mode, std, var, quantile, percentile, skewness, kurtosis ✅
+- Distributions: Normal, Uniform, Exponential, Poisson, Binomial, Gamma, Beta, Chi², Student-t, F (+ Laplace, Weibull, Pareto, LogNormal, Cauchy) ✅
+- Hypothesis Testing: t-test (1-sample, 2-sample, paired), chi-square, ANOVA, KS, Mann-Whitney U ✅
+- Correlation: Pearson, Spearman, Kendall tau, covariance matrix ✅, cross-correlation ✅
+- Regression: OLS, polynomial fit, R², residuals ✅
+- Random: PCG64, Xoshiro256**, uniform, normal, shuffle, choice, multinomial ✅
+- Histogram: histogram, binning, KDE ✅
+
+**Status**: ✅ **COMPLETE** (2026-05-06) — Phase 8 fully implemented, ready for v1.21.0 release
 
 ### v1.20.0 — Advanced Linear Algebra ✅ COMPLETE
 
