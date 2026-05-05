@@ -748,6 +748,184 @@ pub fn polyval(coeffs_input: anytype, x: []const f64, allocator: Allocator) ![]f
 }
 
 // ============================================================================
+// COVARIANCE MATRIX
+// ============================================================================
+
+/// Compute covariance matrix for a 2D data matrix
+///
+/// Given data matrix X (n_samples × n_features), computes the covariance matrix C
+/// where C[i,j] = cov(X[:,i], X[:,j]).
+///
+/// Formula: C = (1/(n-1)) * (X - mean(X))^T @ (X - mean(X))
+///
+/// The covariance matrix is:
+/// - Symmetric: C[i,j] = C[j,i]
+/// - Positive semi-definite
+/// - Diagonal entries are variances: C[i,i] = var(X[:,i])
+/// - Off-diagonal entries are covariances: C[i,j] = cov(X[:,i], X[:,j])
+///
+/// Parameters:
+/// - comptime T: floating-point type (f32 or f64)
+/// - X: 2D NDArray (n_samples × n_features) - data matrix
+/// - allocator: memory allocator for result
+///
+/// Returns: NDArray(T, 2) of shape (n_features × n_features) - covariance matrix
+///
+/// Errors:
+/// - error.EmptyArray if X has zero rows or columns
+/// - error.InsufficientSamples if n_samples < 2
+/// - Allocator.Error on memory allocation failure
+///
+/// Time: O(n * p^2) where n=samples, p=features | Space: O(p^2)
+///
+/// Example:
+/// ```zig
+/// // Data: 3 samples, 2 features
+/// const X_data = [_]f64{ 1.0, 2.0,  // sample 1
+///                        2.0, 4.0,  // sample 2
+///                        3.0, 6.0 }; // sample 3
+/// var X = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 2}, &X_data, .row_major);
+/// const C = try covarianceMatrix(f64, X, allocator);
+/// // C[0,0] = var(column 0), C[1,1] = var(column 1)
+/// // C[0,1] = C[1,0] = cov(column 0, column 1)
+/// ```
+pub fn covarianceMatrix(
+    comptime T: type,
+    X: NDArray_type(T, 2),
+    allocator: Allocator,
+) !NDArray_type(T, 2) {
+    if (T != f32 and T != f64) {
+        @compileError("covarianceMatrix only supports f32 and f64");
+    }
+
+    const shape = X.shape;
+    const n_samples = shape[0];
+    const n_features = shape[1];
+
+    if (n_samples == 0 or n_features == 0) return error.EmptyArray;
+    if (n_samples < 2) return error.InsufficientSamples;
+
+    // Allocate covariance matrix (n_features × n_features)
+    var cov_matrix = try NDArray_type(T, 2).init(
+        allocator,
+        &[_]usize{ n_features, n_features },
+        .row_major,
+    );
+    errdefer cov_matrix.deinit();
+
+    // Compute column means
+    var col_means = try allocator.alloc(T, n_features);
+    defer allocator.free(col_means);
+
+    for (0..n_features) |j| {
+        var sum: T = 0;
+        for (0..n_samples) |i| {
+            sum += X.get(&[_]isize{ @intCast(i), @intCast(j) }) catch unreachable;
+        }
+        col_means[j] = sum / @as(T, @floatFromInt(n_samples));
+    }
+
+    // Compute covariance C[i,j] = cov(col_i, col_j)
+    const n_minus_1 = @as(T, @floatFromInt(n_samples - 1));
+
+    for (0..n_features) |i| {
+        for (0..n_features) |j| {
+            var cov_sum: T = 0;
+            for (0..n_samples) |k| {
+                const x_ki = X.get(&[_]isize{ @intCast(k), @intCast(i) }) catch unreachable;
+                const x_kj = X.get(&[_]isize{ @intCast(k), @intCast(j) }) catch unreachable;
+                cov_sum += (x_ki - col_means[i]) * (x_kj - col_means[j]);
+            }
+            const cov_val = cov_sum / n_minus_1;
+            cov_matrix.set(&[_]isize{ @intCast(i), @intCast(j) }, cov_val);
+        }
+    }
+
+    return cov_matrix;
+}
+
+// ============================================================================
+// CROSS-CORRELATION
+// ============================================================================
+
+/// Compute cross-correlation between two 1D signals
+///
+/// Cross-correlation measures the similarity between two signals as a function
+/// of the displacement of one relative to the other.
+///
+/// Formula: (x ⋆ y)[n] = Σ_m x[m] * y[m+n]
+///
+/// The result has length len(x) + len(y) - 1, with the center element at
+/// index len(y) - 1 corresponding to zero lag.
+///
+/// Properties:
+/// - crossCorrelation(x, y) ≠ crossCorrelation(y, x) in general
+/// - If x = y, this becomes autocorrelation
+/// - Maximum value indicates best alignment
+///
+/// Parameters:
+/// - comptime T: numeric type (any integer or float)
+/// - x: first signal (slice)
+/// - y: second signal (slice)
+/// - allocator: memory allocator for result
+///
+/// Returns: allocated array of length len(x) + len(y) - 1
+///
+/// Errors:
+/// - error.EmptyArray if either x or y is empty
+/// - Allocator.Error on memory allocation failure
+///
+/// Time: O(n * m) where n=len(x), m=len(y) | Space: O(n + m)
+///
+/// Example:
+/// ```zig
+/// const x = [_]f64{ 1.0, 2.0, 3.0 };
+/// const y = [_]f64{ 0.0, 1.0, 0.5 };
+/// const cc = try crossCorrelation(f64, &x, &y, allocator);
+/// // cc has length 3 + 3 - 1 = 5
+/// ```
+pub fn crossCorrelation(
+    comptime T: type,
+    x: []const T,
+    y: []const T,
+    allocator: Allocator,
+) ![]T {
+    if (x.len == 0 or y.len == 0) return error.EmptyArray;
+
+    const n = x.len;
+    const m = y.len;
+    const result_len = n + m - 1;
+
+    var result = try allocator.alloc(T, result_len);
+    errdefer allocator.free(result);
+
+    // Initialize result to zero
+    @memset(result, 0);
+
+    // Compute cross-correlation: result[k] = Σ_i x[i] * y[i + lag]
+    // where lag = k - (m-1), ranging from -(m-1) to (n-1)
+    // k=0 corresponds to lag=-(m-1), k=m-1 corresponds to lag=0 (zero lag/center)
+    for (0..result_len) |k| {
+        var sum: T = 0;
+
+        // lag = k - (m - 1), can be negative
+        // For each x[i], we need y[i+lag] = y[i + k - (m-1)]
+        // Valid when: 0 <= i+k-(m-1) < m and 0 <= i < n
+        for (0..n) |i| {
+            const j_signed: isize = @as(isize, @intCast(i)) + @as(isize, @intCast(k)) - @as(isize, @intCast(m)) + 1;
+            if (j_signed >= 0 and j_signed < @as(isize, @intCast(m))) {
+                const j: usize = @intCast(j_signed);
+                sum += x[i] * y[j];
+            }
+        }
+
+        result[k] = sum;
+    }
+
+    return result;
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 
@@ -3135,4 +3313,223 @@ test "logisticRegress - large dataset convergence" {
 
     try testing.expect(result.n_iter > 0);
     try testing.expect(result.n_iter <= 100);
+}
+
+// ============================================================================
+// Covariance Matrix Tests
+// ============================================================================
+
+test "covarianceMatrix: 2x2 identity covariance (uncorrelated)" {
+    // Two uncorrelated features with unit variance
+    const X_data = [_]f64{
+        1.0, 0.0, // sample 1
+        2.0, 0.0, // sample 2
+        3.0, 0.0, // sample 3
+    };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+
+    var C = try covarianceMatrix(f64, X, test_allocator);
+    defer C.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 2), C.shape[0]);
+    try testing.expectEqual(@as(usize, 2), C.shape[1]);
+
+    // First feature has variance 1.0
+    const c00 = C.get(&[_]isize{ 0, 0 }) catch unreachable;
+    try testing.expectApproxEqAbs(1.0, c00, 1e-10);
+
+    // Second feature has variance 0.0
+    const c11 = C.get(&[_]isize{ 1, 1 }) catch unreachable;
+    try testing.expectApproxEqAbs(0.0, c11, 1e-10);
+
+    // Covariance is 0 (uncorrelated)
+    const c01 = C.get(&[_]isize{ 0, 1 }) catch unreachable;
+    const c10 = C.get(&[_]isize{ 1, 0 }) catch unreachable;
+    try testing.expectApproxEqAbs(0.0, c01, 1e-10);
+    try testing.expectApproxEqAbs(0.0, c10, 1e-10);
+}
+
+test "covarianceMatrix: perfectly correlated features" {
+    // y = 2*x (perfect positive correlation)
+    const X_data = [_]f64{
+        1.0, 2.0, // sample 1
+        2.0, 4.0, // sample 2
+        3.0, 6.0, // sample 3
+    };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+
+    var C = try covarianceMatrix(f64, X, test_allocator);
+    defer C.deinit();
+
+    // Variance of first column: var([1,2,3]) = 1.0
+    const c00 = C.get(&[_]isize{ 0, 0 }) catch unreachable;
+    try testing.expectApproxEqAbs(1.0, c00, 1e-10);
+
+    // Variance of second column: var([2,4,6]) = 4.0
+    const c11 = C.get(&[_]isize{ 1, 1 }) catch unreachable;
+    try testing.expectApproxEqAbs(4.0, c11, 1e-10);
+
+    // Covariance: cov([1,2,3], [2,4,6]) = 2.0
+    const c01 = C.get(&[_]isize{ 0, 1 }) catch unreachable;
+    try testing.expectApproxEqAbs(2.0, c01, 1e-10);
+
+    // Symmetry
+    const c10 = C.get(&[_]isize{ 1, 0 }) catch unreachable;
+    try testing.expectApproxEqAbs(c01, c10, 1e-10);
+}
+
+test "covarianceMatrix: 3x3 matrix" {
+    // Three features
+    const X_data = [_]f64{
+        1.0, 2.0, 3.0,
+        2.0, 4.0, 5.0,
+        3.0, 6.0, 7.0,
+        4.0, 8.0, 9.0,
+    };
+
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 4, 3 }, &X_data, .row_major);
+    defer X.deinit();
+
+    var C = try covarianceMatrix(f64, X, test_allocator);
+    defer C.deinit();
+
+    // Verify shape
+    try testing.expectEqual(@as(usize, 3), C.shape[0]);
+    try testing.expectEqual(@as(usize, 3), C.shape[1]);
+
+    // Check symmetry
+    for (0..3) |i| {
+        for (0..3) |j| {
+            const cij = C.get(&[_]isize{ @intCast(i), @intCast(j) }) catch unreachable;
+            const cji = C.get(&[_]isize{ @intCast(j), @intCast(i) }) catch unreachable;
+            try testing.expectApproxEqAbs(cij, cji, 1e-10);
+        }
+    }
+
+    // Diagonal entries should be positive (variances)
+    for (0..3) |i| {
+        const cii = C.get(&[_]isize{ @intCast(i), @intCast(i) }) catch unreachable;
+        try testing.expect(cii >= 0);
+    }
+}
+
+test "covarianceMatrix: f32 precision" {
+    const X_data = [_]f32{
+        1.0, 2.0,
+        2.0, 4.0,
+        3.0, 6.0,
+    };
+
+    var X = try NDArray_type(f32, 2).fromSlice(test_allocator, &[_]usize{ 3, 2 }, &X_data, .row_major);
+    defer X.deinit();
+
+    var C = try covarianceMatrix(f32, X, test_allocator);
+    defer C.deinit();
+
+    const c00 = C.get(&[_]isize{ 0, 0 }) catch unreachable;
+    try testing.expectApproxEqAbs(@as(f32, 1.0), c00, 1e-6);
+}
+
+test "covarianceMatrix: insufficient samples error" {
+    const X_data = [_]f64{ 1.0, 2.0 };
+    var X = try NDArray_type(f64, 2).fromSlice(test_allocator, &[_]usize{ 1, 2 }, &X_data, .row_major);
+    defer X.deinit();
+
+    const result = covarianceMatrix(f64, X, test_allocator);
+    try testing.expectError(error.InsufficientSamples, result);
+}
+
+// ============================================================================
+// Cross-Correlation Tests
+// ============================================================================
+
+test "crossCorrelation: identical signals (autocorrelation)" {
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+    const cc = try crossCorrelation(f64, &x, &x, test_allocator);
+    defer test_allocator.free(cc);
+
+    // Length should be 2*n - 1 = 5
+    try testing.expectEqual(@as(usize, 5), cc.len);
+
+    // Center element (index 2) should be maximum (sum of squares = 14.0)
+    try testing.expectApproxEqAbs(14.0, cc[2], 1e-10);
+
+    // Symmetry for autocorrelation
+    try testing.expectApproxEqAbs(cc[0], cc[4], 1e-10);
+    try testing.expectApproxEqAbs(cc[1], cc[3], 1e-10);
+}
+
+test "crossCorrelation: different length signals" {
+    const x = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const y = [_]f64{ 0.5, 1.0 };
+    const cc = try crossCorrelation(f64, &x, &y, test_allocator);
+    defer test_allocator.free(cc);
+
+    // Length should be 4 + 2 - 1 = 5
+    try testing.expectEqual(@as(usize, 5), cc.len);
+}
+
+test "crossCorrelation: unit impulse" {
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 1.0, 0.0, 0.0 };
+    const cc = try crossCorrelation(f64, &x, &y, test_allocator);
+    defer test_allocator.free(cc);
+
+    // Cross-correlation with [1,0,0] should extract x in reverse
+    try testing.expectApproxEqAbs(3.0, cc[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, cc[1], 1e-10);
+    try testing.expectApproxEqAbs(1.0, cc[2], 1e-10);
+}
+
+test "crossCorrelation: zero signal" {
+    const x = [_]f64{ 1.0, 2.0, 3.0 };
+    const y = [_]f64{ 0.0, 0.0, 0.0 };
+    const cc = try crossCorrelation(f64, &x, &y, test_allocator);
+    defer test_allocator.free(cc);
+
+    // All zeros expected
+    for (cc) |val| {
+        try testing.expectApproxEqAbs(0.0, val, 1e-10);
+    }
+}
+
+test "crossCorrelation: integer type" {
+    const x = [_]i32{ 1, 2, 3 };
+    const y = [_]i32{ 1, 1 };
+    const cc = try crossCorrelation(i32, &x, &y, test_allocator);
+    defer test_allocator.free(cc);
+
+    try testing.expectEqual(@as(usize, 4), cc.len);
+    try testing.expectEqual(@as(i32, 5), cc[0]); // x[1]*y[0] + x[2]*y[1] = 2+3
+    try testing.expectEqual(@as(i32, 3), cc[1]); // x[0]*y[0] + x[1]*y[1] = 1+2
+    try testing.expectEqual(@as(i32, 1), cc[2]); // x[0]*y[1] = 1
+    try testing.expectEqual(@as(i32, 0), cc[3]); // no overlap
+}
+
+test "crossCorrelation: f32 precision" {
+    const x = [_]f32{ 1.0, 2.0, 3.0 };
+    const y = [_]f32{ 0.5, 1.0, 0.5 };
+    const cc = try crossCorrelation(f32, &x, &y, test_allocator);
+    defer test_allocator.free(cc);
+
+    try testing.expectEqual(@as(usize, 5), cc.len);
+}
+
+test "crossCorrelation: empty array error" {
+    const x = [_]f64{};
+    const y = [_]f64{ 1.0 };
+    const result = crossCorrelation(f64, &x, &y, test_allocator);
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "crossCorrelation: both empty error" {
+    const x = [_]f64{};
+    const y = [_]f64{};
+    const result = crossCorrelation(f64, &x, &y, test_allocator);
+    try testing.expectError(error.EmptyArray, result);
 }
