@@ -1,20 +1,31 @@
-**Session 472 Update (2026-05-06) — FEATURE MODE:**
+**Session 473 Update (2026-05-06) — FEATURE MODE:**
+
+Phase 12 (v2.0 Integration & Release) — Comprehensive Benchmarks:
+- Fixed singular matrix bug in scientific computing benchmarks (LU, QR, SVD)
+- Documented comprehensive benchmark results in `docs/BENCHMARKS.md`
+- Benchmark results:
+  - BLAS: 1.21-2.63 GFLOPS (42-61% of targets, SIMD optimization opportunity)
+  - Linalg: 7-20ms decompositions (25-80× faster than targets ✅)
+  - FFT: 101μs (4K), 48ms (1M) — 1.6-10× slower than aggressive targets
+  - NDArray: 1.28 GFLOPS element-wise ops (exceeds 1.0 target ✅)
+  - Stats: <1ms for all ops (meets targets ✅)
+- Cross-platform validation: all 6 targets passing
+- Commits: 1e7ade0 (benchmark fix), 623e06f (documentation)
+
+**Phase 12 Status** (v1.28.0):
+- ✅ **SIMD Acceleration** (42 tests total)
+- ✅ **Cross-Module Integration Tests** (30+ tests, session 472)
+- ✅ **Comprehensive Benchmarks** (docs/BENCHMARKS.md, session 473)
+- ✅ **NumPy Compatibility Guide** (docs/NUMPY_COMPATIBILITY.md, 50+ function mappings)
+- ⏭️ Next: Migration guides (NumPy, Eigen, MATLAB), Scientific Computing Guide (tutorials), v2.0.0 release
+
+**Previous Session 472 Update (2026-05-06) — FEATURE MODE:**
 
 Phase 12 (v2.0 Integration & Release) — Cross-Module Integration Tests:
 - Added 16 new integration tests to `tests/cross_module_integration.zig` (14 → 30 total)
 - Coverage: NDArray ↔ linalg (7 total), NDArray ↔ stats (6 total), NDArray ↔ signal (6 total), linalg ↔ optimize (5 total), full pipelines (4 total), NDArray ↔ numeric (2 total)
 - All 30 tests passing with comprehensive assertions and memory safety validation
 - Commit: e9e9b3e (test-writer agent)
-
-**Phase 12 Status** (v1.28.0):
-- ✅ **SIMD Acceleration** (42 tests total):
-  - ✅ GEMM 4×4 blocked kernel (22 tests, session 471)
-  - ✅ FFT butterfly SIMD (10 tests, pre-existing)
-  - ✅ NDArray element-wise SIMD (10 tests, pre-existing)
-  - ✅ Dot product SIMD (2 tests in simd_blas, pre-existing)
-- ✅ **Cross-Module Integration Tests** (30+ tests, session 472)
-- ✅ **NumPy Compatibility Guide** (docs/NUMPY_COMPATIBILITY.md, 50+ function mappings, pre-existing)
-- ⏭️ Next: v2.0.0 release preparation (benchmarks, tutorials, API docs)
 
 **Previous Session 471 Update (2026-05-06) — FEATURE MODE:**
 
