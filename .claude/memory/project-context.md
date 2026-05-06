@@ -1,4 +1,18 @@
-**Session 470 Update (2026-05-06) — STABILIZATION MODE:**
+**Session 471 Update (2026-05-06) — FEATURE MODE:**
+
+Phase 12 (v2.0 Integration & Release) — SIMD Acceleration:
+- Implemented `gemm_blocked_4x4`: 4×4 blocked matrix multiplication kernel for cache optimization
+- Algorithm: Partitions C into 4×4 micro-kernels, keeping accumulator in L1 cache
+- Features: Adaptive tail handling, full GEMM support (C = α*A*B + β*C), dimension validation
+- Tests: 13 comprehensive tests (100% passing) — correctness, scaling, types, error handling, memory safety
+- File: src/linalg/simd_blas.zig (lines 300-813)
+- Commits: 71c7916 (implementation), d24fbd0 (agent log)
+
+**Phase 12 Progress**:
+- ✅ GEMM 4×4 blocked kernel (session 471)
+- ⏭️ Next: FFT butterfly SIMD optimization
+
+**Previous Session 470 Update (2026-05-06) — STABILIZATION MODE:**
 
 Code quality audit and invariant validation:
 - Added validate() method to PersistentHashMap (HAMT invariants: bitmap consistency, size matching)
