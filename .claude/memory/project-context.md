@@ -1,4 +1,22 @@
-**Session 471 Update (2026-05-06) — FEATURE MODE:**
+**Session 472 Update (2026-05-06) — FEATURE MODE:**
+
+Phase 12 (v2.0 Integration & Release) — Cross-Module Integration Tests:
+- Added 16 new integration tests to `tests/cross_module_integration.zig` (14 → 30 total)
+- Coverage: NDArray ↔ linalg (7 total), NDArray ↔ stats (6 total), NDArray ↔ signal (6 total), linalg ↔ optimize (5 total), full pipelines (4 total), NDArray ↔ numeric (2 total)
+- All 30 tests passing with comprehensive assertions and memory safety validation
+- Commit: e9e9b3e (test-writer agent)
+
+**Phase 12 Status** (v1.28.0):
+- ✅ **SIMD Acceleration** (42 tests total):
+  - ✅ GEMM 4×4 blocked kernel (22 tests, session 471)
+  - ✅ FFT butterfly SIMD (10 tests, pre-existing)
+  - ✅ NDArray element-wise SIMD (10 tests, pre-existing)
+  - ✅ Dot product SIMD (2 tests in simd_blas, pre-existing)
+- ✅ **Cross-Module Integration Tests** (30+ tests, session 472)
+- ✅ **NumPy Compatibility Guide** (docs/NUMPY_COMPATIBILITY.md, 50+ function mappings, pre-existing)
+- ⏭️ Next: v2.0.0 release preparation (benchmarks, tutorials, API docs)
+
+**Previous Session 471 Update (2026-05-06) — FEATURE MODE:**
 
 Phase 12 (v2.0 Integration & Release) — SIMD Acceleration:
 - Implemented `gemm_blocked_4x4`: 4×4 blocked matrix multiplication kernel for cache optimization
@@ -7,10 +25,6 @@ Phase 12 (v2.0 Integration & Release) — SIMD Acceleration:
 - Tests: 13 comprehensive tests (100% passing) — correctness, scaling, types, error handling, memory safety
 - File: src/linalg/simd_blas.zig (lines 300-813)
 - Commits: 71c7916 (implementation), d24fbd0 (agent log)
-
-**Phase 12 Progress**:
-- ✅ GEMM 4×4 blocked kernel (session 471)
-- ⏭️ Next: FFT butterfly SIMD optimization
 
 **Previous Session 470 Update (2026-05-06) — STABILIZATION MODE:**
 
