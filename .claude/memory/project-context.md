@@ -1,4 +1,28 @@
-**Session 473 Update (2026-05-06) — FEATURE MODE:**
+**Session 474 Update (2026-05-07) — FEATURE MODE:**
+
+Phase 12 (v2.0 Integration & Release) — Migration Guides & Tutorials:
+- Created comprehensive migration guides (2750 lines total):
+  * **FROM_NUMPY.md**: NumPy → zuda with side-by-side syntax, memory management patterns
+  * **FROM_EIGEN.md**: Eigen C++ → zuda with RAII → defer, expression templates → eager evaluation
+  * **FROM_MATLAB.md**: MATLAB → zuda with 1-indexed → 0-indexed (critical pitfalls), backslash operator equivalents
+- Created **SCIENTIFIC_COMPUTING_GUIDE.md**: comprehensive getting started tutorial
+  * Installation & setup (build.zig.zon integration)
+  * Core concepts: allocator-first, compile-time rank, error handling
+  * Module overview: ndarray, linalg, stats, signal, numeric, optimize
+  * 5 complete tutorials: data analysis, linear regression, image filtering, FFT signal analysis, optimization
+  * Performance tips: allocator selection, in-place ops, contiguity, solver selection
+- Commit: 08be189 (4 files, 2750 lines)
+
+**Phase 12 Status** (v1.28.0):
+- ✅ **SIMD Acceleration** (42 tests total)
+- ✅ **Cross-Module Integration Tests** (30+ tests, session 472)
+- ✅ **Comprehensive Benchmarks** (docs/BENCHMARKS.md, session 473)
+- ✅ **NumPy Compatibility Guide** (docs/NUMPY_COMPATIBILITY.md, 50+ function mappings)
+- ✅ **Migration Guides** (NumPy, Eigen, MATLAB — session 474)
+- ✅ **Scientific Computing Tutorial** (SCIENTIFIC_COMPUTING_GUIDE.md — session 474)
+- ⏭️ Next: v2.0.0 release preparation
+
+**Previous Session 473 Update (2026-05-06) — FEATURE MODE:**
 
 Phase 12 (v2.0 Integration & Release) — Comprehensive Benchmarks:
 - Fixed singular matrix bug in scientific computing benchmarks (LU, QR, SVD)
@@ -11,13 +35,6 @@ Phase 12 (v2.0 Integration & Release) — Comprehensive Benchmarks:
   - Stats: <1ms for all ops (meets targets ✅)
 - Cross-platform validation: all 6 targets passing
 - Commits: 1e7ade0 (benchmark fix), 623e06f (documentation)
-
-**Phase 12 Status** (v1.28.0):
-- ✅ **SIMD Acceleration** (42 tests total)
-- ✅ **Cross-Module Integration Tests** (30+ tests, session 472)
-- ✅ **Comprehensive Benchmarks** (docs/BENCHMARKS.md, session 473)
-- ✅ **NumPy Compatibility Guide** (docs/NUMPY_COMPATIBILITY.md, 50+ function mappings)
-- ⏭️ Next: Migration guides (NumPy, Eigen, MATLAB), Scientific Computing Guide (tutorials), v2.0.0 release
 
 **Previous Session 472 Update (2026-05-06) — FEATURE MODE:**
 
