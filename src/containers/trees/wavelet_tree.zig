@@ -328,6 +328,87 @@ pub fn WaveletTree(comptime T: type) type {
         pub fn isEmpty(self: *const Self) bool {
             return self.length == 0;
         }
+
+        /// Validate wavelet tree invariants
+        ///
+        /// Checks:
+        /// - If root is null, length must be 0
+        /// - All leaf nodes have min_val == max_val
+        /// - All internal nodes have left and right children
+        /// - Bitmap size matches sequence length at each level
+        /// - Tree structure is balanced (depth ~= log(alphabet_size))
+        ///
+        /// Time: O(n log σ) | Space: O(log σ) for recursion
+        pub fn validate(self: *const Self) !void {
+            if (self.root) |root| {
+                if (self.length == 0) {
+                    return error.TreeInvariant;
+                }
+                try self.validateNode(root, self.length, 0);
+            } else {
+                if (self.length != 0) {
+                    return error.TreeInvariant;
+                }
+            }
+        }
+
+        fn validateNode(self: *const Self, node: *const Node, expected_len: usize, depth: usize) !void {
+            // Check bitmap size
+            if (node.bitmap.capacity() < expected_len) {
+                return error.TreeInvariant;
+            }
+
+            // Check value range
+            if (node.min_val > node.max_val) {
+                return error.TreeInvariant;
+            }
+
+            // Leaf node: should have min_val == max_val
+            if (node.min_val == node.max_val) {
+                if (node.left != null or node.right != null) {
+                    return error.TreeInvariant;
+                }
+                return;
+            }
+
+            // Internal node: must have both children
+            if (node.left == null or node.right == null) {
+                return error.TreeInvariant;
+            }
+
+            // Check depth doesn't exceed reasonable bound (log₂(alphabet_size) * 2)
+            const max_depth = if (self.alphabet_size > 0) @ctz(@as(usize, 1) << @intCast(@min(63, @as(u6, @intCast(std.math.log2_int(usize, self.alphabet_size) * 2))))) else 0;
+            if (depth > max_depth + 10) { // Allow some slack for unbalanced alphabets
+                return error.TreeInvariant;
+            }
+
+            // Recursively validate children
+            const mid = node.min_val + @divTrunc(node.max_val - node.min_val, 2);
+
+            var left_count: usize = 0;
+            var right_count: usize = 0;
+            for (0..expected_len) |i| {
+                if (node.bitmap.isSet(i)) {
+                    right_count += 1;
+                } else {
+                    left_count += 1;
+                }
+            }
+
+            if (node.left) |left| {
+                if (left.max_val != mid) {
+                    return error.TreeInvariant;
+                }
+                try self.validateNode(left, left_count, depth + 1);
+            }
+
+            if (node.right) |right| {
+                if (right.min_val != mid + 1) {
+                    return error.TreeInvariant;
+                }
+                try self.validateNode(right, right_count, depth + 1);
+            }
+        }
     };
 }
 

@@ -466,6 +466,61 @@ pub fn PersistentHashMap(comptime K: type, comptime V: type, comptime Context: t
                 .allocator = self.allocator,
             };
         }
+
+        /// Validate HAMT invariants
+        ///
+        /// Checks:
+        /// - Bitmap matches actual children presence
+        /// - All branch children are non-null where bitmap indicates
+        /// - Leaf nodes have non-empty entry lists
+        /// - Size matches actual entry count
+        ///
+        /// Time: O(n) | Space: O(log n) for recursion stack
+        pub fn validate(self: *const Self) !void {
+            if (self.root) |root| {
+                const actual_count = try self.validateNode(root);
+                if (actual_count != self.size) {
+                    return error.TreeInvariant;
+                }
+            } else {
+                if (self.size != 0) {
+                    return error.TreeInvariant;
+                }
+            }
+        }
+
+        fn validateNode(self: *const Self, node: *const Node) !usize {
+            switch (node.type) {
+                .branch => {
+                    const branch = &node.data.branch;
+                    var total_count: usize = 0;
+
+                    // Check bitmap consistency
+                    var i: u5 = 0;
+                    while (i < FANOUT) : (i += 1) {
+                        const has_bit = (branch.bitmap & (@as(u32, 1) << i)) != 0;
+                        const has_child = branch.children[i] != null;
+
+                        if (has_bit != has_child) {
+                            return error.TreeInvariant;
+                        }
+
+                        if (has_child) {
+                            total_count += try self.validateNode(branch.children[i].?);
+                        }
+                    }
+
+                    return total_count;
+                },
+                .leaf => {
+                    const leaf = &node.data.leaf;
+                    if (leaf.entries.items.len == 0) {
+                        return error.TreeInvariant;
+                    }
+                    return leaf.entries.items.len;
+                },
+            }
+        }
     };
 }
 
