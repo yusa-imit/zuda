@@ -96,11 +96,14 @@ pub fn main() !void {
         const n: usize = 512;
         var A = try zuda.ndarray.NDArray(f64, 2).eye(allocator, n, n, 0, .row_major);
         defer A.deinit();
-        // Make it non-trivial by adding some values
+        // Make it non-trivial by adding off-diagonal elements (keeps non-singular)
         for (0..n) |i| {
             for (0..n) |j| {
-                const val = @as(f64, @floatFromInt((i + 1) * (j + 1))) / @as(f64, @floatFromInt(n));
-                A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) }, val);
+                if (i != j) {
+                    const val = @as(f64, @floatFromInt((i + 1) * (j + 1))) / @as(f64, @floatFromInt(n * n));
+                    const curr = try A.get(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) });
+                    A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) }, curr + val);
+                }
             }
         }
 
@@ -120,12 +123,16 @@ pub fn main() !void {
         const decomp = zuda.linalg.decompositions;
         const m: usize = 256;
         const n: usize = 256;
-        var A = try zuda.ndarray.NDArray(f64, 2).zeros(allocator, &.{m, n}, .row_major);
+        var A = try zuda.ndarray.NDArray(f64, 2).eye(allocator, m, n, 0, .row_major);
         defer A.deinit();
+        // Add off-diagonal elements to make it non-trivial but keep full rank
         for (0..m) |i| {
             for (0..n) |j| {
-                const val = @as(f64, @floatFromInt((i + 1) * (j + 1))) / @as(f64, @floatFromInt(n));
-                A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) }, val);
+                if (i != j) {
+                    const val = @as(f64, @floatFromInt((i + 1) * (j + 1))) / @as(f64, @floatFromInt(n * n));
+                    const curr = try A.get(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) });
+                    A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) }, curr + val);
+                }
             }
         }
 
@@ -143,12 +150,16 @@ pub fn main() !void {
     {
         const decomp = zuda.linalg.decompositions;
         const n: usize = 128;
-        var A = try zuda.ndarray.NDArray(f64, 2).zeros(allocator, &.{n, n}, .row_major);
+        var A = try zuda.ndarray.NDArray(f64, 2).eye(allocator, n, n, 0, .row_major);
         defer A.deinit();
+        // Add off-diagonal elements to make it non-trivial but keep full rank
         for (0..n) |i| {
             for (0..n) |j| {
-                const val = @as(f64, @floatFromInt((i + 1) * (j + 1))) / @as(f64, @floatFromInt(n));
-                A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) }, val);
+                if (i != j) {
+                    const val = @as(f64, @floatFromInt((i + 1) * (j + 1))) / @as(f64, @floatFromInt(n * n));
+                    const curr = try A.get(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) });
+                    A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(j)) }, curr + val);
+                }
             }
         }
 
