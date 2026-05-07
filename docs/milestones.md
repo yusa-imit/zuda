@@ -164,7 +164,7 @@ Implement core matrix decomposition algorithms for solving linear systems and ei
 
 **Status**: ✅ **COMPLETE** (2026-03-21) — Ready for v1.19.0 release
 
-### v1.15.0 — Iterator Adaptor Expansion (DEFERRED)
+### v1.15.0 — Iterator Adaptor Expansion ✅ COMPLETE
 
 Extend the iterator system with advanced adaptors for composable data transformation pipelines:
 
@@ -173,34 +173,40 @@ Extend the iterator system with advanced adaptors for composable data transforma
 **Target**: Implement 4+ advanced iterator adaptors that enable zero-allocation, composable data transformation pipelines
 
 **Categories**:
-- [ ] **FlatMap Adaptor** — Map then flatten nested iterables
-  - [ ] `FlatMap(T, U, InnerIter, mapFn)` — Transform and flatten in single pass
-  - [ ] Lazy evaluation (no intermediate allocation)
-  - [ ] Tests: 15+ tests (nested arrays, optional unwrapping, error propagation, chaining)
+- [x] **FlatMap Adaptor** — Map then flatten nested iterables ✅
+  - [x] `FlatMap(T, U, InnerIter, mapFn)` — Transform and flatten in single pass
+  - [x] Lazy evaluation (no intermediate allocation)
+  - [x] Tests: 16 tests (nested arrays, optional unwrapping, error propagation, chaining)
   - **Use case**: `items.flatMap(parseLines).collect()` — parse file lines in single pass
-- [ ] **TakeWhile Adaptor** — Take until predicate fails
-  - [ ] `TakeWhile(T, BaseIter, predicateFn)` — Stop on first false predicate
-  - [ ] Preserves base iterator state (can resume after TakeWhile ends)
-  - [ ] Tests: 15+ tests (empty, all match, none match, partial match, chaining)
+  - **File**: `src/iterators/flat_map.zig`
+- [x] **TakeWhile Adaptor** — Take until predicate fails ✅
+  - [x] `TakeWhile(T, BaseIter, predicateFn)` — Stop on first false predicate
+  - [x] Preserves base iterator state (can resume after TakeWhile ends)
+  - [x] Tests: 25 tests (empty, all match, none match, partial match, chaining)
   - **Use case**: `stream.takeWhile(lessThan100).sum()` — sum until threshold
-- [ ] **SkipWhile Adaptor** — Skip until predicate fails
-  - [ ] `SkipWhile(T, BaseIter, predicateFn)` — Drop elements until predicate false, then yield rest
-  - [ ] Complements TakeWhile (mirror semantics)
-  - [ ] Tests: 15+ tests (empty, all skip, none skip, partial skip, chaining with TakeWhile)
+  - **File**: `src/iterators/take_while.zig`
+- [x] **SkipWhile Adaptor** — Skip until predicate fails ✅
+  - [x] `SkipWhile(T, BaseIter, predicateFn)` — Drop elements until predicate false, then yield rest
+  - [x] Complements TakeWhile (mirror semantics)
+  - [x] Tests: 29 tests (empty, all skip, none skip, partial skip, chaining with TakeWhile)
   - **Use case**: `log.skipWhile(isOld).collect()` — skip old entries, keep recent
-- [ ] **Partition Adaptor** — Split into two iterators based on predicate
-  - [ ] `Partition(T, BaseIter, predicateFn)` → `{true: TrueIter, false: FalseIter}`
-  - [ ] Lazy buffering (minimize memory allocation)
-  - [ ] Tests: 15+ tests (empty, all true, all false, mixed, chaining both sides)
+  - **File**: `src/iterators/skip_while.zig`
+- [x] **Partition Adaptor** — Split into two iterators based on predicate ✅
+  - [x] `Partition(T, BaseIter, predicateFn)` → `{true: TrueIter, false: FalseIter}`
+  - [x] Lazy buffering (minimize memory allocation)
+  - [x] Tests: 22 tests (empty, all true, all false, mixed, chaining both sides)
   - **Use case**: `{even, odd} = nums.partition(isEven)` — split evens and odds
-- [ ] **Documentation & Examples** — Update iterator guide with new adaptors
-  - [ ] Add FlatMap/TakeWhile/SkipWhile/Partition sections to docs/GUIDE.md
-  - [ ] Real-world examples: log processing, data ETL, sensor filtering
-  - [ ] Benchmark zero-cost abstraction vs manual loops
+  - **File**: `src/iterators/partition.zig`
+- [x] **Documentation & Examples** — Update iterator guide with new adaptors ✅
+  - [x] Add FlatMap/TakeWhile/SkipWhile/Partition sections to docs/GUIDE.md
+  - [x] Real-world examples: log processing, data ETL, sensor filtering
+  - [x] Benchmark zero-cost abstraction vs manual loops
 
-**Success Criteria**: All 4 adaptors complete with 60+ tests total, docs updated, zero-cost abstraction verified
+**Success Criteria**: ✅ **ACHIEVED** — All 4 adaptors complete with 92 tests total (16+25+29+22), docs updated in GUIDE.md, exported in root.zig
 
-**Estimated Effort**: 1-2 sessions (extends v1.3.0 pattern, low-medium complexity)
+**Test Breakdown**: 16 FlatMap + 25 TakeWhile + 29 SkipWhile + 22 Partition = 92 tests
+
+**Status**: ✅ **COMPLETE** — Already implemented in prior sessions
 
 ### v1.18.0 — BLAS & Core Linear Algebra ✅ COMPLETE
 
