@@ -146,9 +146,9 @@ pub const DAG = struct {
 
         var vertex_it = self.graph.vertexIterator();
         while (vertex_it.next()) |vertex| {
-            // Entry nodes have in-degree 0 (no incoming edges)
-            const in_deg = self.graph.inDegree(vertex);
-            if (in_deg == 0) {
+            // Entry nodes have out-degree 0 (no outgoing dependencies)
+            const out_deg = self.graph.outDegree(vertex);
+            if (out_deg == 0) {
                 try result.append(allocator, try allocator.dupe(u8, vertex));
             }
         }
@@ -221,7 +221,7 @@ pub const DAG = struct {
         }
 
         // Transfer ownership of sorted array to caller
-        return result.order.toOwnedSlice();
+        return result.order.toOwnedSlice(self.allocator);
     }
 
     /// Detect cycle using DFS.
@@ -256,7 +256,7 @@ pub const DAG = struct {
 
         // Return cycle vertices if found
         if (result.cycle_vertices) |*cv| {
-            return cv.toOwnedSlice();
+            return cv.toOwnedSlice(self.allocator);
         }
 
         return null;
@@ -510,4 +510,44 @@ test "zr DAG compatibility - getInDegree with cycle" {
     try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("A")); // C → A
     try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("B")); // A → B
     try std.testing.expectEqual(@as(usize, 1), dag.getInDegree("C")); // B → C
+}
+
+test "zr DAG compatibility - getEntryNodes" {
+    const allocator = std.testing.allocator;
+
+    var dag = DAG.init(allocator);
+    defer dag.deinit();
+
+    // Example from issue #24:
+    // test depends on build, deploy depends on test, lint has no dependencies
+    try dag.addNode("test");
+    try dag.addNode("build");
+    try dag.addNode("deploy");
+    try dag.addNode("lint");
+
+    try dag.addEdge("test", "build"); // test depends on build
+    try dag.addEdge("deploy", "test"); // deploy depends on test
+
+    // Entry nodes = nodes with NO dependencies (out-degree 0)
+    // Expected: ["build", "lint"]
+    var entry_nodes = try dag.getEntryNodes(allocator);
+    defer {
+        for (entry_nodes.items) |item| {
+            allocator.free(item);
+        }
+        entry_nodes.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), entry_nodes.items.len);
+
+    // Check that both "build" and "lint" are in the result (order doesn't matter)
+    var has_build = false;
+    var has_lint = false;
+    for (entry_nodes.items) |node| {
+        if (std.mem.eql(u8, node, "build")) has_build = true;
+        if (std.mem.eql(u8, node, "lint")) has_lint = true;
+    }
+
+    try std.testing.expect(has_build);
+    try std.testing.expect(has_lint);
 }
