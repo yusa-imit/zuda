@@ -1,4 +1,20 @@
-**Session 478 Update (2026-05-08) — FEATURE MODE:**
+**Session 479 Update (2026-05-08) — FEATURE MODE:**
+
+🐛 **Bug Fixes** — Resolved 2 critical zr_dag compatibility issues:
+- **Issue #23**: Fixed Zig 0.15 incompatibility in topologicalSort() and detectCycle()
+  * toOwnedSlice() now passes allocator parameter (Zig 0.15 API change)
+  * Both methods compile and pass tests
+- **Issue #24**: Fixed getEntryNodes() semantic reversal
+  * Changed from in-degree (wrong) to out-degree (correct)
+  * Entry nodes = nodes with NO dependencies (can execute first)
+  * Now matches zr's original semantics: getEntryNodes() returns nodes with empty dependencies list
+  * Added comprehensive test validating correct behavior
+- **Impact**: Unblocks zr task runner migration to zuda.compat.zr_dag layer
+- **Tests**: All passing (exit code 0), including new getEntryNodes() test
+- **Commit**: f95785b (bug fixes)
+- **Issues closed**: #23, #24
+
+**Previous Session 478 Update (2026-05-08) — FEATURE MODE:**
 
 📚 **Phase 12 Documentation Finalization** — Marked all v2.0 phases as complete:
 - **Updated milestones.md**: Checked all Phase 12 boxes (v1.28.0 + v2.0.0 sections)
