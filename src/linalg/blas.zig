@@ -3041,6 +3041,334 @@ test "trmv: dimension mismatch error" {
     try testing.expectError(error.DimensionMismatch, trmv(f64, 'U', 'N', 'N', A, &x));
 }
 
+test "trmv: non-square matrix dimension mismatch" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trmv(f64, 'U', 'N', 'N', A, &x));
+}
+
+test "trmv: 1x1 upper triangular" {
+    const allocator = testing.allocator;
+
+    // 1×1 upper triangular: A = [[5]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{3}, .row_major);
+    defer x.deinit();
+
+    // A*x = [5*3] = [15]
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(15.0, x.data[0], 1e-10);
+}
+
+test "trmv: 1x1 lower triangular" {
+    const allocator = testing.allocator;
+
+    // 1×1 lower triangular: A = [[5]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{3}, .row_major);
+    defer x.deinit();
+
+    // A*x = [5*3] = [15]
+    try trmv(f64, 'L', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(15.0, x.data[0], 1e-10);
+}
+
+test "trmv: upper triangular with zeros" {
+    const allocator = testing.allocator;
+
+    // Upper triangular with explicit zeros: A = [[2, 3, 4], [0, 5, 6], [0, 0, 7]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 3, 4, 0, 5, 6, 0, 0, 7 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [2*1 + 3*2 + 4*3, 5*2 + 6*3, 7*3] = [20, 28, 21]
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(20.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(28.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(21.0, x.data[2], 1e-10);
+}
+
+test "trmv: lower triangular with zeros" {
+    const allocator = testing.allocator;
+
+    // Lower triangular with explicit zeros: A = [[2, 0, 0], [3, 5, 0], [4, 6, 7]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 3, 5, 0, 4, 6, 7 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [2*1, 3*1 + 5*2, 4*1 + 6*2 + 7*3] = [2, 13, 37]
+    try trmv(f64, 'L', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(13.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(37.0, x.data[2], 1e-10);
+}
+
+test "trmv: lower triangular with unit diagonal" {
+    const allocator = testing.allocator;
+
+    // Unit lower triangular: A = [[1, 0, 0], [2, 1, 0], [3, 4, 1]] (diagonals ignored in input)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 999, 0, 0, 2, 999, 0, 3, 4, 999 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // With unit diagonal: A*x = [1 + 0, 2*1 + 2 + 0, 3*1 + 4*2 + 3] = [1, 4, 16]
+    try trmv(f64, 'L', 'N', 'U', A, &x);
+
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(16.0, x.data[2], 1e-10);
+}
+
+test "trmv: upper triangular transpose (acts like lower)" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[2, 1, 0], [0, 3, 2], [0, 0, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 1, 0, 0, 3, 2, 0, 0, 4 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A^T = [[2, 0, 0], [1, 3, 0], [0, 2, 4]]
+    // A^T*x = [2*1, 1*1 + 3*2, 0 + 2*2 + 4*3] = [2, 7, 16]
+    try trmv(f64, 'U', 'T', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(16.0, x.data[2], 1e-10);
+}
+
+test "trmv: lower triangular transpose (acts like upper)" {
+    const allocator = testing.allocator;
+
+    // Lower triangular: A = [[2, 0, 0], [1, 3, 0], [4, 2, 5]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 1, 3, 0, 4, 2, 5 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A^T = [[2, 1, 4], [0, 3, 2], [0, 0, 5]]
+    // A^T*x = [2*1 + 1*2 + 4*3, 3*2 + 2*3, 5*3] = [16, 12, 15]
+    try trmv(f64, 'L', 'T', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(16.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(12.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(15.0, x.data[2], 1e-10);
+}
+
+test "trmv: upper transpose with unit diagonal" {
+    const allocator = testing.allocator;
+
+    // Upper triangular: A = [[1, 2, 3], [0, 1, 4], [0, 0, 1]] (unit diagonal)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 999, 2, 3, 0, 999, 4, 0, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A^T = [[1, 0, 0], [2, 1, 0], [3, 4, 1]] with unit diagonal
+    // A^T*x = [1 + 0, 2 + 2 + 0, 3 + 8 + 3] = [1, 4, 14]
+    try trmv(f64, 'U', 'T', 'U', A, &x);
+
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(14.0, x.data[2], 1e-10);
+}
+
+test "trmv: lower transpose with unit diagonal" {
+    const allocator = testing.allocator;
+
+    // Lower triangular: A = [[1, 0, 0], [2, 1, 0], [3, 4, 1]] (unit diagonal)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 999, 0, 0, 2, 999, 0, 3, 4, 999 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A^T = [[1, 2, 3], [0, 1, 4], [0, 0, 1]] with unit diagonal
+    // A^T*x = [1 + 2*2 + 3*3, 2 + 4*3, 3] = [14, 14, 3]
+    try trmv(f64, 'L', 'T', 'U', A, &x);
+
+    try testing.expectApproxEqAbs(14.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(14.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[2], 1e-10);
+}
+
+test "trmv: 4x4 upper triangular complex pattern" {
+    const allocator = testing.allocator;
+
+    // Upper triangular 4×4
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 2, 3, 4,
+        0, 5, 6, 7,
+        0, 0, 8, 9,
+        0, 0, 0, 10,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [1 + 4 + 9 + 16, 10 + 18 + 28, 24 + 36, 40] = [30, 56, 60, 40]
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(30.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(56.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(60.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(40.0, x.data[3], 1e-10);
+}
+
+test "trmv: 4x4 lower triangular complex pattern" {
+    const allocator = testing.allocator;
+
+    // Lower triangular 4×4
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 0, 0, 0,
+        2, 3, 0, 0,
+        4, 5, 6, 0,
+        7, 8, 9, 10,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [1, 2 + 6, 4 + 10 + 18, 7 + 16 + 27 + 40] = [1, 8, 32, 90]
+    try trmv(f64, 'L', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(32.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(90.0, x.data[3], 1e-10);
+}
+
+test "trmv: zero vector input" {
+    const allocator = testing.allocator;
+
+    // Upper triangular
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 1, 0, 0, 3, 1, 0, 0, 4 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer x.deinit();
+
+    // A*0 = 0
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(0.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, x.data[2], 1e-10);
+}
+
+test "trmv: identity upper triangular" {
+    const allocator = testing.allocator;
+
+    // Identity: A = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // I*x = x
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[2], 1e-10);
+}
+
+test "trmv: identity lower triangular" {
+    const allocator = testing.allocator;
+
+    // Identity: A = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // I*x = x
+    try trmv(f64, 'L', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[2], 1e-10);
+}
+
+test "trmv: with negative numbers" {
+    const allocator = testing.allocator;
+
+    // Upper triangular with negatives: A = [[-1, 2, 3], [0, -2, 4], [0, 0, -3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ -1, 2, 3, 0, -2, 4, 0, 0, -3 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [-1 + 4 + 9, -4 + 12, -9] = [12, 8, -9]
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(12.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-9.0, x.data[2], 1e-10);
+}
+
+test "trmv: with small floating point values" {
+    const allocator = testing.allocator;
+
+    // Upper triangular with small values
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1e-8, 2e-8, 0, 3e-8 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1e8, 1e8 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [1e-8*1e8 + 2e-8*1e8, 3e-8*1e8] = [3, 3]
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(3.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+}
+
+test "trmv: f32 precision" {
+    const allocator = testing.allocator;
+
+    // f32 upper triangular
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2.5, 1.5, 0, 3.5 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // A*x = [2.5*2 + 1.5*3, 3.5*3] = [9.5, 10.5]
+    try trmv(f32, 'U', 'N', 'N', A, &x);
+
+    try testing.expectApproxEqAbs(9.5, x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(10.5, x.data[1], 1e-5);
+}
+
 test "trsv: dimension mismatch error" {
     const allocator = testing.allocator;
 
