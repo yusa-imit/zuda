@@ -108,7 +108,8 @@ Implement linear system solvers, pseudo-inverse, and advanced matrix properties 
 
 **Test Breakdown**: 24 solve + 16 lstsq + 25 inv + 26 pinv + 16 rank + 16 cond = 123 tests
 
-**Total Test Count**: 301 tests (160 BLAS + 114 decompositions + 123 solvers/properties)
+**Total Test Count**: 342 tests (201 BLAS + 114 decompositions + 123 solvers/properties)
+  - BLAS: 160 original + 41 triangular ops (26 trmv + 5 trsv + 5 trmm + 5 trsm) = 201
 
 **Status**: ✅ COMPLETE — Released as v1.20.0 on 2026-03-22
 
@@ -223,13 +224,15 @@ Implement BLAS operations and core matrix properties for scientific computing:
   - ✅ nrm2(x): L2 norm, O(n) — 8 tests
   - ✅ asum(x): sum of absolute values, O(n) — 8 tests
   - ✅ scal(α, x): x = αx, O(n) — 8 tests
-- [x] **BLAS Level 2** (2/2) — Matrix-vector operations ✅
+- [x] **BLAS Level 2** (4/4) — Matrix-vector operations ✅
   - ✅ gemv(α, A, x, β, y): y = αAx + βy, O(m*n) — 15 tests
   - ✅ ger(α, x, y, A): rank-1 update A = A + αxy^T, O(m*n) — 13 tests
-  - ⏭️ trmv, trsv deferred (triangular operations less critical)
-- [x] **BLAS Level 3** (1/1) — Matrix-matrix operations ✅
+  - ✅ trmv(uplo, trans, diag, A, x): triangular matrix-vector multiply, O(n²) — 26 tests
+  - ✅ trsv(uplo, trans, diag, A, x): triangular solve Ax=b, O(n²) — 5 tests
+- [x] **BLAS Level 3** (3/3) — Matrix-matrix operations ✅
   - ✅ gemm(α, A, B, β, C): C = αAB + βC, O(m*n*k) — 24 tests
-  - ⏭️ trmm, trsm deferred (triangular operations)
+  - ✅ trmm(side, uplo, trans, diag, α, A, B): triangular matrix-matrix multiply, O(n³) — 5 tests
+  - ✅ trsm(side, uplo, trans, diag, α, A, B): triangular matrix-matrix solve, O(n³) — 5 tests
 - [x] **Matrix Properties** (2/4) ✅
   - ✅ trace(A): sum of diagonal, O(n) — 15 tests
   - ✅ det(A): determinant via LU, O(n³) — 18 tests

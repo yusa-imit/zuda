@@ -1,4 +1,14 @@
-**Session 476 Update (2026-05-07) — FEATURE MODE:**
+**Session 477 Update (2026-05-08) — FEATURE MODE:**
+
+📚 **Documentation Completion** — Marked deferred milestones as complete:
+- **v1.15.0 Iterator Adaptor Expansion**: Verified all 4 adaptors (FlatMap, TakeWhile, SkipWhile, Partition) already implemented in prior sessions with 92 tests
+- **BLAS Triangular Operations**: Verified all 4 triangular ops (trmv, trsv, trmm, trsm) already implemented with 41 tests total (26 trmv + 5 trsv + 5 trmm + 5 trsm)
+- Updated milestones.md to reflect completion status
+- Total BLAS test count updated: 160 → 201 tests (342 total for v1.18.0)
+- **Status**: All previously deferred BLAS operations are complete and tested
+- Commits: b65d676 (iterator adaptors doc), d81260b (trmv tests by test-writer)
+
+**Previous Session 476 Update (2026-05-07) — FEATURE MODE:**
 
 🎉 **v2.0.4 RELEASED** — Phase 12 Documentation & Integration:
 - Released v2.0.4 (https://github.com/yusa-imit/zuda/releases/tag/v2.0.4)
