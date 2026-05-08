@@ -82,6 +82,11 @@ pub const DAG = struct {
     /// Free all memory.
     /// Time: O(V + E) | Space: O(1)
     pub fn deinit(self: *Self) void {
+        // Free all duped vertex keys (allocated in addNode)
+        var vertex_it = self.graph.vertexIterator();
+        while (vertex_it.next()) |vertex| {
+            self.allocator.free(vertex);
+        }
         self.graph.deinit();
     }
 
