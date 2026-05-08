@@ -1,3 +1,26 @@
+**Session 484 Update (2026-05-09) — FEATURE MODE:**
+
+⚡ **SIMD Performance Enhancement** — Implemented gemm_simd_optimized:
+- **Function**: `gemm_simd_optimized(T, α, A, B, β, C)` — Highly optimized GEMM with full SIMD vectorization
+- **Algorithm**: 4×4 blocking with vectorized k-dimension accumulation
+  * Uses @Vector for FMA-style inner products: `@reduce(.Add, a_vec * b_vec)`
+  * Processes k in chunks of vec_width (4 for f64, 8 for f32)
+  * Maintains cache efficiency with 4×4 micro-kernels
+  * Handles non-aligned dimensions with scalar tail loop
+- **Performance Target**: 3-5 GFLOPS for 1024×1024 f64 matrices
+- **Tests**: 25 comprehensive tests (all passing)
+  * Correctness: 4×4 single block, 64×64, 128×128, 256×256, 1024×1024
+  * Rectangular matrices (64×128×64, 67×77×83 non-aligned)
+  * Alpha/beta scaling (α=0.5, β=2.0, combined, zero, negative)
+  * f32/f64 type support
+  * Numerical equivalence with gemm_blocked_4x4
+  * Edge cases (1×1, zero alpha/beta)
+  * Dimension mismatch error handling
+  * Memory leak detection
+- **Implementation**: src/linalg/simd_blas.zig (+137 lines implementation, +583 lines tests)
+- **Commit**: 8aad951 (feat: gemm_simd_optimized)
+- **Impact**: Expected 2-3× speedup over gemm_blocked_4x4 for large matrices, closing gap to 5 GFLOPS target
+
 **Session 482 Update (2026-05-08) — FEATURE MODE (switched to STABILIZATION due to CI red):**
 
 🐛 **Critical Bug Fixes** — Resolved CI build failure + memory leak:
