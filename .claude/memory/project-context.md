@@ -1,3 +1,31 @@
+**Session 482 Update (2026-05-08) — FEATURE MODE (switched to STABILIZATION due to CI red):**
+
+🐛 **Critical Bug Fixes** — Resolved CI build failure + memory leak:
+1. **CI Build Failure (SIMD BLAS)**:
+   - **Error**: `type '*const @Vector(4, f64)' is not an indexable pointer` in simd_blas.zig:324
+   - **Cause**: @memcpy requires indexable pointer (slice/many-ptr/array-ptr), but `&result` produces `*const @Vector`
+   - **Fix**: Convert SIMD vector to array before memcpy: `const result_array: [vec_width]T = result;`
+   - **Files**: src/linalg/simd_blas.zig (2 occurrences fixed)
+   - **Commit**: d985246 (fix SIMD vector to array conversion)
+
+2. **Memory Leak in zr_dag Compat Layer (Issue #25)**:
+   - **Symptom**: 13 tests in zr project leaking memory from `addNode()` duped strings
+   - **Root Cause**:
+     * `addNode()` calls `allocator.dupe(u8, id)` to own vertex keys (line 95)
+     * `AdjacencyList.deinit()` doesn't free vertex keys (by design — doesn't own them)
+     * Result: every `addNode()` allocation leaked
+   - **Fix**: Added vertex iteration loop in `deinit()` to free all duped keys before `graph.deinit()`
+   - **Files**: src/compat/zr_dag.zig (+5 lines)
+   - **Tests**: All 9 zr_dag tests passing, no memory leaks
+   - **Commit**: 13e0645 (free duped vertex keys)
+   - **Issue**: #25 closed (auto-closed by "Fixes #25" keyword)
+
+- **Impact**:
+  * CI unblocked (build now compiles)
+  * zr task runner migration unblocked (memory-safe integration)
+  * All tests passing locally
+- **System Status**: CI in_progress (waiting for green confirmation)
+
 **Session 481 Update (2026-05-08) — FEATURE MODE:**
 
 ⚡ **Performance Optimization** — BLAS GEMM auto-dispatch to blocked kernel:
