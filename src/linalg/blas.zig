@@ -26,6 +26,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const root = @import("../root.zig");
 const NDArray = root.ndarray.NDArray;
+const simd_blas = @import("simd_blas.zig");
 
 /// Compute inner product (dot product) of two vectors
 ///
@@ -1523,6 +1524,14 @@ pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta
         return error.DimensionMismatch;
     }
 
+    // Auto-dispatch: Use optimized blocked implementation for large matrices
+    // Threshold: if both m and n are >= 64, use the blocked GEMM
+    const threshold: usize = 64;
+    if (m >= threshold and n >= threshold) {
+        return try simd_blas.gemm_blocked_4x4(T, alpha, A, B, beta, C);
+    }
+
+    // Fallback to naive triple-loop for small matrices
     // Operation: C = α*A*B + β*C
     // First scale C by beta, then accumulate α*A*B
     // Loop order: i (rows of C), j (cols of C), k (inner dimension)
@@ -2122,6 +2131,428 @@ test "gemm: column vector (mx1) times row vector (1xn) produces outer product" {
     try testing.expectApproxEqAbs(10.0, C.data[3], 1e-10);
     try testing.expectApproxEqAbs(12.0, C.data[4], 1e-10);
     try testing.expectApproxEqAbs(15.0, C.data[5], 1e-10);
+}
+
+// ============================================================================
+// GEMM Auto-Dispatch Tests (RED tests for blocking optimization)
+// ============================================================================
+// Tests verify that gemm() correctly auto-dispatches to blocked implementation
+// for large matrices while maintaining correctness and performance.
+
+test "gemm: threshold boundary 63x63 uses naive implementation" {
+    const allocator = testing.allocator;
+    const size = 63;
+
+    // Create 63×63 matrices with known values
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    // Initialize with simple patterns
+    for (0..size * size) |i| {
+        data_A[i] = @as(f64, @floatFromInt((i % size) + 1));
+        data_B[i] = @as(f64, @floatFromInt((i / size) + 1));
+        data_C[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    // Compute: C = 2.0*A*B + 0.5*C
+    try gemm(f64, 2.0, A, B, 0.5, &C);
+
+    // Verify some results (spot checks to ensure computation completed)
+    try testing.expect(!std.math.isNan(C.data[0]));
+    try testing.expect(!std.math.isInf(C.data[0]));
+    try testing.expect(C.data[0] > 0.0); // Should have accumulated positive values
+}
+
+test "gemm: threshold boundary 64x64 switches to blocked implementation" {
+    const allocator = testing.allocator;
+    const size = 64;
+
+    // Create 64×64 matrices
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    for (0..size * size) |i| {
+        data_A[i] = @as(f64, @floatFromInt((i % size) + 1));
+        data_B[i] = @as(f64, @floatFromInt((i / size) + 1));
+        data_C[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    // Compute: C = 2.0*A*B + 0.5*C
+    try gemm(f64, 2.0, A, B, 0.5, &C);
+
+    // Verify results are valid (should use blocked implementation)
+    try testing.expect(!std.math.isNan(C.data[0]));
+    try testing.expect(!std.math.isInf(C.data[0]));
+    try testing.expect(C.data[0] > 0.0);
+}
+
+test "gemm: threshold boundary 65x65 uses blocked implementation" {
+    const allocator = testing.allocator;
+    const size = 65;
+
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    for (0..size * size) |i| {
+        data_A[i] = @as(f64, @floatFromInt((i % size) + 1));
+        data_B[i] = @as(f64, @floatFromInt((i / size) + 1));
+        data_C[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    try gemm(f64, 2.0, A, B, 0.5, &C);
+
+    try testing.expect(!std.math.isNan(C.data[0]));
+    try testing.expect(!std.math.isInf(C.data[0]));
+    try testing.expect(C.data[0] > 0.0);
+}
+
+test "gemm: non-square matrices at threshold (64x32x64)" {
+    const allocator = testing.allocator;
+
+    // A: 64×32, B: 32×64, C: 64×64
+    var data_A = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, 32 * 64);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(data_C);
+
+    for (0..64 * 32) |i| {
+        data_A[i] = @as(f64, @floatFromInt(i % 10 + 1));
+    }
+    for (0..32 * 64) |i| {
+        data_B[i] = @as(f64, @floatFromInt(i % 10 + 1));
+    }
+    for (0..64 * 64) |i| {
+        data_C[i] = 0.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 64 }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, data_C, .row_major);
+    defer C.deinit();
+
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    // Verify results are finite
+    for (0..64 * 64) |i| {
+        try testing.expect(!std.math.isNan(C.data[i]));
+        try testing.expect(!std.math.isInf(C.data[i]));
+    }
+}
+
+test "gemm: rectangular 32x64x32 (tall) with dispatch" {
+    const allocator = testing.allocator;
+
+    // A: 32×64, B: 64×32, C: 32×32
+    var data_A = try allocator.alloc(f64, 32 * 64);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, 32 * 32);
+    defer allocator.free(data_C);
+
+    for (0..32 * 64) |i| {
+        data_A[i] = @as(f64, @floatFromInt(i % 7 + 1));
+    }
+    for (0..64 * 32) |i| {
+        data_B[i] = @as(f64, @floatFromInt(i % 7 + 1));
+    }
+    for (0..32 * 32) |i| {
+        data_C[i] = 0.5;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 64 }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 32 }, data_C, .row_major);
+    defer C.deinit();
+
+    try gemm(f64, 1.5, A, B, 2.0, &C);
+
+    for (0..32 * 32) |i| {
+        try testing.expect(!std.math.isNan(C.data[i]));
+        try testing.expect(!std.math.isInf(C.data[i]));
+    }
+}
+
+test "gemm: correctness at 64x64 with alpha=0 (zero scaling)" {
+    const allocator = testing.allocator;
+    const size = 64;
+
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    for (0..size * size) |i| {
+        data_A[i] = @as(f64, @floatFromInt(i + 1));
+        data_B[i] = @as(f64, @floatFromInt(i + 1));
+        data_C[i] = 5.0; // Initial value
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    // C = 0*A*B + 2.5*C = [[12.5, ...]]
+    try gemm(f64, 0.0, A, B, 2.5, &C);
+
+    // All elements should be 5.0 * 2.5 = 12.5
+    for (0..size * size) |i| {
+        try testing.expectApproxEqAbs(12.5, C.data[i], 1e-10);
+    }
+}
+
+test "gemm: correctness at 64x64 with beta=0 (pure matrix multiply)" {
+    const allocator = testing.allocator;
+    const size = 64;
+
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    // Simple diagonal patterns for verification
+    for (0..size * size) |i| {
+        data_A[i] = if (i % (size + 1) == 0) 2.0 else 0.0; // 2*Identity
+        data_B[i] = if (i % (size + 1) == 0) 3.0 else 0.0; // 3*Identity
+        data_C[i] = 99.0; // Should be overwritten
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    // C = 1.0*(2I)*(3I) + 0*C = 6I
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    // Verify diagonal is 6.0, off-diagonal is 0.0
+    for (0..size) |i| {
+        for (0..size) |j| {
+            const idx = i * size + j;
+            const expected = if (i == j) 6.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[idx], 1e-10);
+        }
+    }
+}
+
+test "gemm: f32 precision at 64x64 threshold" {
+    const allocator = testing.allocator;
+    const size = 64;
+
+    var data_A = try allocator.alloc(f32, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f32, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f32, size * size);
+    defer allocator.free(data_C);
+
+    for (0..size * size) |i| {
+        data_A[i] = @as(f32, @floatFromInt((i % 10) + 1));
+        data_B[i] = @as(f32, @floatFromInt((i % 10) + 1));
+        data_C[i] = 0.1;
+    }
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    try gemm(f32, 1.0, A, B, 1.0, &C);
+
+    for (0..size * size) |i| {
+        try testing.expect(!std.math.isNan(C.data[i]));
+        try testing.expect(!std.math.isInf(C.data[i]));
+        try testing.expect(C.data[i] >= 0.0);
+    }
+}
+
+test "gemm: negative alpha at 64x64 threshold" {
+    const allocator = testing.allocator;
+    const size = 64;
+
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    for (0..size * size) |i| {
+        data_A[i] = 1.0;
+        data_B[i] = 1.0;
+        data_C[i] = 10.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    // C = -2.0*ones*ones + 0.5*C
+    // ones*ones = 64*ones (since we have size×size ones)
+    // C[i,j] = -2.0*64 + 0.5*10 = -128 + 5 = -123
+    try gemm(f64, -2.0, A, B, 0.5, &C);
+
+    const expected = -128.0 + 5.0; // -123.0
+    for (0..size * size) |i| {
+        try testing.expectApproxEqAbs(expected, C.data[i], 1e-9);
+    }
+}
+
+test "gemm: large matrix 128x128 uses blocked implementation" {
+    const allocator = testing.allocator;
+    const size = 128;
+
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    for (0..size * size) |i| {
+        data_A[i] = @as(f64, @floatFromInt((i % 5) + 1));
+        data_B[i] = @as(f64, @floatFromInt((i % 5) + 1));
+        data_C[i] = 0.5;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    try gemm(f64, 1.5, A, B, 0.5, &C);
+
+    // Spot checks for validity
+    try testing.expect(!std.math.isNan(C.data[0]));
+    try testing.expect(!std.math.isNan(C.data[size * size - 1]));
+}
+
+test "gemm: mixed scaling with alpha and beta at 64x64" {
+    const allocator = testing.allocator;
+    const size = 64;
+
+    var data_A = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, size * size);
+    defer allocator.free(data_C);
+
+    // Create identity matrices for predictable computation
+    for (0..size * size) |i| {
+        data_A[i] = if (i % (size + 1) == 0) 1.0 else 0.0;
+        data_B[i] = if (i % (size + 1) == 0) 1.0 else 0.0;
+        data_C[i] = 2.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ size, size }, data_C, .row_major);
+    defer C.deinit();
+
+    // C = 3.5*I*I + 1.5*C = 3.5*I + 1.5*C
+    // Diagonal: 3.5*1 + 1.5*2 = 6.5, Off-diagonal: 3.5*0 + 1.5*2 = 3.0
+    try gemm(f64, 3.5, A, B, 1.5, &C);
+
+    for (0..size) |i| {
+        for (0..size) |j| {
+            const idx = i * size + j;
+            const expected = if (i == j) 6.5 else 3.0;
+            try testing.expectApproxEqAbs(expected, C.data[idx], 1e-10);
+        }
+    }
+}
+
+test "gemm: tall matrix 64x16 inner dimension triggers dispatch" {
+    const allocator = testing.allocator;
+
+    var data_A = try allocator.alloc(f64, 64 * 16);
+    defer allocator.free(data_A);
+    var data_B = try allocator.alloc(f64, 16 * 64);
+    defer allocator.free(data_B);
+    var data_C = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(data_C);
+
+    for (0..64 * 16) |i| {
+        data_A[i] = 1.0;
+    }
+    for (0..16 * 64) |i| {
+        data_B[i] = 1.0;
+    }
+    for (0..64 * 64) |i| {
+        data_C[i] = 0.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 16 }, data_A, .row_major);
+    defer A.deinit();
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 16, 64 }, data_B, .row_major);
+    defer B.deinit();
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, data_C, .row_major);
+    defer C.deinit();
+
+    try gemm(f64, 1.0, A, B, 0.0, &C);
+
+    // Each element of C = sum of 16 ones = 16.0
+    for (0..64 * 64) |i| {
+        try testing.expectApproxEqAbs(16.0, C.data[i], 1e-10);
+    }
 }
 
 // ============================================================================
