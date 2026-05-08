@@ -1,4 +1,21 @@
-**Session 479 Update (2026-05-08) — FEATURE MODE:**
+**Session 481 Update (2026-05-08) — FEATURE MODE:**
+
+⚡ **Performance Optimization** — BLAS GEMM auto-dispatch to blocked kernel:
+- **Problem**: Main `gemm()` used naive triple-loop (1.25-2.63 GFLOPS, 42-53% of 5 GFLOPS target)
+- **Solution**: Auto-dispatch to `gemm_blocked_4x4()` for large matrices (>= 64×64)
+- **Implementation**:
+  * Added threshold check in `blas.zig::gemm()`: if m >= 64 AND n >= 64, use blocked kernel
+  * Preserves naive loop for small matrices (overhead matters for N < 64)
+  * Zero API changes — drop-in performance improvement
+- **Tests**: Added 11 new dispatcher tests (36 total GEMM tests, all passing)
+  * Threshold boundaries (63×63, 64×64, 65×65)
+  * Non-square matrices, alpha/beta scaling variants, f32/f64 types
+- **Expected Impact**: 2-3× speedup for large matrices → 3.5-4.0 GFLOPS (70-80% of target)
+- **Files**: src/linalg/blas.zig (+433 lines: 11 tests + dispatcher logic)
+- **Commit**: 3a37b15 (performance optimization)
+- **Agents Used**: test-writer (RED tests), zig-developer (GREEN implementation)
+
+**Previous Session 479 Update (2026-05-08) — FEATURE MODE:**
 
 🐛 **Bug Fixes** — Resolved 2 critical zr_dag compatibility issues:
 - **Issue #23**: Fixed Zig 0.15 incompatibility in topologicalSort() and detectCycle()

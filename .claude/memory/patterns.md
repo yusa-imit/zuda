@@ -703,3 +703,50 @@ pub fn BfgsOptions(comptime T: type) type {
 - Don't assume faster convergence than gradient descent (BFGS is quasi-Newton, not Newton)
 - Don't mix line search parameter validation with convergence tests
 - Don't expect exact minima (numerical error acceptable)
+
+## Performance Optimization Pattern: Auto-Dispatch to Specialized Implementations
+
+When you have both generic and optimized implementations, use threshold-based auto-dispatch:
+
+```zig
+// Example: GEMM with naive vs blocked kernel
+pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) !void {
+    // 1. Validate inputs (dimension checks, etc.)
+    const m = A.shape[0];
+    const n = B.shape[1];
+    
+    // 2. Choose implementation based on problem size
+    const threshold: usize = 64;
+    if (m >= threshold and n >= threshold) {
+        // Large matrices → use cache-optimized blocked kernel
+        return specialized_impl.gemm_blocked_4x4(T, alpha, A, B, beta, C);
+    }
+    
+    // 3. Small matrices → use simple implementation (lower overhead)
+    // ... naive triple-loop implementation ...
+}
+```
+
+**When to use**:
+- Multiple implementations with different performance characteristics
+- Size-dependent performance tradeoffs (e.g., SIMD overhead vs speedup)
+- One implementation is complex/optimized (blocking, SIMD), another is simple/low-overhead
+
+**Guidelines**:
+- Choose threshold empirically (benchmark crossover point)
+- For BLAS: 64×64 is typical for blocking to outperform naive
+- Preserve API compatibility — caller shouldn't know about dispatch
+- Test boundary conditions (threshold-1, threshold, threshold+1)
+
+**Testing Strategy** (TDD):
+1. test-writer creates RED tests for dispatcher logic:
+   - Boundary tests (size = threshold ± 1)
+   - Correctness at both code paths
+   - Various matrix shapes (square, tall, wide)
+2. zig-developer implements dispatcher to make tests GREEN
+3. All existing tests must still pass (drop-in replacement)
+
+**Example Results** (Session 481):
+- Before: gemm() naive triple-loop → 1.25-2.63 GFLOPS (42-53% of target)
+- After: auto-dispatch to gemm_blocked_4x4() → expected 3.5-4.0 GFLOPS (70-80% of target)
+- Small matrices: no performance change (threshold preserves naive path)
