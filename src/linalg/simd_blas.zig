@@ -98,7 +98,8 @@ pub fn gemm_simd(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2),
     while (idx + vec_width <= total_elements) : (idx += vec_width) {
         const c_vec: Vec = C.data[idx..][0..vec_width].*;
         const result = beta_vec * c_vec;
-        @memcpy(C.data[idx..][0..vec_width], &result);
+        const result_array: [vec_width]T = result;
+        @memcpy(C.data[idx..][0..vec_width], &result_array);
     }
 
     // Tail loop for beta*C (scalar)
@@ -321,7 +322,8 @@ pub fn gemm_blocked_4x4(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray
     while (idx + vec_width <= total_elements) : (idx += vec_width) {
         const c_vec: Vec = C.data[idx..][0..vec_width].*;
         const result = beta_vec * c_vec;
-        @memcpy(C.data[idx..][0..vec_width], &result);
+        const result_array: [vec_width]T = result;
+        @memcpy(C.data[idx..][0..vec_width], &result_array);
     }
 
     // Tail loop for beta*C (scalar)
