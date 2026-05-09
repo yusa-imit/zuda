@@ -1,3 +1,15 @@
+**Session 486 Update (2026-05-09) — FEATURE MODE:**
+
+⚡ **BLAS Performance Optimization** — SIMD auto-dispatch upgrade:
+- **Problem**: gemm() dispatched to gemm_blocked_4x4() for large matrices, but gemm_simd_optimized() (session 484) provides 2-3× speedup
+- **Solution**: Updated auto-dispatch in blas.zig:1531 to route to gemm_simd_optimized() instead
+- **Change**: `gemm_blocked_4x4(T, ...)` → `gemm_simd_optimized(T, ...)`
+- **Expected Impact**: GEMM performance increase from 42-53% of target (1.25-2.63 GFLOPS) to 70-80% of target (3.5-4.0 GFLOPS)
+- **Rationale**: Session 484 implemented full SIMD vectorization with 4×4 blocking + vectorized k-dimension accumulation, but dispatcher wasn't updated
+- **Tests**: All passing (exit code 0), no API changes (drop-in performance improvement)
+- **File**: src/linalg/blas.zig (1 line change + comments)
+- **Commit**: 2f86ccf (performance optimization)
+
 **Session 485 Update (2026-05-09) — STABILIZATION MODE:**
 
 ✅ **Comprehensive System Audit** — All systems green:
