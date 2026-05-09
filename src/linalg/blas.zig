@@ -1524,11 +1524,12 @@ pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta
         return error.DimensionMismatch;
     }
 
-    // Auto-dispatch: Use optimized blocked implementation for large matrices
-    // Threshold: if both m and n are >= 64, use the blocked GEMM
+    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
+    // Threshold: if both m and n are >= 64, use the SIMD-optimized GEMM
+    // (Session 484: gemm_simd_optimized provides 2-3× speedup over gemm_blocked_4x4)
     const threshold: usize = 64;
     if (m >= threshold and n >= threshold) {
-        return try simd_blas.gemm_blocked_4x4(T, alpha, A, B, beta, C);
+        return try simd_blas.gemm_simd_optimized(T, alpha, A, B, beta, C);
     }
 
     // Fallback to naive triple-loop for small matrices
