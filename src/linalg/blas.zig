@@ -111,6 +111,17 @@ pub fn axpy(comptime T: type, alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)) (ND
         return error.DimensionMismatch;
     }
 
+    const n = x.shape[0];
+
+    // Auto-dispatch: Use SIMD-optimized implementation for large vectors
+    // Threshold: if n >= 64 (enough elements to benefit from vectorization)
+    // axpy_simd provides 4-8× speedup via SIMD vectorization (y = α*x + y)
+    const threshold: usize = 64;
+    if (n >= threshold) {
+        return try simd_blas.axpy_simd(T, alpha, x, y);
+    }
+
+    // Fallback to scalar loop for small vectors
     // Compute y = alpha * x + y (in-place)
     var x_iter = x.iterator();
     var idx: usize = 0;
@@ -718,6 +729,230 @@ test "axpy: f32 precision" {
     // y = 0.5*[0.5,1.5] + [2.0,3.0] = [0.25,0.75] + [2.0,3.0] = [2.25,3.75]
     try testing.expectApproxEqAbs(@as(f32, 2.25), y.data[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f32, 3.75), y.data[1], 1e-5);
+}
+
+test "axpy: auto-dispatch threshold below (n=63, scalar path)" {
+    // Below threshold (63 < 64) — should use scalar path
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 63);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 63);
+    defer allocator.free(data_y);
+
+    for (0..63) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1)); // x = [1, 2, ..., 63]
+        data_y[i] = @as(f64, @floatFromInt(i + 1)); // y = [1, 2, ..., 63]
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{63}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{63}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, 2.0, x, &y);
+
+    // y = 2*x + y = 2*[1,2,...,63] + [1,2,...,63] = [3,6,...,189]
+    for (0..63) |i| {
+        const expected = 3.0 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy: auto-dispatch threshold exact (n=64, SIMD path)" {
+    // At threshold (64 == 64) — should use SIMD path
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 64);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 64);
+    defer allocator.free(data_y);
+
+    for (0..64) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{64}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{64}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, 2.0, x, &y);
+
+    // y = 2*x + y = 3*[1,2,...,64]
+    for (0..64) |i| {
+        const expected = 3.0 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy: auto-dispatch threshold above (n=65, SIMD path)" {
+    // Above threshold (65 > 64) — should use SIMD path
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 65);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 65);
+    defer allocator.free(data_y);
+
+    for (0..65) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{65}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{65}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, 2.0, x, &y);
+
+    // y = 2*x + y = 3*[1,2,...,65]
+    for (0..65) |i| {
+        const expected = 3.0 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy: auto-dispatch large vector (n=1024, SIMD path)" {
+    // Well above threshold — verify SIMD path correctness
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 1024);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 1024);
+    defer allocator.free(data_y);
+
+    for (0..1024) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1024}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1024}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, 2.0, x, &y);
+
+    // y = 2*x + y = 3*[1,2,...,1024]
+    for (0..1024) |i| {
+        const expected = 3.0 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy: auto-dispatch non-aligned (n=100, SIMD tail loop)" {
+    // Above threshold, non-multiple of vector width — test tail loop
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 100);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 100);
+    defer allocator.free(data_y);
+
+    for (0..100) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, -1.5, x, &y);
+
+    // y = -1.5*x + y = -0.5*[1,2,...,100]
+    for (0..100) |i| {
+        const expected = -0.5 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy: auto-dispatch negative values (n=128, SIMD)" {
+    // Verify SIMD correctness with negative values
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 128);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 128);
+    defer allocator.free(data_y);
+
+    for (0..128) |i| {
+        data_x[i] = -@as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, 2.0, x, &y);
+
+    // y = 2*(-i) + i = -i
+    for (0..128) |i| {
+        const expected = -@as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy: auto-dispatch f32 type (n=256, SIMD 8-wide)" {
+    // f32 uses 8-wide SIMD vectors
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f32, 256);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f32, 256);
+    defer allocator.free(data_y);
+
+    for (0..256) |i| {
+        data_x[i] = @as(f32, @floatFromInt(i + 1));
+        data_y[i] = @as(f32, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{256}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{256}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f32, 0.5, x, &y);
+
+    // y = 0.5*x + y = 1.5*[1,2,...,256]
+    for (0..256) |i| {
+        const expected = 1.5 * @as(f32, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-5);
+    }
+}
+
+test "axpy: auto-dispatch alpha=0 (n=128, SIMD no-op)" {
+    // Verify SIMD path handles alpha=0 correctly (y unchanged)
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 128);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 128);
+    defer allocator.free(data_y);
+
+    for (0..128) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt((i + 1) * 10));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, data_y, .row_major);
+    defer y.deinit();
+
+    try axpy(f64, 0.0, x, &y);
+
+    // y = 0*x + y = y (unchanged)
+    for (0..128) |i| {
+        const expected = @as(f64, @floatFromInt((i + 1) * 10));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
 }
 
 // ============================================================================
