@@ -1080,6 +1080,94 @@ pub fn gemm_simd_optimized(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDAr
     }
 }
 
+/// SIMD-accelerated matrix-vector multiply: y = α*A*x + β*y
+///
+/// Vectorizes the inner dot product (A[row,:] · x) using @Vector.
+/// Expected 2-4× speedup over scalar gemv for large matrices.
+///
+/// Parameters:
+/// - alpha: Scalar multiplier for A*x
+/// - A: Matrix (m×n 2D NDArray)
+/// - x: Input vector (n-element 1D NDArray)
+/// - beta: Scalar multiplier for y (existing values)
+/// - y: Output vector (m-element 1D NDArray, modified in-place)
+///
+/// Errors:
+/// - error.DimensionMismatch if A.shape[1] != x.shape[0] or A.shape[0] != y.shape[0]
+///
+/// Time: O(m*n) where A is m×n
+/// Space: O(1) (modifies y in-place)
+///
+/// Algorithm:
+/// - Validate dimensions: A.shape[1] == x.shape[0], A.shape[0] == y.shape[0]
+/// - Scale y by beta (vectorized with @splat and @Vector)
+/// - For each row i: accumulate dot product A[i,:] · x using SIMD vectorization
+///   - Main loop: process n in chunks of vec_width using @Vector
+///   - Tail loop: handle remaining elements with scalar operations
+/// - Accumulate result into y[i]: y[i] += alpha * sum
+///
+/// Example:
+/// ```zig
+/// var y = try NDArray(f64, 1).zeros(allocator, &.{m}, .row_major);
+/// try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y); // y = A*x
+/// ```
+pub fn gemv_simd_optimized(comptime T: type, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    // Validate dimensions: A: m×n, x: n, y: m
+    const m = A.shape[0]; // rows
+    const n = A.shape[1]; // columns
+
+    if (A.shape[1] != x.shape[0]) return error.DimensionMismatch;
+    if (A.shape[0] != y.shape[0]) return error.DimensionMismatch;
+
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+
+    // Step 1: Scale y by beta (vectorized)
+    const beta_vec: Vec = @splat(beta);
+    var idx: usize = 0;
+
+    // SIMD loop for beta*y
+    while (idx + vec_width <= m) : (idx += vec_width) {
+        const y_vec: Vec = y.data[idx..][0..vec_width].*;
+        const result = beta_vec * y_vec;
+        const result_array: [vec_width]T = result;
+        @memcpy(y.data[idx..][0..vec_width], &result_array);
+    }
+
+    // Tail loop for beta*y (scalar)
+    while (idx < m) : (idx += 1) {
+        y.data[idx] = beta * y.data[idx];
+    }
+
+    // Step 2: Compute y += α*A*x using SIMD-vectorized dot products
+    const n_simd_end = n - (n % vec_width);
+
+    for (0..m) |i| {
+        var sum: T = 0;
+        const row_start = i * n;
+
+        // SIMD loop: process n in chunks of vec_width
+        var k: usize = 0;
+        while (k < n_simd_end) : (k += vec_width) {
+            // Load A[i, k:k+vec_width] and x[k:k+vec_width] as vectors
+            const a_vec: Vec = A.data[row_start + k ..][0..vec_width].*;
+            const x_vec: Vec = x.data[k..][0..vec_width].*;
+
+            // Vectorized multiply-add: sum += A[i,k]*x[k] + ... (vec_width elements)
+            const prod_vec = a_vec * x_vec;
+            sum += @reduce(.Add, prod_vec);
+        }
+
+        // Tail loop: scalar for remaining k elements
+        while (k < n) : (k += 1) {
+            sum += A.data[row_start + k] * x.data[k];
+        }
+
+        // Accumulate into y[i]: y[i] += alpha * sum
+        y.data[i] += alpha * sum;
+    }
+}
+
 // ============================================================================
 // Tests — gemm_simd_optimized: SIMD-accelerated matrix multiply with full FMA
 // ============================================================================
@@ -1656,5 +1744,587 @@ test "gemm_simd_optimized: no memory leaks" {
     defer C.deinit();
 
     try gemm_simd_optimized(f64, 1.0, A, B, 0.0, &C);
+    // testing.allocator detects leaks automatically
+}
+
+// ============================================================================
+// Tests — gemv_simd_optimized: SIMD-accelerated matrix-vector multiply
+// ============================================================================
+//
+// gemv_simd_optimized: y = α*A*x + β*y (matrix-vector multiply)
+// Should achieve 2-3× speedup over scalar gemv() via SIMD vectorization
+
+test "gemv_simd_optimized: basic 4x4 matrix-vector multiply" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]  (4x4)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+        9, 10, 11, 12,
+        13, 14, 15, 16,
+    }, .row_major);
+    defer A.deinit();
+
+    // x = [1, 2, 3, 4]  (4x1)
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // y = [0, 0, 0, 0]  (4x1)
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 0, 0, 0, 0 }, .row_major);
+    defer y.deinit();
+
+    // y = 1.0*A*x + 0.0*y = A*x
+    // A*x = [1*1+2*2+3*3+4*4, 5*1+6*2+7*3+8*4, 9*1+10*2+11*3+12*4, 13*1+14*2+15*3+16*4]
+    //     = [30, 70, 110, 150]
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(30.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(70.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(110.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(150.0, y.data[3], 1e-10);
+}
+
+test "gemv_simd_optimized: 8x8 matrix (full SIMD block for f64)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 8, 8 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{8}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{8}, .row_major);
+    defer y.deinit();
+
+    // Fill A with identity, x with 1s
+    for (0..8) |i| {
+        A.data[i * 8 + i] = 1.0;
+        x.data[i] = 1.0;
+    }
+
+    // y = I*x = x = [1,1,1,1,1,1,1,1]
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    for (0..8) |i| {
+        try testing.expectApproxEqAbs(1.0, y.data[i], 1e-10);
+    }
+}
+
+test "gemv_simd_optimized: 3x4 rectangular matrix" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]  (3x4)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+        9, 10, 11, 12,
+    }, .row_major);
+    defer A.deinit();
+
+    // x = [1, 2, 3, 4]  (4x1)
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    // y = [0, 0, 0]  (3x1)
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 0, 0, 0 }, .row_major);
+    defer y.deinit();
+
+    // y = A*x = [30, 70, 110]
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(30.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(70.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(110.0, y.data[2], 1e-10);
+}
+
+test "gemv_simd_optimized: 64x64 matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer y.deinit();
+
+    // Fill A with sequential values and x with 1s
+    for (0..64 * 64) |i| {
+        A.data[i] = @floatFromInt((i % 64) + 1);
+    }
+    for (0..64) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = sum of row i of A = 1+2+...+64 = 2080
+    for (0..64) |i| {
+        try testing.expectApproxEqAbs(2080.0, y.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: 128x128 matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer y.deinit();
+
+    // Fill A and x with simple pattern
+    for (0..128 * 128) |i| {
+        A.data[i] = 0.5;
+    }
+    for (0..128) |i| {
+        x.data[i] = 2.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 128 * 0.5 * 2.0 = 128
+    for (0..128) |i| {
+        try testing.expectApproxEqAbs(128.0, y.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: 256x256 matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer y.deinit();
+
+    // Fill with 1s
+    for (0..256 * 256) |i| {
+        A.data[i] = 1.0;
+    }
+    for (0..256) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = sum of 256 ones = 256
+    for (0..256) |i| {
+        try testing.expectApproxEqAbs(256.0, y.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: 1024x1024 large matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 1024, 1024 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer y.deinit();
+
+    // Fill with 1s
+    for (0..1024 * 1024) |i| {
+        A.data[i] = 1.0;
+    }
+    for (0..1024) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 1024
+    for (0..1024) |i| {
+        try testing.expectApproxEqAbs(1024.0, y.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: 64x128 non-square matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 128 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer y.deinit();
+
+    // Fill A with simple pattern
+    for (0..64 * 128) |i| {
+        A.data[i] = 1.0;
+    }
+    for (0..128) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 128
+    for (0..64) |i| {
+        try testing.expectApproxEqAbs(128.0, y.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: 128x64 non-square matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 64 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer y.deinit();
+
+    // Fill with values
+    for (0..128 * 64) |i| {
+        A.data[i] = 2.0;
+    }
+    for (0..64) |i| {
+        x.data[i] = 3.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 64 * 2.0 * 3.0 = 384
+    for (0..128) |i| {
+        try testing.expectApproxEqAbs(384.0, y.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: 100x200 non-square matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 200 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{200}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer y.deinit();
+
+    // Fill with sequential pattern
+    for (0..100 * 200) |i| {
+        A.data[i] = @floatFromInt((i % 200) + 1);
+    }
+    for (0..200) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 1+2+...+200 = 200*201/2 = 20100
+    for (0..100) |i| {
+        try testing.expectApproxEqAbs(20100.0, y.data[i], 1e-6);
+    }
+}
+
+test "gemv_simd_optimized: alpha=1, beta=0 (simple A*x)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 999, 999, 999 }, .row_major);
+    defer y.deinit();
+
+    // y = A*x = [6, 15, 24] (ignores initial y values)
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(15.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(24.0, y.data[2], 1e-10);
+}
+
+test "gemv_simd_optimized: alpha=0.5, beta=2.0 combined scaling" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        2, 4,
+        6, 8,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 10, 10 }, .row_major);
+    defer y.deinit();
+
+    // y = 0.5*A*x + 2.0*y
+    // A*x = [6, 14]
+    // 0.5*A*x = [3, 7]
+    // 2.0*[10,10] = [20, 20]
+    // Result = [23, 27]
+    try gemv_simd_optimized(f64, 0.5, A, x, 2.0, &y);
+
+    try testing.expectApproxEqAbs(23.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(27.0, y.data[1], 1e-10);
+}
+
+test "gemv_simd_optimized: alpha=0 (zero multiply, beta accumulate)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 6 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 7, 8 }, .row_major);
+    defer y.deinit();
+
+    // y = 0.0*A*x + 1.0*y = y (unchanged)
+    try gemv_simd_optimized(f64, 0.0, A, x, 1.0, &y);
+
+    try testing.expectApproxEqAbs(7.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+}
+
+test "gemv_simd_optimized: beta=0 (ignore initial y)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        2, 3,
+        4, 5,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 999, 999 }, .row_major);
+    defer y.deinit();
+
+    // y = 1.0*A*x + 0.0*y = A*x = [5, 9]
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(5.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[1], 1e-10);
+}
+
+test "gemv_simd_optimized: negative alpha (α = -1.5)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0, 0 }, .row_major);
+    defer y.deinit();
+
+    // y = -1.5*A*x
+    // A*x = [3, 7]
+    // Result = [-4.5, -10.5]
+    try gemv_simd_optimized(f64, -1.5, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(-4.5, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-10.5, y.data[1], 1e-10);
+}
+
+test "gemv_simd_optimized: negative beta (β = -0.5)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
+        1, 2,
+        3, 4,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 10, 20 }, .row_major);
+    defer y.deinit();
+
+    // y = 1.0*A*x + (-0.5)*y = [3, 7] + [-5, -10] = [-2, -3]
+    try gemv_simd_optimized(f64, 1.0, A, x, -0.5, &y);
+
+    try testing.expectApproxEqAbs(-2.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-3.0, y.data[1], 1e-10);
+}
+
+test "gemv_simd_optimized: f32 type support (8-wide SIMD)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f32{
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+        9, 10, 11, 12,
+        13, 14, 15, 16,
+    }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 0, 0, 0, 0 }, .row_major);
+    defer y.deinit();
+
+    try gemv_simd_optimized(f32, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(@as(f32, 10.0), y.data[0], 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 26.0), y.data[1], 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 42.0), y.data[2], 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 58.0), y.data[3], 1e-4);
+}
+
+test "gemv_simd_optimized: f32 large matrix (128x128)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer y.deinit();
+
+    // Fill with 1s
+    for (0..128 * 128) |i| {
+        A.data[i] = 1.0;
+    }
+    for (0..128) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f32, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 128
+    for (0..128) |i| {
+        try testing.expectApproxEqAbs(@as(f32, 128.0), y.data[i], 1e-4);
+    }
+}
+
+test "gemv_simd_optimized: 1x1 edge case" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{3}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{0}, .row_major);
+    defer y.deinit();
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(15.0, y.data[0], 1e-10);
+}
+
+test "gemv_simd_optimized: 67x77 non-SIMD-aligned dimensions" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 67, 77 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{77}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{67}, .row_major);
+    defer y.deinit();
+
+    // Fill with 1s
+    for (0..67 * 77) |i| {
+        A.data[i] = 1.0;
+    }
+    for (0..77) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+
+    // y[i] = 77
+    for (0..67) |i| {
+        try testing.expectApproxEqAbs(77.0, y.data[i], 1e-10);
+    }
+}
+
+test "gemv_simd_optimized: dimension mismatch A.shape[1] != x.shape[0]" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 3 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer y.deinit();
+
+    const result = gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gemv_simd_optimized: dimension mismatch A.shape[0] != y.shape[0]" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 4 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer y.deinit();
+
+    const result = gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gemv_simd_optimized: numerical equivalence to scalar gemv (100x100)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+
+    // Fill with random-ish pattern
+    for (0..100 * 100) |i| {
+        A.data[i] = @as(f64, @floatFromInt((i * 13) % 256)) / 64.0 - 2.0;
+    }
+    for (0..100) |i| {
+        x.data[i] = @as(f64, @floatFromInt((i * 7) % 128)) / 32.0 - 2.0;
+    }
+
+    var y_scalar = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer y_scalar.deinit();
+    var y_simd = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer y_simd.deinit();
+
+    // Scalar gemv
+    @import("blas.zig").gemv(f64, 1.0, A, x, 0.0, &y_scalar);
+
+    // SIMD gemv_simd_optimized
+    try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y_simd);
+
+    // Compare results
+    for (0..100) |i| {
+        try testing.expectApproxEqAbs(y_scalar.data[i], y_simd.data[i], 1e-8);
+    }
+}
+
+test "gemv_simd_optimized: no memory leaks (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+        defer A.deinit();
+        var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+        defer x.deinit();
+        var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+        defer y.deinit();
+
+        try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
+    }
     // testing.allocator detects leaks automatically
 }
