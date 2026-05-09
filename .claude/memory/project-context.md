@@ -1,3 +1,28 @@
+**Session 487 Update (2026-05-09) — FEATURE MODE:**
+
+⚡ **SIMD GEMV Implementation** — Matrix-vector multiply acceleration:
+- **Feature**: Implemented `gemv_simd_optimized()` in simd_blas.zig — SIMD-accelerated y = α*A*x + β*y
+- **Algorithm**: Vectorized inner dot product (A[row,:] · x) using @Vector and @reduce(.Add, ...)
+  * Beta scaling vectorized: y *= β using @splat + @Vector chunks
+  * Main loop: for each row i, compute y[i] += α*(A[i,:]·x) with SIMD (vec_width chunks)
+  * Tail loop: scalar for k % vec_width remaining elements
+  * SIMD widths: f64 4-wide, f32 8-wide
+- **Auto-Dispatch**: Updated blas.gemv() to route to SIMD version for m >= 64 rows (line 806)
+- **Expected Impact**: 2-4× speedup for large matrix-vector operations (GEMV is O(m×n), heavily used in scientific computing)
+- **Tests**: 24 comprehensive tests (all passing)
+  * Correctness: 4×4, 8×8, 3×4 hand-computed → 64×64, 128×128, 256×256, 1024×1024
+  * Non-square: 64×128, 128×64, 100×200
+  * Alpha/beta scaling: 6 variants (α={0,0.5,1,-1.5}, β={0,2.0,-0.5})
+  * Type support: f32 8-wide, f64 4-wide
+  * Numerical equivalence: 100×100 random matrix vs scalar gemv (tolerance ≤1e-8)
+  * Edge cases: 1×1, 67×77 non-aligned
+  * Error handling: DimensionMismatch tests
+  * Memory safety: 10 iterations with testing.allocator
+- **Files**: src/linalg/simd_blas.zig (+670 lines: 87 implementation, 583 tests), src/linalg/blas.zig (+9 lines dispatcher)
+- **Commit**: d6ffcac (feat: SIMD GEMV)
+- **Agents Used**: test-writer (agent a24e067), zig-developer (agent a565898)
+- **Rationale**: GEMV is a Level 2 BLAS operation critical for solving systems (Ax=b), eigenvalue algorithms, neural networks. Scalar version in blas.zig:790 had unvectorized inner loop — now dispatches to SIMD for large matrices.
+
 **Session 486 Update (2026-05-09) — FEATURE MODE:**
 
 ⚡ **BLAS Performance Optimization** — SIMD auto-dispatch upgrade:
