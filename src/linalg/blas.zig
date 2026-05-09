@@ -56,6 +56,17 @@ pub fn dot(comptime T: type, x: NDArray(T, 1), y: NDArray(T, 1)) (NDArray(T, 1).
         return error.DimensionMismatch;
     }
 
+    const n = x.shape[0];
+
+    // Auto-dispatch: Use SIMD-optimized implementation for large vectors
+    // Threshold: if n >= 64 (enough elements to benefit from vectorization)
+    // Session 488: dot_simd provides 1.5-2× speedup via SIMD vectorization
+    const threshold: usize = 64;
+    if (n >= threshold) {
+        return try simd_blas.dot_simd(T, x, y);
+    }
+
+    // Fallback to scalar loop for small vectors
     // Compute inner product: sum(x[i] * y[i])
     var result: T = 0;
     var x_iter = x.iterator();
@@ -308,6 +319,269 @@ test "dot: orthogonal vectors (result = 0)" {
 
     const result = try dot(f64, x, y);
     try testing.expectApproxEqAbs(0.0, result, 1e-10);
+}
+
+// ============================================================================
+// Auto-Dispatch Tests (SIMD Threshold = 64)
+// ============================================================================
+
+test "dot: auto-dispatch threshold below (n=63, f64)" {
+    // Below threshold (63 < 64) — should use scalar path
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 63);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 63);
+    defer allocator.free(data_y);
+
+    // Initialize with simple values
+    for (0..63) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{63}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{63}, data_y, .row_major);
+    defer y.deinit();
+
+    // Expected: sum of i^2 for i=1 to 63 = 63*64*127/6
+    const expected = 63.0 * 64.0 * 127.0 / 6.0;
+    const result = try dot(f64, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-9);
+}
+
+test "dot: auto-dispatch threshold boundary (n=64, f64)" {
+    // At threshold (64 == 64) — should use SIMD path
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 64);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 64);
+    defer allocator.free(data_y);
+
+    for (0..64) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{64}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{64}, data_y, .row_major);
+    defer y.deinit();
+
+    // Expected: sum of i^2 for i=1 to 64 = 64*65*129/6
+    const expected = 64.0 * 65.0 * 129.0 / 6.0;
+    const result = try dot(f64, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-9);
+}
+
+test "dot: auto-dispatch threshold above (n=65, f64)" {
+    // Above threshold (65 > 64) — should use SIMD path
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 65);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 65);
+    defer allocator.free(data_y);
+
+    for (0..65) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i + 1));
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{65}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{65}, data_y, .row_major);
+    defer y.deinit();
+
+    // Expected: sum of i^2 for i=1 to 65 = 65*66*131/6
+    const expected = 65.0 * 66.0 * 131.0 / 6.0;
+    const result = try dot(f64, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-9);
+}
+
+test "dot: auto-dispatch large vector (n=1024, f64)" {
+    // Well above threshold — verify SIMD path correctness
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 1024);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 1024);
+    defer allocator.free(data_y);
+
+    for (0..1024) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i)) + 0.5;
+        data_y[i] = @as(f64, @floatFromInt(i)) + 0.5;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1024}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1024}, data_y, .row_major);
+    defer y.deinit();
+
+    // Expected: sum of (i+0.5)^2 for i=0 to 1023
+    // = sum of (i^2 + i + 0.25) = sum(i^2) + sum(i) + 256
+    // sum(i^2) = 1023*1024*2047/6, sum(i) = 1023*1024/2
+    const sum_squares = 1023.0 * 1024.0 * 2047.0 / 6.0;
+    const sum_linear = 1023.0 * 1024.0 / 2.0;
+    const expected = sum_squares + sum_linear + 256.0;
+    const result = try dot(f64, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-8);
+}
+
+test "dot: auto-dispatch non-aligned (n=100, f64)" {
+    // Not a multiple of SIMD width — tests remainder loop
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 100);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 100);
+    defer allocator.free(data_y);
+
+    for (0..100) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i)) + 0.1;
+        data_y[i] = 2.0 * @as(f64, @floatFromInt(i)) + 0.2;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, data_y, .row_major);
+    defer y.deinit();
+
+    var expected: f64 = 0;
+    for (0..100) |i| {
+        const xi = @as(f64, @floatFromInt(i)) + 0.1;
+        const yi = 2.0 * @as(f64, @floatFromInt(i)) + 0.2;
+        expected += xi * yi;
+    }
+
+    const result = try dot(f64, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-9);
+}
+
+test "dot: auto-dispatch f32 type (n=64)" {
+    // Test auto-dispatch with f32 at threshold
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f32, 64);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f32, 64);
+    defer allocator.free(data_y);
+
+    for (0..64) |i| {
+        data_x[i] = @as(f32, @floatFromInt(i)) + 0.5;
+        data_y[i] = @as(f32, @floatFromInt(i)) + 0.5;
+    }
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{64}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{64}, data_y, .row_major);
+    defer y.deinit();
+
+    var expected: f32 = 0;
+    for (0..64) |i| {
+        const val = @as(f32, @floatFromInt(i)) + 0.5;
+        expected += val * val;
+    }
+
+    const result = try dot(f32, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-5);
+}
+
+test "dot: auto-dispatch f32 large (n=512)" {
+    // Test auto-dispatch with f32 well above threshold
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f32, 512);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f32, 512);
+    defer allocator.free(data_y);
+
+    for (0..512) |i| {
+        data_x[i] = @as(f32, @floatFromInt(i)) * 0.1;
+        data_y[i] = @as(f32, @floatFromInt(i)) * 0.2;
+    }
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{512}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{512}, data_y, .row_major);
+    defer y.deinit();
+
+    var expected: f32 = 0;
+    for (0..512) |i| {
+        const xi = @as(f32, @floatFromInt(i)) * 0.1;
+        const yi = @as(f32, @floatFromInt(i)) * 0.2;
+        expected += xi * yi;
+    }
+
+    const result = try dot(f32, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-4);
+}
+
+test "dot: auto-dispatch scalar vs simd equivalence (n=256, f64)" {
+    // Verify scalar and SIMD paths produce equivalent results
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 256);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 256);
+    defer allocator.free(data_y);
+
+    var rng = std.Random.DefaultPrng.init(42);
+    const random = rng.random();
+    for (0..256) |i| {
+        data_x[i] = random.float(f64) * 100.0 - 50.0;
+        data_y[i] = random.float(f64) * 100.0 - 50.0;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{256}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{256}, data_y, .row_major);
+    defer y.deinit();
+
+    // For large vectors, both paths should produce the same result
+    const result = try dot(f64, x, y);
+
+    // Manually compute expected value (baseline)
+    var expected: f64 = 0;
+    for (0..256) |i| {
+        expected += data_x[i] * data_y[i];
+    }
+
+    try testing.expectApproxEqRel(expected, result, 1e-9);
+}
+
+test "dot: auto-dispatch with negative values (n=128)" {
+    // Ensure dispatch handles negative values correctly
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 128);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 128);
+    defer allocator.free(data_y);
+
+    for (0..128) |i| {
+        if (i % 2 == 0) {
+            data_x[i] = -@as(f64, @floatFromInt(i + 1));
+        } else {
+            data_x[i] = @as(f64, @floatFromInt(i + 1));
+        }
+        data_y[i] = @as(f64, @floatFromInt(i + 1));
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, data_x, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, data_y, .row_major);
+    defer y.deinit();
+
+    var expected: f64 = 0;
+    for (0..128) |i| {
+        expected += data_x[i] * data_y[i];
+    }
+
+    const result = try dot(f64, x, y);
+    try testing.expectApproxEqRel(expected, result, 1e-9);
 }
 
 // ============================================================================
