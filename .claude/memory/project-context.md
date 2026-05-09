@@ -1,3 +1,25 @@
+**Session 489 Update (2026-05-10) — FEATURE MODE:**
+
+⚡ **BLAS axpy() SIMD Auto-Dispatch** — Vector update operation acceleration:
+- **Feature**: Added auto-dispatch in `blas.axpy()` to route large vectors (n >= 64) to `simd_blas.axpy_simd()`
+- **Algorithm**: Threshold-based dispatch following dot()/gemv()/gemm() optimization pattern
+  * n >= 64: SIMD path (4-wide f64, 8-wide f32 vectorization: y = @splat(α) * x + y)
+  * n < 64: Scalar loop (minimal overhead for small vectors)
+  * Transparent to callers — zero API changes
+- **Expected Impact**: 4-8× speedup for large axpy operations, commonly used in iterative solvers, gradient descent, Level 2/3 BLAS kernels
+- **Tests**: 9 comprehensive dispatch tests (all passing)
+  * Threshold boundaries: n=63 (scalar), n=64 (SIMD), n=65 (SIMD)
+  * Large vectors: n=128, n=256, n=1024
+  * Non-aligned: n=100 (tail loop)
+  * Alpha edge cases: α=0 (no-op), negative values
+  * Type support: f32 8-wide, f64 4-wide
+- **Discovery**: axpy_simd() already implemented (session prior to 489), just needed dispatch integration
+- **Files**: src/linalg/blas.zig (+11 lines dispatch logic, +278 lines tests)
+- **Commit**: 1521937 (performance optimization)
+- **Agents Used**: test-writer (agent a104655 — discovered existing implementation)
+- **Total Tests**: 2967 → 2976 (9 new dispatch tests)
+- **Rationale**: axpy (y = α*x + y) is the most frequently used Level 1 BLAS operation, serving as building block for Level 2/3 operations. SIMD acceleration provides 4-8× speedup with zero API changes.
+
 **Session 488 Update (2026-05-09) — FEATURE MODE:**
 
 ⚡ **BLAS dot() SIMD Auto-Dispatch** — Vector dot product acceleration:
