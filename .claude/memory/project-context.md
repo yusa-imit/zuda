@@ -1,3 +1,23 @@
+**Session 488 Update (2026-05-09) — FEATURE MODE:**
+
+⚡ **BLAS dot() SIMD Auto-Dispatch** — Vector dot product acceleration:
+- **Feature**: Added auto-dispatch in `blas.dot()` to route large vectors (n >= 64) to `simd_blas.dot_simd()`
+- **Algorithm**: Threshold-based dispatch following GEMV/GEMM pattern
+  * n >= 64: SIMD path (4-wide f64, 8-wide f32 vectorization with @reduce)
+  * n < 64: Scalar loop (minimal overhead for small vectors)
+  * Transparent to callers — zero API changes
+- **Expected Impact**: 1.5-2× speedup for large vectors → ~2.0 GFLOPS (100% of target, up from 1.21 GFLOPS / 61%)
+- **Tests**: 9 comprehensive dispatch tests (all passing)
+  * Threshold boundaries: n=63 (scalar), n=64 (SIMD), n=65 (SIMD)
+  * Large vectors: n=1024 SIMD correctness
+  * Types: f32 (1e-5 tol) and f64 (1e-9 tol)
+  * Edge cases: n=100 non-aligned, n=128 negative values, n=256 random equivalence
+  * All tests mathematically verified with Python
+- **Files**: src/linalg/blas.zig (+32 lines dispatch logic + 262 lines tests)
+- **Commit**: c03fd79 (performance optimization)
+- **Agents Used**: test-writer (agent a8d1c2c), zig-developer (agent a7685d8)
+- **Rationale**: Benchmarks showed dot at 1.21 GFLOPS (61% of 2 GFLOPS target). SIMD version existed but wasn't used. Auto-dispatch enables transparent acceleration for Level 1 BLAS, commonly used in machine learning (gradients), physics simulations, and statistical computation.
+
 **Session 487 Update (2026-05-09) — FEATURE MODE:**
 
 ⚡ **SIMD GEMV Implementation** — Matrix-vector multiply acceleration:
