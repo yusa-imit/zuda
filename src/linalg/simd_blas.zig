@@ -575,6 +575,405 @@ test "axpy_simd: vector length not multiple of SIMD width" {
 }
 
 // ============================================================================
+// Additional axpy_simd Tests — Comprehensive Coverage
+// ============================================================================
+
+test "axpy_simd: alpha = 0 (y unchanged)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, 0.0, x, &y);
+
+    // y = 0*{1,2,3,4} + {5,6,7,8} = {5,6,7,8}
+    try testing.expectApproxEqAbs(5.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(7.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[3], 1e-10);
+}
+
+test "axpy_simd: alpha = 1 (simple vector addition)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5, 6, 7, 8 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, 1.0, x, &y);
+
+    // y = 1*{1,2,3,4} + {5,6,7,8} = {6,8,10,12}
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(10.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[3], 1e-10);
+}
+
+test "axpy_simd: alpha = 2.5 (fractional scaling)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 2, 4, 6, 8 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, 2.5, x, &y);
+
+    // y = 2.5*{2,4,6,8} + {1,2,3,4} = {5,10,15,20} + {1,2,3,4} = {6,12,18,24}
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(18.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(24.0, y.data[3], 1e-10);
+}
+
+test "axpy_simd: alpha = -1.5 (negative scaling)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 10, 10, 10, 10 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, -1.5, x, &y);
+
+    // y = -1.5*{1,2,3,4} + {10,10,10,10} = {-1.5,-3,-4.5,-6} + {10,10,10,10} = {8.5,7,5.5,4}
+    try testing.expectApproxEqAbs(8.5, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(5.5, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, y.data[3], 1e-10);
+}
+
+test "axpy_simd: single element vector (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{7}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{3}, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, 2.0, x, &y);
+
+    // y = 2*7 + 3 = 17
+    try testing.expectApproxEqAbs(17.0, y.data[0], 1e-10);
+}
+
+test "axpy_simd: large vector n=64 (aligned with 4-wide SIMD)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer y.deinit();
+
+    for (0..64) |i| {
+        x.data[i] = 1.0;
+        y.data[i] = @floatFromInt(i);
+    }
+
+    try axpy_simd(f64, 2.0, x, &y);
+
+    // y[i] = 2*1 + i = 2 + i
+    for (0..64) |i| {
+        const expected: f64 = 2.0 + @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-10);
+    }
+}
+
+test "axpy_simd: large vector n=128 (multiple blocks)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer y.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = 0.5;
+        y.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    try axpy_simd(f64, 4.0, x, &y);
+
+    // y[i] = 4*0.5 + i = 2 + i
+    for (0..128) |i| {
+        const expected: f64 = 2.0 + @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-10);
+    }
+}
+
+test "axpy_simd: large vector n=1024 (many blocks)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer y.deinit();
+
+    for (0..1024) |i| {
+        x.data[i] = 1.0;
+        y.data[i] = 0.0;
+    }
+
+    try axpy_simd(f64, 3.0, x, &y);
+
+    // y[i] = 3*1 + 0 = 3
+    for (0..1024) |i| {
+        try testing.expectApproxEqAbs(3.0, y.data[i], 1e-10);
+    }
+}
+
+test "axpy_simd: non-aligned size n=67 (tail loop testing)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{67}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{67}, .row_major);
+    defer y.deinit();
+
+    for (0..67) |i| {
+        x.data[i] = 2.0;
+        y.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    try axpy_simd(f64, 1.5, x, &y);
+
+    // y[i] = 1.5*2 + i = 3 + i
+    for (0..67) |i| {
+        const expected: f64 = 3.0 + @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-10);
+    }
+}
+
+test "axpy_simd: non-aligned size n=100 (larger non-aligned)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer y.deinit();
+
+    for (0..100) |i| {
+        x.data[i] = 0.1;
+        y.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    try axpy_simd(f64, 5.0, x, &y);
+
+    // y[i] = 5*0.1 + i = 0.5 + i
+    for (0..100) |i| {
+        const expected: f64 = 0.5 + @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-9);
+    }
+}
+
+test "axpy_simd: f32 type support with SIMD (8-wide)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{8}, &[_]f32{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{8}, &[_]f32{ 10, 11, 12, 13, 14, 15, 16, 17 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f32, 2.0, x, &y);
+
+    // y = 2*{1,2,3,4,5,6,7,8} + {10,11,12,13,14,15,16,17}
+    //   = {2,4,6,8,10,12,14,16} + {10,11,12,13,14,15,16,17}
+    //   = {12,15,18,21,24,27,30,33}
+    try testing.expectApproxEqAbs(@as(f32, 12.0), y.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 15.0), y.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 18.0), y.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 21.0), y.data[3], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 24.0), y.data[4], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 27.0), y.data[5], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 30.0), y.data[6], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 33.0), y.data[7], 1e-5);
+}
+
+test "axpy_simd: f32 large vector n=256 (32 SIMD blocks of 8-wide)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer y.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @as(f32, @floatFromInt(i));
+        y.data[i] = 1.0;
+    }
+
+    try axpy_simd(f32, 0.5, x, &y);
+
+    // y[i] = 0.5*i + 1
+    for (0..256) |i| {
+        const expected: f32 = 0.5 * @as(f32, @floatFromInt(i)) + 1.0;
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-5);
+    }
+}
+
+test "axpy_simd: f32 non-aligned size n=137" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{137}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{137}, .row_major);
+    defer y.deinit();
+
+    for (0..137) |i| {
+        x.data[i] = 2.0;
+        y.data[i] = @as(f32, @floatFromInt(i));
+    }
+
+    try axpy_simd(f32, 3.0, x, &y);
+
+    // y[i] = 3*2 + i = 6 + i
+    for (0..137) |i| {
+        const expected: f32 = 6.0 + @as(f32, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-5);
+    }
+}
+
+test "axpy_simd: dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer y.deinit();
+
+    const result = axpy_simd(f64, 1.0, x, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "axpy_simd: numerical equivalence with scalar axpy for random vectors" {
+    const allocator = testing.allocator;
+
+    // Create identical vectors for comparison
+    var x_data = try allocator.alloc(f64, 100);
+    defer allocator.free(x_data);
+    var y_scalar_data = try allocator.alloc(f64, 100);
+    defer allocator.free(y_scalar_data);
+    var y_simd_data = try allocator.alloc(f64, 100);
+    defer allocator.free(y_simd_data);
+
+    var rng = std.Random.DefaultPrng.init(42);
+    const random = rng.random();
+
+    for (0..100) |i| {
+        x_data[i] = random.float(f64) * 100.0 - 50.0;
+        y_scalar_data[i] = random.float(f64) * 100.0 - 50.0;
+        y_simd_data[i] = y_scalar_data[i]; // Copy
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, x_data, .row_major);
+    defer x.deinit();
+
+    var y_scalar = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, y_scalar_data, .row_major);
+    defer y_scalar.deinit();
+    var y_simd = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, y_simd_data, .row_major);
+    defer y_simd.deinit();
+
+    const alpha = 3.14159;
+
+    // Apply scalar axpy (from blas.zig)
+    const blas_module = @import("blas.zig");
+    try blas_module.axpy(f64, alpha, x, &y_scalar);
+
+    // Apply SIMD axpy
+    try axpy_simd(f64, alpha, x, &y_simd);
+
+    // Verify numerical equivalence
+    for (0..100) |i| {
+        try testing.expectApproxEqAbs(y_scalar.data[i], y_simd.data[i], 1e-12);
+    }
+}
+
+test "axpy_simd: memory safety with repeated operations (10 iterations)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{32}, &[_]f64{1.0} ** 32, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{32}, .row_major);
+    defer y.deinit();
+
+    // Perform 10 iterations of axpy: y += 2*x
+    for (0..10) |_| {
+        try axpy_simd(f64, 2.0, x, &y);
+    }
+
+    // After 10 iterations: y[i] = 10 * (2 * 1) = 20
+    for (0..32) |i| {
+        try testing.expectApproxEqAbs(20.0, y.data[i], 1e-10);
+    }
+}
+
+test "axpy_simd: negative vectors" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ -1, -2, -3, -4, -5, -6, -7, -8 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ -10, -9, -8, -7, -6, -5, -4, -3 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, 2.0, x, &y);
+
+    // y = 2*{-1,-2,-3,-4,-5,-6,-7,-8} + {-10,-9,-8,-7,-6,-5,-4,-3}
+    //   = {-2,-4,-6,-8,-10,-12,-14,-16} + {-10,-9,-8,-7,-6,-5,-4,-3}
+    //   = {-12,-13,-14,-15,-16,-17,-18,-19}
+    try testing.expectApproxEqAbs(-12.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-13.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-14.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(-15.0, y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(-16.0, y.data[4], 1e-10);
+    try testing.expectApproxEqAbs(-17.0, y.data[5], 1e-10);
+    try testing.expectApproxEqAbs(-18.0, y.data[6], 1e-10);
+    try testing.expectApproxEqAbs(-19.0, y.data[7], 1e-10);
+}
+
+test "axpy_simd: mixed positive and negative values" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ 1, -2, 3, -4, 5, -6, 7, -8 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ 8, 7, 6, 5, 4, 3, 2, 1 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, -1.0, x, &y);
+
+    // y = -1*{1,-2,3,-4,5,-6,7,-8} + {8,7,6,5,4,3,2,1}
+    //   = {-1,2,-3,4,-5,6,-7,8} + {8,7,6,5,4,3,2,1}
+    //   = {7,9,3,9,-1,9,-5,9}
+    try testing.expectApproxEqAbs(7.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(-1.0, y.data[4], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[5], 1e-10);
+    try testing.expectApproxEqAbs(-5.0, y.data[6], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[7], 1e-10);
+}
+
+test "axpy_simd: very small alpha value (underflow test)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ 1e15, 2e15, 3e15, 4e15, 5e15, 6e15, 7e15, 8e15 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{8}, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer y.deinit();
+
+    try axpy_simd(f64, 1e-15, x, &y);
+
+    // y[i] = 1e-15 * 1e15 * (i+1) + (i+1) = (i+1) + (i+1) = 2*(i+1)
+    for (0..8) |i| {
+        const expected: f64 = 2.0 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, y.data[i], 1e-10);
+    }
+}
+
+// ============================================================================
 // Tests — gemm_blocked_4x4: Blocked GEMM with 4×4 micro-kernels
 // ============================================================================
 
