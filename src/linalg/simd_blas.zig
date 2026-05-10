@@ -256,6 +256,73 @@ pub fn axpy_simd(comptime T: type, alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)
     }
 }
 
+/// SIMD-accelerated Euclidean norm (L2 norm): ||x||₂ = sqrt(Σ x_i²)
+///
+/// Computes the 2-norm of a vector using SIMD for 4-8× speedup.
+///
+/// Parameters:
+/// - x: Vector (1D NDArray)
+///
+/// Returns: Non-negative scalar norm value
+///
+/// Errors:
+/// - error.DimensionMismatch if x is not 1D (checked by NDArray type system)
+///
+/// Time: O(n) with 4-8× speedup from SIMD
+/// Space: O(1)
+///
+/// Algorithm:
+/// - For n >= 64: Use SIMD vector operations (threshold for overhead amortization)
+///   - Main loop: Accumulate sum of element-wise squares using @Vector
+///   - Tail loop: Handle remaining elements (n % vec_width) with scalar operations
+///   - Reduction: Horizontal sum of vector accumulator + scalar tail sum
+/// - For n < 64: Use scalar fallback (loop overhead dominates SIMD setup)
+/// - Final: Return sqrt(sum)
+///
+/// Example:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{3, 4, 0}, .row_major);
+/// defer x.deinit();
+/// const norm = try nrm2_simd(f64, x); // sqrt(9 + 16 + 0) = 5 (SIMD)
+/// ```
+pub fn nrm2_simd(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    const n = x.shape[0];
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+
+    // For small vectors, use scalar implementation (SIMD overhead not worth it)
+    if (n < 64) {
+        var sum_of_squares: T = 0;
+        for (0..n) |i| {
+            sum_of_squares += x.data[i] * x.data[i];
+        }
+        return @sqrt(sum_of_squares);
+    }
+
+    // Main SIMD loop: accumulate sum of squares
+    var sum_vec: Vec = @splat(0.0);
+    var idx: usize = 0;
+
+    while (idx + vec_width <= n) : (idx += vec_width) {
+        const x_vec: Vec = x.data[idx..][0..vec_width].*;
+        const squared = x_vec * x_vec;
+        sum_vec += squared;
+    }
+
+    // Horizontal reduction: sum all lanes of accumulator
+    var sum: T = 0;
+    for (0..vec_width) |lane| {
+        sum += sum_vec[lane];
+    }
+
+    // Tail loop (scalar) for remaining elements
+    while (idx < n) : (idx += 1) {
+        sum += x.data[idx] * x.data[idx];
+    }
+
+    return @sqrt(sum);
+}
+
 /// SIMD-accelerated blocked matrix-matrix multiply with 4×4 micro-kernels: C = α*A*B + β*C
 ///
 /// Parameters:
@@ -2726,4 +2793,397 @@ test "gemv_simd_optimized: no memory leaks (10 iterations)" {
         try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y);
     }
     // testing.allocator detects leaks automatically
+}
+
+// ============================================================================
+// nrm2_simd Tests — Euclidean Norm (L2 Norm) with SIMD Acceleration
+// ============================================================================
+
+test "nrm2_simd: basic 3-4-5 right triangle (small, scalar path)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer x.deinit();
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(3^2 + 4^2) = sqrt(9 + 16) = sqrt(25) = 5
+    try testing.expectApproxEqAbs(5.0, result, 1e-10);
+}
+
+test "nrm2_simd: single element vector (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{7.0}, .row_major);
+    defer x.deinit();
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(7^2) = sqrt(49) = 7
+    try testing.expectApproxEqAbs(7.0, result, 1e-10);
+}
+
+test "nrm2_simd: threshold boundary — n=63 (just below SIMD threshold)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{63}, .row_major);
+    defer x.deinit();
+
+    for (0..63) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(sum of 63 ones) = sqrt(63)
+    const expected = @sqrt(63.0);
+    try testing.expectApproxEqAbs(expected, result, 1e-10);
+}
+
+test "nrm2_simd: threshold boundary — n=64 (exactly at SIMD threshold)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    for (0..64) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(sum of 64 ones) = sqrt(64) = 8
+    try testing.expectApproxEqAbs(8.0, result, 1e-10);
+}
+
+test "nrm2_simd: threshold boundary — n=65 (just above SIMD threshold)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{65}, .row_major);
+    defer x.deinit();
+
+    for (0..65) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(sum of 65 ones) = sqrt(65)
+    const expected = @sqrt(65.0);
+    try testing.expectApproxEqAbs(expected, result, 1e-10);
+}
+
+test "nrm2_simd: small vector (n=16, sequential values)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{16}, .row_major);
+    defer x.deinit();
+
+    for (0..16) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(0^2 + 1^2 + 2^2 + ... + 15^2) = sqrt(sum of squares 0..15)
+    // Σ i^2 for i=0..15 = 0 + 1 + 4 + 9 + 16 + 25 + 36 + 49 + 64 + 81 + 100 + 121 + 144 + 169 + 196 + 225 = 1240
+    const expected = @sqrt(1240.0);
+    try testing.expectApproxEqAbs(expected, result, 1e-10);
+}
+
+test "nrm2_simd: medium vector (n=128, sequential values)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(sum of i^2 for i=0..127)
+    // Using formula: Σ i^2 for i=0..n-1 = n(n-1)(2n-1)/6
+    // For n=128: 128*127*255/6 = 876240
+    const sum_of_squares = 876240.0;
+    const expected = @sqrt(sum_of_squares);
+    try testing.expectApproxEqAbs(expected, result, 1e-9);
+}
+
+test "nrm2_simd: large vector (n=1024, random values)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer x.deinit();
+
+    var rng = std.Random.DefaultPrng.init(42);
+    const random = rng.random();
+    var sum_of_squares: f64 = 0.0;
+
+    for (0..1024) |i| {
+        const val = random.float(f64) * 100.0 - 50.0;
+        x.data[i] = val;
+        sum_of_squares += val * val;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    const expected = @sqrt(sum_of_squares);
+    try testing.expectApproxEqAbs(expected, result, 1e-8);
+}
+
+test "nrm2_simd: non-aligned size (n=100, not power of 2)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+
+    var sum_of_squares: f64 = 0.0;
+    for (0..100) |i| {
+        const val: f64 = @floatFromInt(i + 1);
+        x.data[i] = val;
+        sum_of_squares += val * val;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    const expected = @sqrt(sum_of_squares);
+    try testing.expectApproxEqAbs(expected, result, 1e-9);
+}
+
+test "nrm2_simd: all zeros vector (returns 0.0)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    const result = try nrm2_simd(f64, x);
+
+    // ||0|| = 0
+    try testing.expectApproxEqAbs(0.0, result, 1e-14);
+}
+
+test "nrm2_simd: negative values (magnitude independent of sign)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ -3, -4 }, .row_major);
+    defer x.deinit();
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt((-3)^2 + (-4)^2) = sqrt(9 + 16) = sqrt(25) = 5
+    try testing.expectApproxEqAbs(5.0, result, 1e-10);
+}
+
+test "nrm2_simd: mixed positive and negative values" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, -2, 3, -4 }, .row_major);
+    defer x.deinit();
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(1^2 + (-2)^2 + 3^2 + (-4)^2) = sqrt(1 + 4 + 9 + 16) = sqrt(30)
+    const expected = @sqrt(30.0);
+    try testing.expectApproxEqAbs(expected, result, 1e-10);
+}
+
+test "nrm2_simd: f32 type support with SIMD (8-wide)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{8}, &[_]f32{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer x.deinit();
+
+    const result = try nrm2_simd(f32, x);
+
+    // sqrt(1 + 4 + 9 + 16 + 25 + 36 + 49 + 64) = sqrt(204)
+    const expected = @sqrt(204.0);
+    try testing.expectApproxEqAbs(expected, result, 1e-5);
+}
+
+test "nrm2_simd: f32 large vector (n=256, 32 SIMD blocks)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    var rng = std.Random.DefaultPrng.init(123);
+    const random = rng.random();
+    var sum_of_squares: f32 = 0.0;
+
+    for (0..256) |i| {
+        const val: f32 = random.float(f32) * 50.0 - 25.0;
+        x.data[i] = val;
+        sum_of_squares += val * val;
+    }
+
+    const result = try nrm2_simd(f32, x);
+
+    const expected = @sqrt(sum_of_squares);
+    try testing.expectApproxEqAbs(expected, result, 1e-5);
+}
+
+test "nrm2_simd: f64 type — relative tolerance check" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    var rng = std.Random.DefaultPrng.init(456);
+    const random = rng.random();
+    var sum_of_squares: f64 = 0.0;
+
+    for (0..256) |i| {
+        const val = random.float(f64) * 1e6 - 5e5;
+        x.data[i] = val;
+        sum_of_squares += val * val;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    const expected = @sqrt(sum_of_squares);
+    const rel_error = @abs(result - expected) / expected;
+    try testing.expect(rel_error < 1e-9);
+}
+
+test "nrm2_simd: large magnitude values (n=64, 1e100)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    const large_val = 1e100;
+    for (0..64) |i| {
+        x.data[i] = large_val;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(64 * (1e100)^2) = sqrt(64) * 1e100 = 8 * 1e100
+    const expected = 8.0 * large_val;
+    try testing.expectApproxEqAbs(expected, result, expected * 1e-9);
+}
+
+test "nrm2_simd: small magnitude values (n=64, 1e-100)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    const small_val = 1e-100;
+    for (0..64) |i| {
+        x.data[i] = small_val;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    // sqrt(64 * (1e-100)^2) = sqrt(64) * 1e-100 = 8 * 1e-100
+    const expected = 8.0 * small_val;
+    try testing.expectApproxEqAbs(expected, result, expected * 1e-9);
+}
+
+test "nrm2_simd: numerical stability — comparison with reference scalar nrm2" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    var rng = std.Random.DefaultPrng.init(789);
+    const random = rng.random();
+
+    for (0..256) |i| {
+        x.data[i] = random.float(f64) * 1000.0 - 500.0;
+    }
+
+    // Compute scalar nrm2
+    const blas_module = @import("blas.zig");
+    const scalar_result = try blas_module.nrm2(f64, x);
+
+    const simd_result = try nrm2_simd(f64, x);
+
+    // Both implementations should give numerically equivalent results
+    // (may differ slightly due to rounding in SIMD reduction)
+    try testing.expectApproxEqAbs(scalar_result, simd_result, 1e-12);
+}
+
+test "nrm2_simd: f32 vs f64 precision difference (n=128)" {
+    const allocator = testing.allocator;
+
+    // Create identical data in f32 and f64
+    var x_f32 = try NDArray(f32, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x_f32.deinit();
+    var x_f64 = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x_f64.deinit();
+
+    var rng = std.Random.DefaultPrng.init(999);
+    const random = rng.random();
+
+    for (0..128) |i| {
+        const val = random.float(f32) * 100.0 - 50.0;
+        x_f32.data[i] = val;
+        x_f64.data[i] = @floatCast(val);
+    }
+
+    const result_f32 = try nrm2_simd(f32, x_f32);
+    const result_f64 = try nrm2_simd(f64, x_f64);
+
+    // f32 result should be close to f64 (within f32 precision)
+    try testing.expectApproxEqAbs(@as(f64, @floatCast(result_f32)), result_f64, 1e-4);
+}
+
+test "nrm2_simd: memory safety with repeated operations" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = 1.0;
+    }
+
+    // Perform nrm2_simd 10 times on the same vector — should not corrupt data
+    var prev_result: f64 = 0.0;
+    for (0..10) |_| {
+        const result = try nrm2_simd(f64, x);
+        if (prev_result != 0.0) {
+            try testing.expectApproxEqAbs(prev_result, result, 1e-14);
+        }
+        prev_result = result;
+    }
+}
+
+test "nrm2_simd: tail loop coverage (n=67, with remainder after SIMD blocks)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{67}, .row_major);
+    defer x.deinit();
+
+    var sum_of_squares: f64 = 0.0;
+    for (0..67) |i| {
+        const val: f64 = @floatFromInt(i + 1);
+        x.data[i] = val;
+        sum_of_squares += val * val;
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    const expected = @sqrt(sum_of_squares);
+    try testing.expectApproxEqAbs(expected, result, 1e-9);
+}
+
+test "nrm2_simd: no memory leaks (allocation and deallocation)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    const result = try nrm2_simd(f64, x);
+
+    try testing.expect(result >= 0.0);
+    // testing.allocator automatically detects memory leaks
 }
