@@ -326,3 +326,7 @@
 {"timestamp":"2026-05-10T16:45:00Z","action":"subagent","agent_type":"test-writer","task":"Write 23 auto-dispatch tests for blas.asum() and blas.scal() (threshold n=64, types f32/f64, edge cases)","project":"zuda"}
 {"timestamp":"2026-05-11T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write comprehensive tests for ger_simd() SIMD-accelerated rank-1 update","project":"zuda"}
 {"timestamp":"2026-05-11T00:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement ger_simd() with row-wise SIMD vectorization","project":"zuda"}
+{"timestamp":"2026-05-11T00:05:00Z","action":"subagent","agent_type":"test-writer","task":"Write trmv_simd tests","project":"zuda"}
+{"timestamp":"2026-05-11T00:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement trmv_simd GREEN","project":"zuda"}
+{"timestamp":"2026-05-11T00:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write trmv dispatch tests","project":"zuda"}
+{"timestamp":"2026-05-11T00:20:00Z","action":"subagent","agent_type":"zig-developer","task":"Add trmv dispatch logic","project":"zuda"}
