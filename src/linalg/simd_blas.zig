@@ -323,6 +323,130 @@ pub fn nrm2_simd(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
     return @sqrt(sum);
 }
 
+/// SIMD-accelerated sum of absolute values: Σ|x_i|
+///
+/// Computes the sum of absolute values of a vector using SIMD for 4-8× speedup.
+///
+/// Parameters:
+/// - x: Vector (1D NDArray)
+///
+/// Returns: Non-negative scalar sum of absolute values
+///
+/// Errors:
+/// - error.DimensionMismatch if x is not 1D (checked by NDArray type system)
+///
+/// Time: O(n) with 4-8× speedup from SIMD
+/// Space: O(1)
+///
+/// Algorithm:
+/// - For n >= 64: Use SIMD vector operations (threshold for overhead amortization)
+///   - Main loop: Accumulate sum of element-wise absolute values using @Vector
+///   - Tail loop: Handle remaining elements (n % vec_width) with scalar operations
+///   - Reduction: Horizontal sum of vector accumulator + scalar tail sum
+/// - For n < 64: Use scalar fallback (loop overhead dominates SIMD setup)
+///
+/// Example:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{-1, 2, -3}, .row_major);
+/// defer x.deinit();
+/// const sum = try asum_simd(f64, x); // |-1| + |2| + |-3| = 6 (SIMD)
+/// ```
+pub fn asum_simd(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    const n = x.shape[0];
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+
+    // For small vectors, use scalar implementation (SIMD overhead not worth it)
+    if (n < 64) {
+        var sum: T = 0;
+        for (0..n) |i| {
+            sum += @abs(x.data[i]);
+        }
+        return sum;
+    }
+
+    // Main SIMD loop: accumulate sum of absolute values
+    var sum_vec: Vec = @splat(0.0);
+    var idx: usize = 0;
+
+    while (idx + vec_width <= n) : (idx += vec_width) {
+        const x_vec: Vec = x.data[idx..][0..vec_width].*;
+        const abs_vec = @abs(x_vec);
+        sum_vec += abs_vec;
+    }
+
+    // Horizontal reduction: sum all lanes of accumulator
+    var sum: T = 0;
+    for (0..vec_width) |lane| {
+        sum += sum_vec[lane];
+    }
+
+    // Tail loop (scalar) for remaining elements
+    while (idx < n) : (idx += 1) {
+        sum += @abs(x.data[idx]);
+    }
+
+    return sum;
+}
+
+/// SIMD-accelerated vector scaling: x = αx (in-place)
+///
+/// Scales a vector by a scalar multiplier using SIMD for 4-8× speedup.
+///
+/// Parameters:
+/// - alpha: Scalar multiplier
+/// - x: Vector (1D NDArray) — modified in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if x is not 1D (checked by NDArray type system)
+///
+/// Time: O(n) with 4-8× speedup from SIMD
+/// Space: O(1) (modifies x in-place)
+///
+/// Algorithm:
+/// - For n >= 64: Use SIMD vector operations (threshold for overhead amortization)
+///   - Create alpha_vec: @splat(alpha) — broadcast scalar to vector
+///   - Main loop: Multiply chunks of x by alpha_vec and store result back
+///   - Tail loop: Handle remaining elements (n % vec_width) with scalar operations
+/// - For n < 64: Use scalar fallback (loop overhead dominates SIMD setup)
+///
+/// Example:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{1, 2, 3}, .row_major);
+/// defer x.deinit();
+/// try scal_simd(f64, 2.5, &x); // x = {2.5, 5.0, 7.5} (SIMD, in-place)
+/// ```
+pub fn scal_simd(comptime T: type, alpha: T, x: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    const n = x.shape[0];
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+
+    // For small vectors, use scalar implementation (SIMD overhead not worth it)
+    if (n < 64) {
+        for (0..n) |i| {
+            x.data[i] *= alpha;
+        }
+        return;
+    }
+
+    // Create alpha broadcast to vector
+    const alpha_vec: Vec = @splat(alpha);
+    var idx: usize = 0;
+
+    // Main SIMD loop: multiply chunks by alpha and store back
+    while (idx + vec_width <= n) : (idx += vec_width) {
+        const x_vec: Vec = x.data[idx..][0..vec_width].*;
+        const result = alpha_vec * x_vec;
+        const result_array: [vec_width]T = result;
+        @memcpy(x.data[idx..][0..vec_width], &result_array);
+    }
+
+    // Tail loop (scalar) for remaining elements
+    while (idx < n) : (idx += 1) {
+        x.data[idx] *= alpha;
+    }
+}
+
 /// SIMD-accelerated blocked matrix-matrix multiply with 4×4 micro-kernels: C = α*A*B + β*C
 ///
 /// Parameters:
@@ -3185,5 +3309,590 @@ test "nrm2_simd: no memory leaks (allocation and deallocation)" {
     const result = try nrm2_simd(f64, x);
 
     try testing.expect(result >= 0.0);
+    // testing.allocator automatically detects memory leaks
+}
+
+// ============================================================================
+// asum_simd Tests — Sum of Absolute Values with SIMD Acceleration
+// ============================================================================
+
+test "asum_simd: basic positive values (n=4)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // |1| + |2| + |3| + |4| = 10
+    try testing.expectApproxEqAbs(10.0, result, 1e-10);
+}
+
+test "asum_simd: mixed positive and negative values" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, -2, 3, -4 }, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // |1| + |-2| + |3| + |-4| = 1 + 2 + 3 + 4 = 10
+    try testing.expectApproxEqAbs(10.0, result, 1e-10);
+}
+
+test "asum_simd: all negative values" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ -1, -2, -3, -4 }, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // |-1| + |-2| + |-3| + |-4| = 1 + 2 + 3 + 4 = 10
+    try testing.expectApproxEqAbs(10.0, result, 1e-10);
+}
+
+test "asum_simd: all positive values" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 2, 3, 5, 7, 11 }, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // |2| + |3| + |5| + |7| + |11| = 28
+    try testing.expectApproxEqAbs(28.0, result, 1e-10);
+}
+
+test "asum_simd: single element (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{7.0}, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // |7| = 7
+    try testing.expectApproxEqAbs(7.0, result, 1e-10);
+}
+
+test "asum_simd: single negative element (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{-5.0}, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // |-5| = 5
+    try testing.expectApproxEqAbs(5.0, result, 1e-10);
+}
+
+test "asum_simd: empty vector (n=0 returns 0)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f64, x);
+
+    // Sum of no elements = 0
+    try testing.expectApproxEqAbs(0.0, result, 1e-10);
+}
+
+test "asum_simd: aligned size n=64 (SIMD threshold, 4-wide f64)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    for (0..64) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i + 1)); // 1 to 64
+    }
+
+    const result = try asum_simd(f64, x);
+
+    // Sum 1 + 2 + ... + 64 = 64 * 65 / 2 = 2080
+    try testing.expectApproxEqAbs(2080.0, result, 1e-10);
+}
+
+test "asum_simd: large vector n=128" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const result = try asum_simd(f64, x);
+
+    // Sum of 128 ones = 128
+    try testing.expectApproxEqAbs(128.0, result, 1e-10);
+}
+
+test "asum_simd: large vector n=1024 with alternating signs" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer x.deinit();
+
+    for (0..1024) |i| {
+        x.data[i] = if (i % 2 == 0) 1.0 else -1.0;
+    }
+
+    const result = try asum_simd(f64, x);
+
+    // Sum of |1| + |-1| + |1| + |-1| ... = 1024
+    try testing.expectApproxEqAbs(1024.0, result, 1e-10);
+}
+
+test "asum_simd: non-aligned size n=67 (tail loop coverage)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{67}, .row_major);
+    defer x.deinit();
+
+    for (0..67) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const result = try asum_simd(f64, x);
+
+    // Sum of 67 ones = 67
+    try testing.expectApproxEqAbs(67.0, result, 1e-10);
+}
+
+test "asum_simd: non-aligned size n=100" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+
+    for (0..100) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    const result = try asum_simd(f64, x);
+
+    // Sum 0 + 1 + 2 + ... + 99 = 99 * 100 / 2 = 4950
+    try testing.expectApproxEqAbs(4950.0, result, 1e-9);
+}
+
+test "asum_simd: non-aligned size n=137" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{137}, .row_major);
+    defer x.deinit();
+
+    for (0..137) |i| {
+        x.data[i] = if (i % 2 == 0) -2.0 else 2.0;
+    }
+
+    const result = try asum_simd(f64, x);
+
+    // Sum of 137 absolute values (all 2.0) = 274
+    try testing.expectApproxEqAbs(274.0, result, 1e-9);
+}
+
+test "asum_simd: f32 type support with SIMD (8-wide)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{8}, &[_]f32{ 1, -2, 3, -4, 5, -6, 7, -8 }, .row_major);
+    defer x.deinit();
+
+    const result = try asum_simd(f32, x);
+
+    // |1| + |-2| + |3| + |-4| + |5| + |-6| + |7| + |-8| = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 = 36
+    try testing.expectApproxEqAbs(@as(f32, 36.0), result, 1e-5);
+}
+
+test "asum_simd: f32 large vector n=256" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @as(f32, @floatFromInt(i));
+    }
+
+    const result = try asum_simd(f32, x);
+
+    // Sum 0 + 1 + 2 + ... + 255 = 255 * 256 / 2 = 32640
+    try testing.expectApproxEqAbs(@as(f32, 32640.0), result, 1e-4);
+}
+
+test "asum_simd: numerical equivalence with scalar implementation (n=256)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i)) - 128.0; // Range: -128 to 127
+    }
+
+    const simd_result = try asum_simd(f64, x);
+
+    // Scalar reference
+    var scalar_result: f64 = 0.0;
+    for (0..256) |i| {
+        scalar_result += @abs(x.data[i]);
+    }
+
+    try testing.expectApproxEqAbs(scalar_result, simd_result, 1e-9);
+}
+
+test "asum_simd: no memory leaks" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    const result = try asum_simd(f64, x);
+
+    try testing.expect(result >= 0.0);
+    // testing.allocator automatically detects memory leaks
+}
+
+// ============================================================================
+// scal_simd Tests — Vector Scaling with SIMD Acceleration
+// ============================================================================
+
+test "scal_simd: basic scaling (n=4, alpha=2)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, 2.0, &x);
+
+    // x = 2*{1,2,3,4} = {2,4,6,8}
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, x.data[3], 1e-10);
+}
+
+test "scal_simd: alpha = 0 (all elements become zero)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, 0.0, &x);
+
+    // x = 0*{1,2,3,4} = {0,0,0,0}
+    try testing.expectApproxEqAbs(0.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(0.0, x.data[3], 1e-10);
+}
+
+test "scal_simd: alpha = 1 (no change)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, 1.0, &x);
+
+    // x = 1*{1,2,3,4} = {1,2,3,4}
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[3], 1e-10);
+}
+
+test "scal_simd: alpha = -1 (sign flip)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, -2, 3, -4 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, -1.0, &x);
+
+    // x = -1*{1,-2,3,-4} = {-1,2,-3,4}
+    try testing.expectApproxEqAbs(-1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-3.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[3], 1e-10);
+}
+
+test "scal_simd: alpha = 0.5 (fractional scaling)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 2, 4, 6, 8 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, 0.5, &x);
+
+    // x = 0.5*{2,4,6,8} = {1,2,3,4}
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[3], 1e-10);
+}
+
+test "scal_simd: single element (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{7.0}, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, 3.0, &x);
+
+    // x = 3*7 = 21
+    try testing.expectApproxEqAbs(21.0, x.data[0], 1e-10);
+}
+
+test "scal_simd: empty vector (n=0 no-op)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, 5.0, &x);
+
+    // No elements to scale
+    try testing.expect(x.shape[0] == 0);
+}
+
+test "scal_simd: aligned size n=64 (SIMD threshold, 4-wide f64)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    for (0..64) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i + 1)); // 1 to 64
+    }
+
+    try scal_simd(f64, 2.0, &x);
+
+    // x[i] = 2*(i+1)
+    for (0..64) |i| {
+        const expected: f64 = 2.0 * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-10);
+    }
+}
+
+test "scal_simd: large vector n=128" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try scal_simd(f64, 5.0, &x);
+
+    // x[i] = 5*1 = 5
+    for (0..128) |i| {
+        try testing.expectApproxEqAbs(5.0, x.data[i], 1e-10);
+    }
+}
+
+test "scal_simd: large vector n=1024" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer x.deinit();
+
+    for (0..1024) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    try scal_simd(f64, 0.5, &x);
+
+    // x[i] = 0.5*i
+    for (0..1024) |i| {
+        const expected: f64 = 0.5 * @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "scal_simd: non-aligned size n=67 (tail loop coverage)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{67}, .row_major);
+    defer x.deinit();
+
+    for (0..67) |i| {
+        x.data[i] = 2.0;
+    }
+
+    try scal_simd(f64, 3.0, &x);
+
+    // x[i] = 3*2 = 6
+    for (0..67) |i| {
+        try testing.expectApproxEqAbs(6.0, x.data[i], 1e-10);
+    }
+}
+
+test "scal_simd: non-aligned size n=100" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+
+    for (0..100) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    try scal_simd(f64, 2.0, &x);
+
+    // x[i] = 2*i
+    for (0..100) |i| {
+        const expected: f64 = 2.0 * @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "scal_simd: non-aligned size n=137" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{137}, .row_major);
+    defer x.deinit();
+
+    for (0..137) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try scal_simd(f64, 4.5, &x);
+
+    // x[i] = 4.5*1 = 4.5
+    for (0..137) |i| {
+        try testing.expectApproxEqAbs(4.5, x.data[i], 1e-9);
+    }
+}
+
+test "scal_simd: f32 type support with SIMD (8-wide)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{8}, &[_]f32{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f32, 2.5, &x);
+
+    // x = 2.5*{1,2,3,4,5,6,7,8} = {2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20}
+    try testing.expectApproxEqAbs(@as(f32, 2.5), x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 5.0), x.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 7.5), x.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 10.0), x.data[3], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 12.5), x.data[4], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 15.0), x.data[5], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 17.5), x.data[6], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 20.0), x.data[7], 1e-5);
+}
+
+test "scal_simd: f32 large vector n=256" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @as(f32, @floatFromInt(i));
+    }
+
+    try scal_simd(f32, 0.5, &x);
+
+    // x[i] = 0.5*i
+    for (0..256) |i| {
+        const expected: f32 = 0.5 * @as(f32, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-5);
+    }
+}
+
+test "scal_simd: negative scaling with mixed values" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, -2, 3, -4 }, .row_major);
+    defer x.deinit();
+
+    try scal_simd(f64, -2.0, &x);
+
+    // x = -2*{1,-2,3,-4} = {-2,4,-6,8}
+    try testing.expectApproxEqAbs(-2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-6.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, x.data[3], 1e-10);
+}
+
+test "scal_simd: in-place modification verification (n=128)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = @as(f64, @floatFromInt(i));
+    }
+
+    // Store pointer to verify in-place modification
+    const original_ptr = x.data.ptr;
+
+    try scal_simd(f64, 3.0, &x);
+
+    // Same pointer (in-place modification)
+    try testing.expect(x.data.ptr == original_ptr);
+
+    // Values should be scaled
+    for (0..128) |i| {
+        const expected: f64 = 3.0 * @as(f64, @floatFromInt(i));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "scal_simd: numerical equivalence with scalar implementation (n=256)" {
+    const allocator = testing.allocator;
+
+    var x_simd = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x_simd.deinit();
+    var x_scalar = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x_scalar.deinit();
+
+    for (0..256) |i| {
+        x_simd.data[i] = @as(f64, @floatFromInt(i)) - 128.0;
+        x_scalar.data[i] = @as(f64, @floatFromInt(i)) - 128.0;
+    }
+
+    const alpha = 2.5;
+
+    // SIMD version
+    try scal_simd(f64, alpha, &x_simd);
+
+    // Scalar reference
+    for (0..256) |i| {
+        x_scalar.data[i] *= alpha;
+    }
+
+    // Compare
+    for (0..256) |i| {
+        try testing.expectApproxEqAbs(x_scalar.data[i], x_simd.data[i], 1e-9);
+    }
+}
+
+test "scal_simd: no memory leaks" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    for (0..256) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    try scal_simd(f64, 2.0, &x);
+
     // testing.allocator automatically detects memory leaks
 }
