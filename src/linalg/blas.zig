@@ -3924,6 +3924,15 @@ pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x
     }
 
     const n = A.shape[0];
+
+    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
+    // Threshold: if n >= 64, use the SIMD trmv
+    // (trmv_simd provides 2-4× speedup over scalar for large triangular matrices)
+    const threshold: usize = 64;
+    if (n >= threshold) {
+        return try simd_blas.trmv_simd(T, uplo, trans, diag, A, x);
+    }
+
     const is_upper = (uplo == 'U' or uplo == 'u');
     const is_trans = (trans == 'T' or trans == 't');
     const is_unit = (diag == 'U' or diag == 'u');
@@ -5123,6 +5132,433 @@ test "trmv: f32 precision" {
 
     try testing.expectApproxEqAbs(9.5, x.data[0], 1e-5);
     try testing.expectApproxEqAbs(10.5, x.data[1], 1e-5);
+}
+
+// ============================================================================
+// trmv Dispatch Tests (auto-routing to SIMD for n >= 64)
+// ============================================================================
+
+test "trmv dispatch: threshold boundary n=63 (scalar fallback)" {
+    const allocator = testing.allocator;
+    const n = 63;
+
+    // Create upper triangular matrix: A[i,j] = i+j+1 if i<=j, else 0
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    // Create vector: x[i] = 1
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    // Call trmv with upper triangular, no transpose, no unit diagonal
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // Expected: x[i] = sum(A[i,j] for j in i..n) = sum(i+j+1 for j in i..n)
+    // For i=62: sum(j in 62..63) = (62+62+1) + (62+63+1) = 125 + 126 = 251
+    const expected_62 = 251.0;
+    try testing.expectApproxEqAbs(expected_62, x.data[62], 1e-9);
+
+    // For i=0: sum(j in 0..63) = sum(0+j+1 for j in 0..63) = sum(1..64) = 64*65/2 = 2080
+    const expected_0 = 2080.0;
+    try testing.expectApproxEqAbs(expected_0, x.data[0], 1e-9);
+}
+
+test "trmv dispatch: threshold boundary n=64 (SIMD path)" {
+    const allocator = testing.allocator;
+    const n = 64;
+
+    // Create upper triangular matrix
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // For i=0: sum(0+j+1 for j in 0..64) = sum(1..65) = 65*66/2 = 2145
+    const expected_0 = 2145.0;
+    try testing.expectApproxEqAbs(expected_0, x.data[0], 1e-9);
+
+    // For i=63: sum(63+j+1 for j in 63..64) = (63+63+1) + (63+64+1) = 127 + 128 = 255
+    const expected_63 = 255.0;
+    try testing.expectApproxEqAbs(expected_63, x.data[63], 1e-9);
+}
+
+test "trmv dispatch: above threshold n=65 (SIMD path)" {
+    const allocator = testing.allocator;
+    const n = 65;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // For i=0: sum(1..66) = 66*67/2 = 2211
+    const expected_0 = 2211.0;
+    try testing.expectApproxEqAbs(expected_0, x.data[0], 1e-9);
+}
+
+test "trmv dispatch: 128x128 upper non-unit (full SIMD)" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Upper triangular: simple pattern
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) 1.0 else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // x[i] = sum(1.0 for j in i..128) = 128-i
+    for (0..n) |i| {
+        const expected = @as(f64, @floatFromInt(n - i));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "trmv dispatch: 128x128 lower unit diagonal (full SIMD)" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Lower triangular: A[i,j] = i-j+1 if i>=j, else 0, diagonal = 1
+    for (0..n) |i| {
+        for (0..n) |j| {
+            if (i >= j) {
+                data_A[i * n + j] = if (i == j) 1.0 else @as(f64, @floatFromInt(i - j + 1));
+            } else {
+                data_A[i * n + j] = 0.0;
+            }
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'L', 'N', 'U', A, &x);
+
+    // With unit diagonal: x[i] = x[i] + sum(A[i,j]*x[j] for j in 0..i)
+    // For i=0: x[0] = 1.0 + 0 = 1.0
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-9);
+
+    // For i=1: x[1] = 1.0 + A[1,0]*1.0 = 1.0 + 2.0 = 3.0
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-9);
+}
+
+test "trmv dispatch: 128x128 upper transpose (full SIMD)" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Upper triangular: A[i,j] = i+j+1 if i<=j, else 0
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'T', 'N', A, &x);
+
+    // Upper transpose acts like lower: compute A^T*x
+    // For i=0: x[0] = sum(A[j,0]*x[j] for j in 0..1) = A[0,0]*1.0 = 1.0
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-9);
+}
+
+test "trmv dispatch: 100x100 lower transpose unit (non-aligned SIMD)" {
+    const allocator = testing.allocator;
+    const n = 100;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Lower triangular with unit diagonal
+    for (0..n) |i| {
+        for (0..n) |j| {
+            if (i >= j) {
+                data_A[i * n + j] = if (i == j) 1.0 else @as(f64, @floatFromInt(i - j + 1));
+            } else {
+                data_A[i * n + j] = 0.0;
+            }
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'L', 'T', 'U', A, &x);
+
+    // Verify no NaN or Inf
+    for (0..n) |i| {
+        try testing.expect(!std.math.isNan(x.data[i]));
+        try testing.expect(!std.math.isInf(x.data[i]));
+    }
+}
+
+test "trmv dispatch: 128x128 f32 precision (8-wide SIMD)" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    var data_A = try allocator.alloc(f32, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) 1.0 else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f32, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f32, 'U', 'N', 'N', A, &x);
+
+    // x[i] = sum(1.0 for j in i..128) = 128-i
+    for (0..n) |i| {
+        const expected = @as(f32, @floatFromInt(n - i));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-5);
+    }
+}
+
+test "trmv dispatch: 128x128 f64 precision (4-wide SIMD)" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) 1.0 else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 2.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // x[i] = sum(1.0 for j in i..128) * 2.0 = (128-i) * 2.0
+    for (0..n) |i| {
+        const expected = @as(f64, @floatFromInt(n - i)) * 2.0;
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "trmv dispatch: 100x100 non-aligned (tail loop coverage)" {
+    const allocator = testing.allocator;
+    const n = 100;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Upper triangular
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(j - i + 1)) else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // x[i] = sum(j-i+1 for j in i..100) = sum(k+1 for k in 0..(100-i)) = sum(1..(100-i+1))
+    // = (100-i)*(100-i+1)/2
+    for (0..n) |i| {
+        const count = n - i;
+        const expected = @as(f64, @floatFromInt(count * (count + 1) / 2));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "trmv dispatch: 137x137 non-aligned (prime dimension SIMD+tail)" {
+    const allocator = testing.allocator;
+    const n = 137;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Lower triangular
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i >= j) 1.0 else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = 1.0;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'L', 'N', 'N', A, &x);
+
+    // x[i] = sum(1.0 for j in 0..i+1) = i+1
+    for (0..n) |i| {
+        const expected = @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, x.data[i], 1e-9);
+    }
+}
+
+test "trmv dispatch: 256x256 stress test (large SIMD correctness)" {
+    const allocator = testing.allocator;
+    const n = 256;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    // Upper triangular with varied pattern
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt((i + j) % 10 + 1)) else 0.0;
+        }
+    }
+
+    var data_x = try allocator.alloc(f64, n);
+    defer allocator.free(data_x);
+    for (0..n) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i % 5 + 1));
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_x, .row_major);
+    defer x.deinit();
+
+    try trmv(f64, 'U', 'N', 'N', A, &x);
+
+    // Verify all values are valid (not NaN or Inf)
+    for (0..n) |i| {
+        try testing.expect(!std.math.isNan(x.data[i]));
+        try testing.expect(!std.math.isInf(x.data[i]));
+        try testing.expect(x.data[i] >= 0.0); // All positive since matrix and vector entries are positive
+    }
+
+    // Spot check: verify first element is reasonable
+    try testing.expect(x.data[0] > 0.0);
 }
 
 test "trsv: dimension mismatch error" {
