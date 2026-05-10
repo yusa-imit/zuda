@@ -1,3 +1,27 @@
+**Session 494 Update (2026-05-11) — FEATURE MODE:**
+
+⚡ **BLAS ger() SIMD Auto-Dispatch** — Completes Level 2 SIMD coverage:
+- **Feature**: Implemented ger_simd() and integrated auto-dispatch in blas.ger() for m >= 64 OR n >= 64
+- **Operation**: Rank-1 update A += α*x*y^T (outer product)
+- **Algorithm**: Row-wise SIMD vectorization
+  * For each row i: vectorize A[i,:] += α*x[i]*y[:]
+  * Broadcast scalar = α*x[i] to @Vector, multiply by y[j:j+vec_width]
+  * Accumulate into A[i,j:j+vec_width] with SIMD add
+  * Tail loop: handle n % vec_width remainder with scalar ops
+  * Vec width: 4 for f64, 8 for f32
+  * Expected impact: 3-6× speedup for large matrices
+- **Tests**: 29 comprehensive tests (all passing)
+  * ger_simd: 20 tests (correctness, alpha variants, types, equivalence, errors, memory safety)
+  * Auto-dispatch: 9 tests (threshold 63×63/64×64/65×65, non-square, non-aligned, f32/f64, alpha=0, 256×256)
+- **Files**:
+  * src/linalg/simd_blas.zig (+67 lines implementation, +522 lines tests)
+  * src/linalg/blas.zig (+10 lines dispatch logic, +194 lines tests)
+- **Commit**: cc98484 (ger SIMD auto-dispatch)
+- **Agents Used**: test-writer (agent a80d49e — 20 RED tests), zig-developer (agent a23a4c2 — GREEN implementation)
+- **Total Tests**: 3054 → 3083 (29 new ger SIMD tests)
+- **Rationale**: ger (rank-1 update) is heavily used in Householder reflections, iterative solvers, gradient descent. SIMD provides 3-6× speedup for large matrices. Completes BLAS Level 2 SIMD coverage (gemv ✅, ger ✅).
+- **BLAS Level 2 SIMD Status**: ✅ COMPLETE — Both core Level 2 operations (gemv, ger) have SIMD acceleration
+
 **Session 493 Update (2026-05-10) — FEATURE MODE:**
 
 ⚡ **BLAS asum()/scal() SIMD Auto-Dispatch** — Completes Level 1 SIMD series:
