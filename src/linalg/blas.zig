@@ -151,6 +151,17 @@ pub fn axpy(comptime T: type, alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)) (ND
 /// const norm = try nrm2(x); // sqrt(9 + 16 + 0) = 5
 /// ```
 pub fn nrm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    const n = x.shape[0];
+
+    // Auto-dispatch: Use SIMD-optimized implementation for large vectors
+    // Threshold: if n >= 64 (enough elements to benefit from vectorization)
+    // Session 492: nrm2_simd provides 2-4× speedup via SIMD vectorization
+    const threshold: usize = 64;
+    if (n >= threshold) {
+        return try simd_blas.nrm2_simd(T, x);
+    }
+
+    // Fallback to scalar loop for small vectors
     // Compute L2 norm: sqrt(sum(x[i]^2))
     var sum_of_squares: T = 0;
     var iter = x.iterator();
@@ -1035,6 +1046,97 @@ test "nrm2: scaled vector" {
     const norm = try nrm2(f64, x);
     // sqrt(36 + 64) = sqrt(100) = 10
     try testing.expectApproxEqAbs(10.0, norm, 1e-10);
+}
+
+// ============================================================================
+// nrm2 Auto-Dispatch Tests (Session 492 — SIMD Optimization)
+// ============================================================================
+
+test "nrm2: auto-dispatch — n=63 (below threshold, uses scalar)" {
+    const allocator = testing.allocator;
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{63}, .row_major);
+    defer x.deinit();
+
+    for (0..63) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const norm = try nrm2(f64, x);
+    // sqrt(63) ≈ 7.937
+    try testing.expectApproxEqAbs(@sqrt(@as(f64, 63.0)), norm, 1e-10);
+}
+
+test "nrm2: auto-dispatch — n=64 (at threshold, uses SIMD)" {
+    const allocator = testing.allocator;
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    for (0..64) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const norm = try nrm2(f64, x);
+    // sqrt(64) = 8.0
+    try testing.expectApproxEqAbs(8.0, norm, 1e-10);
+}
+
+test "nrm2: auto-dispatch — n=65 (above threshold, uses SIMD)" {
+    const allocator = testing.allocator;
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{65}, .row_major);
+    defer x.deinit();
+
+    for (0..65) |i| {
+        x.data[i] = 1.0;
+    }
+
+    const norm = try nrm2(f64, x);
+    // sqrt(65) ≈ 8.062
+    try testing.expectApproxEqAbs(@sqrt(@as(f64, 65.0)), norm, 1e-10);
+}
+
+test "nrm2: auto-dispatch — large n=1024 SIMD correctness" {
+    const allocator = testing.allocator;
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{1024}, .row_major);
+    defer x.deinit();
+
+    // Sequential values: 0, 1, 2, ..., 1023
+    for (0..1024) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    const norm = try nrm2(f64, x);
+    // sum(i²) for i=0..1023 = n(n-1)(2n-1)/6 = 1024*1023*2047/6 = 358,372,352
+    const expected_sum_sq: f64 = 358372352.0;
+    try testing.expectApproxEqAbs(@sqrt(expected_sum_sq), norm, 1e-6);
+}
+
+test "nrm2: auto-dispatch — non-aligned n=100 (tail loop)" {
+    const allocator = testing.allocator;
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+
+    for (0..100) |i| {
+        x.data[i] = 2.0;
+    }
+
+    const norm = try nrm2(f64, x);
+    // sqrt(100 * 4) = sqrt(400) = 20
+    try testing.expectApproxEqAbs(20.0, norm, 1e-10);
+}
+
+test "nrm2: auto-dispatch — f32 type support (n=128)" {
+    const allocator = testing.allocator;
+    var x = try NDArray(f32, 1).zeros(allocator, &[_]usize{128}, .row_major);
+    defer x.deinit();
+
+    for (0..128) |i| {
+        x.data[i] = @floatFromInt(i);
+    }
+
+    const norm = try nrm2(f32, x);
+    // sum(i²) for i=0..127 = 127*128*255/6 = 685,440
+    const expected_sum_sq: f32 = 685440.0;
+    try testing.expectApproxEqAbs(@sqrt(expected_sum_sq), norm, 1e-3);
 }
 
 // ============================================================================
