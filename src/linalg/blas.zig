@@ -1949,6 +1949,13 @@ pub fn gemv(comptime T: type, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta
 /// // A = A + x*y^T = [[0,0],[0,0]] + [[1*3, 1*4], [2*3, 2*4]]
 /// //   = [[3, 4], [6, 8]]
 /// ```
+/// ger — BLAS Level 2 rank-1 update: A := A + α*x*y^T
+///
+/// Auto-dispatches to SIMD implementation for large matrices (m >= 64 OR n >= 64).
+/// Computes outer product rank-1 update with scalar alpha.
+///
+/// Time: O(m*n)
+/// Space: O(1)
 pub fn ger(comptime T: type, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error)!void {
     // Validate dimensions
     if (A.shape[0] != x.shape[0]) {
@@ -1961,6 +1968,13 @@ pub fn ger(comptime T: type, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *N
     const m = A.shape[0]; // rows
     const n = A.shape[1]; // columns
 
+    // Auto-dispatch: use SIMD for large matrices
+    // (Session 494: ger_simd provides 3-6× speedup for m >= 64 OR n >= 64)
+    if (m >= 64 or n >= 64) {
+        return try simd_blas.ger_simd(T, alpha, x, y, A);
+    }
+
+    // Scalar path for small matrices (SIMD overhead not justified)
     // A = A + alpha * x * y^T
     // For each i,j: A[i,j] = A[i,j] + alpha * x[i] * y[j]
     for (0..m) |i| {
@@ -2567,6 +2581,207 @@ test "ger: negative values in vectors" {
     try testing.expectApproxEqAbs(4.0, A.data[1], 1e-10);
     try testing.expectApproxEqAbs(6.0, A.data[2], 1e-10);
     try testing.expectApproxEqAbs(-8.0, A.data[3], 1e-10);
+}
+
+// ============================================================================
+// ger Auto-Dispatch Tests (Session 494)
+// ============================================================================
+
+test "ger dispatch: 63x63 matrix uses scalar path" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).ones(allocator, &[_]usize{63}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).ones(allocator, &[_]usize{63}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 63, 63 }, .row_major);
+    defer A.deinit();
+
+    // α=0.5, x=ones(63), y=ones(63) → A += 0.5 (scalar path: m < 64 and n < 64)
+    try ger(f64, 0.5, x, y, &A);
+
+    // All elements should be 0.5
+    try testing.expectApproxEqAbs(0.5, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.5, A.data[62], 1e-10);
+    try testing.expectApproxEqAbs(0.5, A.data[63 * 62], 1e-10);
+    try testing.expectApproxEqAbs(0.5, A.data[63 * 63 - 1], 1e-10);
+}
+
+test "ger dispatch: 64x64 matrix uses SIMD path" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).ones(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).ones(allocator, &[_]usize{64}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+
+    // α=0.5, x=ones(64), y=ones(64) → A += 0.5 (SIMD path: m >= 64)
+    try ger(f64, 0.5, x, y, &A);
+
+    // All elements should be 0.5
+    try testing.expectApproxEqAbs(0.5, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.5, A.data[63], 1e-10);
+    try testing.expectApproxEqAbs(0.5, A.data[64 * 63], 1e-10);
+    try testing.expectApproxEqAbs(0.5, A.data[64 * 64 - 1], 1e-10);
+}
+
+test "ger dispatch: 65x65 matrix uses SIMD path" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).ones(allocator, &[_]usize{65}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).ones(allocator, &[_]usize{65}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 65, 65 }, .row_major);
+    defer A.deinit();
+
+    // α=1.0, x=ones(65), y=ones(65) → A += 1.0 (SIMD path: m >= 64)
+    try ger(f64, 1.0, x, y, &A);
+
+    // All elements should be 1.0
+    try testing.expectApproxEqAbs(1.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[64], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[65 * 64], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[65 * 65 - 1], 1e-10);
+}
+
+test "ger dispatch: 64x128 non-square uses SIMD path" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).ones(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).full(allocator, &[_]usize{128}, 2.0, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 128 }, .row_major);
+    defer A.deinit();
+
+    // α=0.5, x=ones(64), y=2*ones(128) → A += 0.5*1*2 = 1.0 (SIMD path: m >= 64)
+    try ger(f64, 0.5, x, y, &A);
+
+    // All elements should be 1.0
+    try testing.expectApproxEqAbs(1.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[127], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[63 * 128], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[64 * 128 - 1], 1e-10);
+}
+
+test "ger dispatch: 128x64 non-square uses SIMD path" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).full(allocator, &[_]usize{128}, 3.0, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).ones(allocator, &[_]usize{64}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 64 }, .row_major);
+    defer A.deinit();
+
+    // α=2.0, x=3*ones(128), y=ones(64) → A += 2*3*1 = 6.0 (SIMD path: m >= 64)
+    try ger(f64, 2.0, x, y, &A);
+
+    // All elements should be 6.0
+    try testing.expectApproxEqAbs(6.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, A.data[63], 1e-10);
+    try testing.expectApproxEqAbs(6.0, A.data[127 * 64], 1e-10);
+    try testing.expectApproxEqAbs(6.0, A.data[128 * 64 - 1], 1e-10);
+}
+
+test "ger dispatch: 100x200 non-aligned uses SIMD path" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).ones(allocator, &[_]usize{100}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).full(allocator, &[_]usize{200}, 0.25, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 200 }, .row_major);
+    defer A.deinit();
+
+    // α=4.0, x=ones(100), y=0.25*ones(200) → A += 4*1*0.25 = 1.0 (SIMD path: m >= 64 and n >= 64)
+    try ger(f64, 4.0, x, y, &A);
+
+    // All elements should be 1.0
+    try testing.expectApproxEqAbs(1.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[199], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[99 * 200], 1e-10);
+    try testing.expectApproxEqAbs(1.0, A.data[100 * 200 - 1], 1e-10);
+}
+
+test "ger dispatch: f32 type support" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).ones(allocator, &[_]usize{64}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).ones(allocator, &[_]usize{64}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+
+    // α=2.0, x=ones(64), y=ones(64) → A += 2 (f32 8-wide SIMD)
+    try ger(f32, 2.0, x, y, &A);
+
+    // All elements should be 2.0
+    try testing.expectApproxEqAbs(@as(f32, 2.0), A.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), A.data[63], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), A.data[64 * 63], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 2.0), A.data[64 * 64 - 1], 1e-5);
+}
+
+test "ger dispatch: alpha=0 no-op" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).full(allocator, &[_]usize{64}, 999.0, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).full(allocator, &[_]usize{64}, 888.0, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).full(allocator, &[_]usize{ 64, 64 }, 5.0, .row_major);
+    defer A.deinit();
+
+    // α=0 → A unchanged (SIMD path handles α=0 correctly)
+    try ger(f64, 0.0, x, y, &A);
+
+    // All elements should remain 5.0
+    try testing.expectApproxEqAbs(5.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0, A.data[63], 1e-10);
+    try testing.expectApproxEqAbs(5.0, A.data[64 * 64 - 1], 1e-10);
+}
+
+test "ger dispatch: large matrix 256x256" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).ones(allocator, &[_]usize{256}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).ones(allocator, &[_]usize{256}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer A.deinit();
+
+    // α=-0.5, x=ones(256), y=ones(256) → A += -0.5 (large SIMD path)
+    try ger(f64, -0.5, x, y, &A);
+
+    // Sample elements should be -0.5
+    try testing.expectApproxEqAbs(-0.5, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-0.5, A.data[255], 1e-10);
+    try testing.expectApproxEqAbs(-0.5, A.data[128 * 256 + 128], 1e-10);
+    try testing.expectApproxEqAbs(-0.5, A.data[256 * 256 - 1], 1e-10);
 }
 
 // ============================================================================
