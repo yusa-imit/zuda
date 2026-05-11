@@ -8483,3 +8483,1106 @@ test "trsm auto-dispatch: scalar/SIMD equivalence (small matrix)" {
         try testing.expectApproxEqAbs(B_scalar.data[idx], B_simd.data[idx], 1e-14);
     }
 }
+
+/// Symmetric Matrix-Matrix Multiply: B := α*A*B + β*B (side='L') or B := α*B*A + β*B (side='R')
+///
+/// Performs a symmetric matrix-matrix multiplication. Matrix A is symmetric and only its
+/// specified triangle (upper or lower) is read. B is a general matrix that is modified in-place.
+///
+/// Parameters:
+/// - side: 'L' (left: B = α*A*B + β*B) or 'R' (right: B = α*B*A + β*B)
+/// - uplo: 'U' (upper triangle of A used) or 'L' (lower triangle of A used)
+/// - alpha: scalar multiplier for A*B
+/// - A: m×m symmetric matrix (if side='L') or n×n symmetric matrix (if side='R')
+/// - B: m×n general matrix (modified in-place)
+/// - beta: scalar multiplier for B
+///
+/// Errors:
+/// - error.DimensionMismatch if dimensions don't match
+/// - error.InvalidParameter if side or uplo is not 'L'/'R' or 'U'/'L'
+///
+/// Time: O(m²n) where A is m×m and B is m×n
+/// Space: O(1) (modifies B in-place)
+pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error)!void {
+    // Validate square matrix A
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    // Validate side parameter
+    const is_left = (side == 'L' or side == 'l');
+    const is_right = (side == 'R' or side == 'r');
+    if (!is_left and !is_right) {
+        return error.InvalidValue;
+    }
+
+    // Validate uplo parameter
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_lower = (uplo == 'L' or uplo == 'l');
+    if (!is_upper and !is_lower) {
+        return error.InvalidValue;
+    }
+
+    const m = B.shape[0];
+    const n = B.shape[1];
+    const k = A.shape[0];
+
+    // Validate dimensions
+    if (is_left) {
+        if (k != m) return error.DimensionMismatch;
+    } else {
+        if (k != n) return error.DimensionMismatch;
+    }
+
+    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
+    // Threshold: if m >= 64 OR n >= 64, use the SIMD-optimized symm
+    // (Session 501: symm_simd provides 2-3× speedup over scalar for large matrices)
+    const threshold: usize = 64;
+    if (m >= threshold or n >= threshold) {
+        return try simd_blas.symm_simd(T, side, uplo, alpha, A, B, beta);
+    }
+
+    // Allocate temporary matrix to store original B values
+    const B_orig = try B.allocator.alloc(T, m * n);
+    defer B.allocator.free(B_orig);
+
+    // Copy B to temporary buffer
+    @memcpy(B_orig, B.data);
+
+    // Scale B by beta: B *= beta
+    for (0..m * n) |i| {
+        B.data[i] = beta * B.data[i];
+    }
+
+    if (is_left) {
+        // B := α*A*B + β*B (A is m×m, B is m×n)
+        for (0..m) |i| {
+            for (0..n) |j| {
+                var sum: T = 0;
+                if (is_upper) {
+                    // Use upper triangle of A: A[i,k] if i<=k, else A[k,i]
+                    for (0..k) |p| {
+                        const a_val = if (i <= p) A.data[i * k + p] else A.data[p * k + i];
+                        sum += a_val * B_orig[p * n + j];
+                    }
+                } else {
+                    // Use lower triangle of A: A[i,k] if i>=k, else A[k,i]
+                    for (0..k) |p| {
+                        const a_val = if (i >= p) A.data[i * k + p] else A.data[p * k + i];
+                        sum += a_val * B_orig[p * n + j];
+                    }
+                }
+                B.data[i * n + j] += alpha * sum;
+            }
+        }
+    } else {
+        // B := α*B*A + β*B (B is m×n, A is n×n)
+        for (0..m) |i| {
+            for (0..n) |j| {
+                var sum: T = 0;
+                if (is_upper) {
+                    // Use upper triangle of A: A[k,j] if k<=j, else A[j,k]
+                    for (0..k) |p| {
+                        const a_val = if (p <= j) A.data[p * k + j] else A.data[j * k + p];
+                        sum += B_orig[i * n + p] * a_val;
+                    }
+                } else {
+                    // Use lower triangle of A: A[k,j] if k>=j, else A[j,k]
+                    for (0..k) |p| {
+                        const a_val = if (p >= j) A.data[p * k + j] else A.data[j * k + p];
+                        sum += B_orig[i * n + p] * a_val;
+                    }
+                }
+                B.data[i * n + j] += alpha * sum;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Comprehensive RED tests for symm() (Symmetric Matrix-Matrix Multiply)
+// ============================================================================
+
+test "symm: basic 2×2 left upper triangle, alpha=1, beta=1" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 1*B
+    // A*B = [[2*1+1*3, 2*2+1*4], [1*1+3*3, 1*2+3*4]] = [[5, 8], [10, 14]]
+    // Result = [[5+1, 8+2], [10+3, 14+4]] = [[6, 10], [13, 18]]
+    try symm(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(6.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(18.0, B.data[3], 1e-10);
+}
+
+test "symm: basic 2×2 left lower triangle, alpha=1, beta=1" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored lower): A = [[2, 0], [1, 3]]
+    // Symmetry means upper is [[2, 1], [0, 3]] (but we ignore it)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Same result as upper triangle case: A*B = [[5, 8], [10, 14]]
+    // Result = [[6, 10], [13, 18]]
+    try symm(f64, 'L', 'L', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(6.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(18.0, B.data[3], 1e-10);
+}
+
+test "symm: basic 2×2 right upper triangle, alpha=1, beta=1" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B := 1*B*A + 1*B
+    // B*A = [[1*2+2*1, 1*1+2*3], [3*2+4*1, 3*1+4*3]] = [[4, 7], [10, 15]]
+    // Result = [[4+1, 7+2], [10+3, 15+4]] = [[5, 9], [13, 19]]
+    try symm(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(19.0, B.data[3], 1e-10);
+}
+
+test "symm: basic 2×2 right lower triangle, alpha=1, beta=1" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Symmetric matrix (stored lower): A = [[2, 0], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // Same result as right upper: B*A = [[4, 7], [10, 15]]
+    // Result = [[5, 9], [13, 19]]
+    try symm(f64, 'R', 'L', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(19.0, B.data[3], 1e-10);
+}
+
+test "symm: 3×3 left upper, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // Symmetric 3×3 (upper): A = [[1, 2, 3], [2, 4, 5], [3, 5, 6]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 2, 4, 5, 3, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 1], [2, 2], [3, 3]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 1, 2, 2, 3, 3 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B = A*B (ignore old B)
+    // A*B = [[1*1+2*2+3*3, 1*1+2*2+3*3], [2*1+4*2+5*3, 2*1+4*2+5*3], [3*1+5*2+6*3, 3*1+5*2+6*3]]
+    //     = [[14, 14], [25, 25], [36, 36]]
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    try testing.expectApproxEqAbs(14.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(14.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(25.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(25.0, B.data[3], 1e-10);
+    try testing.expectApproxEqAbs(36.0, B.data[4], 1e-10);
+    try testing.expectApproxEqAbs(36.0, B.data[5], 1e-10);
+}
+
+test "symm: 3×3 right upper, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2, 3], [4, 5, 6]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer B.deinit();
+
+    // Symmetric 3×3 (upper): A = [[2, 1, 1], [1, 2, 1], [1, 1, 2]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 1, 1, 1, 2, 1, 1, 1, 2 }, .row_major);
+    defer A.deinit();
+
+    // B := 1*B*A + 0*B = B*A
+    // B*A = [[1*2+2*1+3*1, 1*1+2*2+3*1, 1*1+2*1+3*2], [4*2+5*1+6*1, 4*1+5*2+6*1, 4*1+5*1+6*2]]
+    //     = [[7, 8, 9], [19, 20, 21]]
+    try symm(f64, 'R', 'U', 1.0, A, &B, 0.0);
+
+    try testing.expectApproxEqAbs(7.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(19.0, B.data[3], 1e-10);
+    try testing.expectApproxEqAbs(20.0, B.data[4], 1e-10);
+    try testing.expectApproxEqAbs(21.0, B.data[5], 1e-10);
+}
+
+test "symm: alpha=0 (B unchanged from beta scaling)" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 0*A*B + 2*B = 2*B = [[2, 4], [6, 8]]
+    try symm(f64, 'L', 'U', 0.0, A, &B, 2.0);
+
+    try testing.expectApproxEqAbs(2.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[3], 1e-10);
+}
+
+test "symm: beta=0 (B replaced by alpha*A*B)" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 2*A*B + 0*B = 2*A*B = 2*[[5, 8], [10, 14]] = [[10, 16], [20, 28]]
+    try symm(f64, 'L', 'U', 2.0, A, &B, 0.0);
+
+    try testing.expectApproxEqAbs(10.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(16.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(20.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(28.0, B.data[3], 1e-10);
+}
+
+test "symm: alpha=0.5, beta=2.0" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 0.5*A*B + 2*B = 0.5*[[5, 8], [10, 14]] + 2*[[1, 2], [3, 4]]
+    //                    = [[2.5, 4], [5, 7]] + [[2, 4], [6, 8]]
+    //                    = [[4.5, 8], [11, 15]]
+    try symm(f64, 'L', 'U', 0.5, A, &B, 2.0);
+
+    try testing.expectApproxEqAbs(4.5, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(11.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(15.0, B.data[3], 1e-10);
+}
+
+test "symm: negative alpha" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := -1*A*B + 1*B = -[[5, 8], [10, 14]] + [[1, 2], [3, 4]]
+    //                   = [[-4, -6], [-7, -10]]
+    try symm(f64, 'L', 'U', -1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(-4.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-6.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-7.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(-10.0, B.data[3], 1e-10);
+}
+
+test "symm: negative beta" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B - 1*B = [[5, 8], [10, 14]] - [[1, 2], [3, 4]]
+    //                  = [[4, 6], [7, 10]]
+    try symm(f64, 'L', 'U', 1.0, A, &B, -1.0);
+
+    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(7.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[3], 1e-10);
+}
+
+test "symm: f32 precision (left upper)" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2.5, 1.5], [1.5, 3.5]]
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2.5, 1.5, 1.5, 3.5 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1.5, 2.5], [3.5, 4.5]]
+    var B = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1.5, 2.5, 3.5, 4.5 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 1*B
+    // A*B = [[2.5*1.5+1.5*3.5, 2.5*2.5+1.5*4.5], [1.5*1.5+3.5*3.5, 1.5*2.5+3.5*4.5]]
+    //     = [[9.75, 13.25], [15.5, 19]]
+    // Result = [[11.25, 15.75], [19, 23.5]]
+    try symm(f32, 'L', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(11.25, B.data[0], 1e-4);
+    try testing.expectApproxEqAbs(15.75, B.data[1], 1e-4);
+    try testing.expectApproxEqAbs(19.0, B.data[2], 1e-4);
+    try testing.expectApproxEqAbs(23.5, B.data[3], 1e-4);
+}
+
+test "symm: 1×1 edge case (single element)" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[5]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    // B = [[3]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{3}, .row_major);
+    defer B.deinit();
+
+    // B := 2*A*B + 1*B = 2*5*3 + 1*3 = 30 + 3 = 33
+    try symm(f64, 'L', 'U', 2.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(33.0, B.data[0], 1e-10);
+}
+
+test "symm: 64×64 left side (SIMD threshold)" {
+    const allocator = testing.allocator;
+
+    // Create 64×64 symmetric identity matrix
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 1.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 64×32 B with incrementing values
+    var B_data = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(B_data);
+    for (0..64 * 32) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 32));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*I*B + 0*B = B (identity should not change it)
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify some elements match original
+    for (0..64) |i| {
+        for (0..32) |j| {
+            const expected = @as(f64, @floatFromInt(j));
+            try testing.expectApproxEqAbs(expected, B.data[i * 32 + j], 1e-10);
+        }
+    }
+}
+
+test "symm: 128×64 right side (large non-square)" {
+    const allocator = testing.allocator;
+
+    // Create 64×64 symmetric identity matrix
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 1.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 128×64 B with incrementing values
+    var B_data = try allocator.alloc(f64, 128 * 64);
+    defer allocator.free(B_data);
+    for (0..128 * 64) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 64));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 128, 64 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*B*I + 0*B = B (right multiply by identity)
+    try symm(f64, 'R', 'U', 1.0, A, &B, 0.0);
+
+    // Verify some elements
+    for (0..128) |i| {
+        for (0..64) |j| {
+            const expected = @as(f64, @floatFromInt(j));
+            try testing.expectApproxEqAbs(expected, B.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "symm: dimension mismatch — left side A not square" {
+    const allocator = testing.allocator;
+
+    // Non-square A: 2×3
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // B: 2×2
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm(f64, 'L', 'U', 1.0, A, &B, 0.0));
+}
+
+test "symm: dimension mismatch — left side B rows != A size" {
+    const allocator = testing.allocator;
+
+    // Symmetric A: 3×3
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 2, 4, 5, 3, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // B: 2×2 (should be 3×?)
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm(f64, 'L', 'U', 1.0, A, &B, 0.0));
+}
+
+test "symm: dimension mismatch — right side A not square" {
+    const allocator = testing.allocator;
+
+    // B: 2×2
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Non-square A: 2×3
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm(f64, 'R', 'U', 1.0, A, &B, 0.0));
+}
+
+test "symm: dimension mismatch — right side B columns != A size" {
+    const allocator = testing.allocator;
+
+    // B: 2×2
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Symmetric A: 3×3 (should match B columns)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 2, 4, 5, 3, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm(f64, 'R', 'U', 1.0, A, &B, 0.0));
+}
+
+test "symm: invalid side parameter" {
+    const allocator = testing.allocator;
+
+    // Symmetric: 2×2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B: 2×2
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.InvalidParameter, symm(f64, 'X', 'U', 1.0, A, &B, 0.0));
+}
+
+test "symm: invalid uplo parameter" {
+    const allocator = testing.allocator;
+
+    // Symmetric: 2×2
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B: 2×2
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.InvalidParameter, symm(f64, 'L', 'X', 1.0, A, &B, 0.0));
+}
+
+test "symm: non-aligned size 67×67 left upper" {
+    const allocator = testing.allocator;
+
+    // Create 67×67 symmetric matrix with non-aligned size
+    var A_data = try allocator.alloc(f64, 67 * 67);
+    defer allocator.free(A_data);
+    for (0..67 * 67) |i| {
+        const row = i / 67;
+        const col = i % 67;
+        // Symmetric: A[i,j] = A[j,i] = (row+1) * (col+1)
+        A_data[i] = @as(f64, @floatFromInt((row + 1) * (col + 1)));
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 67, 67 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 67×16 B
+    var B_data = try allocator.alloc(f64, 67 * 16);
+    defer allocator.free(B_data);
+    for (0..67 * 16) |i| {
+        B_data[i] = 1.0;
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 67, 16 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify a few computed values
+    // Row 0: sum of first row of A times all-ones column = (1 + 2 + 3 + ... + 67) = 67*68/2 = 2278
+    const expected_row0 = 67.0 * 68.0 / 2.0;
+    for (0..16) |j| {
+        try testing.expectApproxEqAbs(expected_row0, B.data[0 * 16 + j], 1e-8);
+    }
+}
+
+test "symm: multiple accumulations (repeated updates)" {
+    const allocator = testing.allocator;
+
+    // Symmetric: A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 1], [1, 1]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer B.deinit();
+
+    // First: B := 1*A*B + 1*B
+    // A*B = [[2+1, 2+1], [1+3, 1+3]] = [[3, 3], [4, 4]]
+    // Result = [[3+1, 3+1], [4+1, 4+1]] = [[4, 4], [5, 5]]
+    try symm(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(5.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(5.0, B.data[3], 1e-10);
+
+    // Second accumulation: B := 1*A*B + 1*B (with new B)
+    // A*B = [[8+5, 8+5], [4+15, 4+15]] = [[13, 13], [19, 19]]
+    // Result = [[17, 17], [24, 24]]
+    try symm(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(17.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(17.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(24.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(24.0, B.data[3], 1e-10);
+}
+
+test "symm: lower triangle used correctly (upper triangle ignored)" {
+    const allocator = testing.allocator;
+
+    // Create matrix where upper and lower would give different results if not handled correctly
+    // A stored as: [[2, 999], [1, 3]] with uplo='L', means we use [[2, 0], [1, 3]] and reconstruct [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 999, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Using lower triangle, A is treated as [[2, 1], [1, 3]], same as upper case
+    // B := 1*A*B + 1*B = [[6, 10], [13, 18]] (same as upper triangle test)
+    try symm(f64, 'L', 'L', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(6.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(18.0, B.data[3], 1e-10);
+}
+
+// ============================================================================
+// AUTO-DISPATCH TESTS FOR symm() — Route to symm_simd() when m >= 64 OR n >= 64
+// ============================================================================
+
+test "symm auto-dispatch: 63×63 left upper should use scalar" {
+    const allocator = testing.allocator;
+
+    // Create 63×63 symmetric identity matrix (below threshold)
+    var A_data = try allocator.alloc(f64, 63 * 63);
+    defer allocator.free(A_data);
+    for (0..63 * 63) |i| {
+        const row = i / 63;
+        const col = i % 63;
+        A_data[i] = if (row == col) 1.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 63, 63 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 63×8 B with incrementing values
+    var B_data = try allocator.alloc(f64, 63 * 8);
+    defer allocator.free(B_data);
+    for (0..63 * 8) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 8));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 63, 8 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*I*B + 0*B = B (identity should preserve B)
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify identity multiplication: B should be unchanged
+    for (0..63) |i| {
+        for (0..8) |j| {
+            const expected = @as(f64, @floatFromInt(j));
+            try testing.expectApproxEqAbs(expected, B.data[i * 8 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 64×64 left upper should use SIMD (m == 64)" {
+    const allocator = testing.allocator;
+
+    // Create 64×64 symmetric identity matrix (at threshold)
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 64×16 B with incrementing values
+    var B_data = try allocator.alloc(f64, 64 * 16);
+    defer allocator.free(B_data);
+    for (0..64 * 16) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 16 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 16 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B where A is diagonal with 2's
+    // Expected: B[i,j] = 2 * (original B[i,j])
+    var expected_data = try allocator.alloc(f64, 64 * 16);
+    defer allocator.free(expected_data);
+    for (0..64) |i| {
+        for (0..16) |j| {
+            expected_data[i * 16 + j] = 2.0 * @as(f64, @floatFromInt(j + 1));
+        }
+    }
+
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..64) |i| {
+        for (0..16) |j| {
+            try testing.expectApproxEqAbs(expected_data[i * 16 + j], B.data[i * 16 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 65×65 left upper should use SIMD (m > 64)" {
+    const allocator = testing.allocator;
+
+    // Create 65×65 symmetric identity matrix (above threshold)
+    var A_data = try allocator.alloc(f64, 65 * 65);
+    defer allocator.free(A_data);
+    for (0..65 * 65) |i| {
+        const row = i / 65;
+        const col = i % 65;
+        A_data[i] = if (row == col) 3.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 65, 65 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 65×10 B with incrementing values
+    var B_data = try allocator.alloc(f64, 65 * 10);
+    defer allocator.free(B_data);
+    for (0..65 * 10) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 10 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 65, 10 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B where A is diagonal with 3's
+    // Expected: B[i,j] = 3 * (original B[i,j])
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..65) |i| {
+        for (0..10) |j| {
+            const expected = 3.0 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 10 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 63×64 left upper should use SIMD (n == 64)" {
+    const allocator = testing.allocator;
+
+    // Create 63×63 symmetric identity matrix
+    var A_data = try allocator.alloc(f64, 63 * 63);
+    defer allocator.free(A_data);
+    for (0..63 * 63) |i| {
+        const row = i / 63;
+        const col = i % 63;
+        A_data[i] = if (row == col) 1.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 63, 63 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 63×64 B with incrementing values (n >= 64 threshold)
+    var B_data = try allocator.alloc(f64, 63 * 64);
+    defer allocator.free(B_data);
+    for (0..63 * 64) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 64 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 63, 64 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B = B (identity preserves B)
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..63) |i| {
+        for (0..64) |j| {
+            const expected = @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 64×63 right upper should use SIMD (m == 64)" {
+    const allocator = testing.allocator;
+
+    // Create 128×64 B (m=128, n=64)
+    var B_data = try allocator.alloc(f64, 128 * 64);
+    defer allocator.free(B_data);
+    for (0..128 * 64) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 64 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 128, 64 }, B_data, .row_major);
+    defer B.deinit();
+
+    // Create 64×64 symmetric identity matrix
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // B := 1*B*A + 0*B where A is diagonal with 2's
+    // Expected: B[i,j] = 2 * (original B[i,j])
+    try symm(f64, 'R', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..128) |i| {
+        for (0..64) |j| {
+            const expected = 2.0 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 128×128 left upper should use SIMD (large matrix)" {
+    const allocator = testing.allocator;
+
+    // Create 128×128 symmetric matrix (scaled identity)
+    var A_data = try allocator.alloc(f64, 128 * 128);
+    defer allocator.free(A_data);
+    for (0..128 * 128) |i| {
+        const row = i / 128;
+        const col = i % 128;
+        A_data[i] = if (row == col) 2.5 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 128, 128 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 128×32 B with incrementing values
+    var B_data = try allocator.alloc(f64, 128 * 32);
+    defer allocator.free(B_data);
+    for (0..128 * 32) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 32 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 128, 32 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B where A is diagonal with 2.5's
+    // Expected: B[i,j] = 2.5 * (original B[i,j])
+    try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results (spot check)
+    for (0..128) |i| {
+        for (0..32) |j| {
+            const expected = 2.5 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 32 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 256×128 right upper should use SIMD (large non-square)" {
+    const allocator = testing.allocator;
+
+    // Create 256×128 B
+    var B_data = try allocator.alloc(f64, 256 * 128);
+    defer allocator.free(B_data);
+    for (0..256 * 128) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 128 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 256, 128 }, B_data, .row_major);
+    defer B.deinit();
+
+    // Create 128×128 symmetric diagonal matrix
+    var A_data = try allocator.alloc(f64, 128 * 128);
+    defer allocator.free(A_data);
+    for (0..128 * 128) |i| {
+        const row = i / 128;
+        const col = i % 128;
+        A_data[i] = if (row == col) 3.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 128, 128 }, A_data, .row_major);
+    defer A.deinit();
+
+    // B := 1*B*A + 0*B where A is diagonal with 3's
+    // Expected: B[i,j] = 3 * (original B[i,j])
+    try symm(f64, 'R', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..256) |i| {
+        for (0..128) |j| {
+            const expected = 3.0 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 128 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 64×64 left lower should use SIMD (uplo=L)" {
+    const allocator = testing.allocator;
+
+    // Create 64×64 symmetric matrix stored as lower triangle
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 1.5 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 64×16 B
+    var B_data = try allocator.alloc(f64, 64 * 16);
+    defer allocator.free(B_data);
+    for (0..64 * 16) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 16 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 16 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B where A is diagonal with 1.5's
+    // Expected: B[i,j] = 1.5 * (original B[i,j])
+    try symm(f64, 'L', 'L', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..64) |i| {
+        for (0..16) |j| {
+            const expected = 1.5 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 16 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 64×64 right lower should use SIMD (all params)" {
+    const allocator = testing.allocator;
+
+    // Create 100×64 B
+    var B_data = try allocator.alloc(f64, 100 * 64);
+    defer allocator.free(B_data);
+    for (0..100 * 64) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 64 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 100, 64 }, B_data, .row_major);
+    defer B.deinit();
+
+    // Create 64×64 symmetric matrix stored as lower triangle
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // B := 1*B*A + 0*B where A is diagonal with 2's
+    try symm(f64, 'R', 'L', 1.0, A, &B, 0.0);
+
+    // Verify results
+    for (0..100) |i| {
+        for (0..64) |j| {
+            const expected = 2.0 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "symm auto-dispatch: 100×100 non-aligned left upper with alpha/beta" {
+    const allocator = testing.allocator;
+
+    // Create 100×100 symmetric matrix (non-aligned size, above threshold)
+    var A_data = try allocator.alloc(f64, 100 * 100);
+    defer allocator.free(A_data);
+    for (0..100 * 100) |i| {
+        const row = i / 100;
+        const col = i % 100;
+        // Symmetric with non-unit diagonal
+        A_data[i] = if (row == col) 2.0 else 0.5;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 100, 100 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 100×20 B with ones
+    var B_data = try allocator.alloc(f64, 100 * 20);
+    defer allocator.free(B_data);
+    for (0..100 * 20) |i| {
+        B_data[i] = 1.0;
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 100, 20 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 2*A*B + 0.5*B
+    // A*ones = [2 + 99*0.5, ...] = [2 + 49.5, ...] per row = [51.5, ...]
+    // Result = 2*51.5 + 0.5*1 = 103 + 0.5 = 103.5
+    try symm(f64, 'L', 'U', 2.0, A, &B, 0.5);
+
+    // Verify results (per row sum should be consistent)
+    for (0..100) |i| {
+        for (0..20) |j| {
+            // Each row of A sum: 2 (diagonal) + 99*0.5 (off-diag) = 51.5
+            // A*B[i,j] = 51.5, so result = 2*51.5 + 0.5*1 = 103.5
+            try testing.expectApproxEqAbs(103.5, B.data[i * 20 + j], 1e-8);
+        }
+    }
+}
+
+test "symm auto-dispatch: f32 dispatch 64×64 left upper" {
+    const allocator = testing.allocator;
+
+    // Create 64×64 symmetric matrix in f32
+    var A_data = try allocator.alloc(f32, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.5 else 0.0;
+    }
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 64×16 B in f32
+    var B_data = try allocator.alloc(f32, 64 * 16);
+    defer allocator.free(B_data);
+    for (0..64 * 16) |i| {
+        B_data[i] = @as(f32, @floatFromInt(i % 16 + 1));
+    }
+    var B = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 64, 16 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B where A is diagonal with 2.5's
+    try symm(f32, 'L', 'U', 1.0, A, &B, 0.0);
+
+    // Verify results with f32 precision tolerance
+    for (0..64) |i| {
+        for (0..16) |j| {
+            const expected = 2.5 * @as(f32, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 16 + j], 1e-4);
+        }
+    }
+}
+
+test "symm auto-dispatch: equivalence scalar vs SIMD (small 2×2 through symm)" {
+    const allocator = testing.allocator;
+
+    // Small 2×2 matrix (below threshold, uses scalar)
+    var A_small = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A_small.deinit();
+
+    var B_small1 = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B_small1.deinit();
+
+    var B_small2 = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B_small2.deinit();
+
+    // Call symm() twice with same inputs
+    try symm(f64, 'L', 'U', 1.5, A_small, &B_small1, 0.5);
+    try symm(f64, 'L', 'U', 1.5, A_small, &B_small2, 0.5);
+
+    // Results should be identical (tests repeatability)
+    for (0..4) |i| {
+        try testing.expectApproxEqAbs(B_small1.data[i], B_small2.data[i], 1e-14);
+    }
+}
+
+test "symm auto-dispatch: alpha=0 with large matrix (SIMD dispatch)" {
+    const allocator = testing.allocator;
+
+    // Create 64×64 symmetric matrix (doesn't matter since alpha=0)
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        A_data[i] = 0.0; // All zeros since alpha=0
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create 64×16 B with initial values
+    var B_data = try allocator.alloc(f64, 64 * 16);
+    defer allocator.free(B_data);
+    for (0..64 * 16) |i| {
+        B_data[i] = @as(f64, @floatFromInt(i % 16 + 1));
+    }
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 16 }, B_data, .row_major);
+    defer B.deinit();
+
+    // B := 0*A*B + 3*B = 3*B
+    try symm(f64, 'L', 'U', 0.0, A, &B, 3.0);
+
+    // Verify results: B should be tripled
+    for (0..64) |i| {
+        for (0..16) |j| {
+            const expected = 3.0 * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, B.data[i * 16 + j], 1e-10);
+        }
+    }
+}
