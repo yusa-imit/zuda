@@ -1067,6 +1067,348 @@ pub fn syr_simd(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDAr
     }
 }
 
+/// SIMD-accelerated triangular matrix-matrix multiply: B := α*op(A)*B or B := α*B*op(A)
+///
+/// Performs triangular matrix-matrix multiplication where A is triangular.
+/// Updates B in-place with the result: B := α*op(A)*B (left) or B := α*B*op(A) (right).
+///
+/// Parameters:
+/// - T: Numeric type (f32 or f64)
+/// - side: 'L' (left, B := α*A*B) or 'R' (right, B := α*B*A)
+/// - uplo: 'U' (upper triangular) or 'L' (lower triangular)
+/// - trans: 'N' (no transpose, op(A) = A) or 'T' (transpose, op(A) = A^T)
+/// - diag: 'N' (non-unit diagonal) or 'U' (unit diagonal, diagonal = 1)
+/// - alpha: Scalar multiplier
+/// - A: Triangular matrix (k×k where k = m if side='L', k = n if side='R')
+/// - B: Matrix to update (m×n), modified in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if A is not square or dimensions incompatible
+///
+/// Time: O(m*n*k) with 2-3× speedup from SIMD for large matrices
+/// Space: O(m*n) for temporary buffer
+///
+/// Algorithm:
+/// - Left side (A on left): B := α*A*B
+///   - For each row i of B: B[i,:] = α*A[i,i:]*B[i:,:] or α*A[i:,i]*B[i:,:]
+/// - Right side (A on right): B := α*B*A
+///   - For each column j of B: B[:,j] = α*B[:,j:]*A[j:,j] or α*B[:,j:]*A[j,j:]
+/// - SIMD vectorization: Process j in chunks of vec_width (4 for f64, 8 for f32)
+/// - Tail loop: Scalar for j % vec_width remainder
+///
+/// Example:
+/// ```zig
+/// // A = [[2, 1], [0, 3]] (upper triangular)
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2}, &[_]f64{2, 1, 0, 3}, .row_major);
+/// defer A.deinit();
+/// // B = [[1, 2], [3, 4]]
+/// var B = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2}, &[_]f64{1, 2, 3, 4}, .row_major);
+/// defer B.deinit();
+/// // B := A*B = [[2*1+1*3, 2*2+1*4], [0*1+3*3, 0*2+3*4]] = [[5, 8], [9, 12]]
+/// try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+/// ```
+pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    // Validate A is square
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    const is_left = (side == 'L' or side == 'l');
+    const m = B.shape[0];
+    const n = B.shape[1];
+    const k = A.shape[0];
+
+    // Validate dimensions
+    if (is_left) {
+        if (k != m) return error.DimensionMismatch;
+    } else {
+        if (k != n) return error.DimensionMismatch;
+    }
+
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    // Allocate temporary buffer for result (avoid overwriting B during computation)
+    var temp = try B.allocator.alloc(T, m * n);
+    defer B.allocator.free(temp);
+
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+    const alpha_vec: Vec = @splat(alpha);
+
+    if (is_left) {
+        // B := α*A*B (A is m×m, B is m×n)
+        for (0..m) |i| {
+            var j: usize = 0;
+
+            // SIMD loop: process n in chunks of vec_width
+            while (j + vec_width <= n) : (j += vec_width) {
+                var sum_vec: Vec = @splat(@as(T, 0));
+
+                if (!is_trans) {
+                    // A*B (access A[i,p])
+                    if (is_upper) {
+                        // Upper: sum A[i,p]*B[p,:] for p in i..m
+                        const start = if (is_unit) i + 1 else i;
+                        for (start..m) |p| {
+                            const a_val = A.data[i * k + p];
+                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const a_vec: Vec = @splat(a_val);
+                            sum_vec += a_vec * b_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A[i,i] = 1)
+                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            sum_vec += b_vec;
+                        }
+                    } else {
+                        // Lower: sum A[i,p]*B[p,:] for p in 0..i+1
+                        const end = if (is_unit) i else i + 1;
+                        for (0..end) |p| {
+                            const a_val = A.data[i * k + p];
+                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const a_vec: Vec = @splat(a_val);
+                            sum_vec += a_vec * b_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A[i,i] = 1)
+                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            sum_vec += b_vec;
+                        }
+                    }
+                } else {
+                    // A^T*B (access A[p,i])
+                    if (is_upper) {
+                        // Upper transpose: sum A[p,i]*B[p,:] for p in 0..i+1
+                        const end = if (is_unit) i else i + 1;
+                        for (0..end) |p| {
+                            const a_val = A.data[p * k + i];
+                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const a_vec: Vec = @splat(a_val);
+                            sum_vec += a_vec * b_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A^T[i,i] = A[i,i] = 1)
+                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            sum_vec += b_vec;
+                        }
+                    } else {
+                        // Lower transpose: sum A[p,i]*B[p,:] for p in i..m
+                        const start = if (is_unit) i + 1 else i;
+                        for (start..m) |p| {
+                            const a_val = A.data[p * k + i];
+                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const a_vec: Vec = @splat(a_val);
+                            sum_vec += a_vec * b_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A^T[i,i] = A[i,i] = 1)
+                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            sum_vec += b_vec;
+                        }
+                    }
+                }
+
+                // Scale by alpha and store in temp
+                const result = alpha_vec * sum_vec;
+                @memcpy(temp[i * n + j..][0..vec_width], &result);
+            }
+
+            // Scalar tail loop for remaining columns
+            while (j < n) : (j += 1) {
+                var sum: T = 0;
+                if (!is_trans) {
+                    if (is_upper) {
+                        const start = if (is_unit) i + 1 else i;
+                        for (start..m) |p| {
+                            sum += A.data[i * k + p] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const end = if (is_unit) i else i + 1;
+                        for (0..end) |p| {
+                            sum += A.data[i * k + p] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                } else {
+                    if (is_upper) {
+                        const end = if (is_unit) i else i + 1;
+                        for (0..end) |p| {
+                            sum += A.data[p * k + i] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const start = if (is_unit) i + 1 else i;
+                        for (start..m) |p| {
+                            sum += A.data[p * k + i] * B.data[p * n + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                }
+                temp[i * n + j] = alpha * sum;
+            }
+        }
+    } else {
+        // B := α*B*A (B is m×n, A is n×n)
+        for (0..m) |i| {
+            var j: usize = 0;
+
+            // SIMD loop: process n in chunks of vec_width
+            while (j + vec_width <= n) : (j += vec_width) {
+                var sum_vec: Vec = @splat(@as(T, 0));
+
+                if (!is_trans) {
+                    // B*A (access A[p,j] for j in range)
+                    if (is_upper) {
+                        // Upper: sum B[i,p]*A[p,j] for p in 0..j+1
+                        const end = if (is_unit) j else j + 1;
+                        for (0..end) |p| {
+                            const b_val = B.data[i * n + p];
+                            var a_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                a_vec[kk] = A.data[p * k + (j + kk)];
+                            }
+                            const b_vec: Vec = @splat(b_val);
+                            sum_vec += b_vec * a_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A[j,j] = 1 for each column j+kk)
+                            var b_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                b_vec[kk] = B.data[i * n + (j + kk)];
+                            }
+                            sum_vec += b_vec;
+                        }
+                    } else {
+                        // Lower: sum B[i,p]*A[p,j] for p in j..n
+                        const start = if (is_unit) j + 1 else j;
+                        for (start..n) |p| {
+                            const b_val = B.data[i * n + p];
+                            var a_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                a_vec[kk] = A.data[p * k + (j + kk)];
+                            }
+                            const b_vec: Vec = @splat(b_val);
+                            sum_vec += b_vec * a_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A[j,j] = 1 for each column j+kk)
+                            var b_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                b_vec[kk] = B.data[i * n + (j + kk)];
+                            }
+                            sum_vec += b_vec;
+                        }
+                    }
+                } else {
+                    // B*A^T (access A[j,p])
+                    if (is_upper) {
+                        // Upper transpose: sum B[i,p]*A[j,p] for p in j..n
+                        const start = if (is_unit) j + 1 else j;
+                        for (start..n) |p| {
+                            const b_val = B.data[i * n + p];
+                            var a_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                a_vec[kk] = A.data[(j + kk) * k + p];
+                            }
+                            const b_vec: Vec = @splat(b_val);
+                            sum_vec += b_vec * a_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A^T[j,j] = A[j,j] = 1)
+                            var b_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                b_vec[kk] = B.data[i * n + (j + kk)];
+                            }
+                            sum_vec += b_vec;
+                        }
+                    } else {
+                        // Lower transpose: sum B[i,p]*A[j,p] for p in 0..j+1
+                        const end = if (is_unit) j else j + 1;
+                        for (0..end) |p| {
+                            const b_val = B.data[i * n + p];
+                            var a_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                a_vec[kk] = A.data[(j + kk) * k + p];
+                            }
+                            const b_vec: Vec = @splat(b_val);
+                            sum_vec += b_vec * a_vec;
+                        }
+                        if (is_unit) {
+                            // Add diagonal contribution (A^T[j,j] = A[j,j] = 1)
+                            var b_vec: Vec = undefined;
+                            inline for (0..vec_width) |kk| {
+                                b_vec[kk] = B.data[i * n + (j + kk)];
+                            }
+                            sum_vec += b_vec;
+                        }
+                    }
+                }
+
+                // Scale by alpha and store in temp
+                const result = alpha_vec * sum_vec;
+                @memcpy(temp[i * n + j..][0..vec_width], &result);
+            }
+
+            // Scalar tail loop for remaining columns
+            while (j < n) : (j += 1) {
+                var sum: T = 0;
+                if (!is_trans) {
+                    if (is_upper) {
+                        const end = if (is_unit) j else j + 1;
+                        for (0..end) |p| {
+                            sum += B.data[i * n + p] * A.data[p * k + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const start = if (is_unit) j + 1 else j;
+                        for (start..n) |p| {
+                            sum += B.data[i * n + p] * A.data[p * k + j];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                } else {
+                    if (is_upper) {
+                        const start = if (is_unit) j + 1 else j;
+                        for (start..n) |p| {
+                            sum += B.data[i * n + p] * A.data[j * k + p];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    } else {
+                        const end = if (is_unit) j else j + 1;
+                        for (0..end) |p| {
+                            sum += B.data[i * n + p] * A.data[j * k + p];
+                        }
+                        if (is_unit) {
+                            sum += B.data[i * n + j];
+                        }
+                    }
+                }
+                temp[i * n + j] = alpha * sum;
+            }
+        }
+    }
+
+    // Copy result back to B
+    @memcpy(B.data, temp);
+}
+
 /// SIMD-accelerated blocked matrix-matrix multiply with 4×4 micro-kernels: C = α*A*B + β*C
 ///
 /// Parameters:
@@ -6427,6 +6769,383 @@ test "syr_simd: no memory leaks (10 iterations f32)" {
         defer A.deinit();
 
         try syr_simd(f32, 'U', 1.0, x, &A);
+    }
+    // testing.allocator automatically detects memory leaks
+}
+
+// ============================================================================
+// TRMM SIMD Tests — Triangular Matrix-Matrix Multiply
+// ============================================================================
+
+test "trmm_simd: basic 2x2 left upper triangular (f64)" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]] (upper triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B = A*B = [[2*1+1*3, 2*2+1*4], [0*1+3*3, 0*2+3*4]] = [[5, 8], [9, 12]]
+    try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(12.0, B.data[3], 1e-10);
+}
+
+test "trmm_simd: basic 2x2 right lower triangular (f64)" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // A = [[2, 0], [1, 3]] (lower triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = B*A = [[1*2+2*1, 1*0+2*3], [3*2+4*1, 3*0+4*3]] = [[4, 6], [10, 12]]
+    try trmm_simd(f64, 'R', 'L', 'N', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(12.0, B.data[3], 1e-10);
+}
+
+test "trmm_simd: left upper with transpose (f64)" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]] (upper triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B = A^T*B = [[2*1+0*3, 2*2+0*4], [1*1+3*3, 1*2+3*4]] = [[2, 4], [10, 14]]
+    try trmm_simd(f64, 'L', 'U', 'T', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(2.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(14.0, B.data[3], 1e-10);
+}
+
+test "trmm_simd: right lower with transpose (f64)" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // A = [[2, 0], [1, 3]] (lower triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = B*A^T = [[1*2+2*1, 1*0+2*3], [3*2+4*1, 3*0+4*3]] = [[4, 6], [10, 12]]
+    try trmm_simd(f64, 'R', 'L', 'T', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(12.0, B.data[3], 1e-10);
+}
+
+test "trmm_simd: unit diagonal behavior (f64)" {
+    const allocator = testing.allocator;
+
+    // Unit upper triangular: A = [[1, 2], [0, 1]] (diagonals are ignored)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 2, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // With unit diagonal: B = [[1*1+2*3, 1*2+2*4], [0*1+1*3, 0*2+1*4]] = [[7, 10], [3, 4]]
+    try trmm_simd(f64, 'L', 'U', 'N', 'U', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(7.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[3], 1e-10);
+}
+
+test "trmm_simd: scalar multiplier alpha (f64)" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B = 2.5*A*B = 2.5*[[5, 8], [9, 12]] = [[12.5, 20], [22.5, 30]]
+    try trmm_simd(f64, 'L', 'U', 'N', 'N', 2.5, A, &B);
+
+    try testing.expectApproxEqAbs(12.5, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(20.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(22.5, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(30.0, B.data[3], 1e-10);
+}
+
+test "trmm_simd: 64x64 matrices (SIMD vector width boundary)" {
+    const allocator = testing.allocator;
+
+    // 64x64 upper triangular
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 2));
+        }
+    }
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64) |i| {
+        for (0..64) |j| {
+            B.data[i * 64 + j] = 1.0;
+        }
+    }
+
+    try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    // Spot check: B[0,0] should be sum of first row upper triangle of A times original B column
+    // With original B all 1s, B[0,0] = sum of A[0,0..63] = sum of (0+0+2 .. 0+63+2) = sum of (2..65)
+    const expected_sum = (2 + 65) * 64 / 2; // arithmetic series
+    try testing.expectApproxEqAbs(@as(f64, @floatFromInt(expected_sum)), B.data[0], 1e-6);
+}
+
+test "trmm_simd: 128x128 matrices (large SIMD)" {
+    const allocator = testing.allocator;
+
+    // 128x128 lower triangular
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+    for (0..128) |i| {
+        for (0..i + 1) |j| {
+            A.data[i * 128 + j] = @as(f64, @floatFromInt(i + j + 2));
+        }
+    }
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 64 }, .row_major);
+    defer B.deinit();
+    for (0..128) |i| {
+        for (0..64) |j| {
+            B.data[i * 64 + j] = 1.0;
+        }
+    }
+
+    try trmm_simd(f64, 'L', 'L', 'N', 'N', 1.0, A, &B);
+
+    // B should be modified; spot check validity
+    for (0..128) |i| {
+        for (0..64) |j| {
+            const result = B.data[i * 64 + j];
+            try testing.expect(result > 0);
+        }
+    }
+}
+
+test "trmm_simd: 256x256 matrices (very large SIMD)" {
+    const allocator = testing.allocator;
+
+    // 256x256 upper triangular
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer A.deinit();
+    for (0..256) |i| {
+        for (i..256) |j| {
+            A.data[i * 256 + j] = 1.0;
+        }
+    }
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 128 }, .row_major);
+    defer B.deinit();
+    for (0..256 * 128) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    // With identity upper triangular, B[i,j] = sum of row i of upper triangle = 256-i
+    for (0..256) |i| {
+        for (0..128) |j| {
+            const expected = @as(f64, @floatFromInt(256 - i));
+            try testing.expectApproxEqAbs(expected, B.data[i * 128 + j], 1e-10);
+        }
+    }
+}
+
+test "trmm_simd: f32 type support" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]] (f32)
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    try trmm_simd(f32, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    try testing.expectApproxEqAbs(@as(f32, 5.0), B.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 8.0), B.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 9.0), B.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 12.0), B.data[3], 1e-5);
+}
+
+test "trmm_simd: 64x64 f32 (8-wide vector)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f32, @floatFromInt(i + j + 2));
+        }
+    }
+
+    var B = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try trmm_simd(f32, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    // Spot check validity
+    for (0..64) |i| {
+        for (0..64) |j| {
+            try testing.expect(B.data[i * 64 + j] > 0);
+        }
+    }
+}
+
+test "trmm_simd: right upper with unit diagonal (f64)" {
+    const allocator = testing.allocator;
+
+    // B = [[1, 2, 3], [4, 5, 6]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer B.deinit();
+
+    // Unit upper triangular: A = [[1, 2, 3], [0, 1, 4], [0, 0, 1]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 999, 2, 3, 0, 999, 4, 0, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    try trmm_simd(f64, 'R', 'U', 'N', 'U', 1.0, A, &B);
+
+    // B = B*A where A is unit upper triangular with off-diagonals [2,3,4]
+    // Row 0: [1,2,3] * A = [1*1+2*0+3*0, 1*2+2*1+3*0, 1*3+2*4+3*1] = [1, 4, 14]
+    try testing.expectApproxEqAbs(1.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(14.0, B.data[2], 1e-10);
+}
+
+test "trmm_simd: 1x1 matrix (edge case)" {
+    const allocator = testing.allocator;
+
+    // A = [[5]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    // B = [[2]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{2}, .row_major);
+    defer B.deinit();
+
+    try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+
+    // B = 5*2 = 10
+    try testing.expectApproxEqAbs(10.0, B.data[0], 1e-10);
+}
+
+test "trmm_simd: dimension mismatch (A not square)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]] (2x3, not square)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B));
+}
+
+test "trmm_simd: dimension mismatch (left side, A size != B rows)" {
+    const allocator = testing.allocator;
+
+    // A = 3x3, B = 2x2 (incompatible)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B));
+}
+
+test "trmm_simd: dimension mismatch (right side, A size != B cols)" {
+    const allocator = testing.allocator;
+
+    // A = 3x3, B = 2x2 (incompatible)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trmm_simd(f64, 'R', 'U', 'N', 'N', 1.0, A, &B));
+}
+
+test "trmm_simd: no memory leaks f64" {
+    for (0..10) |_| {
+        const allocator = testing.allocator;
+
+        var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer A.deinit();
+        for (0..32) |i| {
+            for (i..32) |j| {
+                A.data[i * 32 + j] = 1.0;
+            }
+        }
+
+        var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer B.deinit();
+        for (0..32 * 32) |idx| {
+            B.data[idx] = 1.0;
+        }
+
+        try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
+    }
+    // testing.allocator automatically detects memory leaks
+}
+
+test "trmm_simd: no memory leaks f32" {
+    for (0..10) |_| {
+        const allocator = testing.allocator;
+
+        var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer A.deinit();
+        for (0..32) |i| {
+            for (i..32) |j| {
+                A.data[i * 32 + j] = 1.0;
+            }
+        }
+
+        var B = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer B.deinit();
+        for (0..32 * 32) |idx| {
+            B.data[idx] = 1.0;
+        }
+
+        try trmm_simd(f32, 'L', 'U', 'N', 'N', 1.0, A, &B);
     }
     // testing.allocator automatically detects memory leaks
 }
