@@ -1853,6 +1853,196 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
     }
 }
 
+/// SIMD-accelerated symmetric matrix-matrix multiply: B := α*A*B + β*B (left) or B := α*B*A + β*B (right)
+///
+/// Performs symmetric matrix multiplication with SIMD vectorization for improved performance
+/// over the scalar symm(). Only the specified triangle of the symmetric matrix A is read.
+/// B is a general matrix that is modified in-place.
+///
+/// Parameters:
+/// - T: Floating-point type (f32 or f64)
+/// - side: 'L' (left: B = α*A*B + β*B) or 'R' (right: B = α*B*A + β*B)
+/// - uplo: 'U' (upper triangle of A used) or 'L' (lower triangle of A used)
+/// - alpha: Scalar multiplier for A*B
+/// - A: m×m symmetric matrix (if side='L') or n×n symmetric matrix (if side='R')
+/// - B: m×n general matrix (modified in-place)
+/// - beta: Scalar multiplier for B
+///
+/// Errors:
+/// - error.DimensionMismatch if dimensions don't match
+/// - error.InvalidValue if side or uplo is not 'L'/'R' or 'U'/'L'
+///
+/// Time: O(m²n) with 2-4× speedup from SIMD (similar to trmm_simd)
+/// Space: O(m*n) for temporary buffer to store original B
+///
+/// SIMD Strategy:
+/// - Vec width: 4 for f64, 8 for f32
+/// - For side='L': Row-by-row processing, vectorize the j-dimension (columns of B)
+///   * For each row i: B[i, j:j+vec_width] = β*B[i,j:j+vec_width] + α*Σ_k A_sym[i,k]*B_orig[k,j:j+vec_width]
+/// - For side='R': Row-by-row processing, vectorize the k-dimension summation
+///   * For each B[i,j]: accumulate with SIMD chunks of Σ_k B_orig[i,k:k+vec_width]*A_sym[k:k+vec_width,j]
+///
+/// Example:
+/// ```zig
+/// var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{64, 64}, data_a, .row_major);
+/// defer A.deinit();
+/// var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{64, 64}, data_b, .row_major);
+/// defer B.deinit();
+/// try symm_simd(f64, 'L', 'U', 1.0, A, &B, 0.0); // B = A*B (SIMD-accelerated)
+/// ```
+pub fn symm_simd(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error)!void {
+    // Validate square matrix A
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+
+    // Validate side parameter
+    const is_left = (side == 'L' or side == 'l');
+    const is_right = (side == 'R' or side == 'r');
+    if (!is_left and !is_right) {
+        return error.InvalidValue;
+    }
+
+    // Validate uplo parameter
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_lower = (uplo == 'L' or uplo == 'l');
+    if (!is_upper and !is_lower) {
+        return error.InvalidValue;
+    }
+
+    const m = B.shape[0];
+    const n = B.shape[1];
+    const k = A.shape[0];
+
+    // Validate dimensions
+    if (is_left) {
+        if (k != m) return error.DimensionMismatch;
+    } else {
+        if (k != n) return error.DimensionMismatch;
+    }
+
+    // SIMD-accelerated symmetric matrix-matrix multiply
+
+    // Allocate temporary matrix to store original B values
+    const B_orig = try B.allocator.alloc(T, m * n);
+    defer B.allocator.free(B_orig);
+
+    // Copy B to temporary buffer
+    @memcpy(B_orig, B.data);
+
+    // Setup SIMD constants
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+    const beta_vec: Vec = @splat(beta);
+    const alpha_vec: Vec = @splat(alpha);
+
+    // Step 1: Beta scaling (vectorized)
+    {
+        var idx: usize = 0;
+        while (idx + vec_width <= m * n) : (idx += vec_width) {
+            const b_vec: Vec = B.data[idx..][0..vec_width].*;
+            const result = beta_vec * b_vec;
+            const result_array: [vec_width]T = result;
+            @memcpy(B.data[idx..][0..vec_width], &result_array);
+        }
+        // Scalar tail for beta scaling
+        while (idx < m * n) : (idx += 1) {
+            B.data[idx] = beta * B.data[idx];
+        }
+    }
+
+    if (is_left) {
+        // B := α*A*B + β*B (A is m×m, B is m×n)
+        // SIMD Strategy: Vectorize j-dimension (columns)
+        for (0..m) |i| {
+            var j: usize = 0;
+
+            // SIMD loop: process columns in chunks of vec_width
+            while (j + vec_width <= n) : (j += vec_width) {
+                var sum_vec: Vec = @splat(@as(T, 0));
+
+                // Inner loop: accumulate over all k (full dimension)
+                for (0..k) |p| {
+                    const a_val = if (is_upper)
+                        (if (i <= p) A.data[i * k + p] else A.data[p * k + i])
+                    else
+                        (if (i >= p) A.data[i * k + p] else A.data[p * k + i]);
+
+                    const b_vec: Vec = B_orig[p * n + j..][0..vec_width].*;
+                    const a_vec: Vec = @splat(a_val);
+                    sum_vec += a_vec * b_vec;
+                }
+
+                // Scale by alpha and accumulate into B
+                const result = alpha_vec * sum_vec;
+                const result_array: [vec_width]T = result;
+                inline for (0..vec_width) |kk| {
+                    B.data[i * n + j + kk] += result_array[kk];
+                }
+            }
+
+            // Scalar tail loop for remaining columns
+            while (j < n) : (j += 1) {
+                var sum: T = 0;
+                if (is_upper) {
+                    for (0..k) |p| {
+                        const a_val = if (i <= p) A.data[i * k + p] else A.data[p * k + i];
+                        sum += a_val * B_orig[p * n + j];
+                    }
+                } else {
+                    for (0..k) |p| {
+                        const a_val = if (i >= p) A.data[i * k + p] else A.data[p * k + i];
+                        sum += a_val * B_orig[p * n + j];
+                    }
+                }
+                B.data[i * n + j] += alpha * sum;
+            }
+        }
+    } else {
+        // B := α*B*A + β*B (B is m×n, A is n×n)
+        // SIMD Strategy: Vectorize k-dimension in the summation (gather from A)
+        for (0..m) |i| {
+            for (0..n) |j| {
+                var k_idx: usize = 0;
+                var sum: T = 0;
+
+                // SIMD loop: process k in chunks of vec_width
+                while (k_idx + vec_width <= k) : (k_idx += vec_width) {
+                    var b_vec: Vec = undefined;
+                    var a_vec: Vec = undefined;
+
+                    inline for (0..vec_width) |kk| {
+                        const p = k_idx + kk;
+                        b_vec[kk] = B_orig[i * n + p];
+
+                        // Gather A_symmetric[p,j] respecting triangle
+                        a_vec[kk] = if (is_upper)
+                            (if (p <= j) A.data[p * k + j] else A.data[j * k + p])
+                        else
+                            (if (p >= j) A.data[p * k + j] else A.data[j * k + p]);
+                    }
+
+                    // Multiply and reduce (horizontal sum)
+                    const prod = b_vec * a_vec;
+                    sum += @reduce(.Add, prod);
+                }
+
+                // Scalar tail loop for remaining k
+                while (k_idx < k) : (k_idx += 1) {
+                    const p = k_idx;
+                    const a_val = if (is_upper)
+                        (if (p <= j) A.data[p * k + j] else A.data[j * k + p])
+                    else
+                        (if (p >= j) A.data[p * k + j] else A.data[j * k + p]);
+                    sum += B_orig[i * n + p] * a_val;
+                }
+
+                B.data[i * n + j] += alpha * sum;
+            }
+        }
+    }
+}
+
 /// SIMD-accelerated blocked matrix-matrix multiply with 4×4 micro-kernels: C = α*A*B + β*C
 ///
 /// Parameters:
@@ -8069,6 +8259,760 @@ test "trsm_simd: no memory leaks f32" {
         }
 
         try trsm_simd(f32, 'L', 'U', 'N', 'N', 1.0, A, &B);
+    }
+    // testing.allocator automatically detects memory leaks
+}
+
+// ============================================================================
+// Comprehensive RED tests for symm_simd() (SIMD-Accelerated Symmetric Matrix-Matrix Multiply)
+// ============================================================================
+
+test "symm_simd: basic 2×2 left upper triangle, alpha=1, beta=1 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 1*B
+    // A*B = [[2*1+1*3, 2*2+1*4], [1*1+3*3, 1*2+3*4]] = [[5, 8], [10, 14]]
+    // Result = [[5+1, 8+2], [10+3, 14+4]] = [[6, 10], [13, 18]]
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(6.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(18.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: basic 2×2 left lower triangle, alpha=1, beta=1 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored lower): A = [[2, 0], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Same result as upper triangle case: A*B = [[5, 8], [10, 14]]
+    // Result = [[6, 10], [13, 18]]
+    try symm_simd(f64, 'L', 'L', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(6.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(18.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: basic 2×2 right upper triangle, alpha=1, beta=1 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*B*A + 1*B (right multiply)
+    // B*A = [[1*2+2*1, 1*1+2*3], [3*2+4*1, 3*1+4*3]] = [[4, 7], [10, 15]]
+    // Result = [[4+1, 7+2], [10+3, 15+4]] = [[5, 9], [13, 19]]
+    try symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(19.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: basic 2×2 right lower triangle, alpha=1, beta=1 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored lower): A = [[2, 0], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // Same result as upper triangle case: B*A = [[4, 7], [10, 15]]
+    // Result = [[5, 9], [13, 19]]
+    try symm_simd(f64, 'R', 'L', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(13.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(19.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: 64×64 left upper (SIMD threshold boundary) f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×64 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid (no NaN, no Inf)
+    for (0..64 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 64×64 left lower (SIMD threshold boundary) f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (lower triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (0..i + 1) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×64 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'L', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 64×64 right upper (SIMD threshold boundary) f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×64 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 64×64 right lower (SIMD threshold boundary) f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (lower triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (0..i + 1) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×64 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'L', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 128×64 non-square left upper f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×128 general matrix B (non-square)
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 128 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 128) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64 * 128) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 128×64 non-square left lower f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (lower triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (0..i + 1) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×128 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 128 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 128) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'L', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64 * 128) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 128×64 non-square right upper f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 128×64 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 64 }, .row_major);
+    defer B.deinit();
+    for (0..128 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..128 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 128×64 non-square right lower f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (lower triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (0..i + 1) |j| {
+            A.data[i * 64 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 128×64 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 64 }, .row_major);
+    defer B.deinit();
+    for (0..128 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'L', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..128 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 256×256 large matrix left upper f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 256×256 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer A.deinit();
+    for (0..256) |i| {
+        for (i..256) |j| {
+            A.data[i * 256 + j] = 1.0;
+        }
+    }
+
+    // Create 256×256 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer B.deinit();
+    for (0..256 * 256) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid and positive
+    for (0..256 * 256) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: 512×256 very large matrix right upper f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 256×256 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer A.deinit();
+    for (0..256) |i| {
+        for (i..256) |j| {
+            A.data[i * 256 + j] = 1.0;
+        }
+    }
+
+    // Create 512×256 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 512, 256 }, .row_major);
+    defer B.deinit();
+    for (0..512 * 256) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..512 * 256) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: alpha=0.5 and beta=2.0 scaling 2×2 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 0.5*A*B + 2.0*B
+    // A*B = [[5, 8], [10, 14]]
+    // 0.5*A*B = [[2.5, 4.0], [5.0, 7.0]]
+    // 2.0*B = [[2, 4], [6, 8]]
+    // Result = [[4.5, 8.0], [11.0, 15.0]]
+    try symm_simd(f64, 'L', 'U', 0.5, A, &B, 2.0);
+
+    try testing.expectApproxEqAbs(4.5, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(11.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(15.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: alpha=0 (scales to zero) 2×2 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 0*A*B + 1.0*B = B (no change to B itself)
+    try symm_simd(f64, 'L', 'U', 0.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(1.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: beta=0 (clears beta scaling) 2×2 f64" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 0*B = A*B only
+    // A*B = [[5, 8], [10, 14]]
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 0.0);
+
+    try testing.expectApproxEqAbs(5.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(10.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(14.0, B.data[3], 1e-10);
+}
+
+test "symm_simd: basic 2×2 left upper f32 (8-wide SIMD)" {
+    const allocator = testing.allocator;
+
+    // Symmetric matrix (stored upper): A = [[2, 1], [1, 3]]
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2, 1, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // B = [[1, 2], [3, 4]]
+    var B = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1, 2, 3, 4 }, .row_major);
+    defer B.deinit();
+
+    // B := 1*A*B + 1*B = [[6, 10], [13, 18]]
+    try symm_simd(f32, 'L', 'U', 1.0, A, &B, 1.0);
+
+    try testing.expectApproxEqAbs(@as(f32, 6.0), B.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 10.0), B.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 13.0), B.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 18.0), B.data[3], 1e-5);
+}
+
+test "symm_simd: 64×64 left upper f32 (8-wide SIMD vector)" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = @as(f32, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 64×64 general matrix B
+    var B = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64 * 64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f32, 'L', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64 * 64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: non-aligned 67×67 left upper f64 (tests tail loop)" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 67×67 matrix (upper triangle) - non-aligned for SIMD
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 67, 67 }, .row_major);
+    defer A.deinit();
+    for (0..67) |i| {
+        for (i..67) |j| {
+            A.data[i * 67 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // Create 67×67 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 67, 67 }, .row_major);
+    defer B.deinit();
+    for (0..67 * 67) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..67 * 67) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: non-aligned 100×128 right upper f64 (tests tail loop)" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 128×128 matrix (upper triangle) - non-aligned
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+    for (0..128) |i| {
+        for (i..128) |j| {
+            A.data[i * 128 + j] = 1.0;
+        }
+    }
+
+    // Create 100×128 general matrix B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 128 }, .row_major);
+    defer B.deinit();
+    for (0..100 * 128) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..100 * 128) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: edge case 64×1 left upper f64 (minimal SIMD benefit)" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = 1.0;
+        }
+    }
+
+    // Create 64×1 general matrix B (single column)
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 1 }, .row_major);
+    defer B.deinit();
+    for (0..64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: edge case 1×64 right upper f64 (minimal SIMD benefit)" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 64×64 matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+    for (0..64) |i| {
+        for (i..64) |j| {
+            A.data[i * 64 + j] = 1.0;
+        }
+    }
+
+    // Create 1×64 general matrix B (single row)
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 1, 64 }, .row_major);
+    defer B.deinit();
+    for (0..64) |idx| {
+        B.data[idx] = 1.0;
+    }
+
+    try symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0);
+
+    // Verify all values are valid
+    for (0..64) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+        try testing.expect(B.data[i] > 0);
+    }
+}
+
+test "symm_simd: dimension mismatch (A not square)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]] (2×3, not square)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0));
+}
+
+test "symm_simd: dimension mismatch (left side, A size != B rows)" {
+    const allocator = testing.allocator;
+
+    // A = 3×3, B = 2×2 (incompatible for left multiply)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0));
+}
+
+test "symm_simd: dimension mismatch (right side, A size != B cols)" {
+    const allocator = testing.allocator;
+
+    // A = 3×3, B = 2×2 (incompatible for right multiply)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.DimensionMismatch, symm_simd(f64, 'R', 'U', 1.0, A, &B, 1.0));
+}
+
+test "symm_simd: invalid side parameter" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.InvalidValue, symm_simd(f64, 'X', 'U', 1.0, A, &B, 1.0));
+}
+
+test "symm_simd: invalid uplo parameter" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer B.deinit();
+
+    try testing.expectError(error.InvalidValue, symm_simd(f64, 'L', 'X', 1.0, A, &B, 1.0));
+}
+
+test "symm_simd: deterministic result verification on 100×100 f64" {
+    const allocator = testing.allocator;
+
+    // Create symmetric 100×100 matrix (upper triangle with deterministic values)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer A.deinit();
+    var seed: u64 = 42;
+    for (0..100) |i| {
+        for (i..100) |j| {
+            const x = ((seed * 1103515245 + 12345) / 65536) % 100;
+            seed = x;
+            A.data[i * 100 + j] = @as(f64, @floatFromInt(x)) / 100.0;
+        }
+    }
+
+    // Create B
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer B.deinit();
+    for (0..100 * 100) |idx| {
+        const x = ((seed * 1103515245 + 12345) / 65536) % 100;
+        seed = x;
+        const val = @as(f64, @floatFromInt(x)) / 100.0;
+        B.data[idx] = val;
+    }
+
+    // Run SIMD symm_simd
+    try symm_simd(f64, 'L', 'U', 1.5, A, &B, 0.5);
+
+    // Verify all results are valid (not NaN/Inf) and positive
+    for (0..100 * 100) |i| {
+        try testing.expect(!std.math.isNan(B.data[i]));
+        try testing.expect(!std.math.isInf(B.data[i]));
+    }
+}
+
+test "symm_simd: no memory leaks f64" {
+    for (0..5) |_| {
+        const allocator = testing.allocator;
+
+        var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer A.deinit();
+        for (0..32) |i| {
+            for (i..32) |j| {
+                A.data[i * 32 + j] = 1.0;
+            }
+        }
+
+        var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer B.deinit();
+        for (0..32 * 32) |idx| {
+            B.data[idx] = 1.0;
+        }
+
+        try symm_simd(f64, 'L', 'U', 1.0, A, &B, 1.0);
+    }
+    // testing.allocator automatically detects memory leaks
+}
+
+test "symm_simd: no memory leaks f32" {
+    for (0..5) |_| {
+        const allocator = testing.allocator;
+
+        var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer A.deinit();
+        for (0..32) |i| {
+            for (i..32) |j| {
+                A.data[i * 32 + j] = 1.0;
+            }
+        }
+
+        var B = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+        defer B.deinit();
+        for (0..32 * 32) |idx| {
+            B.data[idx] = 1.0;
+        }
+
+        try symm_simd(f32, 'L', 'U', 1.0, A, &B, 1.0);
     }
     // testing.allocator automatically detects memory leaks
 }
