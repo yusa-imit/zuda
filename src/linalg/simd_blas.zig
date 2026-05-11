@@ -724,6 +724,227 @@ pub fn trmv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 
     }
 }
 
+/// SIMD-accelerated triangular solve: x := A^(-1)*b (or A^(-T)*b) in-place
+///
+/// Solves the triangular system Ax = b (or A^T*x = b) where A is triangular.
+/// Modified x in-place to contain the solution.
+///
+/// Parameters:
+/// - T: Numeric type (f32 or f64)
+/// - uplo: 'U' (upper) or 'L' (lower) triangular
+/// - trans: 'N' (no transpose, solve Ax=b) or 'T' (transpose, solve A^T*x=b)
+/// - diag: 'N' (non-unit diagonal) or 'U' (unit diagonal = 1, ignore stored values)
+/// - A: n×n triangular matrix
+/// - x: n-element vector (input b, output solution, modified in-place)
+///
+/// Errors:
+/// - error.DimensionMismatch if A is not square or A.shape[0] != x.shape[0]
+///
+/// Time: O(n²) — must be sequential (data dependencies in solution)
+/// Space: O(n) temporary buffer for safe computation
+///
+/// Algorithm (4 cases based on uplo × trans):
+///
+/// **Case 1: Upper + NoTrans (back substitution)**
+/// ```
+/// for i = n-1 down to 0:
+///   sum = x[i] - Σ(j=i+1..n-1) A[i,j] * x[j]
+///   x[i] = sum / A[i,i]  (or sum if unit diagonal)
+/// ```
+///
+/// **Case 2: Lower + NoTrans (forward substitution)**
+/// ```
+/// for i = 0 to n-1:
+///   sum = x[i] - Σ(j=0..i-1) A[i,j] * x[j]
+///   x[i] = sum / A[i,i]  (or sum if unit diagonal)
+/// ```
+///
+/// **Case 3: Upper + Trans (forward substitution on A^T)**
+/// ```
+/// for i = 0 to n-1:
+///   sum = x[i] - Σ(j=0..i-1) A[j,i] * x[j]  # Access A^T[i,j] = A[j,i]
+///   x[i] = sum / A[i,i]  (or sum if unit diagonal)
+/// ```
+///
+/// **Case 4: Lower + Trans (back substitution on A^T)**
+/// ```
+/// for i = n-1 down to 0:
+///   sum = x[i] - Σ(j=i+1..n-1) A[j,i] * x[j]  # Access A^T[i,j] = A[j,i]
+///   x[i] = sum / A[i,i]  (or sum if unit diagonal)
+/// ```
+///
+/// SIMD vectorization:
+/// - Outer loop is sequential (x[i] depends on x[j] for j ≠ i)
+/// - Vectorize inner dot product: Σ A[...] * x[...] using @Vector and @reduce
+/// - vec_width = 4 for f64, 8 for f32 (256-bit SIMD, typical AVX/AVX2)
+/// - Main loop: process vec_width elements at once, reduce with @reduce(.Add, ...)
+/// - Tail loop: scalar for remaining n % vec_width elements
+///
+/// Example (solve Ux=b where U is upper triangular):
+/// ```zig
+/// // U = [[2, 1], [0, 3]], b = [5, 6]
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2},
+///     &[_]f64{2, 1, 0, 3}, .row_major);
+/// defer A.deinit();
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{2},
+///     &[_]f64{5, 6}, .row_major);  // x = b initially
+/// defer x.deinit();
+/// try trsv_simd(f64, 'U', 'N', 'N', A, &x);
+/// // Back substitution: x[1] = 6/3 = 2, x[0] = (5 - 1*2)/2 = 1.5
+/// // Result: x = [1.5, 2]
+/// ```
+pub fn trsv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+    // Validate dimensions
+    if (A.shape[0] != A.shape[1]) {
+        return error.DimensionMismatch;
+    }
+    if (A.shape[0] != x.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = A.shape[0];
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    // Allocate temporary buffer to preserve solution during computation
+    const temp = try x.allocator.alloc(T, n);
+    defer x.allocator.free(temp);
+    @memcpy(temp, x.data); // temp = copy of initial RHS (b)
+
+    const vec_width = comptime simdWidth(T);
+    const Vec = @Vector(vec_width, T);
+
+    // Four cases: uplo × trans
+    if (!is_trans) {
+        // Solve A*x = b
+        if (is_upper) {
+            // Case 1: Upper triangular, no transpose — back substitution
+            // for i = n-1 down to 0:
+            //   sum = b[i] - Σ(j=i+1..n-1) A[i,j] * x[j]
+            //   x[i] = sum / A[i,i]
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = temp[i];
+
+                // SIMD main loop: dot product of A[i, i+1..n) and x[i+1..n)
+                var j = i + 1;
+                while (j + vec_width <= n) : (j += vec_width) {
+                    var a_vec: Vec = undefined;
+                    var x_vec: Vec = undefined;
+                    inline for (0..vec_width) |k| {
+                        a_vec[k] = A.data[i * n + j + k];
+                        x_vec[k] = x.data[j + k];
+                    }
+                    const prod = a_vec * x_vec;
+                    sum -= @reduce(.Add, prod);
+                }
+
+                // Scalar tail loop for remaining elements
+                while (j < n) : (j += 1) {
+                    sum -= A.data[i * n + j] * x.data[j];
+                }
+
+                // Solve for x[i]: either divide by diagonal or use sum directly
+                x.data[i] = if (!is_unit) sum / A.data[i * n + i] else sum;
+            }
+        } else {
+            // Case 2: Lower triangular, no transpose — forward substitution
+            // for i = 0..n:
+            //   sum = b[i] - Σ(j=0..i-1) A[i,j] * x[j]
+            //   x[i] = sum / A[i,i]
+            for (0..n) |i| {
+                var sum: T = temp[i];
+
+                // SIMD main loop: dot product of A[i, 0..i) and x[0..i)
+                var j: usize = 0;
+                while (j + vec_width <= i) : (j += vec_width) {
+                    var a_vec: Vec = undefined;
+                    var x_vec: Vec = undefined;
+                    inline for (0..vec_width) |k| {
+                        a_vec[k] = A.data[i * n + j + k];
+                        x_vec[k] = x.data[j + k];
+                    }
+                    const prod = a_vec * x_vec;
+                    sum -= @reduce(.Add, prod);
+                }
+
+                // Scalar tail loop for remaining elements
+                while (j < i) : (j += 1) {
+                    sum -= A.data[i * n + j] * x.data[j];
+                }
+
+                // Solve for x[i]
+                x.data[i] = if (!is_unit) sum / A.data[i * n + i] else sum;
+            }
+        }
+    } else {
+        // Solve A^T*x = b (transpose cases)
+        if (is_upper) {
+            // Case 3: Upper triangular transpose (becomes lower) — forward substitution
+            // for i = 0..n:
+            //   sum = b[i] - Σ(j=0..i-1) A[j,i] * x[j]  # Access A^T[i,j] = A[j,i]
+            //   x[i] = sum / A[i,i]
+            for (0..n) |i| {
+                var sum: T = temp[i];
+
+                // SIMD main loop: dot product of A[0..i, i] and x[0..i)
+                var j: usize = 0;
+                while (j + vec_width <= i) : (j += vec_width) {
+                    var a_vec: Vec = undefined;
+                    var x_vec: Vec = undefined;
+                    inline for (0..vec_width) |k| {
+                        a_vec[k] = A.data[(j + k) * n + i]; // A[j,i] for transpose
+                        x_vec[k] = x.data[j + k];
+                    }
+                    const prod = a_vec * x_vec;
+                    sum -= @reduce(.Add, prod);
+                }
+
+                // Scalar tail loop for remaining elements
+                while (j < i) : (j += 1) {
+                    sum -= A.data[j * n + i] * x.data[j];
+                }
+
+                // Solve for x[i]
+                x.data[i] = if (!is_unit) sum / A.data[i * n + i] else sum;
+            }
+        } else {
+            // Case 4: Lower triangular transpose (becomes upper) — back substitution
+            // for i = n-1 down to 0:
+            //   sum = b[i] - Σ(j=i+1..n-1) A[j,i] * x[j]  # Access A^T[i,j] = A[j,i]
+            //   x[i] = sum / A[i,i]
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = temp[i];
+
+                // SIMD main loop: dot product of A[i+1..n, i] and x[i+1..n)
+                var j = i + 1;
+                while (j + vec_width <= n) : (j += vec_width) {
+                    var a_vec: Vec = undefined;
+                    var x_vec: Vec = undefined;
+                    inline for (0..vec_width) |k| {
+                        a_vec[k] = A.data[(j + k) * n + i]; // A[j,i] for transpose
+                        x_vec[k] = x.data[j + k];
+                    }
+                    const prod = a_vec * x_vec;
+                    sum -= @reduce(.Add, prod);
+                }
+
+                // Scalar tail loop for remaining elements
+                while (j < n) : (j += 1) {
+                    sum -= A.data[j * n + i] * x.data[j];
+                }
+
+                // Solve for x[i]
+                x.data[i] = if (!is_unit) sum / A.data[i * n + i] else sum;
+            }
+        }
+    }
+}
+
 /// SIMD-accelerated blocked matrix-matrix multiply with 4×4 micro-kernels: C = α*A*B + β*C
 ///
 /// Parameters:
@@ -5240,6 +5461,396 @@ test "trmv_simd: no memory leaks (10 iterations)" {
         }
 
         try trmv_simd(f64, 'U', 'N', 'N', A, &x);
+    }
+    // testing.allocator automatically detects memory leaks
+}
+
+// ============================================================================
+// SIMD-Accelerated Triangular Solve (trsv_simd) Tests
+// ============================================================================
+
+test "trsv_simd: upper triangular non-unit diagonal 2x2" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]] (upper triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [5, 6]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 6 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'N', 'N', A, &x);
+
+    // Back substitution:
+    // x[1] = 6/3 = 2
+    // x[0] = (5 - 1*2)/2 = 3/2 = 1.5
+    try testing.expectApproxEqAbs(1.5, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-9);
+}
+
+test "trsv_simd: lower triangular non-unit diagonal 2x2" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0], [1, 3]] (lower triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [4, 7]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 4, 7 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'L', 'N', 'N', A, &x);
+
+    // Forward substitution:
+    // x[0] = 4/2 = 2
+    // x[1] = (7 - 1*2)/3 = 5/3 ≈ 1.6667
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(5.0 / 3.0, x.data[1], 1e-9);
+}
+
+test "trsv_simd: upper triangular transpose 2x2" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]] (upper triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A^T*x = b where b = [2, 3]
+    // A^T = [[2, 0], [1, 3]] (lower triangular)
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'T', 'N', A, &x);
+
+    // Forward substitution on A^T:
+    // x[0] = 2/2 = 1
+    // x[1] = (3 - 1*1)/3 = 2/3 ≈ 0.6667
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(2.0 / 3.0, x.data[1], 1e-9);
+}
+
+test "trsv_simd: lower triangular transpose 2x2" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0], [1, 3]] (lower triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A^T*x = b where b = [2, 3]
+    // A^T = [[2, 1], [0, 3]] (upper triangular)
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'L', 'T', 'N', A, &x);
+
+    // Back substitution on A^T:
+    // x[1] = 3/3 = 1
+    // x[0] = (2 - 1*1)/2 = 1/2 = 0.5
+    try testing.expectApproxEqAbs(0.5, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(1.0, x.data[1], 1e-9);
+}
+
+test "trsv_simd: upper triangular unit diagonal 2x2" {
+    const allocator = testing.allocator;
+
+    // A = [[999, 2], [0, 999]] (upper triangular, unit diagonal)
+    // Diagonal values don't matter for unit diagonal
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 2, 0, 999 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [5, 3]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 3 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'N', 'U', A, &x);
+
+    // With unit diagonal:
+    // x[1] = 3 (no division by diagonal)
+    // x[0] = 5 - 2*3 = -1
+    try testing.expectApproxEqAbs(-1.0, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-9);
+}
+
+test "trsv_simd: lower triangular unit diagonal 2x2" {
+    const allocator = testing.allocator;
+
+    // A = [[999, 0], [2, 999]] (lower triangular, unit diagonal)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 999, 0, 2, 999 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [5, 7]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 5, 7 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'L', 'N', 'U', A, &x);
+
+    // With unit diagonal:
+    // x[0] = 5
+    // x[1] = 7 - 2*5 = -3
+    try testing.expectApproxEqAbs(5.0, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(-3.0, x.data[1], 1e-9);
+}
+
+test "trsv_simd: upper triangular non-unit diagonal 4x4" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3, 4], [0, 5, 6, 7], [0, 0, 8, 9], [0, 0, 0, 10]]  (upper triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        1, 2, 3, 4,
+        0, 5, 6, 7,
+        0, 0, 8, 9,
+        0, 0, 0, 10,
+    }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [10, 18, 17, 10]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 10, 18, 17, 10 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'N', 'N', A, &x);
+
+    // Back substitution:
+    // x[3] = 10/10 = 1
+    // x[2] = (17 - 9*1)/8 = 8/8 = 1
+    // x[1] = (18 - 6*1 - 7*1)/5 = 5/5 = 1
+    // x[0] = (10 - 2*1 - 3*1 - 4*1)/1 = 1/1 = 1
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(1.0, x.data[1], 1e-9);
+    try testing.expectApproxEqAbs(1.0, x.data[2], 1e-9);
+    try testing.expectApproxEqAbs(1.0, x.data[3], 1e-9);
+}
+
+test "trsv_simd: lower triangular non-unit diagonal 4x4" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0, 0, 0], [3, 4, 0, 0], [5, 6, 7, 0], [8, 9, 10, 11]]  (lower triangular)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        2, 0, 0, 0,
+        3, 4, 0, 0,
+        5, 6, 7, 0,
+        8, 9, 10, 11,
+    }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [2, 11, 38, 102]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 2, 11, 38, 102 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'L', 'N', 'N', A, &x);
+
+    // Forward substitution:
+    // x[0] = 2/2 = 1
+    // x[1] = (11 - 3*1)/4 = 8/4 = 2
+    // x[2] = (38 - 5*1 - 6*2)/7 = 21/7 = 3
+    // x[3] = (102 - 8*1 - 9*2 - 10*3)/11 = 44/11 = 4
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-9);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-9);
+    try testing.expectApproxEqAbs(3.0, x.data[2], 1e-9);
+    try testing.expectApproxEqAbs(4.0, x.data[3], 1e-9);
+}
+
+test "trsv_simd: 1x1 edge case" {
+    const allocator = testing.allocator;
+
+    // A = [[5]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 1, 1 }, &[_]f64{5}, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [10]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{10}, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'N', 'N', A, &x);
+
+    // x[0] = 10/5 = 2
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-9);
+}
+
+test "trsv_simd: f32 type support" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1], [0, 3]] (upper triangular)
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 2, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // Solve A*x = b where b = [5, 6]
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 5, 6 }, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f32, 'U', 'N', 'N', A, &x);
+
+    // Back substitution:
+    // x[1] = 6/3 = 2
+    // x[0] = (5 - 1*2)/2 = 1.5
+    try testing.expectApproxEqAbs(1.5, x.data[0], 1e-6);
+    try testing.expectApproxEqAbs(2.0, x.data[1], 1e-6);
+}
+
+test "trsv_simd: 64x64 large matrix upper non-unit (SIMD threshold)" {
+    const allocator = testing.allocator;
+    const n = 64;
+
+    // Create upper triangular matrix: A[i,j] = i+j+1 if i<=j, else 0
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    // Create vector b: b[i] = sum(i+j+1 for j in i..n)
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv_simd: 128x128 large matrix lower non-unit" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    // Create lower triangular matrix: A[i,j] = i-j+1 if i>=j, else 0
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            if (i >= j) {
+                data_A[i * n + j] = @as(f64, @floatFromInt(i - j + 1));
+            } else {
+                data_A[i * n + j] = 0.0;
+            }
+        }
+    }
+
+    // Create vector b: b[i] = sum(i-j+1 for j in 0..i+1)
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (0..i + 1) |j| {
+            sum += @as(f64, @floatFromInt(i - j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'L', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv_simd: 256x256 large matrix upper unit diagonal" {
+    const allocator = testing.allocator;
+    const n = 256;
+
+    // Create upper triangular matrix with unit diagonal: A[i,j] = (i+j+1) if i<j, 1 if i==j, else 0
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            if (i < j) {
+                data_A[i * n + j] = @as(f64, @floatFromInt(i + j + 1));
+            } else if (i == j) {
+                data_A[i * n + j] = 1.0; // Diagonal (ignored for unit)
+            } else {
+                data_A[i * n + j] = 0.0;
+            }
+        }
+    }
+
+    // Create vector b: b[i] = sum(i+j+1 for j in i+1..n)
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i + 1..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv_simd(f64, 'U', 'N', 'U', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv_simd: non-square matrix error" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trsv_simd(f64, 'U', 'N', 'N', A, &x));
+}
+
+test "trsv_simd: vector dimension mismatch error" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try testing.expectError(error.DimensionMismatch, trsv_simd(f64, 'U', 'N', 'N', A, &x));
+}
+
+test "trsv_simd: no memory leaks (10 iterations)" {
+    for (0..10) |_| {
+        const allocator = testing.allocator;
+
+        var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+            1, 2, 3, 4,
+            0, 5, 6, 7,
+            0, 0, 8, 9,
+            0, 0, 0, 10,
+        }, .row_major);
+        defer A.deinit();
+
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 10, 18, 17, 10 }, .row_major);
+        defer x.deinit();
+
+        try trsv_simd(f64, 'U', 'N', 'N', A, &x);
     }
     // testing.allocator automatically detects memory leaks
 }

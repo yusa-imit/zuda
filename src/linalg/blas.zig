@@ -4056,6 +4056,13 @@ pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x
     }
 
     const n = A.shape[0];
+
+    // Auto-dispatch: use SIMD implementation for n >= 64
+    if (n >= 64) {
+        return try simd_blas.trsv_simd(T, uplo, trans, diag, A, x);
+    }
+
+    // Scalar fallback for small matrices
     const is_upper = (uplo == 'U' or uplo == 'u');
     const is_trans = (trans == 'T' or trans == 't');
     const is_unit = (diag == 'U' or diag == 'u');
@@ -5571,6 +5578,360 @@ test "trsv: dimension mismatch error" {
     defer x.deinit();
 
     try testing.expectError(error.DimensionMismatch, trsv(f64, 'U', 'N', 'N', A, &x));
+}
+
+test "trsv dispatch: threshold boundary n=63 (scalar fallback)" {
+    const allocator = testing.allocator;
+    const n = 63;
+
+    // Create upper triangular matrix: A[i,j] = i+j+1 if i<=j, else 0
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    // Create vector b: b[i] = sum(i+j+1 for j in i..n)
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv dispatch: threshold boundary n=64 (SIMD path)" {
+    const allocator = testing.allocator;
+    const n = 64;
+
+    // Create upper triangular matrix
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv dispatch: above threshold n=65 (SIMD path)" {
+    const allocator = testing.allocator;
+    const n = 65;
+
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv dispatch: large matrix n=128 all parameter combinations" {
+    const allocator = testing.allocator;
+    const n = 128;
+
+    // Test all 8 combinations: uplo × trans × diag
+    const params = [_][3]u8{
+        [3]u8{ 'U', 'N', 'N' },
+        [3]u8{ 'U', 'N', 'U' },
+        [3]u8{ 'U', 'T', 'N' },
+        [3]u8{ 'U', 'T', 'U' },
+        [3]u8{ 'L', 'N', 'N' },
+        [3]u8{ 'L', 'N', 'U' },
+        [3]u8{ 'L', 'T', 'N' },
+        [3]u8{ 'L', 'T', 'U' },
+    };
+
+    for (params) |param| {
+        const uplo = param[0];
+        const trans = param[1];
+        const diag = param[2];
+
+        var data_A = try allocator.alloc(f64, n * n);
+        defer allocator.free(data_A);
+
+        // Create triangular matrix
+        for (0..n) |i| {
+            for (0..n) |j| {
+                if (uplo == 'U') {
+                    data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+                } else {
+                    data_A[i * n + j] = if (i >= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+                }
+            }
+        }
+
+        // Create RHS vector that produces solution x[i] = 1
+        var data_b = try allocator.alloc(f64, n);
+        defer allocator.free(data_b);
+
+        if (trans == 'N') {
+            if (uplo == 'U') {
+                // Back substitution: b[i] = sum(A[i,j] for j in i..n)
+                for (0..n) |i| {
+                    var sum: f64 = 0.0;
+                    for (i..n) |j| {
+                        sum += @as(f64, @floatFromInt(i + j + 1));
+                    }
+                    data_b[i] = sum;
+                }
+            } else {
+                // Forward substitution: b[i] = sum(A[i,j] for j in 0..i+1)
+                for (0..n) |i| {
+                    var sum: f64 = 0.0;
+                    for (0..i + 1) |j| {
+                        sum += @as(f64, @floatFromInt(i + j + 1));
+                    }
+                    data_b[i] = sum;
+                }
+            }
+        } else {
+            if (uplo == 'U') {
+                // A^T is lower, forward substitution: b[i] = sum(A^T[i,j] for j in 0..i+1)
+                for (0..n) |i| {
+                    var sum: f64 = 0.0;
+                    for (0..i + 1) |j| {
+                        sum += @as(f64, @floatFromInt(j + i + 1));
+                    }
+                    data_b[i] = sum;
+                }
+            } else {
+                // A^T is upper, back substitution: b[i] = sum(A^T[i,j] for j in i..n)
+                for (0..n) |i| {
+                    var sum: f64 = 0.0;
+                    for (i..n) |j| {
+                        sum += @as(f64, @floatFromInt(j + i + 1));
+                    }
+                    data_b[i] = sum;
+                }
+            }
+        }
+
+        var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+        defer A.deinit();
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+        defer x.deinit();
+
+        try trsv(f64, uplo, trans, diag, A, &x);
+
+        // Verify solution
+        for (0..n) |i| {
+            try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+        }
+    }
+}
+
+test "trsv dispatch: f32 type support n=64" {
+    const allocator = testing.allocator;
+    const n = 64;
+
+    // Create f32 upper triangular matrix
+    var data_A = try allocator.alloc(f32, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f32, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_b = try allocator.alloc(f32, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f32 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f32, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f32, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-6);
+    }
+}
+
+test "trsv dispatch: non-aligned size n=67 (tail loop coverage)" {
+    const allocator = testing.allocator;
+    const n = 67;
+
+    // Create upper triangular matrix
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv dispatch: non-aligned size n=100 (tail loop coverage)" {
+    const allocator = testing.allocator;
+    const n = 100;
+
+    // Create lower triangular matrix
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i >= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (0..i + 1) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'L', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
+}
+
+test "trsv dispatch: non-aligned size n=137 (tail loop coverage)" {
+    const allocator = testing.allocator;
+    const n = 137;
+
+    // Create upper triangular matrix
+    var data_A = try allocator.alloc(f64, n * n);
+    defer allocator.free(data_A);
+
+    for (0..n) |i| {
+        for (0..n) |j| {
+            data_A[i * n + j] = if (i <= j) @as(f64, @floatFromInt(i + j + 1)) else 0.0;
+        }
+    }
+
+    var data_b = try allocator.alloc(f64, n);
+    defer allocator.free(data_b);
+    for (0..n) |i| {
+        var sum: f64 = 0.0;
+        for (i..n) |j| {
+            sum += @as(f64, @floatFromInt(i + j + 1));
+        }
+        data_b[i] = sum;
+    }
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
+    defer A.deinit();
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
+    defer x.deinit();
+
+    try trsv(f64, 'U', 'N', 'N', A, &x);
+
+    // Solution should be x[i] = 1 for all i
+    for (0..n) |i| {
+        try testing.expectApproxEqAbs(1.0, x.data[i], 1e-8);
+    }
 }
 
 test "trmm: dimension mismatch error" {
