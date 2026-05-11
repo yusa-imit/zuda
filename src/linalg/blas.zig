@@ -7141,7 +7141,12 @@ pub fn syr(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDArray(T
         return;
     }
 
-    // Scalar implementation for all sizes (SIMD dispatch would come later)
+    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
+    if (n >= 64) {
+        return simd_blas.syr_simd(T, uplo, alpha, x, A);
+    }
+
+    // Scalar implementation for small matrices
     if (uplo == 'U') {
         // Update upper triangle: for i in 0..n, for j in i..n: A[i,j] += α*x[i]*x[j]
         for (0..n) |i| {
@@ -7558,4 +7563,371 @@ test "syr: multiple accumulations (repeated updates)" {
     try testing.expectApproxEqAbs(2.0, A.data[0], 1e-10);
     try testing.expectApproxEqAbs(2.0, A.data[1], 1e-10);
     try testing.expectApproxEqAbs(2.0, A.data[3], 1e-10);
+}
+
+// ============================================================================
+// syr() Auto-Dispatch Tests
+// ============================================================================
+// These tests verify that syr() correctly dispatches to syr_simd() for
+// large matrices (n >= 64) and uses the scalar path for smaller matrices.
+
+test "syr: auto-dispatch threshold below (n=63, upper, f64, scalar path)" {
+    // Below threshold (63 < 64) — should use scalar path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 63);
+    defer allocator.free(x_data);
+    for (0..63) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{63}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 63, 63 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
+    for (0..63) |i| {
+        const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
+    for (0..10) |i| {
+        for (i + 1..10) |j| {
+            const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr: auto-dispatch threshold boundary (n=64, upper, f64, SIMD path)" {
+    // At threshold (64 == 64) — should use SIMD path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 64);
+    defer allocator.free(x_data);
+    for (0..64) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{64}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
+    for (0..64) |i| {
+        const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
+    for (0..10) |i| {
+        for (i + 1..10) |j| {
+            const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr: auto-dispatch threshold above (n=65, upper, f64, SIMD path)" {
+    // Above threshold (65 > 64) — should use SIMD path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 65);
+    defer allocator.free(x_data);
+    for (0..65) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{65}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 65, 65 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
+    for (0..10) |i| {
+        const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
+    for (0..10) |i| {
+        for (i + 1..10) |j| {
+            const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr: auto-dispatch lower triangle (n=64, lower, SIMD path)" {
+    // SIMD path with lower triangle variant
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 64);
+    defer allocator.free(x_data);
+    for (0..64) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{64}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update with lower triangle
+    try syr(f64, 'L', 1.0, x, &A);
+
+    // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
+    for (0..64) |i| {
+        const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify lower triangle sample: A[i,j] = x[i]*x[j] for i >= j
+    for (0..10) |j| {
+        for (j + 1..10) |i| {
+            const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr: auto-dispatch large matrix (n=128, upper, f64, SIMD)" {
+    // Well above threshold — verify SIMD efficiency with larger matrix
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 128);
+    defer allocator.free(x_data);
+    for (0..128) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i % 10 + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal sample: A[i,i] should be x[i]²
+    for (0..10) |i| {
+        const x_i = @as(f64, @floatFromInt(i % 10 + 1));
+        const expected = x_i * x_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
+    for (0..5) |i| {
+        for (i + 1..5) |j| {
+            const x_i = @as(f64, @floatFromInt(i % 10 + 1));
+            const x_j = @as(f64, @floatFromInt(j % 10 + 1));
+            const expected = x_i * x_j;
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr: auto-dispatch very large matrix (n=256, upper, f64, SIMD)" {
+    // Very large matrix to stress SIMD path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 256);
+    defer allocator.free(x_data);
+    for (0..256) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i % 20 + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{256}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal sample
+    for (0..10) |i| {
+        const x_i = @as(f64, @floatFromInt(i % 20 + 1));
+        const expected = x_i * x_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+}
+
+test "syr: auto-dispatch non-aligned (n=67, upper, SIMD tail loop)" {
+    // Non-aligned size to verify tail loop handling in SIMD path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 67);
+    defer allocator.free(x_data);
+    for (0..67) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{67}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 67, 67 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal sample
+    for (0..10) |i| {
+        const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+}
+
+test "syr: auto-dispatch non-aligned (n=100, upper, SIMD tail loop)" {
+    // Another non-aligned size (100) to verify tail loop in SIMD
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 100);
+    defer allocator.free(x_data);
+    for (0..100) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i % 15 + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f64, 'U', 1.0, x, &A);
+
+    // Verify diagonal sample
+    for (0..10) |i| {
+        const x_i = @as(f64, @floatFromInt(i % 15 + 1));
+        const expected = x_i * x_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+}
+
+test "syr: auto-dispatch f32 type (n=64, upper, SIMD)" {
+    // Test with f32 type instead of f64
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f32, 64);
+    defer allocator.free(x_data);
+    for (0..64) |i| {
+        x_data[i] = @as(f32, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{64}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f32, 'U', 1.0, x, &A);
+
+    // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
+    for (0..10) |i| {
+        const expected = @as(f32, @floatFromInt(i + 1)) * @as(f32, @floatFromInt(i + 1));
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-5);
+    }
+}
+
+test "syr: auto-dispatch f32 large (n=128, upper, SIMD)" {
+    // Test with f32 type on larger matrix
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f32, 128);
+    defer allocator.free(x_data);
+    for (0..128) |i| {
+        x_data[i] = @as(f32, @floatFromInt(i % 10 + 1));
+    }
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{128}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr update
+    try syr(f32, 'U', 1.0, x, &A);
+
+    // Verify diagonal sample
+    for (0..10) |i| {
+        const x_i = @as(f32, @floatFromInt(i % 10 + 1));
+        const expected = x_i * x_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-5);
+    }
+}
+
+test "syr: auto-dispatch alpha=0 (n=128, SIMD no-op)" {
+    // Alpha=0 should be a no-op even in SIMD path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 128);
+    defer allocator.free(x_data);
+    for (0..128) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+
+    const original = try A.clone();
+    defer original.deinit();
+
+    // alpha=0 should not change A
+    try syr(f64, 'U', 0.0, x, &A);
+
+    // Verify A is unchanged
+    for (0..128 * 128) |i| {
+        try testing.expectApproxEqAbs(original.data[i], A.data[i], 1e-10);
+    }
+}
+
+test "syr: auto-dispatch alpha=2.5 (n=128, upper, SIMD)" {
+    // Non-unit alpha to verify scalar multiplication in SIMD path
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 128);
+    defer allocator.free(x_data);
+    for (0..128) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i % 5 + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{128}, x_data, .row_major);
+    defer x.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer A.deinit();
+
+    const alpha = 2.5;
+
+    // Perform syr update with non-unit alpha
+    try syr(f64, 'U', alpha, x, &A);
+
+    // Verify diagonal sample: A[i,i] should be alpha * x[i]²
+    for (0..10) |i| {
+        const x_i = @as(f64, @floatFromInt(i % 5 + 1));
+        const expected = alpha * x_i * x_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-9);
+    }
+
+    // Verify upper triangle sample: A[i,j] = alpha * x[i]*x[j] for i <= j
+    for (0..5) |i| {
+        for (i + 1..5) |j| {
+            const x_i = @as(f64, @floatFromInt(i % 5 + 1));
+            const x_j = @as(f64, @floatFromInt(j % 5 + 1));
+            const expected = alpha * x_i * x_j;
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-9);
+        }
+    }
 }
