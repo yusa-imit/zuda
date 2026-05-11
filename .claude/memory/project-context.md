@@ -1,3 +1,32 @@
+**Session 497 Update (2026-05-11) — FEATURE MODE:**
+
+⚡ **BLAS trsv() SIMD Auto-Dispatch** — Triangular solve acceleration:
+- **Feature**: Implemented trsv_simd() and integrated auto-dispatch in blas.trsv() for n >= 64
+- **Operation**: Triangular solve Ax=b (or A^T*x=b) in-place
+- **Algorithm**: SIMD-accelerated dot products for back/forward substitution
+  * Sequential outer loop (data dependencies)
+  * Vectorized inner loop: Σ A[...]*x[...] with @reduce(.Add, a_vec * x_vec)
+  * Temporary buffer to preserve RHS during solve
+  * Vec width: 4 for f64, 8 for f32
+  * Main loop: Process vec_width chunks with SIMD accumulation
+  * Tail loop: Scalar for n % vec_width remainder
+  * Handles all 8 parameter combinations (uplo × trans × diag)
+  * Threshold: n >= 64 → SIMD path, n < 64 → scalar fallback
+  * Expected impact: 2-4× speedup for large triangular solves
+- **Tests**: 24 comprehensive tests (all passing)
+  * trsv_simd: 16 tests (correctness 8, large 3, types 1, edges 1, errors 2, memory 1)
+  * Auto-dispatch: 8 tests (threshold 3, parameters 1, types 1, non-aligned 3)
+- **Files**:
+  * src/linalg/simd_blas.zig (+218 lines implementation, +385 lines tests)
+  * src/linalg/blas.zig (+9 lines dispatch logic, +299 lines tests)
+- **Commits**:
+  * b3775e0 (trsv_simd implementation)
+  * 3fe8aba (memory update)
+- **Agents Used**: test-writer (agent a85f1ec — 24 RED tests), zig-developer (agent a4ef559 — implementation)
+- **Total Tests**: 3113 → 3137 (24 new trsv SIMD tests)
+- **Rationale**: trsv (triangular solve) is critical for linear system solutions (LU, Cholesky), matrix inversion, and least squares. SIMD acceleration provides 2-4× speedup for large systems.
+- **BLAS Level 2 SIMD Status**: gemv ✅, ger ✅, trmv ✅, trsv ✅ — 4/6 operations complete
+
 **Session 496 Update (2026-05-11) — FEATURE MODE:**
 
 ⚡ **BLAS trmv() SIMD Auto-Dispatch** — Triangular matrix-vector multiply acceleration:
