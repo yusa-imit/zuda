@@ -330,3 +330,5 @@
 {"timestamp":"2026-05-11T00:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement trmv_simd GREEN","project":"zuda"}
 {"timestamp":"2026-05-11T00:15:00Z","action":"subagent","agent_type":"test-writer","task":"Write trmv dispatch tests","project":"zuda"}
 {"timestamp":"2026-05-11T00:20:00Z","action":"subagent","agent_type":"zig-developer","task":"Add trmv dispatch logic","project":"zuda"}
+{"timestamp":"2026-05-11T00:30:00Z","action":"subagent","agent_type":"test-writer","task":"Write RED tests for trsv_simd() and dispatch logic","project":"zuda"}
+{"timestamp":"2026-05-11T00:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement trsv_simd() SIMD-accelerated triangular solve","project":"zuda"}
