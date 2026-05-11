@@ -750,3 +750,115 @@ pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta
 - Before: gemm() naive triple-loop → 1.25-2.63 GFLOPS (42-53% of target)
 - After: auto-dispatch to gemm_blocked_4x4() → expected 3.5-4.0 GFLOPS (70-80% of target)
 - Small matrices: no performance change (threshold preserves naive path)
+
+## SIMD Triangular Solve (trsv_simd) Pattern — Session 497
+
+**When to use**: SIMD-accelerate inner dot product in sequential triangular solve loops.
+
+**Key insight**: Data dependencies prevent outer loop parallelism (x[i] depends on x[j] for j ≠ i), but inner accumulation can be vectorized.
+
+```zig
+pub fn trsv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8,
+                 A: NDArray(T, 2), x: *NDArray(T, 1)) !void {
+    const n = A.shape[0];
+
+    // Allocate temp buffer to preserve original RHS during solve
+    const temp = try x.allocator.alloc(T, n);
+    defer x.allocator.free(temp);
+    @memcpy(temp, x.data);  // temp = copy of b
+
+    const vec_width = comptime simdWidth(T);  // 4 for f64, 8 for f32
+    const Vec = @Vector(vec_width, T);
+
+    // 4 cases based on uplo × trans
+    if (!is_trans) {
+        if (is_upper) {
+            // Back substitution: for i = n-1 down to 0
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = temp[i];
+
+                // SIMD main loop for inner dot product
+                var j = i + 1;
+                while (j + vec_width <= n) : (j += vec_width) {
+                    var a_vec: Vec = undefined;
+                    var x_vec: Vec = undefined;
+                    inline for (0..vec_width) |k| {
+                        a_vec[k] = A.data[i * n + j + k];
+                        x_vec[k] = x.data[j + k];
+                    }
+                    const prod = a_vec * x_vec;
+                    sum -= @reduce(.Add, prod);  // Accumulate: sum -= Σ(a*x)
+                }
+
+                // Scalar tail loop
+                while (j < n) : (j += 1) {
+                    sum -= A.data[i * n + j] * x.data[j];
+                }
+
+                // Solve for x[i]
+                x.data[i] = if (!is_unit) sum / A.data[i * n + i] else sum;
+            }
+        } else {
+            // Forward substitution: similar pattern with i in 0..n and j in 0..i
+        }
+    } else {
+        // Transpose cases: similar but access A[j,i] instead of A[i,j]
+    }
+}
+```
+
+**SIMD vectorization breakdown**:
+1. **Temporary buffer**: Preserve original RHS (b) because x[i] overwrites as solved
+2. **Outer loop**: Sequential (data dependencies on prior x[j])
+3. **Inner loop**: Vectorize dot product accumulation
+   - Main loop: Process `vec_width` elements at once
+   - Use `@Vector(vec_width, T)` and `@reduce(.Add, ...)`
+   - SIMD width: 4 for f64, 8 for f32 (256-bit AVX/AVX2)
+4. **Tail loop**: Scalar for `n % vec_width` remainder
+5. **Unit diagonal**: Skip division when diag='U'
+
+**4 Cases** (uplo × trans):
+- **Upper + NoTrans**: Back substitution, `j ∈ [i+1, n)`
+- **Lower + NoTrans**: Forward substitution, `j ∈ [0, i)`
+- **Upper + Trans**: Forward on A^T, access A[j,i], `j ∈ [0, i)`
+- **Lower + Trans**: Back on A^T, access A[j,i], `j ∈ [i+1, n)`
+
+**Testing strategy** (24 tests):
+- Basic cases: 2×2 upper/lower × noTrans/trans × unit/nonUnit
+- Edge case: 1×1 matrix
+- Type support: both f32 and f64
+- Large matrices: 64×64 (threshold), 128×128, 256×256
+- Error paths: non-square, dimension mismatch
+- Memory: no leaks over 10 iterations
+
+**Auto-dispatch integration** (threshold: n >= 64):
+```zig
+pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8,
+            A: NDArray(T, 2), x: *NDArray(T, 1)) !void {
+    // ... validation ...
+    const n = A.shape[0];
+
+    // Auto-dispatch: use SIMD for large matrices
+    if (n >= 64) {
+        return try simd_blas.trsv_simd(T, uplo, trans, diag, A, x);
+    }
+
+    // Scalar fallback for small matrices (lower overhead)
+    // ... scalar implementation ...
+}
+```
+
+**Performance characteristics**:
+- Time: O(n²) sequential (data dependencies prevent parallelism)
+- Space: O(n) temporary buffer
+- Speedup: 2-4× over scalar on large matrices (vectorized dot product)
+- Threshold: 64×64 is empirically optimal (SIMD speedup > overhead at this size)
+
+**Pitfalls to avoid**:
+- Don't forget temp buffer copy (original RHS needed for all x[i])
+- Don't vectorize outer loop (data dependencies)
+- Don't forget tail loop (n % vec_width elements)
+- Don't forget unit diagonal special case (skip A[i,i] division)
+- Don't forget 4 cases (upper/lower × noTrans/trans)
