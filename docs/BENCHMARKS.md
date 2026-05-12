@@ -3,17 +3,17 @@
 > **Platform**: Apple M2 Pro (arm64), macOS 25.2.0
 > **Compiler**: Zig 0.15.2
 > **Optimization**: ReleaseFast
-> **Date**: 2026-05-06
+> **Date**: 2026-05-13 (Updated Session 507)
 
 ---
 
 ## Executive Summary
 
-zuda v2.0 achieves **strong performance** across all categories:
+zuda v2.0 achieves **excellent performance** across all categories:
+- ✅ **BLAS**: GEMM exceeds 5.0 GFLOPS target (8.12 GFLOPS on 1024×1024)
 - ✅ **Linear Algebra**: 25-80× faster than targets
-- ✅ **NDArray Operations**: Exceeds 1 GFLOPS target (1.28 GFLOPS)
+- ✅ **NDArray Operations**: Exceeds 1 GFLOPS target (1.20 GFLOPS)
 - ✅ **Statistics**: All operations meet <1ms target
-- ⚠️ **BLAS**: 42-61% of targets (opportunity for SIMD optimization)
 - ⚠️ **FFT**: 1.6-10× slower than aggressive targets (still competitive)
 
 ---
@@ -24,20 +24,21 @@ Matrix multiplication and vector operations performance:
 
 | Operation | Size | Target | Actual | % of Target | Status |
 |-----------|------|--------|--------|-------------|--------|
-| **dot** (inner product) | 1M f64 | 2 GFLOPS | 1.21 GFLOPS | 61% | ⚠️ Below target |
-| **GEMM** (matrix multiply) | 256×256 | 3 GFLOPS | 1.25 GFLOPS | 42% | ⚠️ Below target |
-| **GEMM** (matrix multiply) | 1024×1024 | 5 GFLOPS | 2.63 GFLOPS | 53% | ⚠️ Below target |
+| **dot** (inner product) | 1M f64 | 2 GFLOPS | 1.49 GFLOPS | 75% | ⚠️ Approaching target |
+| **GEMM** (matrix multiply) | 256×256 | 3 GFLOPS | 2.96 GFLOPS | 99% | ✅ At target |
+| **GEMM** (matrix multiply) | 1024×1024 | 5 GFLOPS | 8.12 GFLOPS | 162% | ✅ **Exceeds target** |
 
 **Observations**:
-- Current implementation uses naive triple-loop GEMM
-- Session 471 added 4×4 blocked SIMD kernel (cache optimization)
-- Further optimization opportunities: AVX2/NEON vectorization, loop unrolling, register tiling
-- Competitive with unoptimized BLAS implementations, but room for 2-3× improvement
+- **Session 507**: Added SIMD vectorization to gemm_blocked_tiled micro-kernel → **3× speedup** on large matrices
+- Cache-blocked tiling (256×128×256 blocks) + SIMD j-loop vectorization achieves optimal cache/SIMD utilization
+- 1024×1024 GEMM now **exceeds 5 GFLOPS target by 62%**
+- 256×256 GEMM at 99% of target (uses SIMD-optimized path)
+- dot approaching target with auto-dispatch to SIMD path (session 488)
 
 **Timing Details**:
-- dot (1M f64): 1.66ms → 602M ops/sec
-- GEMM 256²: 26.88ms → 37M ops/sec
-- GEMM 1024²: 815.49ms → 1.2M ops/sec
+- dot (1M f64): 1.34ms → 746M ops/sec
+- GEMM 256²: 11.35ms → 2.96 GFLOPS
+- GEMM 1024²: 264.59ms → 8.12 GFLOPS
 
 ---
 
@@ -127,10 +128,10 @@ Descriptive statistics performance — **all meet <1ms target**:
 
 | Category | Metric | Target | Actual | Assessment |
 |----------|--------|--------|--------|------------|
-| **BLAS** | GEMM 1024² GFLOPS | 5.0 | 2.63 | ⚠️ Needs optimization |
+| **BLAS** | GEMM 1024² GFLOPS | 5.0 | 8.12 | ✅ **Exceeds target** |
 | **Linalg** | Decomposition latency | <500ms | <21ms | ✅ Excellent |
 | **FFT** | 1M complex latency | <30ms | 47.87ms | ⚠️ Acceptable |
-| **NDArray** | Element-wise GFLOPS | 1.0 | 1.28 | ✅ Exceeds target |
+| **NDArray** | Element-wise GFLOPS | 1.0 | 1.20 | ✅ Exceeds target |
 | **Stats** | Descriptive ops latency | <1ms | <1ms | ✅ Meets target |
 
 ---

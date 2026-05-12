@@ -10185,20 +10185,45 @@ pub fn gemm_blocked_tiled(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArr
                 const block_k = k_end - k_block;
 
                 // Compute C[i_block:i_end, j_block:j_end] += α * A[i_block:i_end, k_block:k_end] * B[k_block:k_end, j_block:j_end]
-                // Using simple triple loop for clarity (can be optimized with micro-kernel)
+                // SIMD micro-kernel: vectorize j-dimension (columns) for each row
                 var ii: usize = 0;
                 while (ii < block_m) : (ii += 1) {
+                    const i_global = i_block + ii;
+
+                    // SIMD vectorized j-loop (main loop)
                     var jj: usize = 0;
+                    while (jj + vec_width <= block_n) : (jj += vec_width) {
+                        var acc_vec: Vec = @splat(0.0);
+
+                        // Inner k-loop: accumulate dot product for vec_width columns
+                        for (0..block_k) |kk| {
+                            const a_val = A.data[i_global * k + (k_block + kk)];
+                            const a_vec: Vec = @splat(a_val);
+
+                            // Load vec_width elements from B row
+                            const b_row = (k_block + kk) * n + (j_block + jj);
+                            const b_vec: Vec = B.data[b_row..][0..vec_width].*;
+
+                            acc_vec += a_vec * b_vec;
+                        }
+
+                        // Scale by alpha and accumulate into C
+                        const c_row = i_global * n + (j_block + jj);
+                        var c_vec: Vec = C.data[c_row..][0..vec_width].*;
+                        c_vec += @as(Vec, @splat(alpha)) * acc_vec;
+                        const result_array: [vec_width]T = c_vec;
+                        @memcpy(C.data[c_row..][0..vec_width], &result_array);
+                    }
+
+                    // Scalar tail loop for remaining columns
                     while (jj < block_n) : (jj += 1) {
-                        // Accumulate C[i_block+ii, j_block+jj]
                         var acc: T = 0.0;
-                        var kk: usize = 0;
-                        while (kk < block_k) : (kk += 1) {
-                            const a_val = A.data[(i_block + ii) * k + (k_block + kk)];
+                        for (0..block_k) |kk| {
+                            const a_val = A.data[i_global * k + (k_block + kk)];
                             const b_val = B.data[(k_block + kk) * n + (j_block + jj)];
                             acc += a_val * b_val;
                         }
-                        C.data[(i_block + ii) * n + (j_block + jj)] += alpha * acc;
+                        C.data[i_global * n + (j_block + jj)] += alpha * acc;
                     }
                 }
 
