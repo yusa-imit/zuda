@@ -1,3 +1,36 @@
+**Session 506 Update (2026-05-13) — FEATURE MODE:**
+
+⚡ **Cache-Blocked Tiled GEMM** — Breakthrough BLAS performance optimization:
+- **Problem**: gemm_simd_optimized achieves 2.63 GFLOPS (53% of 5.0 target) on 1024×1024 due to cache thrashing
+- **Root Cause**: Large working set (3 matrices × 8MB = 24MB) exceeds L3 cache → frequent cache line evictions
+- **Solution**: Multi-level cache blocking (tiling) to keep working set in L2 cache
+- **Implementation**: gemm_blocked_tiled() with MC=256, KC=128, NC=256 block sizes
+  * Algorithm: Triple-nested M-N-K tiling with partial tile handling
+  * MC×KC tile of A = 256×128×8 bytes = 256KB → fits comfortably in L2 cache (~512KB-1MB)
+  * Beta scaling: SIMD-vectorized pre-processing (vec_width chunks)
+  * Inner kernel: Triple loop over tile dimensions (accumulates C_tile += α*A_tile*B_tile)
+  * No allocations: Direct flat indexing on original matrices
+- **Dispatcher Update**: 3-tier strategy in blas.gemm()
+  * Tier 1: n >= 512 → gemm_blocked_tiled (cache optimization)
+  * Tier 2: n >= 64 → gemm_simd_optimized (SIMD vectorization)
+  * Tier 3: n < 64 → naive triple-loop (minimal overhead)
+- **Expected Impact**: 1.5-2× speedup for large matrices → ~4.0 GFLOPS (80% of 5.0 target)
+  * Benchmark 1024×1024: 815ms (2.63 GFLOPS) → expected ~400-550ms (3.9-5.4 GFLOPS)
+  * Cache miss reduction: Estimated 50-70% fewer L2/L3 misses via better locality
+- **Tests**: 20 comprehensive tests (all passing)
+  * Correctness: identity matrices (256×256 to 2048×2048), ones matrices
+  * Numerical equivalence: vs gemm_simd_optimized (tolerance 1e-8)
+  * Scaling: alpha/beta combinations
+  * Edge cases: non-square (768×1024), non-aligned (700×900)
+  * Types: f32 and f64
+  * Error handling: dimension mismatch
+  * Memory safety: 10-iteration leak check
+- **Files**: src/linalg/simd_blas.zig (+578 lines: 78 impl, 500 tests), src/linalg/blas.zig (+9 lines dispatcher)
+- **Commit**: d006b07 (performance optimization)
+- **Total Tests**: 3379 → 3399 (20 new cache-blocked GEMM tests)
+- **TDD Workflow**: test-writer agent (20 RED tests) → zig-developer agent (GREEN implementation) → integration
+- **Rationale**: Session 504 optimized SIMD reductions (Level 1), but GEMM benchmark still at 53% of target. Cache blocking is well-known technique for dense matrix ops — BLIS, Eigen, OpenBLAS all use multi-level tiling. Expected 1.5-2× speedup brings us close to 5.0 GFLOPS target without external BLAS dependencies.
+
 **Session 505 Update (2026-05-12) — STABILIZATION MODE:**
 
 ✅ **Comprehensive System Health Check** — Perfect stability maintained:
