@@ -195,11 +195,8 @@ pub fn dot_simd(comptime T: type, x: NDArray(T, 1), y: NDArray(T, 1)) (NDArray(T
         sum_vec += x_vec * y_vec;
     }
 
-    // Horizontal reduction
-    var sum: T = 0;
-    for (0..vec_width) |lane| {
-        sum += sum_vec[lane];
-    }
+    // Horizontal reduction with @reduce for optimal SIMD performance
+    var sum: T = @reduce(.Add, sum_vec);
 
     // Tail loop (scalar)
     while (idx < n) : (idx += 1) {
@@ -309,11 +306,8 @@ pub fn nrm2_simd(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
         sum_vec += squared;
     }
 
-    // Horizontal reduction: sum all lanes of accumulator
-    var sum: T = 0;
-    for (0..vec_width) |lane| {
-        sum += sum_vec[lane];
-    }
+    // Horizontal reduction with @reduce for optimal SIMD performance
+    var sum: T = @reduce(.Add, sum_vec);
 
     // Tail loop (scalar) for remaining elements
     while (idx < n) : (idx += 1) {
@@ -375,11 +369,8 @@ pub fn asum_simd(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
         sum_vec += abs_vec;
     }
 
-    // Horizontal reduction: sum all lanes of accumulator
-    var sum: T = 0;
-    for (0..vec_width) |lane| {
-        sum += sum_vec[lane];
-    }
+    // Horizontal reduction with @reduce for optimal SIMD performance
+    var sum: T = @reduce(.Add, sum_vec);
 
     // Tail loop (scalar) for remaining elements
     while (idx < n) : (idx += 1) {
