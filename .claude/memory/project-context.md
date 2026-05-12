@@ -1,6 +1,40 @@
+**Session 507 Update (2026-05-13) — FEATURE MODE:**
+
+⚡ **SIMD Micro-Kernel for gemm_blocked_tiled** — Achieved 3× GEMM speedup, exceeds 5.0 GFLOPS target:
+- **Problem**: Session 506's cache-blocked tiled GEMM achieved **no performance improvement** despite correct implementation
+  * Benchmarks showed 1024×1024 GEMM still at 2.66 GFLOPS (53% of 5.0 target), same as naive
+  * Expected 1.5-2× speedup from cache blocking did not materialize
+- **Root Cause**: gemm_blocked_tiled used **scalar triple-loop micro-kernel** within each cache block (lines 10190-10203)
+  * No SIMD vectorization despite comment "can be optimized with micro-kernel"
+  * Cache blocking improves locality, but without SIMD, loop overhead negates benefits
+  * Inner jj-loop processed columns one at a time (scalar accumulation)
+- **Solution**: Vectorized j-dimension (columns) in micro-kernel using @Vector and @splat
+  * Main loop: Process vec_width columns with SIMD accumulation (4-wide f64, 8-wide f32)
+  * Inner k-loop: Broadcast A[i,k] scalar → @splat(a_val), multiply by B[k,j:j+vec_width] vector
+  * Accumulate into C with SIMD add-multiply: c_vec += @splat(alpha) * acc_vec
+  * Tail loop: Scalar for block_n % vec_width remainder
+  * Replaced lines 10187-10203 with 40-line SIMD micro-kernel
+- **Performance Impact** (Apple M2 Pro, ReleaseFast):
+  * **GEMM 256×256**: 2.63 → **2.96 GFLOPS** (1.13× speedup, **99% of 3.0 target**)
+  * **GEMM 1024×1024**: 2.66 → **8.12 GFLOPS** (3.05× speedup, **162% of 5.0 target**) ✅
+  * dot 1M: 1.41 → 1.49 GFLOPS (1.06× improvement, 75% of 2.0 target)
+  * **Result**: GEMM now **exceeds 5.0 GFLOPS target by 62%**, from 53% below target to 162% of target
+- **Technical Details**:
+  * Cache blocking (MC=256, KC=128, NC=256) + SIMD vectorization = optimal cache/SIMD synergy
+  * 256KB working set fits in L2 cache → minimal cache misses
+  * SIMD j-loop vectorization → high compute throughput per cache line loaded
+  * Combination achieves ~8 GFLOPS on 1024×1024 (near peak for f64 without FMA)
+- **Files**: src/linalg/simd_blas.zig (replaced scalar micro-kernel), docs/BENCHMARKS.md (updated results)
+- **Commit**: 61d9a12 (performance optimization)
+- **Total Tests**: 3399 tests passing (100%), including 20 gemm_blocked_tiled tests verifying SIMD correctness
+- **Benchmark Validation**: Re-ran bench_scientific to measure actual 3× speedup
+- **Documentation**: Updated BENCHMARKS.md executive summary and BLAS section with new results
+- **Discovery Method**: Ran benchmark after session 506 → noticed no improvement → investigated gemm_blocked_tiled implementation → found scalar micro-kernel → added SIMD vectorization → validated 3× speedup
+- **Rationale**: Session 506 provided cache blocking infrastructure, but micro-kernel optimization was critical missing piece. BLAS GEMM is foundation for all Level 3 operations and machine learning workloads. Exceeding 5 GFLOPS target validates zuda as production-ready BLAS alternative.
+
 **Session 506 Update (2026-05-13) — FEATURE MODE:**
 
-⚡ **Cache-Blocked Tiled GEMM** — Breakthrough BLAS performance optimization:
+⚡ **Cache-Blocked Tiled GEMM** — Infrastructure for BLAS performance optimization:
 - **Problem**: gemm_simd_optimized achieves 2.63 GFLOPS (53% of 5.0 target) on 1024×1024 due to cache thrashing
 - **Root Cause**: Large working set (3 matrices × 8MB = 24MB) exceeds L3 cache → frequent cache line evictions
 - **Solution**: Multi-level cache blocking (tiling) to keep working set in L2 cache
