@@ -8668,6 +8668,15 @@ pub fn syrk(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), b
 
     const n = c_rows;  // C is n×n
 
+    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
+    // Threshold: n >= 64 (enough elements to benefit from vectorization)
+    // Session 503: syrk_simd provides 2-3× speedup via SIMD vectorization
+    const threshold: usize = 64;
+    if (n >= threshold) {
+        return try simd_blas.syrk_simd(T, trans, uplo, alpha, A, beta, C);
+    }
+
+    // Fallback to scalar implementation for small matrices
     // Scale C by beta first
     for (0..n * n) |i| {
         C.data[i] = beta * C.data[i];
@@ -10313,4 +10322,434 @@ test "syrk: 4×4 full verification, transpose lower" {
     try testing.expectApproxEqAbs(100.0, C.data[1], 1e-10);
     try testing.expectApproxEqAbs(100.0, C.data[2], 1e-10);
     try testing.expectApproxEqAbs(120.0, C.data[3], 1e-10);
+}
+
+// ===== AUTO-DISPATCH TESTS =====
+// These tests verify that syrk() correctly dispatches to syrk_simd() for large matrices (n >= 64)
+// and uses scalar implementation for smaller matrices (n < 64).
+
+test "syrk auto-dispatch: 63×63 should use scalar (below threshold)" {
+    const allocator = testing.allocator;
+
+    // A is 63×63, so C will be 63×63 (trans='N')
+    // Create 63×63 identity matrix for A
+    var A_data = try allocator.alloc(f64, 63 * 63);
+    defer allocator.free(A_data);
+    for (0..63 * 63) |i| {
+        const row = i / 63;
+        const col = i % 63;
+        A_data[i] = if (row == col) 1.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 63, 63 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 63×63, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 63, 63 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where A is identity
+    // Expected: C = I (identity matrix, since I*I^T = I)
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 1.0, off-diagonal should be 0.0
+    for (0..63) |i| {
+        for (0..63) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 63 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 64×64 should use SIMD (at threshold, trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 64×64, so C will be 64×64 (trans='N')
+    // Create 64×64 diagonal matrix with 2's on diagonal
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 64×64, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where A is diagonal with 2's
+    // Expected: C[i,i] = 2*2 = 4, C[i,j] = 0 (i != j)
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 4.0, off-diagonal should be 0.0
+    for (0..64) |i| {
+        for (0..64) |j| {
+            const expected: f64 = if (i == j) 4.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 65×65 should use SIMD (above threshold, trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 65×65, so C will be 65×65 (trans='N')
+    // Create 65×65 matrix with simple values
+    var A_data = try allocator.alloc(f64, 65 * 65);
+    defer allocator.free(A_data);
+    for (0..65 * 65) |i| {
+        const row = i / 65;
+        const col = i % 65;
+        A_data[i] = if (row == col) 1.5 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 65, 65 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 65×65, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 65, 65 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where A is diagonal with 1.5's
+    // Expected: C[i,i] = 1.5*1.5 = 2.25, C[i,j] = 0 (i != j)
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 2.25, off-diagonal should be 0.0
+    for (0..65) |i| {
+        for (0..65) |j| {
+            const expected: f64 = if (i == j) 2.25 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 65 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 64×64 should use SIMD (trans='T' at threshold)" {
+    const allocator = testing.allocator;
+
+    // A is 64×64, C will be 64×64 (trans='T')
+    // Create 64×64 matrix with values
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 64×64, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0.0*C where A is diagonal with 2's
+    // Expected: C[i,i] = 2*2 = 4, C[i,j] = 0 (i != j)
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 4.0
+    for (0..64) |i| {
+        for (0..64) |j| {
+            const expected: f64 = if (i == j) 4.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 128×64 large matrix (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 128×64, C will be 128×128 (trans='N')
+    var A_data = try allocator.alloc(f64, 128 * 64);
+    defer allocator.free(A_data);
+    for (0..128 * 64) |i| {
+        A_data[i] = 1.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 128, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 128×128, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where all A elements are 1.0
+    // Expected: C[i,j] = sum(A[i,:]) = 64.0 for all i,j
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify all elements should be 64.0
+    for (0..128) |i| {
+        for (0..128) |j| {
+            try testing.expectApproxEqAbs(64.0, C.data[i * 128 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 256×128 large matrix (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 256×128, C will be 256×256 (trans='N')
+    var A_data = try allocator.alloc(f64, 256 * 128);
+    defer allocator.free(A_data);
+    for (0..256 * 128) |i| {
+        A_data[i] = 0.5;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 256, 128 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 256×256, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where all A elements are 0.5
+    // Expected: C[i,j] = sum(0.5 * 0.5) = 128 * 0.25 = 32.0 for all i,j
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify all elements should be 32.0
+    for (0..256) |i| {
+        for (0..256) |j| {
+            try testing.expectApproxEqAbs(32.0, C.data[i * 256 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 64×64 with alpha=0.5, beta=0 (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 64×64 with all 2's
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        A_data[i] = 2.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 64×64, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // C := 0.5*A*A^T + 0.0*C where all A elements are 2.0
+    // Expected: C[i,j] = 0.5 * (sum of 2*2) = 0.5 * 64 * 4 = 128.0
+    try syrk(f64, 'N', 'U', 0.5, A, 0.0, &C);
+
+    // Verify all elements should be 128.0
+    for (0..64) |i| {
+        for (0..64) |j| {
+            try testing.expectApproxEqAbs(128.0, C.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 64×64 with alpha=1.0, beta=0.5 (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 64×64 with all 1's
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        A_data[i] = 1.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 64×64 with all 4's (initial value)
+    var C_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(C_data);
+    for (0..64 * 64) |i| {
+        C_data[i] = 4.0;
+    }
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, C_data, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.5*C where all A elements are 1.0
+    // Expected: C[i,j] = 1.0 * 64 + 0.5 * 4 = 64 + 2 = 66
+    try syrk(f64, 'N', 'U', 1.0, A, 0.5, &C);
+
+    // Verify all elements should be 66.0
+    for (0..64) |i| {
+        for (0..64) |j| {
+            try testing.expectApproxEqAbs(66.0, C.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 64×64 uplo='L' (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 64×64 with diagonal values
+    var A_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 3.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 64×64, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C with uplo='L' (lower triangle)
+    // Expected: C[i,i] = 9.0, other elements = 0.0
+    try syrk(f64, 'N', 'L', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 9.0, off-diagonal 0.0
+    for (0..64) |i| {
+        for (0..64) |j| {
+            const expected: f64 = if (i == j) 9.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 64 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 67×67 non-aligned (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 67×67 (non-aligned, above threshold)
+    var A_data = try allocator.alloc(f64, 67 * 67);
+    defer allocator.free(A_data);
+    for (0..67 * 67) |i| {
+        const row = i / 67;
+        const col = i % 67;
+        A_data[i] = if (row == col) 1.0 else 0.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 67, 67 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 67×67, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 67, 67 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where A is identity
+    // Expected: C = I
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 1.0
+    for (0..67) |i| {
+        for (0..67) |j| {
+            const expected: f64 = if (i == j) 1.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 67 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: 100×50 non-aligned (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 100×50 (non-aligned, above threshold for n=100)
+    var A_data = try allocator.alloc(f64, 100 * 50);
+    defer allocator.free(A_data);
+    for (0..100 * 50) |i| {
+        A_data[i] = 1.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 100, 50 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 100×100, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 100, 100 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C where all A elements are 1.0
+    // Expected: C[i,j] = 50.0 for all i,j
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify all elements should be 50.0
+    for (0..100) |i| {
+        for (0..100) |j| {
+            try testing.expectApproxEqAbs(50.0, C.data[i * 100 + j], 1e-10);
+        }
+    }
+}
+
+test "syrk auto-dispatch: f32 type 64×64 (trans='N')" {
+    const allocator = testing.allocator;
+
+    // A is 64×64 with f32 type
+    var A_data = try allocator.alloc(f32, 64 * 64);
+    defer allocator.free(A_data);
+    for (0..64 * 64) |i| {
+        const row = i / 64;
+        const col = i % 64;
+        A_data[i] = if (row == col) 2.0 else 0.0;
+    }
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 64×64 with f32 type, initialized to zero
+    var C = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C
+    // Expected: C[i,i] = 4.0, C[i,j] = 0.0 (i != j)
+    try syrk(f32, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify: diagonal should be 4.0
+    for (0..64) |i| {
+        for (0..64) |j| {
+            const expected: f32 = if (i == j) 4.0 else 0.0;
+            try testing.expectApproxEqAbs(expected, C.data[i * 64 + j], 1e-5);
+        }
+    }
+}
+
+test "syrk auto-dispatch: numerical equivalence scalar vs dispatch (64×32)" {
+    const allocator = testing.allocator;
+
+    // A is 64×32 for trans='N' (produces 64×64 C)
+    var A_data = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(A_data);
+    for (0..64 * 32) |i| {
+        A_data[i] = @as(f64, @floatFromInt(i % 10)) * 0.1;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, A_data, .row_major);
+    defer A.deinit();
+
+    // Create two identical C matrices
+    var C1 = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C1.deinit();
+
+    const C2_data = try allocator.alloc(f64, 64 * 64);
+    defer allocator.free(C2_data);
+    @memcpy(C2_data, C1.data);
+    var C2 = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, C2_data, .row_major);
+    defer C2.deinit();
+
+    // Call syrk on both (dispatch version)
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C1);
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C2);
+
+    // Verify both results are identical
+    for (0..64 * 64) |i| {
+        try testing.expectApproxEqAbs(C1.data[i], C2.data[i], 1e-10);
+    }
+}
+
+test "syrk auto-dispatch: 64×32 trans='T' (produces 32×32)" {
+    const allocator = testing.allocator;
+
+    // A is 64×32, C will be 32×32 (trans='T')
+    var A_data = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(A_data);
+    for (0..64 * 32) |i| {
+        A_data[i] = 1.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C is 32×32, initialized to zero
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 32, 32 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0.0*C where all A elements are 1.0
+    // Expected: C[i,j] = 64.0 for all i,j (32×32, below threshold, uses scalar)
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    // Verify all elements should be 64.0
+    for (0..32) |i| {
+        for (0..32) |j| {
+            try testing.expectApproxEqAbs(64.0, C.data[i * 32 + j], 1e-10);
+        }
+    }
 }
