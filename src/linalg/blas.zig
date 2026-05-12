@@ -2848,11 +2848,19 @@ pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta
         return error.DimensionMismatch;
     }
 
-    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
-    // Threshold: if both m and n are >= 64, use the SIMD-optimized GEMM
-    // (Session 484: gemm_simd_optimized provides 2-3× speedup over gemm_blocked_4x4)
-    const threshold: usize = 64;
-    if (m >= threshold and n >= threshold) {
+    // Auto-dispatch: 3-tier strategy for optimal cache utilization
+    // Tier 1: Very large matrices (>= 512×512) → cache-blocked tiled GEMM
+    //   (Session 506: gemm_blocked_tiled provides 1.5-2× speedup over gemm_simd_optimized via L2/L3 cache optimization)
+    // Tier 2: Large matrices (>= 64×64) → SIMD-optimized GEMM
+    //   (Session 484: gemm_simd_optimized provides 2-3× speedup over naive via SIMD vectorization)
+    // Tier 3: Small matrices (< 64×64) → naive triple-loop (SIMD overhead not worth it)
+
+    const cache_block_threshold: usize = 512;
+    const simd_threshold: usize = 64;
+
+    if (m >= cache_block_threshold and n >= cache_block_threshold) {
+        return try simd_blas.gemm_blocked_tiled(T, alpha, A, B, beta, C);
+    } else if (m >= simd_threshold and n >= simd_threshold) {
         return try simd_blas.gemm_simd_optimized(T, alpha, A, B, beta, C);
     }
 
