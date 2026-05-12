@@ -239,6 +239,46 @@ pub fn main() !void {
         std.debug.print("  FFT 1M:           {d:>8.2} ms\n", .{time_ms});
     }
 
+    // FFT 4096 complex with caching (comparison to baseline)
+    {
+        const fft = zuda.signal.fft;
+        const n: usize = 4096;
+        var signal = try std.ArrayList(fft.Complex(f64)).initCapacity(allocator, n);
+        defer signal.deinit(allocator);
+        for (0..n) |i| {
+            const t = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n));
+            signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
+        }
+
+        var timer = try std.time.Timer.start();
+        const result = try fft.fftCached(f64, allocator, signal.items);
+        defer allocator.free(result);
+        const elapsed_ns = timer.read();
+        const time_us = @as(f64, @floatFromInt(elapsed_ns)) / 1_000.0;
+
+        std.debug.print("  FFT 4096 (cached): {d:>8.2} μs\n", .{time_us});
+    }
+
+    // FFT 1M complex with caching (comparison to baseline)
+    {
+        const fft = zuda.signal.fft;
+        const n: usize = 1_048_576; // 2^20
+        var signal = try std.ArrayList(fft.Complex(f64)).initCapacity(allocator, n);
+        defer signal.deinit(allocator);
+        for (0..n) |i| {
+            const t = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(n));
+            signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
+        }
+
+        var timer = try std.time.Timer.start();
+        const result = try fft.fftCached(f64, allocator, signal.items);
+        defer allocator.free(result);
+        const elapsed_ns = timer.read();
+        const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
+
+        std.debug.print("  FFT 1M (cached):  {d:>8.2} ms\n", .{time_ms});
+    }
+
     // Category 4: NDArray Operations
     std.debug.print("\n## 4. NDArray Operations\n", .{});
     std.debug.print("───────────────────────────────────────────────\n", .{});

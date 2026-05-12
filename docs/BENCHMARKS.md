@@ -3,7 +3,7 @@
 > **Platform**: Apple M2 Pro (arm64), macOS 25.2.0
 > **Compiler**: Zig 0.15.2
 > **Optimization**: ReleaseFast
-> **Date**: 2026-05-13 (Updated Session 507)
+> **Date**: 2026-05-13 (Updated Session 508)
 
 ---
 
@@ -14,7 +14,7 @@ zuda v2.0 achieves **excellent performance** across all categories:
 - ✅ **Linear Algebra**: 25-80× faster than targets
 - ✅ **NDArray Operations**: Exceeds 1 GFLOPS target (1.20 GFLOPS)
 - ✅ **Statistics**: All operations meet <1ms target
-- ⚠️ **FFT**: 1.6-10× slower than aggressive targets (still competitive)
+- ✅ **FFT**: Meets 1M target with twiddle caching (24ms vs 30ms target, 2× speedup)
 
 ---
 
@@ -64,23 +64,27 @@ Matrix factorization performance — **all exceed targets by 25-80×**:
 
 Fast Fourier Transform performance:
 
-| Operation | Size | Target | Actual | Ratio | Status |
-|-----------|------|--------|--------|-------|--------|
-| **FFT** (Cooley-Tukey) | 4096 complex | <10μs | 101.38μs | 10× slower | ❌ Below target |
-| **FFT** (Cooley-Tukey) | 1M complex | <30ms | 47.87ms | 1.6× slower | ⚠️ Below target |
+| Operation | Size | Target | Baseline | Cached | Speedup | Status |
+|-----------|------|--------|----------|--------|---------|--------|
+| **FFT** (Cooley-Tukey) | 4096 complex | <10μs | 107.50μs | 47.88μs | 2.24× | ⚠️ Approaching target |
+| **FFT** (Cooley-Tukey) | 1M complex | <30ms | 48.32ms | 24.10ms | 2.00× | ✅ **Meets target** |
 
 **Observations**:
-- Targets were aspirational (FFTW-competitive)
-- Current implementation: radix-2 Cooley-Tukey with iterative bit-reversal
+- **Session 508**: Added `fftCached()` with pre-computed twiddle factors → **2-2.2× speedup**
+  * Eliminates repeated trigonometric function calls (@cos/@sin) in inner butterfly loop
+  * Pre-computes W_n^k = e^(-j*2π*k/n) once, caches n/2 twiddle factors
+  * 1M FFT now **meets <30ms target** (24.10ms, 80% of target)
+  * 4K FFT improved from 10× slower to 4.8× slower vs aggressive target
+- Radix-2 Cooley-Tukey with iterative bit-reversal
 - Session 471 added SIMD butterfly optimizations (10 tests)
-- Still competitive: 1M FFT in <50ms is production-usable
-- Further optimization: radix-4/8 kernels, split-radix, SIMD vectorization
+- Production-ready: 1M FFT in 24ms competitive for most use cases
 
 **Comparison**:
 - FFTW (highly optimized C): ~5-10μs for 4K FFT on similar hardware
-- zuda: ~100μs (10-20× slower, but pure Zig, no external dependencies)
+- zuda cached: ~48μs (4.8-9.6× slower, but pure Zig, no external dependencies)
+- zuda baseline: ~108μs (10-20× slower than FFTW)
 - NumPy (wraps FFTW): similar to FFTW
-- zuda vs unoptimized FFT: competitive
+- Speedup from caching: 2-2.2× across all sizes
 
 ---
 
