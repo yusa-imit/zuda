@@ -8599,6 +8599,159 @@ pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B:
     }
 }
 
+/// Symmetric Rank-K Update: C := α*A*A^T + β*C (trans='N') or C := α*A^T*A + β*C (trans='T')
+///
+/// Performs a symmetric rank-k update. The result matrix C is symmetric and only its specified
+/// triangle (upper or lower) is updated. C is modified in-place.
+///
+/// Parameters:
+/// - trans: 'N' (no transpose: C := α*A*A^T + β*C) or 'T' (transpose: C := α*A^T*A + β*C)
+/// - uplo: 'U' (upper triangle of C updated) or 'L' (lower triangle of C updated)
+/// - alpha: scalar multiplier for the rank-k update
+/// - A: rectangular matrix (m×k for trans='N', or k×m for trans='T', but stored as is)
+/// - beta: scalar multiplier for existing C
+/// - C: symmetric matrix (m×m for trans='N', or k×k for trans='T', modified in-place)
+///
+/// Errors:
+/// - error.DimensionMismatch if dimensions don't match
+/// - error.InvalidValue if trans or uplo is not valid ('N'/'T' or 'U'/'L')
+///
+/// Time: O(m²k) for trans='N' or O(k²m) for trans='T'
+/// Space: O(m) or O(k) temporary storage for row/column computations
+///
+/// Example (trans='N'):
+/// ```zig
+/// // A is 3×2, C is 3×3
+/// // C := 1.0*A*A^T + 0.0*C
+/// try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+/// ```
+pub fn syrk(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    // Validate trans parameter
+    const is_trans_n = (trans == 'N' or trans == 'n');
+    const is_trans_t = (trans == 'T' or trans == 't');
+    if (!is_trans_n and !is_trans_t) {
+        return error.InvalidValue;
+    }
+
+    // Validate uplo parameter
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_lower = (uplo == 'L' or uplo == 'l');
+    if (!is_upper and !is_lower) {
+        return error.InvalidValue;
+    }
+
+    // Get dimensions
+    const a_rows = A.shape[0];
+    const a_cols = A.shape[1];
+    const c_rows = C.shape[0];
+    const c_cols = C.shape[1];
+
+    // Validate that C is square
+    if (c_rows != c_cols) {
+        return error.DimensionMismatch;
+    }
+
+    // Validate dimensions based on trans parameter
+    // For trans='N': A is m×k, C is m×m
+    // For trans='T': A is m×k, C is k×k
+    if (is_trans_n) {
+        // A is a_rows×a_cols, C should be a_rows×a_rows
+        if (c_rows != a_rows) {
+            return error.DimensionMismatch;
+        }
+    } else {
+        // A is a_rows×a_cols, C should be a_cols×a_cols
+        if (c_rows != a_cols) {
+            return error.DimensionMismatch;
+        }
+    }
+
+    const n = c_rows;  // C is n×n
+
+    // Scale C by beta first
+    for (0..n * n) |i| {
+        C.data[i] = beta * C.data[i];
+    }
+
+    // Perform the rank-k update
+    if (is_trans_n) {
+        // C := α*A*A^T + β*C
+        // A is m×k, so we compute C[i,j] = α * sum(A[i,:] * A[j,:]) for i,j in 0..m
+        const m = a_rows;
+        const k = a_cols;
+
+        if (is_upper) {
+            // Update only upper triangle: i <= j
+            for (0..m) |i| {
+                for (i..m) |j| {
+                    var sum: T = 0;
+                    for (0..k) |p| {
+                        sum += A.data[i * k + p] * A.data[j * k + p];
+                    }
+                    C.data[i * n + j] += alpha * sum;
+                    // Set lower triangle equal (maintain symmetry)
+                    if (i != j) {
+                        C.data[j * n + i] = C.data[i * n + j];
+                    }
+                }
+            }
+        } else {
+            // Update only lower triangle: i >= j
+            for (0..m) |i| {
+                for (0..i + 1) |j| {
+                    var sum: T = 0;
+                    for (0..k) |p| {
+                        sum += A.data[i * k + p] * A.data[j * k + p];
+                    }
+                    C.data[i * n + j] += alpha * sum;
+                    // Set upper triangle equal (maintain symmetry)
+                    if (i != j) {
+                        C.data[j * n + i] = C.data[i * n + j];
+                    }
+                }
+            }
+        }
+    } else {
+        // C := α*A^T*A + β*C
+        // A is m×k, so A^T is k×m
+        // C[i,j] = α * sum(A[:,i] * A[:,j]) for i,j in 0..k
+        const m = a_rows;
+        const k = a_cols;
+
+        if (is_upper) {
+            // Update only upper triangle: i <= j
+            for (0..k) |i| {
+                for (i..k) |j| {
+                    var sum: T = 0;
+                    for (0..m) |p| {
+                        sum += A.data[p * k + i] * A.data[p * k + j];
+                    }
+                    C.data[i * n + j] += alpha * sum;
+                    // Set lower triangle equal (maintain symmetry)
+                    if (i != j) {
+                        C.data[j * n + i] = C.data[i * n + j];
+                    }
+                }
+            }
+        } else {
+            // Update only lower triangle: i >= j
+            for (0..k) |i| {
+                for (0..i + 1) |j| {
+                    var sum: T = 0;
+                    for (0..m) |p| {
+                        sum += A.data[p * k + i] * A.data[p * k + j];
+                    }
+                    C.data[i * n + j] += alpha * sum;
+                    // Set upper triangle equal (maintain symmetry)
+                    if (i != j) {
+                        C.data[j * n + i] = C.data[i * n + j];
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Comprehensive RED tests for symm() (Symmetric Matrix-Matrix Multiply)
 // ============================================================================
@@ -9585,4 +9738,579 @@ test "symm auto-dispatch: alpha=0 with large matrix (SIMD dispatch)" {
             try testing.expectApproxEqAbs(expected, B.data[i * 16 + j], 1e-10);
         }
     }
+}
+
+// ============================================================================
+// Comprehensive RED tests for syrk() (Symmetric Rank-K Update)
+// ============================================================================
+//
+// Operation:
+// - trans='N': C := alpha*A*A^T + beta*C (A is m×k → C is m×m symmetric)
+// - trans='T': C := alpha*A^T*A + beta*C (A is m×k → C is k×k symmetric)
+//
+// Parameters:
+// - trans: 'N' (no transpose) or 'T' (transpose)
+// - uplo: 'U' (upper triangle) or 'L' (lower triangle)
+// - alpha: scalar multiplier for the rank-k update
+// - A: rectangular matrix (m×k)
+// - beta: scalar multiplier for existing C
+// - C: symmetric matrix (m×m or k×k, updated in-place)
+
+test "syrk: basic 2×2 no-transpose, upper triangle, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]  (2×2, here m=2, k=2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 output)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C
+    // A*A^T = [[1, 2], [3, 4]] * [[1, 3], [2, 4]]
+    //       = [[1*1+2*2, 1*3+2*4], [3*1+4*2, 3*3+4*4]]
+    //       = [[5, 11], [11, 25]]
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10);   // C[0,0]
+    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10);  // C[0,1]
+    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10);  // C[1,0] (should match [0,1] for symmetry)
+    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10);  // C[1,1]
+}
+
+test "syrk: basic 2×2 transpose, upper triangle, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]  (2×2, m=2, k=2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 output)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0.0*C
+    // A^T*A = [[1, 3], [2, 4]] * [[1, 2], [3, 4]]
+    //       = [[1*1+3*3, 1*2+3*4], [2*1+4*3, 2*2+4*4]]
+    //       = [[10, 14], [14, 20]]
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(10.0, C.data[0], 1e-10);  // C[0,0]
+    try testing.expectApproxEqAbs(14.0, C.data[1], 1e-10);  // C[0,1]
+    try testing.expectApproxEqAbs(14.0, C.data[2], 1e-10);  // C[1,0]
+    try testing.expectApproxEqAbs(20.0, C.data[3], 1e-10);  // C[1,1]
+}
+
+test "syrk: rectangular A (2×3), no-transpose, upper triangle" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]]  (2×3, m=2, k=3)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 output)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C
+    // A*A^T = [[1, 2, 3], [4, 5, 6]] * [[1, 4], [2, 5], [3, 6]]
+    //       = [[1*1+2*2+3*3, 1*4+2*5+3*6], [4*1+5*2+6*3, 4*4+5*5+6*6]]
+    //       = [[14, 32], [32, 77]]
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(14.0, C.data[0], 1e-10);  // C[0,0]
+    try testing.expectApproxEqAbs(32.0, C.data[1], 1e-10);  // C[0,1]
+    try testing.expectApproxEqAbs(32.0, C.data[2], 1e-10);  // C[1,0]
+    try testing.expectApproxEqAbs(77.0, C.data[3], 1e-10);  // C[1,1]
+}
+
+test "syrk: rectangular A (3×2), transpose, upper triangle" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4], [5, 6]]  (3×2, m=3, k=2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 output)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0.0*C
+    // A^T*A = [[1, 3, 5], [2, 4, 6]] * [[1, 2], [3, 4], [5, 6]]
+    //       = [[1*1+3*3+5*5, 1*2+3*4+5*6], [2*1+4*3+6*5, 2*2+4*4+6*6]]
+    //       = [[35, 44], [44, 56]]
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(35.0, C.data[0], 1e-10);  // C[0,0]
+    try testing.expectApproxEqAbs(44.0, C.data[1], 1e-10);  // C[0,1]
+    try testing.expectApproxEqAbs(44.0, C.data[2], 1e-10);  // C[1,0]
+    try testing.expectApproxEqAbs(56.0, C.data[3], 1e-10);  // C[1,1]
+}
+
+test "syrk: lower triangle, no-transpose, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]  (2×2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 output)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C (with lower triangle storage)
+    // Result should be same symmetric matrix: [[5, 11], [11, 25]]
+    try syrk(f64, 'N', 'L', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10);   // C[0,0]
+    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10);  // C[1,0]
+    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10);  // C[0,1] (stored in lower)
+    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10);  // C[1,1]
+}
+
+test "syrk: alpha=0 (C = beta*C only)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[10, 20], [30, 40]]
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 10, 20, 30, 40 }, .row_major);
+    defer C.deinit();
+
+    // C := 0.0*A*A^T + 2.0*C = 2.0*C
+    try syrk(f64, 'N', 'U', 0.0, A, 2.0, &C);
+
+    try testing.expectApproxEqAbs(20.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(40.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(60.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(80.0, C.data[3], 1e-10);
+}
+
+test "syrk: beta=0 (C = alpha*A*A^T)" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[100, 200], [300, 400]]  (should be overwritten)
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 100, 200, 300, 400 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0.0*C = A*A^T
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10);
+}
+
+test "syrk: alpha=0.5, beta=0.5 (mixed scaling)" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 0], [0, 2]]  (2×2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 0, 2 }, .row_major);
+    defer A.deinit();
+
+    // C = [[4, 0], [0, 4]]
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 4, 0, 0, 4 }, .row_major);
+    defer C.deinit();
+
+    // A*A^T = [[4, 0], [0, 4]]
+    // C := 0.5*[[4, 0], [0, 4]] + 0.5*[[4, 0], [0, 4]]
+    //    = [[2, 0], [0, 2]] + [[2, 0], [0, 2]]
+    //    = [[4, 0], [0, 4]]
+    try syrk(f64, 'N', 'U', 0.5, A, 0.5, &C);
+
+    try testing.expectApproxEqAbs(4.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[3], 1e-10);
+}
+
+test "syrk: negative alpha" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := -1.5*A*A^T + 0*C
+    // A*A^T = [[5, 11], [11, 25]]
+    // C = [[-7.5, -16.5], [-16.5, -37.5]]
+    try syrk(f64, 'N', 'U', -1.5, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(-7.5, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-16.5, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-16.5, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(-37.5, C.data[3], 1e-10);
+}
+
+test "syrk: negative beta" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 1], [1, 1]]  (simple matrix)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer A.deinit();
+
+    // C = [[4, 4], [4, 4]]
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 4, 4, 4, 4 }, .row_major);
+    defer C.deinit();
+
+    // A*A^T = [[2, 2], [2, 2]]
+    // C := 1.0*[[2, 2], [2, 2]] + (-1.0)*[[4, 4], [4, 4]]
+    //    = [[2, 2], [2, 2]] - [[4, 4], [4, 4]]
+    //    = [[-2, -2], [-2, -2]]
+    try syrk(f64, 'N', 'U', 1.0, A, -1.0, &C);
+
+    try testing.expectApproxEqAbs(-2.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(-2.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(-2.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(-2.0, C.data[3], 1e-10);
+}
+
+test "syrk: k=1 (single column/row)" {
+    const allocator = testing.allocator;
+
+    // A = [[1], [2], [3]]  (3×1 matrix)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]  (3×3 output)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0*C
+    // A*A^T = [[1], [2], [3]] * [[1, 2, 3]]
+    //       = [[1, 2, 3], [2, 4, 6], [3, 6, 9]]
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(1.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(4.0, C.data[3], 1e-10);
+    try testing.expectApproxEqAbs(6.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(6.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(9.0, C.data[8], 1e-10);
+}
+
+test "syrk: 3×3 full computation, no-transpose, upper" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]  (3×3)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0*C
+    // A*A^T:
+    // Row 0: [1,2,3]*[1,4,7] = 1+8+21 = 30
+    //        [1,2,3]*[2,5,8] = 2+10+24 = 36
+    //        [1,2,3]*[3,6,9] = 3+12+27 = 42
+    // Row 1: [4,5,6]*[1,4,7] = 4+20+42 = 66
+    //        [4,5,6]*[2,5,8] = 8+25+48 = 81
+    //        [4,5,6]*[3,6,9] = 12+30+54 = 96
+    // Row 2: [7,8,9]*[1,4,7] = 7+32+63 = 102
+    //        [7,8,9]*[2,5,8] = 14+40+72 = 126
+    //        [7,8,9]*[3,6,9] = 21+48+81 = 150
+    // So: [[30, 36, 42], [66, 81, 96], [102, 126, 150]]
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(30.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(36.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(42.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(81.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(96.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(150.0, C.data[8], 1e-10);
+}
+
+test "syrk: 3×3 transpose, upper" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]  (3×3)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]  (3×3)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0*C
+    // A^T*A:
+    // [1,4,7]*[1,2,3] = 1+8+21 = 30;  [1,4,7]*[4,5,6] = 4+20+42 = 66;  [1,4,7]*[7,8,9] = 7+32+63 = 102
+    // [2,5,8]*[1,2,3] = 2+10+24 = 36;  [2,5,8]*[4,5,6] = 8+25+48 = 81;  [2,5,8]*[7,8,9] = 14+40+72 = 126
+    // [3,6,9]*[1,2,3] = 3+12+27 = 42;  [3,6,9]*[4,5,6] = 12+30+54 = 96;  [3,6,9]*[7,8,9] = 21+48+81 = 150
+    // So: [[66, 81, 96], [81, 107, 133], [96, 133, 170]]
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(66.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(81.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(96.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(107.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(133.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(170.0, C.data[8], 1e-10);
+}
+
+test "syrk: repeated updates accumulation" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0], [0, 1]]  (2×2 identity)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    // C = [[1, 0], [0, 1]]  (2×2 identity)
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 0, 0, 1 }, .row_major);
+    defer C.deinit();
+
+    // First update: C := 1.0*A*A^T + 1.0*C
+    // A*A^T = I, so C = I + I = 2I
+    try syrk(f64, 'N', 'U', 1.0, A, 1.0, &C);
+
+    try testing.expectApproxEqAbs(2.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(2.0, C.data[3], 1e-10);
+
+    // Second update: C := 1.0*A*A^T + 1.0*C (C is now 2I)
+    // Result = I + 2I = 3I
+    try syrk(f64, 'N', 'U', 1.0, A, 1.0, &C);
+
+    try testing.expectApproxEqAbs(3.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(3.0, C.data[3], 1e-10);
+}
+
+test "syrk: zero matrix A" {
+    const allocator = testing.allocator;
+
+    // A = [[0, 0], [0, 0]]
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    // C = [[5, 5], [5, 5]]
+    var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 5, 5, 5 }, .row_major);
+    defer C.deinit();
+
+    // C := 2.0*A*A^T + 1.0*C
+    // A*A^T = 0, so C = 0 + 1*C = C (unchanged)
+    try syrk(f64, 'N', 'U', 2.0, A, 1.0, &C);
+
+    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(5.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(5.0, C.data[3], 1e-10);
+}
+
+test "syrk: identity matrix A with transpose" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]  (3×3 identity)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0*C
+    // A^T*A = I*I = I
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(1.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(1.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(0.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(1.0, C.data[8], 1e-10);
+}
+
+test "syrk: f32 precision, no-transpose upper" {
+    const allocator = testing.allocator;
+
+    // A = [[1.5, 2.5], [3.5, 4.5]]  (f32)
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1.5, 2.5, 3.5, 4.5 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]
+    var C = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A*A^T + 0*C
+    // A*A^T = [[1.5*1.5+2.5*2.5, 1.5*3.5+2.5*4.5], [3.5*1.5+4.5*2.5, 3.5*3.5+4.5*4.5]]
+    //       = [[2.25+6.25, 5.25+11.25], [5.25+11.25, 12.25+20.25]]
+    //       = [[8.5, 16.5], [16.5, 32.5]]
+    try syrk(f32, 'N', 'U', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(8.5, C.data[0], 1e-5);
+    try testing.expectApproxEqAbs(16.5, C.data[1], 1e-5);
+    try testing.expectApproxEqAbs(16.5, C.data[2], 1e-5);
+    try testing.expectApproxEqAbs(32.5, C.data[3], 1e-5);
+}
+
+test "syrk: dimension mismatch — C not square" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]  (2×2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0]]  (2×3 — not square!)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 3 }, .row_major);
+    defer C.deinit();
+
+    // Should return DimensionMismatch
+    const result = syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "syrk: dimension mismatch — C size doesn't match A for no-transpose" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2, 3], [4, 5, 6]]  (2×3)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]  (3×3 — should be 2×2 for no-transpose)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer C.deinit();
+
+    // Should return DimensionMismatch
+    const result = syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "syrk: dimension mismatch — C size doesn't match A for transpose" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4], [5, 6]]  (3×2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2 — should be 2×2 for transpose, this is correct)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // This should succeed
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+}
+
+test "syrk: invalid trans parameter" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // Should return InvalidValue for invalid trans
+    const result = syrk(f64, 'X', 'U', 1.0, A, 0.0, &C);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "syrk: invalid uplo parameter" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // Should return InvalidValue for invalid uplo
+    const result = syrk(f64, 'N', 'X', 1.0, A, 0.0, &C);
+    try testing.expectError(error.InvalidValue, result);
+}
+
+test "syrk: large 64×32 matrix no-transpose upper" {
+    const allocator = testing.allocator;
+
+    // Create a 64×32 matrix with sequential values
+    var A_data = try allocator.alloc(f64, 64 * 32);
+    defer allocator.free(A_data);
+    for (0..64 * 32) |i| {
+        A_data[i] = @as(f64, @floatFromInt(i + 1)) / 100.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 32 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C = 64×64 zeros
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // Should complete without error
+    try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
+
+    // Verify C is symmetric (C[i,j] == C[j,i] for upper triangle)
+    for (0..64) |i| {
+        for (i..64) |j| {
+            try testing.expectApproxEqAbs(C.data[i * 64 + j], C.data[j * 64 + i], 1e-10);
+        }
+    }
+}
+
+test "syrk: large 32×64 matrix transpose upper" {
+    const allocator = testing.allocator;
+
+    // Create a 32×64 matrix with sequential values
+    var A_data = try allocator.alloc(f64, 32 * 64);
+    defer allocator.free(A_data);
+    for (0..32 * 64) |i| {
+        A_data[i] = @as(f64, @floatFromInt(i + 1)) / 100.0;
+    }
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 32, 64 }, A_data, .row_major);
+    defer A.deinit();
+
+    // C = 64×64 zeros
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
+    defer C.deinit();
+
+    // Should complete without error
+    try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
+
+    // Verify C is symmetric (C[i,j] == C[j,i] for upper triangle)
+    for (0..64) |i| {
+        for (i..64) |j| {
+            try testing.expectApproxEqAbs(C.data[i * 64 + j], C.data[j * 64 + i], 1e-10);
+        }
+    }
+}
+
+test "syrk: 4×4 full verification, transpose lower" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [3, 4], [5, 6], [7, 8]]  (4×2)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 2 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 }, .row_major);
+    defer A.deinit();
+
+    // C = [[0, 0], [0, 0]]  (2×2)
+    var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer C.deinit();
+
+    // C := 1.0*A^T*A + 0*C
+    // A^T = [[1, 3, 5, 7], [2, 4, 6, 8]]
+    // A^T*A = [[1+9+25+49, 2+12+30+56], [2+12+30+56, 4+16+36+64]]
+    //       = [[84, 100], [100, 120]]
+    try syrk(f64, 'T', 'L', 1.0, A, 0.0, &C);
+
+    try testing.expectApproxEqAbs(84.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(100.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(100.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(120.0, C.data[3], 1e-10);
 }
