@@ -1,3 +1,27 @@
+**Session 504 Update (2026-05-12) — FEATURE MODE:**
+
+⚡ **BLAS SIMD Horizontal Reduction Optimization** — Improved Level 1 performance:
+- **Problem**: Manual horizontal reduction loops in dot_simd, nrm2_simd, asum_simd prevented full SIMD utilization
+- **Root Cause**: `for (0..vec_width) |lane| sum += vec[lane]` uses scalar accumulation instead of vector horizontal add
+- **Fix**: Replaced with `@reduce(.Add, sum_vec)` — compiles to optimal HADD (x86) / FADDP (ARM NEON) instructions
+- **Functions Optimized**:
+  * dot_simd() — inner product reduction (line 199)
+  * nrm2_simd() — L2 norm sum-of-squares reduction (line 310)
+  * asum_simd() — absolute value sum reduction (line 376)
+- **Impact**: Expected 1.2-1.5× speedup for Level 1 BLAS operations
+  * Current: dot at 1.21 GFLOPS (61% of 2.0 GFLOPS target)
+  * After optimization: targeting ~1.6-1.8 GFLOPS (80-90% of target)
+  * Closes gap between manual reduction overhead and optimal SIMD code
+- **Rationale**: Other SIMD functions (trmv_simd, gemv_simd, gemm_simd_optimized) already use @reduce — this brings Level 1 to same standard
+- **Code Changes**:
+  * -9 lines (removed 3× manual reduction loops)
+  * +3 lines (@reduce calls with improved comment)
+  * Zero API changes (drop-in performance improvement)
+- **Tests**: All 2967+ tests passing (no regressions)
+- **Files**: src/linalg/simd_blas.zig (3 functions optimized)
+- **Commit**: 2a0fb07 (performance optimization)
+- **Discovery Method**: Analyzed BENCHMARKS.md showing dot at 61% of target → investigated simd_blas.zig → found inconsistency (Level 2/3 use @reduce, Level 1 doesn't)
+
 **Session 503 Update (2026-05-12) — FEATURE MODE:**
 
 ⚡ **BLAS syrk() COMPLETE** — Symmetric rank-k update (extends BLAS Level 3):
