@@ -1,3 +1,42 @@
+**Session 508 Update (2026-05-13) — FEATURE MODE:**
+
+⚡ **FFT Twiddle Factor Caching** — Achieved 2× FFT speedup, 1M FFT now meets target:
+- **Problem**: FFT benchmark at 10× slower than aggressive target for 4K, 1.6× for 1M
+  * Inner butterfly loop computed @cos/@sin for every operation (lines 94-96)
+  * 4096-point FFT: 24,576 trigonometric function calls (expensive)
+  * Session 507 optimized GEMM → FFT became next performance bottleneck
+- **Root Cause**: No twiddle factor caching — recomputed W_n^k = e^(-j*2π*k/n) every iteration
+  * Standard optimization in FFTW, cuFFT, Intel MKL
+  * Trig functions are ~50-100 CPU cycles each
+- **Solution**: Implemented fftCached() with pre-computed twiddle factors
+  * Pre-compute: W_n^k for k = 0..(n/2-1) once at start
+  * Cache n/2 twiddle factors (reused across stages via symmetry)
+  * Replace inline @cos/@sin calls with table lookup (O(1) array access)
+  * Algorithm: stride = n/size for each stage, twiddle_idx = j * stride
+  * Same O(n log n) complexity, reduced constant factor by eliminating trig calls
+- **Performance Impact** (Apple M2 Pro, ReleaseFast):
+  * **FFT 4K**: 107.50 → **47.88 μs** (2.24× speedup, now 4.8× vs target, down from 10×)
+  * **FFT 1M**: 48.32 → **24.10 ms** (2.00× speedup, **meets <30ms target** ✅)
+  * Benchmark: bench/scientific_computing.zig (+40 lines for cached tests)
+- **Tests**: 17 comprehensive tests (all passing, 100%)
+  * Correctness: 6 tests (8, 16, 32, 256, 512, 4096 points vs baseline fft())
+  * Type support: 2 tests (f32 precision with realistic tolerances)
+  * Edge cases: 2 tests (n=1 trivial, non-power-of-two error)
+  * Signal types: 4 tests (impulse, sine, complex exponential, DC constant)
+  * Mathematical: 1 test (Parseval's theorem — energy conservation)
+  * Memory safety: 1 test (10-iteration leak detection)
+  * Error handling: 1 test (empty input validation)
+  * Fixed Parseval test bug: sum(|time|²) * N = sum(|freq|²) (was missing N factor)
+- **Files**:
+  * src/signal/fft.zig (+272 lines: 67 fftCached(), 205 tests)
+  * bench/scientific_computing.zig (+40 lines: 2 cached benchmarks)
+  * docs/BENCHMARKS.md (updated FFT section, executive summary)
+- **Commit**: 7794a44 (performance optimization)
+- **Total Tests**: 3021 tests passing (100%), +17 FFT tests
+- **TDD Workflow**: test-writer agent (17 RED tests) → direct implementation → GREEN
+- **Documentation**: Updated BENCHMARKS.md with 2× speedup results, 1M FFT ✅ meets target
+- **Rationale**: v2.0 complete, maintenance mode focuses on performance. Session 507 optimized GEMM (162% of target), FFT was next bottleneck. Twiddle caching is well-known optimization (FFTW uses it). Now 1M FFT meets target, 4K FFT gap reduced from 10× to 4.8× vs aggressive target.
+
 **Session 507 Update (2026-05-13) — FEATURE MODE:**
 
 ⚡ **SIMD Micro-Kernel for gemm_blocked_tiled** — Achieved 3× GEMM speedup, exceeds 5.0 GFLOPS target:
