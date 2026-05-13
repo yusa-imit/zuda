@@ -10761,3 +10761,253 @@ test "syrk auto-dispatch: 64×32 trans='T' (produces 32×32)" {
         }
     }
 }
+
+// ============================================================================
+// iamax Tests — Index of Maximum Absolute Value
+// ============================================================================
+//
+// BLAS Level 1 operation: find index of first element with max |value|
+// Specification:
+// - Returns index of first element with maximum absolute value
+// - Empty vector → error.EmptyArray
+// - Time: O(n) single pass
+// - Space: O(1) constant
+//
+// Test coverage:
+// 1. Basic correctness (3 tests): positive max, negative max, zero included
+// 2. Edge cases (4 tests): single element, all equal, all zeros, max at start
+// 3. Tie breaking (2 tests): multiple maxima (first occurrence principle)
+// 4. Type support (2 tests): f32 and f64 precision
+// 5. Large vectors (2 tests): n=1000 cases with max at different positions
+// 6. Error handling (1 test): empty vector → error.EmptyArray
+// 7. Memory safety (1 test): 10 iterations with testing.allocator
+
+/// Find index of first element with maximum absolute value
+///
+/// Parameters:
+/// - x: Input vector (1D NDArray)
+///
+/// Returns: Index (usize) of first element with maximum absolute value
+///
+/// Errors:
+/// - error.EmptyArray if vector is empty
+///
+/// Time: O(n) where n = length of vector
+/// Space: O(1) constant
+///
+/// Example:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{1.0, -7.0, 3.0}, .row_major);
+/// defer x.deinit();
+/// const idx = try iamax(f64, x); // Returns 1 (|-7.0| = 7.0 is max)
+/// ```
+pub fn iamax(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!usize {
+    // Check if vector is empty
+    if (x.shape[0] == 0) {
+        return error.EmptyArray;
+    }
+
+    const n = x.shape[0];
+    var max_abs = @abs(x.data[0]);
+    var max_idx: usize = 0;
+
+    // Single-pass O(n) search for maximum absolute value
+    for (1..n) |i| {
+        const abs_val = @abs(x.data[i]);
+        if (abs_val > max_abs) {
+            max_abs = abs_val;
+            max_idx = i;
+        }
+    }
+
+    return max_idx;
+}
+
+test "iamax: positive max at index 1" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 5.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |1.0| = 1.0, |5.0| = 5.0, |3.0| = 3.0 → max is 5.0 at index 1
+    try testing.expect(idx == 1);
+}
+
+test "iamax: negative max at index 1" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, -7.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |1.0| = 1.0, |-7.0| = 7.0, |3.0| = 3.0 → max is 7.0 at index 1
+    try testing.expect(idx == 1);
+}
+
+test "iamax: zero included with negative max" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 0.0, -2.0, 1.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |0.0| = 0.0, |-2.0| = 2.0, |1.0| = 1.0 → max is 2.0 at index 1
+    try testing.expect(idx == 1);
+}
+
+test "iamax: single element" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{5.0}, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // Only one element at index 0
+    try testing.expect(idx == 0);
+}
+
+test "iamax: all equal elements" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 2.0, 2.0, 2.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // All have |2.0| = 2.0, should return first occurrence at index 0
+    try testing.expect(idx == 0);
+}
+
+test "iamax: all zeros" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0.0, 0.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // All have |0.0| = 0.0, should return first occurrence at index 0
+    try testing.expect(idx == 0);
+}
+
+test "iamax: max at start" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 5.0, 1.0, 2.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |5.0| = 5.0 is largest, at index 0
+    try testing.expect(idx == 0);
+}
+
+test "iamax: multiple maxima, first positive then negative" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 3.0, -3.0, 1.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |3.0| = 3.0 and |-3.0| = 3.0 both have max abs value, should return first (index 0)
+    try testing.expect(idx == 0);
+}
+
+test "iamax: multiple maxima, first positive then negative at different indices" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, -2.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |1.0| = 1.0, |2.0| = 2.0, |-2.0| = 2.0 → max is 2.0, first occurrence at index 1
+    try testing.expect(idx == 1);
+}
+
+test "iamax: f32 precision" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 1.5, -3.2, 2.1, 0.5 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f32, x);
+    // |1.5| = 1.5, |-3.2| = 3.2, |2.1| = 2.1, |0.5| = 0.5 → max is 3.2 at index 1
+    try testing.expect(idx == 1);
+}
+
+test "iamax: f64 precision" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.5, -3.2, 2.1, 0.5 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // |1.5| = 1.5, |-3.2| = 3.2, |2.1| = 2.1, |0.5| = 0.5 → max is 3.2 at index 1
+    try testing.expect(idx == 1);
+}
+
+test "iamax: large vector n=1000 with max at index 500" {
+    const allocator = testing.allocator;
+
+    var data = try allocator.alloc(f64, 1000);
+    defer allocator.free(data);
+
+    for (0..1000) |i| {
+        if (i == 500) {
+            data[i] = 999.9; // Peak value
+        } else {
+            data[i] = @as(f64, @floatFromInt(i)) * 0.1;
+        }
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, data, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // Max value 999.9 is at index 500
+    try testing.expect(idx == 500);
+}
+
+test "iamax: large vector n=1000 with max at index 999 (end)" {
+    const allocator = testing.allocator;
+
+    var data = try allocator.alloc(f64, 1000);
+    defer allocator.free(data);
+
+    for (0..1000) |i| {
+        if (i == 999) {
+            data[i] = -1000.5; // Peak absolute value
+        } else {
+            data[i] = @as(f64, @floatFromInt(i)) * 0.1;
+        }
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, data, .row_major);
+    defer x.deinit();
+
+    const idx = try iamax(f64, x);
+    // Max absolute value 1000.5 is at index 999
+    try testing.expect(idx == 999);
+}
+
+test "iamax: error on empty vector" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
+    defer x.deinit();
+
+    const result = iamax(f64, x);
+    // Empty vector should return error.EmptyArray
+    try testing.expectError(error.EmptyArray, result);
+}
+
+test "iamax: memory safety 10 iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, -2.0, 3.0, -4.0, 2.5 }, .row_major);
+        defer x.deinit();
+
+        const idx = try iamax(f64, x);
+        // |1.0| = 1.0, |-2.0| = 2.0, |3.0| = 3.0, |-4.0| = 4.0, |2.5| = 2.5 → max is 4.0 at index 3
+        try testing.expect(idx == 3);
+    }
+}
