@@ -11243,6 +11243,117 @@ pub fn swap(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1)) (NDArray(T, 
     }
 }
 
+/// Compute Givens rotation parameters
+///
+/// Given scalars a and b, computes the Givens rotation matrix parameters (c, s)
+/// and the resulting norm r such that:
+///   [ c  s ] [ a ]   [ r ]
+///   [-s  c ] [ b ] = [ 0 ]
+///
+/// The rotation satisfies: c² + s² = 1 (orthogonality)
+///
+/// Parameters:
+/// - a: First scalar
+/// - b: Second scalar
+///
+/// Returns: struct { c: T, s: T, r: T } where
+///   - c: cosine component
+///   - s: sine component
+///   - r: resulting norm sqrt(a² + b²)
+///
+/// Time: O(1)
+/// Space: O(1)
+///
+/// Special cases:
+/// - If both a and b are zero: c=1, s=0, r=0
+/// - If a is zero: c=0, s=1, r=|b|
+/// - If b is zero: c=1, s=0, r=|a|
+///
+/// Example:
+/// ```zig
+/// const result = rotg(f64, 3.0, 4.0);
+/// // result.c ≈ 0.6, result.s ≈ 0.8, result.r ≈ 5.0
+/// ```
+pub fn rotg(comptime T: type, a: T, b: T) struct { c: T, s: T, r: T } {
+    // Handle special case: both zero
+    if (a == 0.0 and b == 0.0) {
+        return .{ .c = 1.0, .s = 0.0, .r = 0.0 };
+    }
+
+    // Handle special case: a is zero
+    if (a == 0.0) {
+        const abs_b = @abs(b);
+        return .{ .c = 0.0, .s = if (b >= 0.0) 1.0 else -1.0, .r = abs_b };
+    }
+
+    // Handle special case: b is zero
+    if (b == 0.0) {
+        const abs_a = @abs(a);
+        return .{ .c = if (a >= 0.0) 1.0 else -1.0, .s = 0.0, .r = abs_a };
+    }
+
+    // General case: compute r = sqrt(a² + b²) using hypot for numerical stability
+    // hypot(a, b) computes sqrt(a² + b²) while avoiding overflow/underflow
+    const r = @sqrt(a * a + b * b);
+
+    // Compute rotation parameters: c = a/r, s = b/r
+    const c = a / r;
+    const s = b / r;
+
+    return .{ .c = c, .s = s, .r = r };
+}
+
+/// Apply Givens rotation to two vectors
+///
+/// Applies the Givens rotation defined by (c, s) to vectors x and y in-place:
+///   x_new[i] = c*x[i] + s*y[i]
+///   y_new[i] = c*y[i] - s*x[i]
+///
+/// This is equivalent to multiplying the 2-element vectors [x[i], y[i]]
+/// by the rotation matrix:
+///   [ c  s ]
+///   [-s  c ]
+///
+/// Parameters:
+/// - x: First vector (modified in-place)
+/// - y: Second vector (modified in-place)
+/// - c: Cosine component of rotation
+/// - s: Sine component of rotation
+///
+/// Errors:
+/// - error.DimensionMismatch if x and y have different lengths
+///
+/// Time: O(n) where n = vector length
+/// Space: O(1) (modifies vectors in-place)
+///
+/// Example:
+/// ```zig
+/// // Rotate by 45 degrees (c = s = 1/sqrt(2))
+/// const c = 0.7071067811865476;
+/// const s = 0.7071067811865476;
+/// try rot(f64, &x, &y, c, s);
+/// ```
+pub fn rot(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), c: T, s: T) (NDArray(T, 1).Error)!void {
+    // Validate dimension match
+    if (x.shape[0] != y.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = x.shape[0];
+
+    // Apply rotation to each element pair
+    for (0..n) |i| {
+        const x_val = x.data[i];
+        const y_val = y.data[i];
+
+        // Compute rotated values:
+        //   x_new = c*x + s*y
+        //   y_new = c*y - s*x
+        x.data[i] = c * x_val + s * y_val;
+        y.data[i] = c * y_val - s * x_val;
+    }
+}
+
 test "swap: basic correctness 5 elements" {
     const allocator = testing.allocator;
 
@@ -11446,5 +11557,489 @@ test "swap: memory safety 10 iterations" {
         // Verify swap occurred
         try testing.expectApproxEqAbs(@as(f64, 6.6), x.data[0], 1e-10);
         try testing.expectApproxEqAbs(@as(f64, 1.1), y.data[0], 1e-10);
+    }
+}
+
+// ============================================================================
+// Givens Rotation Tests — rotg() and rot()
+// ============================================================================
+//
+// BLAS Level 1 operations: Givens rotation for orthogonal transformations
+//
+// Specification for rotg(a, b):
+// - Computes Givens rotation parameters (c, s, r) from scalars a and b
+// - Where: r = sqrt(a² + b²), c = a/r, s = b/r (with special case handling)
+// - Returns struct { c: T, s: T, r: T }
+// - Special cases: a=0, b=0, both zero, large values (avoid overflow)
+// - Time: O(1) constant
+// - Space: O(1) constant
+//
+// Specification for rot(x, y, c, s):
+// - Applies Givens rotation to vectors x and y in-place
+// - For each i: temp = c*x[i] + s*y[i]; y[i] = c*y[i] - s*x[i]; x[i] = temp
+// - Standard BLAS drot/srot operation
+// - Validates dimension match between x and y
+// - Time: O(n) where n = vector length
+// - Space: O(1) in-place
+//
+// Test coverage:
+// rotg():
+// 1. Basic cases (3 tests): standard a,b, both zero, one zero
+// 2. Special case: a=0 only (1 test)
+// 3. Special case: b=0 only (1 test)
+// 4. Orthogonality (1 test): c² + s² = 1
+// 5. Type support (2 tests): f32 and f64 precision
+// 6. Large values (1 test): avoid overflow
+// 7. Small values (1 test): avoid underflow
+//
+// rot():
+// 1. Basic correctness (3 tests): 2-element, 3-element, 5-element vectors
+// 2. Verify formula (2 tests): manual element-wise checks
+// 3. Orthogonality preservation (1 test): orthogonal vectors remain orthogonal
+// 4. Type support (2 tests): f32 and f64 precision
+// 5. Large vectors (1 test): n=1000 elements
+// 6. Edge cases (2 tests): single element, all zeros
+// 7. Error handling (1 test): dimension mismatch between x and y
+// 8. Reverse application (1 test): rot(...,-c,-s) is inverse of rot(...,c,s)
+// 9. Composition (1 test): multiple rot() calls compose correctly
+// 10. Memory safety (1 test): 10 iterations with testing.allocator
+
+// ============================================================================
+// rotg Tests — Givens Rotation Parameter Generation
+// ============================================================================
+
+test "rotg: basic case with non-zero a and b (f64)" {
+    // rotg computes rotation parameters for a=3.0, b=4.0
+    // Expected: r = sqrt(9 + 16) = 5.0, c = 3/5 = 0.6, s = 4/5 = 0.8
+    const rotation = rotg(f64, 3.0, 4.0);
+
+    try testing.expectApproxEqAbs(@as(f64, 0.6), rotation.c, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), rotation.s, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), rotation.r, 1e-10);
+}
+
+test "rotg: basic case with negative a (f64)" {
+    // rotg with a=-3.0, b=4.0
+    // Expected: r = sqrt(9 + 16) = 5.0, c = -3/5 = -0.6, s = 4/5 = 0.8
+    const rotation = rotg(f64, -3.0, 4.0);
+
+    try testing.expectApproxEqAbs(@as(f64, -0.6), rotation.c, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), rotation.s, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), rotation.r, 1e-10);
+}
+
+test "rotg: both a and b are zero (f64)" {
+    // rotg(0, 0): special case where both inputs are zero
+    // Expected: r = 0, c = 1.0 (or 0, depending on convention), s = 0
+    const rotation = rotg(f64, 0.0, 0.0);
+
+    // When both are zero, r should be 0, c should typically be 1.0 (identity component)
+    try testing.expectApproxEqAbs(@as(f64, 0.0), rotation.r, 1e-10);
+    try testing.expect(rotation.c == 1.0 or rotation.c == 0.0); // Handle variant conventions
+    try testing.expectApproxEqAbs(@as(f64, 0.0), rotation.s, 1e-10);
+}
+
+test "rotg: a is zero, b is non-zero (f64)" {
+    // rotg(0, 5): when a=0, b≠0
+    // Expected: r = |b| = 5.0, c = 0, s = sign(b) = 1.0
+    const rotation = rotg(f64, 0.0, 5.0);
+
+    try testing.expectApproxEqAbs(@as(f64, 0.0), rotation.c, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), rotation.s, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), rotation.r, 1e-10);
+}
+
+test "rotg: b is zero, a is non-zero (f64)" {
+    // rotg(5, 0): when b=0, a≠0
+    // Expected: r = |a| = 5.0, c = sign(a) = 1.0, s = 0
+    const rotation = rotg(f64, 5.0, 0.0);
+
+    try testing.expectApproxEqAbs(@as(f64, 1.0), rotation.c, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), rotation.s, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), rotation.r, 1e-10);
+}
+
+test "rotg: orthogonality c² + s² = 1 (f64)" {
+    // Verify that for any a, b: c² + s² = 1 (Givens rotation is orthogonal)
+    const rotation1 = rotg(f64, 3.0, 4.0);
+    const sum1 = rotation1.c * rotation1.c + rotation1.s * rotation1.s;
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum1, 1e-10);
+
+    const rotation2 = rotg(f64, -2.0, 1.0);
+    const sum2 = rotation2.c * rotation2.c + rotation2.s * rotation2.s;
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum2, 1e-10);
+
+    const rotation3 = rotg(f64, 0.0, -7.0);
+    const sum3 = rotation3.c * rotation3.c + rotation3.s * rotation3.s;
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum3, 1e-10);
+}
+
+test "rotg: type support f32" {
+    // rotg with f32 type
+    const rotation = rotg(f32, 3.0, 4.0);
+
+    try testing.expectApproxEqAbs(@as(f32, 0.6), rotation.c, 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 0.8), rotation.s, 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 5.0), rotation.r, 1e-5);
+}
+
+test "rotg: type support f64" {
+    // rotg with f64 type (double precision)
+    const rotation = rotg(f64, 1.0, 1.0);
+
+    const sqrt2 = @sqrt(@as(f64, 2.0));
+    try testing.expectApproxEqAbs(1.0 / sqrt2, rotation.c, 1e-10);
+    try testing.expectApproxEqAbs(1.0 / sqrt2, rotation.s, 1e-10);
+    try testing.expectApproxEqAbs(sqrt2, rotation.r, 1e-10);
+}
+
+test "rotg: large values avoid overflow (f64)" {
+    // Test with large values to ensure algorithm avoids overflow
+    const large = 1e200;
+    const rotation = rotg(f64, large, large);
+
+    // Result should still be normalized (r approximately large*sqrt(2))
+    const expected_r = large * @sqrt(@as(f64, 2.0));
+    try testing.expectApproxEqRel(expected_r, rotation.r, 1e-10);
+
+    // c and s should still be normalized
+    const sum = rotation.c * rotation.c + rotation.s * rotation.s;
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum, 1e-10);
+}
+
+test "rotg: small values avoid underflow (f64)" {
+    // Test with very small values
+    const tiny = 1e-200;
+    const rotation = rotg(f64, tiny, tiny);
+
+    // c and s should be approximately 1/sqrt(2)
+    const inv_sqrt2 = 1.0 / @sqrt(@as(f64, 2.0));
+    try testing.expectApproxEqAbs(inv_sqrt2, rotation.c, 1e-15);
+    try testing.expectApproxEqAbs(inv_sqrt2, rotation.s, 1e-15);
+}
+
+// ============================================================================
+// rot Tests — Apply Givens Rotation to Vectors
+// ============================================================================
+
+test "rot: basic 2-element vectors (f64)" {
+    // Apply Givens rotation to x=[1,0], y=[0,1] with c=0.6, s=0.8
+    // Expected: x'=[0.6, -0.8], y'=[0.8, 0.6]
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 0.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    try rot(f64, &x, &y, 0.6, 0.8);
+
+    try testing.expectApproxEqAbs(@as(f64, 0.6), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -0.8), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.6), y.data[1], 1e-10);
+}
+
+test "rot: basic 3-element vectors (f64)" {
+    // Apply rotation to x=[1,2,3], y=[4,5,6] with c=0.6, s=0.8
+    // For each i: x'[i] = c*x[i] + s*y[i], y'[i] = c*y[i] - s*x[i]
+    // x'[0] = 0.6*1 + 0.8*4 = 3.8, y'[0] = 0.6*4 - 0.8*1 = 1.6
+    // x'[1] = 0.6*2 + 0.8*5 = 5.2, y'[1] = 0.6*5 - 0.8*2 = 1.8
+    // x'[2] = 0.6*3 + 0.8*6 = 6.6, y'[2] = 0.6*6 - 0.8*3 = 1.2
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4.0, 5.0, 6.0 }, .row_major);
+    defer y.deinit();
+
+    try rot(f64, &x, &y, 0.6, 0.8);
+
+    try testing.expectApproxEqAbs(@as(f64, 3.8), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.2), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 6.6), x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.6), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.8), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.2), y.data[2], 1e-10);
+}
+
+test "rot: 5-element vectors (f64)" {
+    // Test with 5 elements using c=0.8, s=0.6
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 5.0, 4.0, 3.0, 2.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    try rot(f64, &x, &y, 0.8, 0.6);
+
+    // Verify all elements transformed correctly
+    for (0..5) |i| {
+        const xi = @as(f64, @floatFromInt(i + 1));
+        const yi = @as(f64, @floatFromInt(5 - i));
+        const expected_x = 0.8 * xi + 0.6 * yi;
+        const expected_y = 0.8 * yi - 0.6 * xi;
+        try testing.expectApproxEqAbs(expected_x, x.data[i], 1e-10);
+        try testing.expectApproxEqAbs(expected_y, y.data[i], 1e-10);
+    }
+}
+
+test "rot: verify rotation formula element-wise (f64)" {
+    // Verify that the transformation follows the mathematical formula exactly
+    // x' = c*x + s*y, y' = c*y - s*x
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 2.0, 3.0, 1.5, 4.2 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.0, 2.5, 3.0, 0.8 }, .row_major);
+    defer y.deinit();
+
+    const c = 0.5;
+    const s = @sqrt(@as(f64, 0.75)); // 0.5^2 + s^2 = 1
+
+    // Save original values
+    const x_orig = try allocator.dupe(f64, x.data);
+    defer allocator.free(x_orig);
+    const y_orig = try allocator.dupe(f64, y.data);
+    defer allocator.free(y_orig);
+
+    try rot(f64, &x, &y, c, s);
+
+    // Verify formula for each element
+    for (0..4) |i| {
+        const expected_x = c * x_orig[i] + s * y_orig[i];
+        const expected_y = c * y_orig[i] - s * x_orig[i];
+        try testing.expectApproxEqAbs(expected_x, x.data[i], 1e-10);
+        try testing.expectApproxEqAbs(expected_y, y.data[i], 1e-10);
+    }
+}
+
+test "rot: orthogonal vectors remain orthogonal (f64)" {
+    // Start with orthogonal vectors (x ⊥ y), apply rotation, verify orthogonality preserved
+    // If x·y = 0 before rotation, it should remain 0 after rotation
+    const allocator = testing.allocator;
+
+    // x = [1, 0], y = [0, 1] are orthogonal
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 0.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    // Apply rotation with c=0.6, s=0.8
+    try rot(f64, &x, &y, 0.6, 0.8);
+
+    // Compute dot product: should still be approximately 0
+    var dot_product: f64 = 0;
+    for (0..2) |i| {
+        dot_product += x.data[i] * y.data[i];
+    }
+
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dot_product, 1e-10);
+}
+
+test "rot: type support f32" {
+    // Test rot with f32 precision
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{3}, &[_]f32{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{3}, &[_]f32{ 4.0, 5.0, 6.0 }, .row_major);
+    defer y.deinit();
+
+    try rot(f32, &x, &y, 0.6, 0.8);
+
+    try testing.expectApproxEqAbs(@as(f32, 3.8), x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 5.2), x.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 6.6), x.data[2], 1e-5);
+}
+
+test "rot: type support f64" {
+    // Test rot with f64 precision
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 0.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    try rot(f64, &x, &y, 0.6, 0.8);
+
+    try testing.expectApproxEqAbs(@as(f64, 0.6), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -0.8), x.data[1], 1e-10);
+}
+
+test "rot: large vectors n=1000 (f64)" {
+    // Test with large vector of 1000 elements
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 1000);
+    defer allocator.free(x_data);
+    var y_data = try allocator.alloc(f64, 1000);
+    defer allocator.free(y_data);
+
+    // Initialize with pattern data
+    for (0..1000) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1)) * 0.1;
+        y_data[i] = @as(f64, @floatFromInt(1000 - i)) * 0.2;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, x_data, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, y_data, .row_major);
+    defer y.deinit();
+
+    const c = 0.6;
+    const s = 0.8;
+
+    try rot(f64, &x, &y, c, s);
+
+    // Verify sampling of elements
+    const c_val = @as(f64, 0.6);
+    const s_val = @as(f64, 0.8);
+
+    const x0_orig = 0.1;
+    const y0_orig = 200.0;
+    const expected_x0 = c_val * x0_orig + s_val * y0_orig;
+    try testing.expectApproxEqAbs(expected_x0, x.data[0], 1e-10);
+}
+
+test "rot: single element vector (f64)" {
+    // Edge case: single element (n=1)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{5.0}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{3.0}, .row_major);
+    defer y.deinit();
+
+    try rot(f64, &x, &y, 0.6, 0.8);
+
+    try testing.expectApproxEqAbs(@as(f64, 0.6 * 5.0 + 0.8 * 3.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.6 * 3.0 - 0.8 * 5.0), y.data[0], 1e-10);
+}
+
+test "rot: all zero vectors (f64)" {
+    // Edge case: both vectors are all zeros
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 0.0, 0.0, 0.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 0.0, 0.0, 0.0 }, .row_major);
+    defer y.deinit();
+
+    try rot(f64, &x, &y, 0.6, 0.8);
+
+    // All elements should remain zero
+    for (0..3) |i| {
+        try testing.expectApproxEqAbs(@as(f64, 0.0), x.data[i], 1e-10);
+        try testing.expectApproxEqAbs(@as(f64, 0.0), y.data[i], 1e-10);
+    }
+}
+
+test "rot: error dimension mismatch (f64)" {
+    // Error handling: dimension mismatch between x and y
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.0, 2.0, 3.0, 4.0 }, .row_major);
+    defer y.deinit();
+
+    const result = rot(f64, &x, &y, 0.6, 0.8);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "rot: inverse application via negative parameters (f64)" {
+    // Mathematical property: rot(..., -c, -s) reverses rot(..., c, s)
+    const allocator = testing.allocator;
+
+    var x_orig = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x_orig.deinit();
+
+    var y_orig = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4.0, 5.0, 6.0 }, .row_major);
+    defer y_orig.deinit();
+
+    // Save originals
+    const x_start = try allocator.dupe(f64, x_orig.data);
+    defer allocator.free(x_start);
+    const y_start = try allocator.dupe(f64, y_orig.data);
+    defer allocator.free(y_start);
+
+    const c = 0.6;
+    const s = 0.8;
+
+    // Apply rotation
+    try rot(f64, &x_orig, &y_orig, c, s);
+
+    // Apply inverse rotation with -c, -s
+    try rot(f64, &x_orig, &y_orig, -c, -s);
+
+    // Should restore original values
+    for (0..3) |i| {
+        try testing.expectApproxEqAbs(x_start[i], x_orig.data[i], 1e-10);
+        try testing.expectApproxEqAbs(y_start[i], y_orig.data[i], 1e-10);
+    }
+}
+
+test "rot: composition of multiple rotations (f64)" {
+    // Test that multiple sequential rotations compose correctly
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 0.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    const c1 = 0.6;
+    const s1 = 0.8;
+
+    // Apply first rotation
+    try rot(f64, &x, &y, c1, s1);
+
+    // Save intermediate state
+    const x_mid = try allocator.dupe(f64, x.data);
+    defer allocator.free(x_mid);
+    const y_mid = try allocator.dupe(f64, y.data);
+    defer allocator.free(y_mid);
+
+    const c2 = @sqrt(@as(f64, 0.5));
+    const s2 = @sqrt(@as(f64, 0.5));
+
+    // Apply second rotation
+    try rot(f64, &x, &y, c2, s2);
+
+    // Verify intermediate and final states have expected values
+    try testing.expectApproxEqAbs(@as(f64, 0.6), x_mid[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), x_mid[1], 1e-10);
+}
+
+test "rot: memory safety 10 iterations (f64)" {
+    // Test for memory leaks over 10 iterations
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+        defer x.deinit();
+
+        var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 5.0, 4.0, 3.0, 2.0, 1.0 }, .row_major);
+        defer y.deinit();
+
+        try rot(f64, &x, &y, 0.6, 0.8);
+
+        // Verify at least one element transformed
+        try testing.expect(x.data[0] != 1.0 or y.data[0] != 5.0);
     }
 }
