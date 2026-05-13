@@ -1,3 +1,33 @@
+**Session 509 Update (2026-05-13) — FEATURE MODE:**
+
+✅ **BLAS Level 1 iamax() COMPLETE** — Index of maximum absolute value:
+- **Feature**: Implemented iamax(x) to return index of first element with maximum absolute value
+- **Algorithm**: Single-pass O(n) iteration tracking max_abs and max_idx
+  * Initialize: max_abs = @abs(x[0]), max_idx = 0
+  * Loop: for each i, if @abs(x[i]) > max_abs, update both max_abs and max_idx
+  * Tie-breaking: returns first occurrence (standard BLAS behavior)
+  * Error handling: returns error.EmptyArray for empty vectors
+- **Tests**: 15 comprehensive tests (all passing)
+  * Basic correctness: 3 tests (positive max, negative max, mixed with zeros)
+  * Edge cases: 4 tests (single element, all equal, all zeros, max at start)
+  * Tie breaking: 2 tests (multiple maxima, first occurrence principle)
+  * Type support: 2 tests (f32, f64)
+  * Large vectors: 2 tests (n=1000 with max at index 500 and 999)
+  * Error handling: 1 test (empty vector → error.EmptyArray)
+  * Memory safety: 1 test (10 iterations leak detection)
+- **Performance**: O(n) time, O(1) space
+- **Use Cases**: Finding pivot elements in linear algebra, identifying dominant components, norm calculations
+- **Files**: src/linalg/blas.zig (+247 lines: 21 implementation, 226 tests)
+- **Commits**: 9f13df7 (iamax implementation), 1229000 (FFT pattern doc)
+- **Agents Used**: test-writer (agent a592232 — 15 RED tests), zig-developer (agent a72a110 — GREEN implementation)
+- **Total Tests**: 3021 → 3036 (15 new iamax tests)
+- **Rationale**: iamax is standard BLAS Level 1 operation (BLAS-1 reference), commonly used for:
+  * Partial pivoting in LU decomposition (find largest element for numerical stability)
+  * Identifying dominant frequency in FFT output
+  * Calculating infinity norm (||x||_∞ = |x[iamax(x)]|)
+  * Finding most significant component in vectors
+- **BLAS Level 1 Status**: dot ✅, axpy ✅, nrm2 ✅, asum ✅, scal ✅, iamax ✅ — Core operations complete
+
 **Session 508 Update (2026-05-13) — FEATURE MODE:**
 
 ⚡ **FFT Twiddle Factor Caching** — Achieved 2× FFT speedup, 1M FFT now meets target:
