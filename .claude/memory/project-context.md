@@ -1,3 +1,50 @@
+**Session 514 Update (2026-05-14) — FEATURE MODE:**
+
+✅ **BLAS Level 1 rotmg(), rotm(), iamin() COMPLETE** — Extended BLAS-1 suite completion:
+- **Feature**: Implemented three additional BLAS Level 1 operations
+- **Functions**:
+  * rotmg(d1, d2, x1, y1): Generate modified Givens rotation parameters
+    - Lawson-Hanson-Kincaid-Krogh algorithm with overflow handling
+    - Returns struct { flag: i8, h: [4]T } indicating H matrix form
+    - Four flag modes: -2 (identity), -1/0/1 (various H matrix structures)
+    - Handles special cases: zeros, overflow/underflow with safmin/safmax bounds
+    - Time: O(1), Space: O(1)
+  * rotm(x, y, param): Apply modified Givens rotation to vectors
+    - Applies H matrix transformation based on param.flag value
+    - In-place vector modification with dimension validation
+    - Four transformation modes corresponding to flag values
+    - Time: O(n), Space: O(1)
+  * iamin(x): Find index of minimum absolute value element
+    - Complement to iamax for finding minimum instead of maximum
+    - Single-pass linear search with @abs() comparison
+    - Returns first occurrence on ties (< not <=)
+    - Supports all numeric types (f32, f64, integers)
+    - Time: O(n), Space: O(1)
+- **Tests**: 27 comprehensive tests (all passing)
+  * rotmg: 8 tests (correctness, edge cases zeros, overflow prevention, type support f32/f64)
+  * rotm: 9 tests (all 4 flag types, vector sizes 1-1000, dimension mismatch error, type support)
+  * iamin: 10 tests (correctness, single element, ties, negatives, empty array error, types)
+- **Files**: src/linalg/blas.zig (+713 lines: 229 implementation, 484 tests)
+- **Commit**: fd45302 (feature implementation)
+- **Total Tests**: 3045 → 3072 (27 new tests)
+- **Use Cases**:
+  * rotmg/rotm: Modified Givens rotations for numerically stable transformations
+    - QR decomposition with scaling (more stable than standard Givens)
+    - Eigenvalue algorithms requiring scaled rotations
+    - Ill-conditioned systems where overflow/underflow is a concern
+  * iamin: Find near-zero elements, condition number estimation, convergence criteria
+- **Rationale**: Completes extended BLAS-1 suite (reference BLAS: drotmg/srotmg, drotm/srotm, idamin/isamin)
+  * Modified Givens more numerically stable than standard Givens for ill-conditioned problems
+  * iamin essential for:
+    - Finding smallest residuals in iterative solvers
+    - Identifying near-singular pivot candidates
+    - Condition number estimation (ratio of max to min absolute values)
+- **BLAS Level 1 Status**: ✅ **FULLY EXTENDED** — 13 operations complete
+  * Basic: dot ✅, axpy ✅, nrm2 ✅, asum ✅, scal ✅
+  * Copy/Swap: copy ✅, swap ✅
+  * Index: iamax ✅, iamin ✅
+  * Rotation: rotg ✅, rot ✅, rotmg ✅, rotm ✅
+
 **Session 513 Update (2026-05-14) — FEATURE MODE:**
 
 ✅ **BLAS Level 1 rotg() and rot() COMPLETE** — Givens rotation operations:
