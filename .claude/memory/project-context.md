@@ -1,3 +1,30 @@
+**Session 512 Update (2026-05-14) — FEATURE MODE:**
+
+✅ **BLAS Level 1 copy() and swap() COMPLETE** — Completed core Level 1 suite:
+- **Feature**: Implemented copy() and swap() BLAS Level 1 vector operations
+- **Functions**:
+  * copy(x, y): Copy vector x to y (y := x) - O(n) time, O(1) space
+  * swap(x, y): Swap vectors x and y (x <-> y) - O(n) time, O(1) space
+- **Algorithm**:
+  * copy: Simple element-wise assignment loop (12 lines)
+  * swap: Element-wise exchange with temporary variable (15 lines)
+  * Both validate dimension match before operation
+- **Tests**: 18 comprehensive tests (all passing)
+  * copy: 9 tests (correctness, overwrite verification, source preservation, f32/f64 types, n=1000 large, n=1 edge, error handling, memory safety)
+  * swap: 9 tests (correctness, both modified, f32/f64 types, n=1000 large, n=1 edge, commutativity, error handling, memory safety)
+- **Files**: src/linalg/blas.zig (+437 lines: 27 implementation, 410 tests)
+- **Commit**: 1411a5d (feature implementation)
+- **Total Tests**: 3021 → 3039 (18 new copy/swap tests)
+- **Use Cases**:
+  * copy(): Preserve vectors before in-place operations, duplicate data for multiple algorithms
+  * swap(): Pivot exchanges in LU factorization with partial pivoting, permutations, Givens rotations
+- **Rationale**: copy and swap are fundamental BLAS-1 operations (dcopy, dswap in reference BLAS). Required for:
+  * LU decomposition with partial pivoting (row/column swaps)
+  * Iterative solvers that need to preserve original vectors
+  * QR factorization with Givens rotations (element swaps)
+  * Permutation matrix applications
+- **BLAS Level 1 Status**: ✅ **ALL CORE OPERATIONS COMPLETE** — dot ✅, axpy ✅, nrm2 ✅, asum ✅, scal ✅, iamax ✅, copy ✅, swap ✅ (8 operations)
+
 **Session 511 Update (2026-05-13) — FEATURE MODE:**
 
 📬 **Consumer Migration Issues Created** — Initiated zuda adoption across 3 projects:
