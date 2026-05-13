@@ -11011,3 +11011,440 @@ test "iamax: memory safety 10 iterations" {
         try testing.expect(idx == 3);
     }
 }
+
+// ============================================================================
+// BLAS Level 1: copy(x, y) — Copy vector x to vector y
+// ============================================================================
+
+/// Copies a vector x to a vector y: y := x.
+///
+/// Performs element-wise copy from source vector x to destination vector y.
+/// Overwrites all elements of y with values from x.
+///
+/// **Time**: O(n) | **Space**: O(1)
+///
+/// **Errors**: error.DimensionMismatch if x.shape[0] != y.shape[0]
+///
+/// **Example**:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{1.0, 2.0, 3.0}, .row_major);
+/// defer x.deinit();
+/// var y = try NDArray(f64, 1).zeros(alloc, &[_]usize{3}, .row_major);
+/// defer y.deinit();
+/// try copy(f64, x, &y);  // y is now [1.0, 2.0, 3.0]
+/// ```
+pub fn copy(comptime T: type, x: NDArray(T, 1), y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    // Validate dimension match
+    if (x.shape[0] != y.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = x.shape[0];
+
+    // Copy elements from x to y
+    for (0..n) |i| {
+        y.data[i] = x.data[i];
+    }
+}
+
+test "copy: basic correctness 5 elements" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer y.deinit();
+
+    try copy(f64, x, &y);
+
+    // Verify y is exact copy of x
+    try testing.expectApproxEqAbs(@as(f64, 1.0), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), y.data[4], 1e-10);
+}
+
+test "copy: destination overwritten" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 7.0, 8.0, 9.0 }, .row_major);
+    defer x.deinit();
+
+    // y has different initial values
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer y.deinit();
+
+    try copy(f64, x, &y);
+
+    // y should be completely overwritten with x values
+    try testing.expectApproxEqAbs(@as(f64, 7.0), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 8.0), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 9.0), y.data[2], 1e-10);
+}
+
+test "copy: source unchanged" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 5.0, 6.0, 7.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer y.deinit();
+
+    try copy(f64, x, &y);
+
+    // x should remain unchanged after copy
+    try testing.expectApproxEqAbs(@as(f64, 5.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 7.0), x.data[2], 1e-10);
+}
+
+test "copy: f32 precision" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 1.5, -2.3, 3.7, 0.1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer y.deinit();
+
+    try copy(f32, x, &y);
+
+    try testing.expectApproxEqAbs(@as(f32, 1.5), y.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, -2.3), y.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.7), y.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 0.1), y.data[3], 1e-5);
+}
+
+test "copy: f64 precision" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.5, -2.3, 3.7, 0.1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+    defer y.deinit();
+
+    try copy(f64, x, &y);
+
+    try testing.expectApproxEqAbs(@as(f64, 1.5), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -2.3), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.7), y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.1), y.data[3], 1e-10);
+}
+
+test "copy: large vector n=1000" {
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 1000);
+    defer allocator.free(data_x);
+
+    for (0..1000) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i)) * 0.123;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, data_x, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{1000}, .row_major);
+    defer y.deinit();
+
+    try copy(f64, x, &y);
+
+    // Verify sample elements
+    try testing.expectApproxEqAbs(x.data[0], y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(x.data[500], y.data[500], 1e-10);
+    try testing.expectApproxEqAbs(x.data[999], y.data[999], 1e-10);
+}
+
+test "copy: single element (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{42.5}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{1}, .row_major);
+    defer y.deinit();
+
+    try copy(f64, x, &y);
+
+    try testing.expectApproxEqAbs(@as(f64, 42.5), y.data[0], 1e-10);
+}
+
+test "copy: error dimension mismatch different lengths" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer y.deinit();
+
+    const result = copy(f64, x, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "copy: memory safety 10 iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.1, 2.2, 3.3, 4.4, 5.5 }, .row_major);
+        defer x.deinit();
+
+        var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+        defer y.deinit();
+
+        try copy(f64, x, &y);
+
+        // Verify all elements match
+        for (0..5) |i| {
+            try testing.expectApproxEqAbs(x.data[i], y.data[i], 1e-10);
+        }
+    }
+}
+
+// ============================================================================
+// BLAS Level 1: swap(x, y) — Swap vectors x and y
+// ============================================================================
+
+/// Swaps two vectors x and y: x <-> y.
+///
+/// Performs in-place element-wise swap of vector x with vector y.
+/// After this operation, x contains the original values of y and
+/// y contains the original values of x.
+///
+/// **Time**: O(n) | **Space**: O(1)
+///
+/// **Errors**: error.DimensionMismatch if x.shape[0] != y.shape[0]
+///
+/// **Example**:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{1.0, 2.0, 3.0}, .row_major);
+/// defer x.deinit();
+/// var y = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{4.0, 5.0, 6.0}, .row_major);
+/// defer y.deinit();
+/// try swap(f64, &x, &y);  // x is now [4.0, 5.0, 6.0], y is now [1.0, 2.0, 3.0]
+/// ```
+pub fn swap(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    // Validate dimension match
+    if (x.shape[0] != y.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = x.shape[0];
+
+    // Swap elements between x and y
+    for (0..n) |i| {
+        const temp = x.data[i];
+        x.data[i] = y.data[i];
+        y.data[i] = temp;
+    }
+}
+
+test "swap: basic correctness 5 elements" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 6.0, 7.0, 8.0, 9.0, 10.0 }, .row_major);
+    defer y.deinit();
+
+    try swap(f64, &x, &y);
+
+    // After swap, x should have y's original values
+    try testing.expectApproxEqAbs(@as(f64, 6.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 7.0), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 8.0), x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 9.0), x.data[3], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), x.data[4], 1e-10);
+
+    // After swap, y should have x's original values
+    try testing.expectApproxEqAbs(@as(f64, 1.0), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), y.data[4], 1e-10);
+}
+
+test "swap: both vectors modified" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 10.0, 20.0, 30.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 100.0, 200.0, 300.0 }, .row_major);
+    defer y.deinit();
+
+    try swap(f64, &x, &y);
+
+    // Both vectors should be modified
+    try testing.expectApproxEqAbs(@as(f64, 100.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 200.0), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 300.0), x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 20.0), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 30.0), y.data[2], 1e-10);
+}
+
+test "swap: f32 precision" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 1.5, -2.3, 3.7, 0.1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 4.2, -5.6, 6.1, 7.9 }, .row_major);
+    defer y.deinit();
+
+    try swap(f32, &x, &y);
+
+    try testing.expectApproxEqAbs(@as(f32, 4.2), x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, -5.6), x.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 6.1), x.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 7.9), x.data[3], 1e-5);
+
+    try testing.expectApproxEqAbs(@as(f32, 1.5), y.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, -2.3), y.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.7), y.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 0.1), y.data[3], 1e-5);
+}
+
+test "swap: f64 precision" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.5, -2.3, 3.7, 0.1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 4.2, -5.6, 6.1, 7.9 }, .row_major);
+    defer y.deinit();
+
+    try swap(f64, &x, &y);
+
+    try testing.expectApproxEqAbs(@as(f64, 4.2), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -5.6), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 6.1), x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 7.9), x.data[3], 1e-10);
+
+    try testing.expectApproxEqAbs(@as(f64, 1.5), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -2.3), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.7), y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.1), y.data[3], 1e-10);
+}
+
+test "swap: large vector n=1000" {
+    const allocator = testing.allocator;
+
+    var data_x = try allocator.alloc(f64, 1000);
+    defer allocator.free(data_x);
+    var data_y = try allocator.alloc(f64, 1000);
+    defer allocator.free(data_y);
+
+    for (0..1000) |i| {
+        data_x[i] = @as(f64, @floatFromInt(i)) * 0.123;
+        data_y[i] = @as(f64, @floatFromInt(i)) * 0.456;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, data_x, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, data_y, .row_major);
+    defer y.deinit();
+
+    // Store original values for verification
+    const orig_x_0 = x.data[0];
+    const orig_x_500 = x.data[500];
+    const orig_x_999 = x.data[999];
+    const orig_y_0 = y.data[0];
+    const orig_y_500 = y.data[500];
+    const orig_y_999 = y.data[999];
+
+    try swap(f64, &x, &y);
+
+    // Verify swap occurred correctly
+    try testing.expectApproxEqAbs(orig_y_0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(orig_y_500, x.data[500], 1e-10);
+    try testing.expectApproxEqAbs(orig_y_999, x.data[999], 1e-10);
+    try testing.expectApproxEqAbs(orig_x_0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(orig_x_500, y.data[500], 1e-10);
+    try testing.expectApproxEqAbs(orig_x_999, y.data[999], 1e-10);
+}
+
+test "swap: single element (n=1)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{42.5}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{99.0}, .row_major);
+    defer y.deinit();
+
+    try swap(f64, &x, &y);
+
+    try testing.expectApproxEqAbs(@as(f64, 99.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 42.5), y.data[0], 1e-10);
+}
+
+test "swap: error dimension mismatch different lengths" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{5}, .row_major);
+    defer y.deinit();
+
+    const result = swap(f64, &x, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "swap: commutativity swap(a,b) then swap(b,a) restores original" {
+    const allocator = testing.allocator;
+
+    var x_orig = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.0, 2.0, 3.0, 4.0 }, .row_major);
+    defer x_orig.deinit();
+
+    var y_orig = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5.0, 6.0, 7.0, 8.0 }, .row_major);
+    defer y_orig.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1.0, 2.0, 3.0, 4.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5.0, 6.0, 7.0, 8.0 }, .row_major);
+    defer y.deinit();
+
+    // First swap
+    try swap(f64, &x, &y);
+
+    // After first swap: x = [5,6,7,8], y = [1,2,3,4]
+    try testing.expectApproxEqAbs(@as(f64, 5.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), y.data[0], 1e-10);
+
+    // Second swap should restore original
+    try swap(f64, &x, &y);
+
+    // After second swap: x = [1,2,3,4], y = [5,6,7,8] (back to original)
+    for (0..4) |i| {
+        try testing.expectApproxEqAbs(x_orig.data[i], x.data[i], 1e-10);
+        try testing.expectApproxEqAbs(y_orig.data[i], y.data[i], 1e-10);
+    }
+}
+
+test "swap: memory safety 10 iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.1, 2.2, 3.3, 4.4, 5.5 }, .row_major);
+        defer x.deinit();
+
+        var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 6.6, 7.7, 8.8, 9.9, 10.0 }, .row_major);
+        defer y.deinit();
+
+        try swap(f64, &x, &y);
+
+        // Verify swap occurred
+        try testing.expectApproxEqAbs(@as(f64, 6.6), x.data[0], 1e-10);
+        try testing.expectApproxEqAbs(@as(f64, 1.1), y.data[0], 1e-10);
+    }
+}
