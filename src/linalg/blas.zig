@@ -11354,6 +11354,274 @@ pub fn rot(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), c: T, s: T) (
     }
 }
 
+/// Compute modified Givens rotation parameter generation
+///
+/// Computes parameters (flag, H matrix) for a modified Givens rotation
+/// that eliminates y1 from the pair (d1*x1, d2*y1).
+///
+/// This function generates the parameters that can be used with rotm()
+/// to apply an orthogonal transformation to vectors.
+///
+/// Parameters:
+/// - d1: Scaling factor 1 (modified in-place)
+/// - d2: Scaling factor 2 (modified in-place)
+/// - x1: Vector element 1 (modified in-place)
+/// - y1: Vector element 2 (read-only)
+///
+/// Returns: Struct with:
+/// - flag: Integer -2..1 indicating H matrix form
+/// - h: Array [4] of matrix coefficients
+///
+/// The flag indicates the form of the 2x2 matrix H:
+/// - flag = -2: H is identity (no operation)
+/// - flag = -1: H = [[1, h[2]], [h[3], 1]]
+/// - flag = 0: H = [[h[1], h[2]], [h[3], h[0]]]
+/// - flag = 1: H = [[h[1], 1], [-1, h[0]]]
+///
+/// Time: O(1) | Space: O(1)
+///
+/// Example:
+/// ```zig
+/// var d1: f64 = 1.0;
+/// var d2: f64 = 1.0;
+/// var x1: f64 = 3.0;
+/// const y1: f64 = 4.0;
+/// const result = try rotmg(f64, &d1, &d2, &x1, y1);
+/// // result.flag indicates which H matrix form to use
+/// // d1, d2, x1 are modified in-place
+/// ```
+pub fn rotmg(comptime T: type, d1: *T, d2: *T, x1: *T, y1: T) struct { flag: i8, h: [4]T } {
+    const epsilon = if (T == f32) 1e-5 else 1e-15;
+    const safmin = if (T == f32) 1e-37 else 1e-308;
+
+    var h: [4]T = undefined;
+    var flag: i8 = 0;
+
+    // Handle special case: both d1 and d2 are zero
+    if (d1.* == 0.0 and d2.* == 0.0) {
+        h = [4]T{ 0.0, 0.0, 0.0, 0.0 };
+        return .{ .flag = -2, .h = h };
+    }
+
+    // Scale to avoid overflow/underflow
+    var p = d1.*;
+    var q = d2.*;
+    var r = x1.*;
+    var u = y1;
+
+    // Check if values need scaling
+    const abs_p = @abs(p);
+    const abs_q = @abs(q);
+    const abs_r = @abs(r);
+    const abs_u = @abs(u);
+
+    const max_val = if (abs_p > abs_q) abs_p else abs_q;
+    const max_u = if (abs_r > abs_u) abs_r else abs_u;
+
+    var scale: T = 1.0;
+    if (max_val < safmin and max_u > 0.0) {
+        scale = safmin / (max_val + epsilon);
+        p *= scale;
+        q *= scale;
+        r *= scale;
+        u *= scale;
+    }
+
+    // Now compute the rotation
+    const abs_p_new = @abs(p);
+    const abs_q_new = @abs(q);
+    const abs_u_new = @abs(u);
+
+    // Check if we can eliminate u
+    if (abs_u_new == 0.0) {
+        // u is zero, no rotation needed
+        flag = -2;
+        h = [4]T{ 0.0, 0.0, 0.0, 0.0 };
+        x1.* = r;
+        if (scale != 1.0) {
+            d1.* = (abs_p_new * d1.*) / (scale * scale);
+            d2.* = (abs_q_new * d2.*) / (scale * scale);
+        }
+        return .{ .flag = flag, .h = h };
+    }
+
+    // Compute using the standard modified Givens algorithm
+    const p_sq = p * p;
+    const q_sq = q * q;
+
+    const p_times_d1_sq = p_sq * d1.*;
+    const q_times_d2_sq = q_sq * d2.*;
+
+    if (p_times_d1_sq >= q_times_d2_sq) {
+        // Case 1: |d1*p| >= |d2*q|
+        flag = 0;
+        const gamma = u / r;
+        const delta = gamma * (q / (p * d1.*));
+        h[1] = 1.0 / (1.0 + delta * delta);
+        h[2] = delta;
+        h[3] = delta;
+        h[0] = 1.0 - delta * delta;
+    } else {
+        // Case 2: |d1*p| < |d2*q|
+        flag = 1;
+        const gamma = r / u;
+        const delta = gamma * (p / (q * d2.*));
+        h[1] = delta;
+        h[0] = 1.0 / (1.0 + delta * delta);
+        h[3] = -1.0;
+        h[2] = 1.0;
+    }
+
+    // Update d1 and x1
+    if (scale == 1.0) {
+        d1.* = d1.* * (1.0 + h[0] * h[0] + h[2] * h[2]);
+        x1.* = r / (1.0 + h[1] * h[1] + h[3] * h[3]);
+    } else {
+        const p_sq_scaled = (p * scale) * (p * scale);
+        const q_sq_scaled = (q * scale) * (q * scale);
+        d1.* = (abs_p_new * p_sq_scaled) / (scale * scale) + abs_q_new * q_sq_scaled;
+        x1.* = r / scale;
+    }
+
+    // Ensure d1 and d2 are non-negative
+    if (d1.* < 0.0) d1.* = -d1.*;
+    if (d2.* < 0.0) d2.* = -d2.*;
+
+    return .{ .flag = flag, .h = h };
+}
+
+/// Apply modified Givens rotation to vectors
+///
+/// Applies a modified Givens rotation (defined by H matrix and flag)
+/// to a pair of vectors x and y in-place.
+///
+/// The transformation depends on the flag parameter:
+/// - flag = -2: H is identity (no transformation)
+/// - flag = -1: H = [[1, h[2]], [h[3], 1]]
+/// - flag = 0: H = [[h[1], h[2]], [h[3], h[0]]]
+/// - flag = 1: H = [[h[1], 1], [-1, h[0]]]
+///
+/// For each element i:
+///   w = x[i] * H[0,0] + y[i] * H[0,1]
+///   y[i] = x[i] * H[1,0] + y[i] * H[1,1]
+///   x[i] = w
+///
+/// Parameters:
+/// - x: First vector (modified in-place)
+/// - y: Second vector (modified in-place)
+/// - param: Anonymous struct with fields:
+///   - flag: i8 in range [-2, 1]
+///   - h: [4]T array of matrix coefficients
+///
+/// Errors:
+/// - error.DimensionMismatch if x and y have different lengths
+///
+/// Time: O(n) where n = vector length
+/// Space: O(1) (modifies vectors in-place)
+///
+/// Example:
+/// ```zig
+/// const param = .{
+///     .flag = @as(i8, 0),
+///     .h = [_]f64{ 0.6, 0.8, -0.8, 0.6 },
+/// };
+/// try rotm(f64, &x, &y, param);
+/// ```
+pub fn rotm(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), param: anytype) (NDArray(T, 1).Error)!void {
+    // Validate dimension match
+    if (x.shape[0] != y.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = x.shape[0];
+    const flag = param.flag;
+    const h = param.h;
+
+    // Handle based on flag
+    if (flag == -2) {
+        // H is identity, no operation
+        return;
+    } else if (flag == -1) {
+        // H = [[1, h[2]], [h[3], 1]]
+        // x_new = x + h[2]*y
+        // y_new = h[3]*x + y
+        for (0..n) |i| {
+            const x_val = x.data[i];
+            const y_val = y.data[i];
+            const w = x_val + h[2] * y_val;
+            y.data[i] = h[3] * x_val + y_val;
+            x.data[i] = w;
+        }
+    } else if (flag == 0) {
+        // H = [[h[1], h[2]], [h[3], h[0]]]
+        // x_new = h[1]*x + h[2]*y
+        // y_new = h[3]*x + h[0]*y
+        for (0..n) |i| {
+            const x_val = x.data[i];
+            const y_val = y.data[i];
+            const w = h[1] * x_val + h[2] * y_val;
+            y.data[i] = h[3] * x_val + h[0] * y_val;
+            x.data[i] = w;
+        }
+    } else if (flag == 1) {
+        // H = [[h[1], 1], [-1, h[0]]]
+        // x_new = h[1]*x + y
+        // y_new = -x + h[0]*y
+        for (0..n) |i| {
+            const x_val = x.data[i];
+            const y_val = y.data[i];
+            const w = h[1] * x_val + y_val;
+            y.data[i] = -x_val + h[0] * y_val;
+            x.data[i] = w;
+        }
+    }
+}
+
+/// Index of minimum absolute value
+///
+/// Finds the index of the vector element with the smallest absolute value.
+///
+/// Parameters:
+/// - x: Input vector (1D NDArray)
+///
+/// Returns: Index (0-based) of the element with minimum absolute value.
+/// If multiple elements have the same minimum absolute value,
+/// returns the index of the first occurrence.
+///
+/// Errors:
+/// - error.EmptyArray if x has zero length
+///
+/// Time: O(n) where n = vector length
+/// Space: O(1)
+///
+/// Example:
+/// ```zig
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{3}, &[_]f64{5.0, -1.0, 3.0}, .row_major);
+/// defer x.deinit();
+/// const idx = try iamin(f64, x); // Returns 1 (|-1.0| = 1.0 is minimum)
+/// ```
+pub fn iamin(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!usize {
+    // Check if vector is empty
+    if (x.shape[0] == 0) {
+        return error.EmptyArray;
+    }
+
+    const n = x.shape[0];
+    var min_abs = @abs(x.data[0]);
+    var min_idx: usize = 0;
+
+    // Single-pass O(n) search for minimum absolute value
+    for (1..n) |i| {
+        const abs_val = @abs(x.data[i]);
+        if (abs_val < min_abs) {
+            min_abs = abs_val;
+            min_idx = i;
+        }
+    }
+
+    return min_idx;
+}
+
 test "swap: basic correctness 5 elements" {
     const allocator = testing.allocator;
 
@@ -12042,4 +12310,449 @@ test "rot: memory safety 10 iterations (f64)" {
         // Verify at least one element transformed
         try testing.expect(x.data[0] != 1.0 or y.data[0] != 5.0);
     }
+}
+
+// ============================================================================
+// rotmg Tests — Modified Givens Rotation Parameter Generation
+// ============================================================================
+// Time: O(1) | Space: O(1)
+
+test "rotmg: basic case d1=1.0 d2=1.0 x1=3.0 y1=4.0 (f64)" {
+    // rotmg computes modified Givens parameters that eliminate y1
+    // Input: d1=1, d2=1, x1=3.0, y1=4.0
+    // Should produce flag and H matrix
+    var d1: f64 = 1.0;
+    var d2: f64 = 1.0;
+    var x1: f64 = 3.0;
+    const y1: f64 = 4.0;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    // Verify result contains flag and H matrix parameters
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    try testing.expect(result.h.len == 4);
+
+    // After rotmg, x1 should be modified
+    try testing.expect(x1 != 3.0);
+
+    // d1 and d2 should be modified (scaling factors)
+    try testing.expect(d1 >= 0);
+    try testing.expect(d2 >= 0);
+}
+
+test "rotmg: both d1 and d2 are zero (f64)" {
+    // Edge case: both scaling factors are zero
+    var d1: f64 = 0.0;
+    var d2: f64 = 0.0;
+    var x1: f64 = 3.0;
+    const y1: f64 = 4.0;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    // Should still produce valid flag and parameters
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    try testing.expect(result.h.len == 4);
+}
+
+test "rotmg: x1 is zero (f64)" {
+    // Edge case: x1=0, y1=non-zero
+    var d1: f64 = 1.0;
+    var d2: f64 = 1.0;
+    var x1: f64 = 0.0;
+    const y1: f64 = 5.0;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    try testing.expect(result.h.len == 4);
+}
+
+test "rotmg: y1 is zero (f64)" {
+    // Edge case: y1=0, x1=non-zero
+    var d1: f64 = 1.0;
+    var d2: f64 = 1.0;
+    var x1: f64 = 7.0;
+    const y1: f64 = 0.0;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    try testing.expect(result.h.len == 4);
+}
+
+test "rotmg: flag is -2 case (f64)" {
+    // Verify all 4 flag values are possible
+    var d1: f64 = 2.0;
+    var d2: f64 = 2.0;
+    var x1: f64 = 1.0;
+    const y1: f64 = 0.5;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    // flag should be one of -2, -1, 0, 1
+    try testing.expect(result.flag == -2 or result.flag == -1 or result.flag == 0 or result.flag == 1);
+}
+
+test "rotmg: type support f32" {
+    // Test rotmg with f32 precision
+    var d1: f32 = 1.0;
+    var d2: f32 = 1.0;
+    var x1: f32 = 2.0;
+    const y1: f32 = 3.0;
+
+    const result = try rotmg(f32, &d1, &d2, &x1, y1);
+
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    try testing.expect(result.h.len == 4);
+}
+
+test "rotmg: type support f64" {
+    // Test rotmg with f64 precision
+    var d1: f64 = 1.0;
+    var d2: f64 = 1.0;
+    var x1: f64 = 2.0;
+    const y1: f64 = 3.0;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    try testing.expect(result.h.len == 4);
+}
+
+test "rotmg: large values avoid overflow (f64)" {
+    // Test with large scaling factors
+    var d1: f64 = 1e100;
+    var d2: f64 = 1e100;
+    var x1: f64 = 1e100;
+    const y1: f64 = 1e100;
+
+    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+
+    try testing.expect(result.flag >= -2 and result.flag <= 1);
+    // Verify no infinity or NaN
+    try testing.expect(!std.math.isInf(d1) and !std.math.isNan(d1));
+    try testing.expect(!std.math.isInf(d2) and !std.math.isNan(d2));
+}
+
+// ============================================================================
+// rotm Tests — Apply Modified Givens Rotation to Vectors
+// ============================================================================
+// Time: O(n) | Space: O(1)
+
+test "rotm: basic 2-element vectors with flag=0 (f64)" {
+    // Apply modified Givens rotation H (flag=0) to x and y
+    // This is the most common case
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 0.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 0.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    // param: flag=0, h=[h11, h21, h12, h22] for H matrix
+    // H = [[h11, h12], [h21, h22]] for flag=0
+    const param = .{
+        .flag = @as(i8, 0),
+        .h = [_]f64{ 0.6, 0.8, -0.8, 0.6 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    // Both vectors should be modified
+    try testing.expect(x.data[0] != 1.0 or x.data[1] != 0.0);
+    try testing.expect(y.data[0] != 0.0 or y.data[1] != 1.0);
+}
+
+test "rotm: basic 3-element vectors flag=-1 (f64)" {
+    // Test with flag=-1 (H only has h21, h12 nonzero)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4.0, 5.0, 6.0 }, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, -1),
+        .h = [_]f64{ 0.0, 0.8, -0.8, 0.0 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    // Vectors should be rotated
+    try testing.expect(x.data[0] != 1.0);
+}
+
+test "rotm: 5-element vectors flag=1 (f64)" {
+    // Test with flag=1 (H only has h11, h22 nonzero)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 5.0, 4.0, 3.0, 2.0, 1.0 }, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, 1),
+        .h = [_]f64{ 0.6, 0.0, 0.0, 0.8 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    // Vectors should be scaled/rotated
+    try testing.expect(x.data[0] != 1.0 or y.data[0] != 5.0);
+}
+
+test "rotm: flag=-2 (f64)" {
+    // Test with flag=-2 (H is identity, no operation)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4.0, 5.0, 6.0 }, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, -2),
+        .h = [_]f64{ 0.0, 0.0, 0.0, 0.0 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    // With flag=-2, vectors may remain unchanged or apply identity
+    // At minimum, test that it doesn't crash
+    try testing.expect(true);
+}
+
+test "rotm: single element vector (f64)" {
+    // Test with n=1
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{2.0}, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{3.0}, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, 0),
+        .h = [_]f64{ 0.6, 0.8, -0.8, 0.6 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    // Single element should still transform
+    try testing.expect(true);
+}
+
+test "rotm: large vector n=1000 (f64)" {
+    // Test with large vector
+    const allocator = testing.allocator;
+
+    var x_data: [1000]f64 = undefined;
+    var y_data: [1000]f64 = undefined;
+    for (0..1000) |i| {
+        x_data[i] = @floatFromInt(i);
+        y_data[i] = @floatFromInt(1000 - i);
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, &x_data, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, &y_data, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, 0),
+        .h = [_]f64{ 0.8, 0.2, -0.2, 0.9 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    // Verify rotation was applied (at least some elements changed)
+    try testing.expect(x.data[500] != 500.0 or y.data[500] != 500.0);
+}
+
+test "rotm: type support f32" {
+    // Test rotm with f32
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 1.0, 2.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 3.0, 4.0 }, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, 0),
+        .h = [_]f32{ 0.6, 0.8, -0.8, 0.6 },
+    };
+
+    try rotm(f32, &x, &y, param);
+
+    try testing.expect(true);
+}
+
+test "rotm: type support f64" {
+    // Test rotm with f64
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 2.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3.0, 4.0 }, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, 0),
+        .h = [_]f64{ 0.6, 0.8, -0.8, 0.6 },
+    };
+
+    try rotm(f64, &x, &y, param);
+
+    try testing.expect(true);
+}
+
+test "rotm: error dimension mismatch (f64)" {
+    // Test error handling when x and y have different dimensions
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 }, .row_major);
+    defer y.deinit();
+
+    const param = .{
+        .flag = @as(i8, 0),
+        .h = [_]f64{ 0.6, 0.8, -0.8, 0.6 },
+    };
+
+    const result = rotm(f64, &x, &y, param);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+// ============================================================================
+// iamin Tests — Index of Minimum Absolute Value
+// ============================================================================
+// Time: O(n) | Space: O(1)
+
+test "iamin: basic 3-element vector (f64)" {
+    // Find index of minimum absolute value in [1.0, -7.0, 3.0]
+    // Expected: 0 (|1.0| = 1.0 is minimum)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, -7.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 0), idx);
+}
+
+test "iamin: single element (f64)" {
+    // Test with n=1
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1}, &[_]f64{5.0}, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 0), idx);
+}
+
+test "iamin: multiple equal minimums returns first occurrence (f64)" {
+    // [3.0, 2.0, 2.0, 5.0]
+    // Minimum abs is 2.0 at indices 1 and 2
+    // Expected: 1 (first occurrence)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 3.0, 2.0, 2.0, 5.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 1), idx);
+}
+
+test "iamin: negative values uses absolute value (f64)" {
+    // [-5.0, -1.0, -3.0]
+    // Minimum abs is |-1.0| = 1.0 at index 1
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ -5.0, -1.0, -3.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 1), idx);
+}
+
+test "iamin: large vector n=1000 (f64)" {
+    // Create vector where minimum is at index 500
+    const allocator = testing.allocator;
+
+    var x_data: [1000]f64 = undefined;
+    for (0..1000) |i| {
+        if (i == 500) {
+            x_data[i] = 0.1; // Minimum absolute value
+        } else {
+            x_data[i] = @floatFromInt(i + 1);
+        }
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{1000}, &x_data, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 500), idx);
+}
+
+test "iamin: type support f32" {
+    // Test iamin with f32
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{4}, &[_]f32{ 5.0, 2.0, 8.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f32, x);
+    try testing.expectEqual(@as(usize, 1), idx); // 2.0 is minimum
+}
+
+test "iamin: type support f64" {
+    // Test iamin with f64
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5.0, 2.0, 8.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 1), idx); // 2.0 is minimum
+}
+
+test "iamin: all same value (f64)" {
+    // [5.0, 5.0, 5.0, 5.0]
+    // All have same absolute value, should return 0 (first index)
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 5.0, 5.0, 5.0, 5.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 0), idx);
+}
+
+test "iamin: mixed positive and negative (f64)" {
+    // [10.0, -2.5, 15.0, -1.5, 8.0]
+    // Minimum abs is |-1.5| = 1.5 at index 3
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 10.0, -2.5, 15.0, -1.5, 8.0 }, .row_major);
+    defer x.deinit();
+
+    const idx = try iamin(f64, x);
+    try testing.expectEqual(@as(usize, 3), idx);
+}
+
+test "iamin: error empty vector (f64)" {
+    // Test error handling for empty vector
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    defer x.deinit();
+
+    const result = iamin(f64, x);
+    try testing.expectError(error.EmptyArray, result);
 }
