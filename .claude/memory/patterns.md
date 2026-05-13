@@ -862,3 +862,121 @@ pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8,
 - Don't forget tail loop (n % vec_width elements)
 - Don't forget unit diagonal special case (skip A[i,i] division)
 - Don't forget 4 cases (upper/lower × noTrans/trans)
+
+## FFT Twiddle Factor Caching Pattern — Session 507
+
+**When to use**: Optimize FFT by pre-computing twiddle factors (cos/sin values) instead of computing on-the-fly in butterfly loops.
+
+**Current bottleneck** (src/signal/fft.zig lines 94-96):
+```zig
+while (j < half_size) : (j += 1) {
+    const angle = theta * @as(T, @floatFromInt(j));
+    const twiddle = Complex(T).init(@cos(angle), @sin(angle));  // EXPENSIVE
+    // ... butterfly operation ...
+}
+```
+- Cost: ~n*log(n)/2 trigonometric evaluations (0.5B trig ops for n=1B FFT)
+- Each @cos/@sin: ~100+ CPU cycles, ~10% of total FFT time
+
+**Optimization strategy**:
+```zig
+pub fn fftCached(comptime T: type, allocator: Allocator, input: []const Complex(T)) ![]Complex(T) {
+    const n = input.len;
+    if (n == 0) return error.InvalidSize;
+    if (!isPowerOfTwo(n)) return error.NotPowerOfTwo;
+
+    // 1. Allocate output and twiddle cache
+    var output = try allocator.alloc(Complex(T), n);
+    errdefer allocator.free(output);
+    @memcpy(output, input);
+
+    bitReversePermutation(Complex(T), output);
+
+    // 2. Pre-compute all twiddle factors for this FFT size
+    var twiddles = try allocator.alloc(Complex(T), n);
+    defer allocator.free(twiddles);
+
+    // Pre-compute twiddle factors: W_{N}^{k} = exp(-j*2π*k/N) for all k
+    // Only need n/2 unique values per stage, but compute all for simplicity
+    for (0..n) |k| {
+        const angle = -2.0 * math.pi * @as(T, @floatFromInt(k)) / @as(T, @floatFromInt(n));
+        twiddles[k] = Complex(T).init(@cos(angle), @sin(angle));
+    }
+
+    // 3. Cooley-Tukey FFT using cached twiddles
+    var size: usize = 2;
+    while (size <= n) : (size *= 2) {
+        const half_size = size / 2;
+        const twiddle_stride = n / size;  // Index stride in twiddle array
+
+        var k: usize = 0;
+        while (k < n) : (k += size) {
+            var j: usize = 0;
+            while (j < half_size) : (j += 1) {
+                const twiddle_idx = j * twiddle_stride;
+                const twiddle = twiddles[twiddle_idx];  // LOOKUP instead of compute
+
+                const t = twiddle.mul(output[k + j + half_size]);
+                const u = output[k + j];
+
+                output[k + j] = u.add(t);
+                output[k + j + half_size] = u.sub(t);
+            }
+        }
+    }
+
+    return output;
+}
+```
+
+**Key aspects**:
+1. **Twiddle indexing**: For each butterfly stage, use `twiddle_stride = n / size` to index correctly
+   - Stage 1 (size=2): twiddle_stride = n/2, use twiddles[0], twiddles[n/2], twiddles[n/4], ...
+   - Stage 2 (size=4): twiddle_stride = n/4, use twiddles[0], twiddles[n/4], twiddles[n/8], ...
+   - General: The `j * twiddle_stride` indexing maps to W_{N}^{j*stride}
+2. **Memory tradeoff**: O(n) extra space for twiddles vs O(log n) computation savings
+3. **Accuracy**: Should be identical to fft() since we're using same trig computations, just cached
+4. **Error paths**: Same as fft() — validate input size and power-of-two
+
+**Test coverage** (17 comprehensive tests):
+
+1. **Correctness (6 tests)**: fftCached() matches fft() exactly
+   - Sizes: 8, 16, 32, 256, 512, 4096
+   - Tolerances: 1e-9 for small, 1e-7 for large (accumulation error)
+
+2. **Type support (2 tests)**: Both f32 and f64
+   - f32 16-point (tolerance 1e-6)
+   - f32 256-point (tolerance 1e-5)
+
+3. **Edge cases (2 tests)**:
+   - Single point (n=1) — trivial case
+   - Non-power-of-two error handling
+
+4. **Numerical properties (4 tests)**:
+   - Impulse response at different positions
+   - Real sine wave (validates frequency peak)
+   - Complex exponential (validates complex handling)
+   - DC constant signal (validates spectral shape)
+
+5. **Mathematical invariants (1 test)**:
+   - Parseval's theorem: sum(|FFT|²) = N * sum(|input|²)
+
+6. **Memory safety (1 test)**:
+   - 10 iterations with testing.allocator (leak detection)
+
+7. **Error handling (1 test)**:
+   - Empty input validation
+
+**Performance expectations**:
+- Time: O(n log n) same as fft(), but with smaller constant factor
+- Space: O(n) for output + O(n) for twiddle cache
+- Speedup: 2-3× for large FFTs (n >= 256) due to eliminated trig ops
+- Latency: Slightly higher for small FFTs (n < 64) due to pre-compute overhead
+- Microarchitecture: Table lookups → better cache locality than repeated trig computation
+
+**Pitfalls to avoid**:
+- Don't forget twiddle_stride = n / size for each butterfly stage
+- Don't mix up twiddle indexing between stages (stride changes!)
+- Don't assume identical floating-point results (minor rounding differences OK within 1e-6)
+- Don't forget to defer/free twiddle allocation
+- Don't pre-compute all exp(-j*2π*k/N) naively in the butterfly loop (defeats purpose)
