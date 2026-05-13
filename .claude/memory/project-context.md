@@ -1,3 +1,36 @@
+**Session 513 Update (2026-05-14) — FEATURE MODE:**
+
+✅ **BLAS Level 1 rotg() and rot() COMPLETE** — Givens rotation operations:
+- **Feature**: Implemented Givens rotation for orthogonal transformations
+- **Functions**:
+  * rotg(a, b): Compute Givens rotation parameters (c, s, r) from scalars
+    - Returns struct { c: T, s: T, r: T } where c² + s² = 1 (orthogonality)
+    - Handles special cases: both zero, a=0, b=0, numerical stability
+    - Formula: r = sqrt(a² + b²), c = a/r, s = b/r
+    - Time: O(1), Space: O(1)
+  * rot(x, y, c, s): Apply Givens rotation to vectors in-place
+    - Transformation: x_new = c*x + s*y, y_new = c*y - s*x
+    - Equivalent to 2D rotation matrix multiplication
+    - Time: O(n), Space: O(1)
+- **Tests**: 24 comprehensive tests (all passing)
+  * rotg: 10 tests (basic correctness, special cases, orthogonality c²+s²=1, f32/f64, large/small values)
+  * rot: 14 tests (correctness, formula verification, types, n=1000 large, edge cases, dimension errors, inverse via negation, composition, memory safety)
+- **Files**: src/linalg/blas.zig (+595 lines: 105 implementation, 490 tests)
+- **Commit**: ffcf61b (feature implementation)
+- **Total Tests**: 3021 → 3045 (24 new Givens rotation tests)
+- **Use Cases**:
+  * QR decomposition with Givens rotations (alternative to Householder)
+  * Eigenvalue algorithms (Jacobi, implicit QR iteration)
+  * Least squares problems
+  * Sparse matrix operations (selective element zeroing)
+  * Tridiagonalization of symmetric matrices
+- **Rationale**: Givens rotations (rotg/rot) are fundamental BLAS-1 operations (drotg/srotg, drot/srot in reference BLAS). Essential for:
+  * QR factorization in sparse settings (modify only specific elements)
+  * Jacobi eigenvalue algorithm (sequential 2×2 diagonalization)
+  * Implicit QR iteration for eigenvalue computation
+  * Hessenberg reduction and matrix diagonalization
+- **BLAS Level 1 Status**: ✅ **EXTENDED** — dot ✅, axpy ✅, nrm2 ✅, asum ✅, scal ✅, iamax ✅, copy ✅, swap ✅, rotg ✅, rot ✅ (10 operations)
+
 **Session 512 Update (2026-05-14) — FEATURE MODE:**
 
 ✅ **BLAS Level 1 copy() and swap() COMPLETE** — Completed core Level 1 suite:
