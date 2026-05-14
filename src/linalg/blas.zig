@@ -12756,3 +12756,635 @@ test "iamin: error empty vector (f64)" {
     const result = iamin(f64, x);
     try testing.expectError(error.EmptyArray, result);
 }
+
+// ============================================================================
+// gbmv Tests — General Banded Matrix-Vector Multiplication
+// ============================================================================
+// Time: O(m*(kl+ku+1)) | Space: O(1)
+//
+// gbmv performs y := alpha*A*x + beta*y where A is an m×n banded matrix
+// with kl sub-diagonals and ku super-diagonals, stored in banded format.
+//
+// Banded storage format:
+// - A is stored as (kl+ku+1) × n array
+// - Element A(i,j) of full matrix is at A_banded(ku+i-j, j) when the
+//   element exists (max(0, j-ku) <= i < min(m, j+kl+1))
+
+/// General banded matrix-vector multiply: y = αAx + βy
+///
+/// Performs matrix-vector multiplication where A is a banded matrix with kl
+/// sub-diagonals and ku super-diagonals. Only the band is stored, reducing
+/// memory requirements from O(m*n) to O((kl+ku+1)*n).
+///
+/// The banded storage format stores the diagonals as rows:
+/// - Row 0 of storage: the ku-th super-diagonal
+/// - Row ku: the main diagonal
+/// - Row kl+ku: the kl-th sub-diagonal
+///
+/// Parameters:
+/// - m: Number of rows of the full matrix
+/// - n: Number of columns of the matrix (and length of x)
+/// - kl: Number of sub-diagonals
+/// - ku: Number of super-diagonals
+/// - alpha: Scalar multiplier for Ax
+/// - A: Banded matrix stored as (kl+ku+1)×n array
+/// - x: Vector of length n — not modified
+/// - beta: Scalar multiplier for y
+/// - y: Vector of length m — modified in-place
+///
+/// Errors:
+/// - error.DimensionMismatch if x.shape[0] != n or y.shape[0] != m
+/// - error.DimensionMismatch if A.shape[0] != kl+ku+1 or A.shape[1] != n
+///
+/// Time: O(m*(kl+ku+1))
+/// Space: O(1) (modifies y in-place)
+pub fn gbmv(comptime T: type, m: usize, n: usize, kl: usize, ku: usize, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    // Validate dimensions
+    if (x.shape[0] != n) {
+        return error.DimensionMismatch;
+    }
+    if (y.shape[0] != m) {
+        return error.DimensionMismatch;
+    }
+    if (A.shape[0] != kl + ku + 1) {
+        return error.DimensionMismatch;
+    }
+    if (A.shape[1] != n) {
+        return error.DimensionMismatch;
+    }
+
+    // y = alpha * A * x + beta * y
+    // For each row i of the full matrix (0..m):
+    //   y[i] = beta * y[i] + alpha * sum over valid j of A[i,j] * x[j]
+    //
+    // In banded storage:
+    //   A_banded[ku + i - j, j] stores A[i, j] when max(0, j-ku) <= i < min(m, j+kl+1)
+    for (0..m) |i| {
+        var sum: T = 0;
+
+        // For row i, the valid column range is [j_min, j_max)
+        // where j_min = max(0, i-kl) and j_max = min(n, i+ku+1)
+        const j_min = if (i > kl) i - kl else 0;
+        const j_max = if (i + ku + 1 < n) i + ku + 1 else n;
+
+        for (j_min..j_max) |j| {
+            // Element A(i,j) is stored at A_banded(ku+i-j, j)
+            const row_idx = ku + i - j;
+            const a_val = A.data[row_idx * n + j];
+            const x_val = x.data[j];
+            sum += a_val * x_val;
+        }
+
+        y.data[i] = beta * y.data[i] + alpha * sum;
+    }
+}
+
+test "gbmv: tridiagonal matrix 5x5 (kl=1, ku=1) basic multiply" {
+    // Test basic tridiagonal (kl=1, ku=1) banded matrix-vector multiply
+    // Full matrix:
+    // [2  1  0  0  0]
+    // [1  2  1  0  0]
+    // [0  1  2  1  0]
+    // [0  0  1  2  1]
+    // [0  0  0  1  2]
+    //
+    // Banded storage (3 rows):
+    // Row 0 (super-diagonal):  [0, 1, 1, 1, 1]
+    // Row 1 (main diagonal):   [2, 2, 2, 2, 2]
+    // Row 2 (sub-diagonal):    [1, 1, 1, 1, 0]
+    //
+    // x = [1, 2, 3, 4, 5]
+    // Expected y = A*x:
+    // [2*1 + 1*2, 1*1 + 2*2 + 1*3, 1*2 + 2*3 + 1*4, 1*3 + 2*4 + 1*5, 1*4 + 2*5]
+    // = [4, 9, 14, 19, 14]
+    const allocator = testing.allocator;
+    const m = 5;
+    const n = 5;
+    const kl = 1;
+    const ku = 1;
+
+    // Create banded storage
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    // Initialize to zero
+    @memset(A.data, 0);
+
+    // Fill super-diagonal (row 0): [0, 1, 1, 1, 1]
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+    A.data[0 * n + 4] = 1;
+
+    // Fill main diagonal (row 1): [2, 2, 2, 2, 2]
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[1 * n + 3] = 2;
+    A.data[1 * n + 4] = 2;
+
+    // Fill sub-diagonal (row 2): [1, 1, 1, 1, 0]
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 1;
+    A.data[2 * n + 2] = 1;
+    A.data[2 * n + 3] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3, 4, 5 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(4.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(14.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(19.0, y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(14.0, y.data[4], 1e-10);
+}
+
+test "gbmv: pentadiagonal 6x6 (kl=2, ku=2) with alpha=2, beta=3" {
+    // Test pentadiagonal (kl=2, ku=2) with scaling factors
+    // Full matrix (simplified):
+    // [3  1  1  0  0  0]
+    // [1  3  1  1  0  0]
+    // [1  1  3  1  1  0]
+    // [0  1  1  3  1  1]
+    // [0  0  1  1  3  1]
+    // [0  0  0  1  1  3]
+    //
+    // Banded storage (5 rows for kl+ku+1=5):
+    // A_banded layout (with row indexing for storage)
+    //
+    // x = [1, 1, 1, 1, 1, 1]
+    // y_initial = [2, 2, 2, 2, 2, 2]
+    // Result: y = 2*A*x + 3*y_initial
+    const allocator = testing.allocator;
+    const m = 6;
+    const n = 6;
+    const kl = 2;
+    const ku = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill banded structure (pentadiagonal):
+    // Row 0 (2nd super-diagonal): [_, _, 1, 1, 1, 1]
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+    A.data[0 * n + 4] = 1;
+    A.data[0 * n + 5] = 1;
+
+    // Row 1 (1st super-diagonal): [_, 1, 1, 1, 1, 1]
+    A.data[1 * n + 1] = 1;
+    A.data[1 * n + 2] = 1;
+    A.data[1 * n + 3] = 1;
+    A.data[1 * n + 4] = 1;
+    A.data[1 * n + 5] = 1;
+
+    // Row 2 (main diagonal): [3, 3, 3, 3, 3, 3]
+    for (0..n) |j| {
+        A.data[2 * n + j] = 3;
+    }
+
+    // Row 3 (1st sub-diagonal): [1, 1, 1, 1, 1, _]
+    for (0..5) |j| {
+        A.data[3 * n + j] = 1;
+    }
+
+    // Row 4 (2nd sub-diagonal): [1, 1, 1, 1, _, _]
+    for (0..4) |j| {
+        A.data[4 * n + j] = 1;
+    }
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 1, 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{m}, &[_]f64{ 2, 2, 2, 2, 2, 2 }, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 2.0, A, x, 3.0, &y);
+
+    // Manual calculation for row 0: A[0,0]*x[0] + A[0,1]*x[1] + A[0,2]*x[2]
+    //                               = 3*1 + 1*1 + 1*1 = 5
+    // y[0] = 2*5 + 3*2 = 16
+    try testing.expectApproxEqAbs(16.0, y.data[0], 1e-10);
+
+    // Row 1: A[1,0]*x[0] + ... + A[1,3]*x[3]
+    //      = 1*1 + 3*1 + 1*1 + 1*1 = 6
+    // y[1] = 2*6 + 3*2 = 18
+    try testing.expectApproxEqAbs(18.0, y.data[1], 1e-10);
+}
+
+test "gbmv: diagonal matrix (kl=0, ku=0)" {
+    // Test purely diagonal case (no off-diagonals)
+    // A = diag([2, 3, 4, 5])
+    // x = [1, 2, 3, 4]
+    // Expected: A*x = [2, 6, 12, 20]
+    const allocator = testing.allocator;
+    const m = 4;
+    const n = 4;
+    const kl = 0;
+    const ku = 0;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    // Single row for diagonal: [2, 3, 4, 5]
+    A.data[0] = 2;
+    A.data[1] = 3;
+    A.data[2] = 4;
+    A.data[3] = 5;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(2.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(20.0, y.data[3], 1e-10);
+}
+
+test "gbmv: upper triangular band (kl=0, ku=2)" {
+    // Test upper triangular banded: only main diagonal and 2 super-diagonals
+    // Full matrix (3x5):
+    // [1  2  3  0  0]
+    // [0  4  5  6  0]
+    // [0  0  7  8  9]
+    //
+    // Banded storage (3 rows):
+    // Row 0: [_, _, 3, 6, 9]
+    // Row 1: [_, 2, 5, 8, 0]
+    // Row 2: [1, 4, 7, 0, 0]
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 5;
+    const kl = 0;
+    const ku = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Row 0 (2nd super-diagonal)
+    A.data[0 * n + 2] = 3;
+    A.data[0 * n + 3] = 6;
+    A.data[0 * n + 4] = 9;
+
+    // Row 1 (1st super-diagonal)
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 5;
+    A.data[1 * n + 3] = 8;
+
+    // Row 2 (main diagonal)
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 4;
+    A.data[2 * n + 2] = 7;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    // Row 0: 1*3 + 1*2 + 1*1 = wait, need to recalculate
+    // A[0,0]=1, A[0,1]=2, A[0,2]=3 => y[0] = 1 + 2 + 3 = 6
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    // A[1,1]=4, A[1,2]=5, A[1,3]=6 => y[1] = 4 + 5 + 6 = 15
+    try testing.expectApproxEqAbs(15.0, y.data[1], 1e-10);
+    // A[2,2]=7, A[2,3]=8, A[2,4]=9 => y[2] = 7 + 8 + 9 = 24
+    try testing.expectApproxEqAbs(24.0, y.data[2], 1e-10);
+}
+
+test "gbmv: lower triangular band (kl=2, ku=0)" {
+    // Test lower triangular banded: only main diagonal and 2 sub-diagonals
+    // Full matrix (5x3):
+    // [1  0  0]
+    // [2  4  0]
+    // [3  5  7]
+    // [0  6  8]
+    // [0  0  9]
+    //
+    // Banded storage (3 rows for kl+ku+1=3):
+    // Row 0 (sub-diag 2): [3, 5, 7]
+    // Row 1 (sub-diag 1): [2, 4, 0] -> actually [2, 4, 8]
+    // Row 2 (main diag):  [1, 4, 7]
+    const allocator = testing.allocator;
+    const m = 5;
+    const n = 3;
+    const kl = 2;
+    const ku = 0;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Row 0 (2nd sub-diagonal): [3, 5, 7]
+    A.data[0 * n + 0] = 3;
+    A.data[0 * n + 1] = 5;
+    A.data[0 * n + 2] = 7;
+
+    // Row 1 (1st sub-diagonal): [2, 4, 8]
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 4;
+    A.data[1 * n + 2] = 8;
+
+    // Row 2 (main diagonal): [1, 4, 7]
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 4;
+    A.data[2 * n + 2] = 7;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    // Row 0: A[0,0]*x[0] = 1*1 = 1
+    try testing.expectApproxEqAbs(1.0, y.data[0], 1e-10);
+    // Row 1: A[1,0]*x[0] + A[1,1]*x[1] = 2*1 + 4*2 = 10
+    try testing.expectApproxEqAbs(10.0, y.data[1], 1e-10);
+    // Row 2: A[2,0]*x[0] + A[2,1]*x[1] + A[2,2]*x[2] = 1*1 + 4*2 + 7*3 = 34
+    try testing.expectApproxEqAbs(34.0, y.data[2], 1e-10);
+    // Row 3: A[3,1]*x[1] + A[3,2]*x[2] = 4*2 + 8*3 = 32
+    try testing.expectApproxEqAbs(32.0, y.data[3], 1e-10);
+    // Row 4: A[4,2]*x[2] = 8*3 = 24
+    try testing.expectApproxEqAbs(24.0, y.data[4], 1e-10);
+}
+
+test "gbmv: scalar alpha=0 (y = beta*y)" {
+    // Test that when alpha=0, A and x are effectively ignored
+    // y should only depend on beta*y_old
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 999); // arbitrary values should not affect result
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 999, 999, 999 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{m}, &[_]f64{ 5, 10, 15 }, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 0.0, A, x, 2.0, &y);
+
+    // y should be [10, 20, 30]
+    try testing.expectApproxEqAbs(10.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(20.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(30.0, y.data[2], 1e-10);
+}
+
+test "gbmv: scalar beta=0 (y = alpha*A*x)" {
+    // Test that when beta=0, old y is ignored
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Set up simple tridiagonal: diagonal = 2, off-diagonals = 1
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{m}, &[_]f64{ 999, 999, 999 }, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 3.0, A, x, 0.0, &y);
+
+    // y[0] = 3*(2*1 + 1*2) = 3*4 = 12
+    // y[1] = 3*(1*1 + 2*2 + 1*3) = 3*8 = 24
+    // y[2] = 3*(1*2 + 2*3) = 3*8 = 24
+    try testing.expectApproxEqAbs(12.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(24.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(24.0, y.data[2], 1e-10);
+}
+
+test "gbmv: type support f32" {
+    // Test gbmv with f32 precision
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f32, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 1;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{n}, &[_]f32{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f32, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(@as(f32, 4), y.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 8), y.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 8), y.data[2], 1e-5);
+}
+
+test "gbmv: type support f64" {
+    // Test gbmv with f64 precision
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(4.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[2], 1e-10);
+}
+
+test "gbmv: error dimension mismatch x length" {
+    // Test error when x.shape[0] != n
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major); // wrong size!
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    const result = gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gbmv: error dimension mismatch y length" {
+    // Test error when y.shape[0] != m
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major); // wrong size!
+    defer y.deinit();
+
+    const result = gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gbmv: error dimension mismatch A rows" {
+    // Test error when A.shape[0] != kl+ku+1
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, n }, .row_major); // wrong rows!
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    const result = gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gbmv: error dimension mismatch A columns" {
+    // Test error when A.shape[1] != n
+    const allocator = testing.allocator;
+    const m = 3;
+    const n = 3;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, 5 }, .row_major); // wrong cols!
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    const result = gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "gbmv: large matrix 100x100 tridiagonal" {
+    // Test performance/correctness on larger tridiagonal system
+    const allocator = testing.allocator;
+    const m = 100;
+    const n = 100;
+    const kl = 1;
+    const ku = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ kl + ku + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill tridiagonal: super-diagonal = 1, main = 2, sub = 1
+    for (0..n - 1) |j| {
+        A.data[0 * n + j + 1] = 1;
+    }
+    for (0..n) |j| {
+        A.data[1 * n + j] = 2;
+    }
+    for (0..n - 1) |j| {
+        A.data[2 * n + j] = 1;
+    }
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+    for (0..n) |i| {
+        x.data[i] = 1.0; // all ones
+    }
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{m}, .row_major);
+    defer y.deinit();
+
+    try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
+
+    // First row: 2*1 + 1*1 = 3
+    try testing.expectApproxEqAbs(3.0, y.data[0], 1e-10);
+
+    // Middle rows: 1*1 + 2*1 + 1*1 = 4
+    try testing.expectApproxEqAbs(4.0, y.data[50], 1e-10);
+
+    // Last row: 1*1 + 2*1 = 3
+    try testing.expectApproxEqAbs(3.0, y.data[99], 1e-10);
+}
