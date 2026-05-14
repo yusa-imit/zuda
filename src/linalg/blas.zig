@@ -8227,6 +8227,564 @@ test "syr: auto-dispatch alpha=2.5 (n=128, upper, SIMD)" {
 }
 
 // ============================================================================
+// syr2() — Symmetric Rank-2 Update: A := α*x*y^T + α*y*x^T + A
+// ============================================================================
+
+/// Symmetric rank-2 update: A := α*x*y^T + α*y*x^T + A
+/// Performs a symmetric rank-2 update to a symmetric matrix.
+/// Only the specified triangle (upper 'U' or lower 'L') is updated.
+/// The other triangle is left untouched.
+///
+/// Time: O(n²) | Space: O(1)
+///
+/// Parameters:
+///   T: floating point type (f32 or f64)
+///   uplo: 'U' for upper triangle, 'L' for lower triangle
+///   alpha: scalar multiplier
+///   x, y: 1D vectors of length n
+///   A: n×n symmetric matrix (modified in-place)
+///
+/// Errors:
+///   - DimensionMismatch: if x.shape[0] != A.shape[0] or y.shape[0] != A.shape[0]
+///   - NotSquare: if A is not square
+pub fn syr2(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error)!void {
+    // Validate matrix is square
+    if (A.shape[0] != A.shape[1]) {
+        return error.NotSquare;
+    }
+
+    // Validate x dimension
+    if (x.shape[0] != A.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    // Validate y dimension
+    if (y.shape[0] != A.shape[0]) {
+        return error.DimensionMismatch;
+    }
+
+    const n = A.shape[0];
+
+    // Early exit: alpha == 0 is a no-op
+    if (alpha == 0) {
+        return;
+    }
+
+    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
+    if (n >= 64) {
+        return simd_blas.syr2_simd(T, uplo, alpha, x, y, A);
+    }
+
+    // Scalar implementation for small matrices
+    if (uplo == 'U') {
+        // Update upper triangle: for i in 0..n, for j in i..n: A[i,j] += α*(x[i]*y[j] + y[i]*x[j])
+        for (0..n) |i| {
+            const x_i = x.data[i];
+            const y_i = y.data[i];
+            for (i..n) |j| {
+                const x_j = x.data[j];
+                const y_j = y.data[j];
+                A.data[i * n + j] += alpha * (x_i * y_j + y_i * x_j);
+            }
+        }
+    } else if (uplo == 'L') {
+        // Update lower triangle: for i in 0..n, for j in 0..=i: A[i,j] += α*(x[i]*y[j] + y[i]*x[j])
+        for (0..n) |i| {
+            const x_i = x.data[i];
+            const y_i = y.data[i];
+            for (0..i + 1) |j| {
+                const x_j = x.data[j];
+                const y_j = y.data[j];
+                A.data[i * n + j] += alpha * (x_i * y_j + y_i * x_j);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// syr2() Tests
+// ============================================================================
+
+test "syr2: basic 3×3 upper triangle, alpha=1" {
+    const allocator = testing.allocator;
+
+    // x = [1, 2, 3]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // y = [4, 5, 6]
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer y.deinit();
+
+    // A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]  (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    // syr2(1.0, x, y, &A) updates upper triangle:
+    // x*y^T = [[1*4, 1*5, 1*6], [2*4, 2*5, 2*6], [3*4, 3*5, 3*6]]
+    //       = [[4, 5, 6], [8, 10, 12], [12, 15, 18]]
+    // y*x^T = [[4*1, 4*2, 4*3], [5*1, 5*2, 5*3], [6*1, 6*2, 6*3]]
+    //       = [[4, 8, 12], [5, 10, 15], [6, 12, 18]]
+    // (x*y^T + y*x^T)(upper) = [[8, 13, 18], [18, 20, 27], [18, 27, 36]]
+    // Result: A(upper) = A(upper) + 1*(x*y^T + y*x^T)(upper)
+    //       = [0, 0, 0, 0, 0, 0] + [8, 13, 18, 20, 27, 36]
+    //       = [8, 13, 18, 20, 27, 36]
+    // In full matrix form (upper triangle):
+    //   A[0,0] = 0 + 8 = 8
+    //   A[0,1] = 0 + 13 = 13
+    //   A[0,2] = 0 + 18 = 18
+    //   A[1,1] = 0 + 20 = 20
+    //   A[1,2] = 0 + 27 = 27
+    //   A[2,2] = 0 + 36 = 36
+
+    try syr2(f64, 'U', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(8.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(13.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(18.0, A.data[2], 1e-10);
+    try testing.expectApproxEqAbs(20.0, A.data[4], 1e-10);
+    try testing.expectApproxEqAbs(27.0, A.data[5], 1e-10);
+    try testing.expectApproxEqAbs(36.0, A.data[8], 1e-10);
+}
+
+test "syr2: basic 3×3 lower triangle, alpha=1" {
+    const allocator = testing.allocator;
+
+    // x = [1, 2, 3]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // y = [4, 5, 6]
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer y.deinit();
+
+    // A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]  (lower triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    // syr2(1.0, x, y, &A) updates lower triangle:
+    // (x*y^T + y*x^T)(lower) = [[8, 13, 18], [13, 20, 27], [18, 27, 36]]
+    // Result: A(lower) = A(lower) + 1*(x*y^T + y*x^T)(lower)
+    //       = [0, 0, 0, 0, 0, 0] + [8, 13, 20, 18, 27, 36]
+    //       = [8, 13, 20, 18, 27, 36]
+    // In full matrix form (lower triangle):
+    //   A[0,0] = 0 + 8 = 8
+    //   A[1,0] = 0 + 13 = 13
+    //   A[1,1] = 0 + 20 = 20
+    //   A[2,0] = 0 + 18 = 18
+    //   A[2,1] = 0 + 27 = 27
+    //   A[2,2] = 0 + 36 = 36
+
+    try syr2(f64, 'L', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(8.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(13.0, A.data[3], 1e-10);
+    try testing.expectApproxEqAbs(20.0, A.data[4], 1e-10);
+    try testing.expectApproxEqAbs(18.0, A.data[6], 1e-10);
+    try testing.expectApproxEqAbs(27.0, A.data[7], 1e-10);
+    try testing.expectApproxEqAbs(36.0, A.data[8], 1e-10);
+}
+
+test "syr2: alpha=0 (no-op, preserves matrix)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
+    defer A.deinit();
+
+    const original = try A.clone();
+    defer original.deinit();
+
+    // alpha=0 should not change A
+    try syr2(f64, 'U', 0.0, x, y, &A);
+
+    for (0..9) |i| {
+        try testing.expectApproxEqAbs(original.data[i], A.data[i], 1e-10);
+    }
+}
+
+test "syr2: alpha=2.0 (non-unit scaling)" {
+    const allocator = testing.allocator;
+
+    // x = [1, 1]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    // y = [2, 2]
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 2, 2 }, .row_major);
+    defer y.deinit();
+
+    // A = [[0, 0], [0, 0]]  (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    // syr2(2.0, x, y, &A) with upper:
+    // x*y^T = [[1*2, 1*2], [1*2, 1*2]] = [[2, 2], [2, 2]]
+    // y*x^T = [[2*1, 2*1], [2*1, 2*1]] = [[2, 2], [2, 2]]
+    // (x*y^T + y*x^T)(upper) = [[4, 4], [4, 4]]
+    // 2.0 * (x*y^T + y*x^T)(upper) = [[8, 8], [8, 8]]
+    // A(upper) = [0, 0, 0] + [8, 8, 8] = [8, 8, 8]
+
+    try syr2(f64, 'U', 2.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(8.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(8.0, A.data[3], 1e-10);
+}
+
+test "syr2: 2×2 smallest non-trivial case" {
+    const allocator = testing.allocator;
+
+    // x = [1, 2]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    // y = [3, 4]
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 4 }, .row_major);
+    defer y.deinit();
+
+    // A = [[1, 2], [0, 3]]  (upper triangle)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // syr2(1.0, x, y, &A) with upper:
+    // x*y^T = [[1*3, 1*4], [2*3, 2*4]] = [[3, 4], [6, 8]]
+    // y*x^T = [[3*1, 3*2], [4*1, 4*2]] = [[3, 6], [4, 8]]
+    // (x*y^T + y*x^T)(upper) = [[6, 10], [10, 16]]
+    // A(upper) = [1, 2, 3] + [6, 10, 16] = [7, 12, 19]
+
+    try syr2(f64, 'U', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(7.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(12.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(19.0, A.data[3], 1e-10);
+}
+
+test "syr2: x dimension mismatch (x.length != A.shape[0])" {
+    const allocator = testing.allocator;
+
+    // x has 2 elements, A is 3×3
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    // y has 3 elements
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    // Should return error
+    const result = syr2(f64, 'U', 1.0, x, y, &A);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "syr2: y dimension mismatch (y.length != A.shape[0])" {
+    const allocator = testing.allocator;
+
+    // x has 3 elements
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    // y has 2 elements, A is 3×3
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    // Should return error
+    const result = syr2(f64, 'U', 1.0, x, y, &A);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "syr2: matrix not square (3×4)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 4, 5, 6 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
+    defer A.deinit();
+
+    // Should return error: matrix is not square
+    const result = syr2(f64, 'U', 1.0, x, y, &A);
+    try testing.expectError(error.NotSquare, result);
+}
+
+test "syr2: f32 type support" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 1.5, 2.5 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 0.5, 1.5 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    // syr2(1.0, x, y, &A) with upper:
+    // x*y^T = [[1.5*0.5, 1.5*1.5], [2.5*0.5, 2.5*1.5]] = [[0.75, 2.25], [1.25, 3.75]]
+    // y*x^T = [[0.5*1.5, 0.5*2.5], [1.5*1.5, 1.5*2.5]] = [[0.75, 1.25], [2.25, 3.75]]
+    // (x*y^T + y*x^T)(upper) = [[1.5, 3.5], [3.5, 7.5]]
+
+    try syr2(f32, 'U', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(@as(f32, 1.5), A.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.5), A.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 7.5), A.data[3], 1e-5);
+}
+
+test "syr2: n=10 with pattern validation" {
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 10);
+    defer allocator.free(x_data);
+    for (0..10) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{10}, x_data, .row_major);
+    defer x.deinit();
+
+    var y_data = try allocator.alloc(f64, 10);
+    defer allocator.free(y_data);
+    for (0..10) |i| {
+        y_data[i] = @as(f64, @floatFromInt((i + 1) * 2));
+    }
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{10}, y_data, .row_major);
+    defer y.deinit();
+
+    // Create 10×10 matrix initialized to zeros
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 10 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr2 update with upper triangle
+    try syr2(f64, 'U', 1.0, x, y, &A);
+
+    // Verify diagonal: A[i,i] should be 2*x[i]*y[i] = 2*(i+1)*2*(i+1) = 4*(i+1)²
+    for (0..10) |i| {
+        const x_i = @as(f64, @floatFromInt(i + 1));
+        const y_i = @as(f64, @floatFromInt((i + 1) * 2));
+        const expected = 2.0 * x_i * y_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify upper triangle: A[i,j] = x[i]*y[j] + y[i]*x[j] for i < j
+    for (0..5) |i| {
+        for (i + 1..5) |j| {
+            const x_i = @as(f64, @floatFromInt(i + 1));
+            const y_i = @as(f64, @floatFromInt((i + 1) * 2));
+            const x_j = @as(f64, @floatFromInt(j + 1));
+            const y_j = @as(f64, @floatFromInt((j + 1) * 2));
+            const expected = x_i * y_j + y_i * x_j;
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr2: no memory leaks with multiple iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 1, 2, 3, 4, 5 }, .row_major);
+        defer x.deinit();
+
+        var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{5}, &[_]f64{ 5, 4, 3, 2, 1 }, .row_major);
+        defer y.deinit();
+
+        var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 5, 5 }, .row_major);
+        defer A.deinit();
+
+        try syr2(f64, 'U', 1.0, x, y, &A);
+    }
+}
+
+test "syr2: large matrix n=10 with lower triangle" {
+    const allocator = testing.allocator;
+
+    var x_data = try allocator.alloc(f64, 10);
+    defer allocator.free(x_data);
+    for (0..10) |i| {
+        x_data[i] = @as(f64, @floatFromInt(i + 1));
+    }
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{10}, x_data, .row_major);
+    defer x.deinit();
+
+    var y_data = try allocator.alloc(f64, 10);
+    defer allocator.free(y_data);
+    for (0..10) |i| {
+        y_data[i] = @as(f64, @floatFromInt((i + 1) * 3));
+    }
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{10}, y_data, .row_major);
+    defer y.deinit();
+
+    // Create 10×10 matrix initialized to zeros
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 10 }, .row_major);
+    defer A.deinit();
+
+    // Perform syr2 update with lower triangle
+    try syr2(f64, 'L', 1.0, x, y, &A);
+
+    // Verify diagonal: A[i,i] should be 2*x[i]*y[i]
+    for (0..10) |i| {
+        const x_i = @as(f64, @floatFromInt(i + 1));
+        const y_i = @as(f64, @floatFromInt((i + 1) * 3));
+        const expected = 2.0 * x_i * y_i;
+        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+    }
+
+    // Verify lower triangle: A[i,j] = x[i]*y[j] + y[i]*x[j] for i > j
+    for (0..5) |j| {
+        for (j + 1..5) |i| {
+            const x_i = @as(f64, @floatFromInt(i + 1));
+            const y_i = @as(f64, @floatFromInt((i + 1) * 3));
+            const x_j = @as(f64, @floatFromInt(j + 1));
+            const y_j = @as(f64, @floatFromInt((j + 1) * 3));
+            const expected = x_i * y_j + y_i * x_j;
+            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+        }
+    }
+}
+
+test "syr2: alpha=-1.0 (negative scalar)" {
+    const allocator = testing.allocator;
+
+    // x = [1, 2]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    // y = [1, 1]
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer y.deinit();
+
+    // A = [[5, 6], [0, 7]]  (upper triangle)
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 5, 6, 0, 7 }, .row_major);
+    defer A.deinit();
+
+    // syr2(-1.0, x, y, &A) with upper:
+    // x*y^T = [[1*1, 1*1], [2*1, 2*1]] = [[1, 1], [2, 2]]
+    // y*x^T = [[1*1, 1*2], [1*1, 1*2]] = [[1, 2], [1, 2]]
+    // (x*y^T + y*x^T)(upper) = [[2, 3], [3, 4]]
+    // -1.0 * (x*y^T + y*x^T)(upper) = [[-2, -3], [-3, -4]]
+    // A(upper) = [5, 6, 7] + [-2, -3, -4] = [3, 3, 3]
+
+    try syr2(f64, 'U', -1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(3.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, A.data[3], 1e-10);
+}
+
+test "syr2: x equals y (rank-1 only)" {
+    const allocator = testing.allocator;
+
+    // x = y = [1, 2, 3]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
+    defer A.deinit();
+
+    // syr2(1.0, x, y, &A) with x==y should be 2*syr(1.0, x, &A)
+    // x*x^T = [[1, 2, 3], [2, 4, 6], [3, 6, 9]]
+    // (x*x^T + x*x^T)(upper) = [[2, 4, 6], [4, 8, 12], [6, 12, 18]]
+
+    try syr2(f64, 'U', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(2.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, A.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, A.data[4], 1e-10);
+    try testing.expectApproxEqAbs(12.0, A.data[5], 1e-10);
+    try testing.expectApproxEqAbs(18.0, A.data[8], 1e-10);
+}
+
+test "syr2: zero vector x (x all zeros)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
+    defer A.deinit();
+
+    const original = try A.clone();
+    defer original.deinit();
+
+    // Zero vector x contributes nothing: A remains unchanged
+    try syr2(f64, 'U', 5.0, x, y, &A);
+
+    for (0..9) |i| {
+        try testing.expectApproxEqAbs(original.data[i], A.data[i], 1e-10);
+    }
+}
+
+test "syr2: zero vector y (y all zeros)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
+    defer A.deinit();
+
+    const original = try A.clone();
+    defer original.deinit();
+
+    // Zero vector y contributes nothing: A remains unchanged
+    try syr2(f64, 'U', 5.0, x, y, &A);
+
+    for (0..9) |i| {
+        try testing.expectApproxEqAbs(original.data[i], A.data[i], 1e-10);
+    }
+}
+
+test "syr2: repeated accumulation (multiple updates)" {
+    const allocator = testing.allocator;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer y.deinit();
+
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
+    defer A.deinit();
+
+    // First update: A = 0 + 1.0 * [[2, 2], [2, 2]] = [[2, 2], [2, 2]]
+    try syr2(f64, 'U', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(2.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(2.0, A.data[3], 1e-10);
+
+    // Second update: A = [[2, 2], [2, 2]] + 1.0 * [[2, 2], [2, 2]] = [[4, 4], [4, 4]]
+    try syr2(f64, 'U', 1.0, x, y, &A);
+
+    try testing.expectApproxEqAbs(4.0, A.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, A.data[1], 1e-10);
+    try testing.expectApproxEqAbs(4.0, A.data[3], 1e-10);
+}
+
+// ============================================================================
 // TRSM AUTO-DISPATCH TESTS — Verify dispatch to SIMD/scalar implementations
 // ============================================================================
 // Tests verify that trsm() correctly dispatches to simd_blas.trsm_simd()
