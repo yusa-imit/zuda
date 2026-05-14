@@ -1,3 +1,43 @@
+**Session 517 Update (2026-05-14) — FEATURE MODE:**
+
+✅ **BLAS Level 2 symv() COMPLETE** — Symmetric matrix-vector multiplication:
+- **Feature**: Implemented BLAS Level 2 SYMV operation: y = α*A*x + β*y where A is symmetric
+- **Function**: symv(uplo, alpha, A, x, beta, y)
+  * Operation: y := alpha*A*x + beta*y (in-place modification of y)
+  * Symmetry exploitation: only accesses upper ('U') or lower ('L') triangle of A
+  * Triangle specification: uplo='U' uses A[i,j] for i≤j, uplo='L' uses A[i,j] for i≥j
+  * Alpha/beta scaling: flexible linear combinations (alpha=0 → just scale y, beta=0 → overwrite)
+  * Time: O(n²) where n = matrix dimension
+  * Space: O(1) (modifies y in-place)
+- **Algorithm**:
+  * Upper triangle: for each row i, accumulate A[i,j]*x[j] (j≥i) + symmetric A[j,i]*x[i] (j>i)
+  * Lower triangle: for each row i, accumulate A[i,j]*x[j] (j≤i) + symmetric A[j,i]*x[i] (j<i)
+  * Two-phase: first scale y by beta, then add alpha*A*x using symmetry
+  * Special cases optimized: alpha=0 (no matrix access), alpha=0&beta=1 (no-op)
+  * Symmetric contribution technique: each off-diagonal element contributes to both y[i] and y[j]
+- **Tests**: 10 comprehensive tests (all passing)
+  * Basic correctness: 2×2 upper, 3×3 lower with various alpha/beta combinations
+  * Alpha/beta edge cases: alpha=2.0&beta=0.5, alpha=0&beta=1 (no-op), alpha=0&beta=2 (scale only)
+  * Error handling: dimension mismatch (x size), not square matrix
+  * Type support: f32, f64 precision validation
+  * Memory safety: 10 iterations with allocator leak detection
+  * Large matrix: n=10 with pattern validation
+- **Files**: src/linalg/blas.zig (+332 lines: 114 implementation, 218 tests)
+- **Commit**: db7889e (feature implementation)
+- **Total Tests**: 3086 → 3096 (10 new symv tests)
+- **Use Cases**:
+  * Symmetric eigenvalue problems (Lanczos/Arnoldi iterations for large sparse systems)
+  * Quadratic forms: computing x^T A x in optimization (gradient descent, trust region)
+  * Covariance matrix operations in statistics/ML (whitening, Mahalanobis distance)
+  * Physics simulations: symmetric Hamiltonians (quantum mechanics, lattice models)
+  * Finite element methods: symmetric stiffness matrices (structural analysis)
+- **Rationale**: symv is core BLAS Level 2 for symmetric matrices (dsymv/ssymv in reference BLAS)
+  * Complements syr() (rank-1 update: A += α*x*x^T) for symmetric matrix operations
+  * Exploits symmetry to halve memory access vs general gemv() (only n(n+1)/2 elements)
+  * Foundation for symmetric eigenvalue solvers (implicitly restarted Arnoldi, Lanczos method)
+  * Essential for quadratic form evaluation in optimization algorithms
+- **BLAS Level 2 Status**: ✅ **EXTENDED** — symv added to gemv, gbmv, ger, trmv, trsv, syr, symm, syrk
+
 **Session 516 Update (2026-05-14) — FEATURE MODE:**
 
 ✅ **BLAS Level 2 gbmv() COMPLETE** — General banded matrix-vector multiplication:
