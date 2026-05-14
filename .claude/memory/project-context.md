@@ -1,3 +1,42 @@
+**Session 516 Update (2026-05-14) — FEATURE MODE:**
+
+✅ **BLAS Level 2 gbmv() COMPLETE** — General banded matrix-vector multiplication:
+- **Feature**: Implemented BLAS Level 2 gbmv operation for efficient banded matrix operations
+- **Function**: gbmv(m, n, kl, ku, alpha, A, x, beta, y)
+  * Operation: y := alpha*A*x + beta*y where A is m×n banded matrix
+  * Parameters: m (rows), n (cols), kl (sub-diagonals), ku (super-diagonals)
+  * Banded storage: A[i,j] stored at A_banded[ku+i-j, j] — only (kl+ku+1)×n array needed
+  * Time: O(m*(kl+ku+1)) vs O(m*n) for dense matrix — significant savings for banded systems
+  * Space: O(1) (in-place modification of y)
+- **Algorithm**:
+  * For each row i: compute y[i] = beta*y[i] + alpha*sum_j(A[i,j]*x[j])
+  * Band bounds: j ∈ [max(0,i-kl), min(n,i+ku+1))
+  * 4 dimension validation checks (A rows/cols, x length, y length)
+  * Handles edge cases: diagonal (kl=0,ku=0), upper-only (kl=0), lower-only (ku=0)
+  * Scalar cases: alpha=0 (y := beta*y), beta=0 (y := alpha*A*x)
+- **Tests**: 14 comprehensive tests (all passing)
+  * Basic correctness: tridiagonal (5×5), pentadiagonal (6×6) with scaling
+  * Edge cases: diagonal matrix, upper-banded, lower-banded
+  * Scalar edge: alpha=0, beta=0
+  * Type support: f32, f64
+  * Error handling: 4 dimension mismatch validation tests
+  * Large inputs: 100×100 tridiagonal system
+- **Files**: src/linalg/blas.zig (+632 lines: implementation + tests)
+- **Commit**: b81bee8 (feature implementation)
+- **Total Tests**: 3072 → 3086 (14 new gbmv tests)
+- **Use Cases**:
+  * Finite difference discretization of PDEs (tridiagonal, pentadiagonal systems)
+  * Cubic spline interpolation (tridiagonal coefficient matrix)
+  * Time-series moving average filters (banded Toeplitz matrices)
+  * Numerical differential equations with local coupling
+  * Sparse banded linear systems (memory-efficient storage)
+- **Rationale**: gbmv is core BLAS Level 2 for banded matrices (dgbmv/sgbmv in reference BLAS)
+  * Banded storage reduces memory from O(mn) to O((kl+ku+1)n)
+  * Computation reduced from O(mn) to O(m(kl+ku+1))
+  * Essential for solving tridiagonal and pentadiagonal systems arising in numerical methods
+  * Foundation for future gbanded operations (gbmv leads to gbtrf, gbtrs for LU factorization)
+- **BLAS Level 2 Status**: ✅ **EXTENDED** — gbmv added to existing gemv, ger, trmv, trsv, syr, symm, syrk
+
 **Session 514 Update (2026-05-14) — FEATURE MODE:**
 
 ✅ **BLAS Level 1 rotmg(), rotm(), iamin() COMPLETE** — Extended BLAS-1 suite completion:
