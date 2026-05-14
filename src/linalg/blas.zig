@@ -8497,6 +8497,338 @@ test "trsm auto-dispatch: scalar/SIMD equivalence (small matrix)" {
 /// Performs a symmetric matrix-matrix multiplication. Matrix A is symmetric and only its
 /// specified triangle (upper or lower) is read. B is a general matrix that is modified in-place.
 ///
+// ============================================================================
+// symv() — BLAS Level 2: Symmetric Matrix-Vector Multiply
+// ============================================================================
+
+/// Symmetric matrix-vector multiplication: y = α*A*x + β*y
+///
+/// Performs matrix-vector multiplication where A is a symmetric matrix.
+/// Only the upper or lower triangle of A is accessed (specified by uplo),
+/// with the other triangle assumed symmetric.
+///
+/// This is BLAS Level 2 SYMV operation.
+///
+/// Parameters:
+/// - uplo: 'U' (upper triangle of A used) or 'L' (lower triangle of A used)
+/// - alpha: scalar multiplier for A*x
+/// - A: n×n symmetric matrix (only upper or lower triangle accessed)
+/// - x: n-dimensional vector
+/// - beta: scalar multiplier for y (original y values)
+/// - y: n-dimensional vector (modified in-place: y := α*A*x + β*y)
+///
+/// Errors:
+/// - error.DimensionMismatch if A not square or dimensions incompatible
+/// - error.NotSquare if A is not a square matrix
+///
+/// Time: O(n²) where n = size of matrix A
+/// Space: O(1) (modifies y in-place)
+///
+/// Example:
+/// ```zig
+/// // A = [[4, 1], [1, 3]] (symmetric), x = [1, 2], y = [0, 0]
+/// // Upper triangle: A = [[4, 1], [_, 3]]
+/// // y = 1.0*A*x + 0.0*y = [[4*1 + 1*2], [1*1 + 3*2]] = [6, 7]
+/// var A = try NDArray(f64, 2).fromSlice(alloc, &[_]usize{2, 2}, &[_]f64{4, 1, 0, 3}, .row_major);
+/// var x = try NDArray(f64, 1).fromSlice(alloc, &[_]usize{2}, &[_]f64{1, 2}, .row_major);
+/// var y = try NDArray(f64, 1).zeros(alloc, &[_]usize{2}, .row_major);
+/// try symv(f64, 'U', 1.0, A, x, 0.0, &y);
+/// // y.data == [6.0, 7.0]
+/// ```
+pub fn symv(comptime T: type, uplo: u8, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    // Validate matrix is square
+    if (A.shape[0] != A.shape[1]) {
+        return error.NotSquare;
+    }
+
+    const n = A.shape[0];
+
+    // Validate dimensions match
+    if (x.shape[0] != n or y.shape[0] != n) {
+        return error.DimensionMismatch;
+    }
+
+    // Special case: alpha=0 and beta=1 is a no-op
+    if (alpha == 0 and beta == 1) {
+        return;
+    }
+
+    // Special case: alpha=0 and beta≠1 means just scale y
+    if (alpha == 0) {
+        for (0..n) |i| {
+            y.data[i] *= beta;
+        }
+        return;
+    }
+
+    // First, scale y by beta (if beta != 1)
+    if (beta != 1) {
+        for (0..n) |i| {
+            y.data[i] *= beta;
+        }
+    }
+
+    // Compute y += α*A*x using symmetry
+    // Only access upper or lower triangle based on uplo
+    if (uplo == 'U' or uplo == 'u') {
+        // Upper triangle: A[i,j] stored for i <= j
+        // For each row i, accumulate:
+        //   - Diagonal: y[i] += α * A[i,i] * x[i]
+        //   - Upper (j>i): y[i] += α * A[i,j] * x[j]
+        //   - Symmetric (j>i): y[j] += α * A[i,j] * x[i]  (using symmetry)
+        for (0..n) |i| {
+            var temp: T = 0;
+            // Diagonal and upper triangle entries for row i
+            for (i..n) |j| {
+                const a_ij = A.data[i * n + j];
+                temp += a_ij * x.data[j];
+                // Symmetric contribution: A[j,i] = A[i,j]
+                if (j > i) {
+                    y.data[j] += alpha * a_ij * x.data[i];
+                }
+            }
+            y.data[i] += alpha * temp;
+        }
+    } else if (uplo == 'L' or uplo == 'l') {
+        // Lower triangle: A[i,j] stored for i >= j
+        // For each row i, accumulate:
+        //   - Diagonal and lower (j<=i): y[i] += α * A[i,j] * x[j]
+        //   - Symmetric (j<i): y[j] += α * A[i,j] * x[i]  (using symmetry)
+        for (0..n) |i| {
+            var temp: T = 0;
+            // Lower triangle and diagonal entries for row i
+            for (0..i + 1) |j| {
+                const a_ij = A.data[i * n + j];
+                temp += a_ij * x.data[j];
+                // Symmetric contribution: A[j,i] = A[i,j]
+                if (j < i) {
+                    y.data[j] += alpha * a_ij * x.data[i];
+                }
+            }
+            y.data[i] += alpha * temp;
+        }
+    }
+}
+
+// ============================================================================
+// symv() Tests
+// ============================================================================
+
+test "symv: basic 2×2 upper triangle, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // A = [[4, 1], [1, 3]] symmetric
+    // Upper triangle stored: [[4, 1], [_, 3]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 4, 1, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // x = [1, 2]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    // y = [0, 0] (will be overwritten with α*A*x + β*y)
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{2}, .row_major);
+    defer y.deinit();
+
+    // symv: y = 1.0*A*x + 0.0*y
+    // A*x = [[4*1 + 1*2], [1*1 + 3*2]] = [[6], [7]]
+    try symv(f64, 'U', 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, y.data[1], 1e-10);
+}
+
+test "symv: basic 3×3 lower triangle, alpha=1, beta=0" {
+    const allocator = testing.allocator;
+
+    // A = [[2, 1, 0], [1, 3, 1], [0, 1, 4]] symmetric
+    // Lower triangle stored: [[2, _, _], [1, 3, _], [0, 1, 4]]
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 2, 0, 0, 1, 3, 0, 0, 1, 4 }, .row_major);
+    defer A.deinit();
+
+    // x = [1, 1, 1]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    // y = [0, 0, 0]
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer y.deinit();
+
+    // A*x = [[2+1+0], [1+3+1], [0+1+4]] = [3, 5, 5]
+    try symv(f64, 'L', 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(3.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(5.0, y.data[2], 1e-10);
+}
+
+test "symv: alpha=2.0, beta=0.5" {
+    const allocator = testing.allocator;
+
+    // A = [[1, 2], [2, 3]] upper triangle
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    // x = [1, 1]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    // y = [4, 6] (initial values)
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 4, 6 }, .row_major);
+    defer y.deinit();
+
+    // symv: y = 2.0*A*x + 0.5*y
+    // A*x = [[1+2], [2+3]] = [3, 5]
+    // Result: [2*3 + 0.5*4, 2*5 + 0.5*6] = [8, 13]
+    try symv(f64, 'U', 2.0, A, x, 0.5, &y);
+
+    try testing.expectApproxEqAbs(8.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(13.0, y.data[1], 1e-10);
+}
+
+test "symv: alpha=0 (no-op when beta=1)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 7, 9 }, .row_major);
+    defer y.deinit();
+
+    const original = try y.clone();
+    defer original.deinit();
+
+    // alpha=0, beta=1: y unchanged
+    try symv(f64, 'U', 0.0, A, x, 1.0, &y);
+
+    try testing.expectApproxEqAbs(original.data[0], y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(original.data[1], y.data[1], 1e-10);
+}
+
+test "symv: alpha=0, beta=2.0 (just scale y)" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 0, 3 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 3, 5 }, .row_major);
+    defer y.deinit();
+
+    // alpha=0, beta=2: y = 2*y = [6, 10]
+    try symv(f64, 'U', 0.0, A, x, 2.0, &y);
+
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(10.0, y.data[1], 1e-10);
+}
+
+test "symv: dimension mismatch — x wrong size" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1, 2 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer y.deinit();
+
+    const result = symv(f64, 'U', 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "symv: not square matrix" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{3}, .row_major);
+    defer y.deinit();
+
+    const result = symv(f64, 'U', 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.NotSquare, result);
+}
+
+test "symv: f32 precision" {
+    const allocator = testing.allocator;
+
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{ 1.5, 2.5, 0, 3.5 }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{2}, &[_]f32{ 2.0, 1.0 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{2}, .row_major);
+    defer y.deinit();
+
+    // A*x = [[1.5*2 + 2.5*1], [2.5*2 + 3.5*1]] = [5.5, 8.5]
+    try symv(f32, 'U', 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(@as(f32, 5.5), y.data[0], 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 8.5), y.data[1], 1e-6);
+}
+
+test "symv: memory safety — 10 iterations" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{ 1, 2, 3, 4, 0, 5, 6, 7, 0, 0, 8, 9, 0, 0, 0, 10 }, .row_major);
+        defer A.deinit();
+
+        var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+        defer x.deinit();
+
+        var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{4}, .row_major);
+        defer y.deinit();
+
+        try symv(f64, 'U', 1.0, A, x, 0.0, &y);
+    }
+}
+
+test "symv: large matrix n=10, upper triangle" {
+    const allocator = testing.allocator;
+
+    // Create 10×10 symmetric matrix (upper triangle)
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 10 }, .row_major);
+    defer A.deinit();
+
+    // Fill upper triangle: A[i,j] = i+j+1 for i <= j
+    for (0..10) |i| {
+        for (i..10) |j| {
+            A.data[i * 10 + j] = @as(f64, @floatFromInt(i + j + 1));
+        }
+    }
+
+    // x = [1, 1, ..., 1]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{10}, &[_]f64{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{10}, .row_major);
+    defer y.deinit();
+
+    try symv(f64, 'U', 1.0, A, x, 0.0, &y);
+
+    // Verify first row: A[0,0..9] = [1,2,3,4,5,6,7,8,9,10]
+    // Sum = 1+2+3+...+10 = 55
+    try testing.expectApproxEqAbs(55.0, y.data[0], 1e-9);
+}
+
+// ============================================================================
+// symm() — BLAS Level 3: Symmetric Matrix-Matrix Multiply
+// ============================================================================
+
+/// Symmetric matrix-matrix multiplication: C = α*A*B + β*C or C = α*B*A + β*C
+///
 /// Parameters:
 /// - side: 'L' (left: B = α*A*B + β*B) or 'R' (right: B = α*B*A + β*B)
 /// - uplo: 'U' (upper triangle of A used) or 'L' (lower triangle of A used)
