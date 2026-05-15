@@ -371,3 +371,5 @@
 {"timestamp":"2026-05-15T08:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement sbmv() to pass 14 RED tests","project":"zuda"}
 {"timestamp":"2026-05-15T03:15:30Z","action":"subagent","agent_type":"test-writer","task":"Write RED tests for tbmv (triangular banded matrix-vector multiply)","project":"zuda"}
 {"timestamp":"2026-05-15T03:17:45Z","action":"subagent","agent_type":"zig-developer","task":"Implement tbmv GREEN code to pass 14 tests","project":"zuda"}
+{"timestamp":"2026-05-15T11:03:17Z","action":"subagent","agent_type":"test-writer","task":"Write RED tests for tbsv (triangular banded solve)","project":"zuda"}
+{"timestamp":"2026-05-15T11:06:43Z","action":"subagent","agent_type":"zig-developer","task":"Implement tbsv() to pass 19 RED tests","project":"zuda"}
