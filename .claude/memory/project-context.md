@@ -1,3 +1,48 @@
+**Session 521 Update (2026-05-15) — FEATURE MODE:**
+
+✅ **BLAS Level 2 sbmv() COMPLETE** — Symmetric banded matrix-vector multiplication:
+- **Feature**: Implemented BLAS Level 2 sbmv() operation: y := α*A*x + β*y where A is symmetric banded
+- **Function**: sbmv(uplo, k, alpha, A, x, beta, y)
+  * Operation: y := α*A*x + β*y (in-place modification)
+  * Banded storage: (k+1)×n array stores k super/sub-diagonals + main diagonal
+  * Triangle specification: uplo='U' (upper) uses A_banded[k+i-j,j], uplo='L' (lower) uses A_banded[i-j,j]
+  * Symmetry exploitation: A[i,j] = A[j,i], each off-diagonal contributes to both y[i] and y[j]
+  * Time: O(n·k) vs O(n²) for dense symv
+  * Space: O(1) (modifies y in-place)
+- **Algorithm**:
+  * Phase 1: Scale y by beta (y := β*y)
+  * Phase 2: Accumulate α*A*x with band traversal
+  * Upper: for i in 0..n, for j in i..min(n,i+k+1): y[i] += α*A[k+i-j,j]*x[j], y[j] += α*A[k+i-j,j]*x[i]
+  * Lower: for i in 0..n, for j in max(0,i-k)..=i: y[i] += α*A[i-j,j]*x[j], y[j] += α*A[i-j,j]*x[i]
+  * Diagonal elements counted once (no double contribution)
+  * Special cases optimized: alpha=0 (skip matrix multiply), beta=0 (overwrite y)
+- **Tests**: 14 comprehensive tests (all passing)
+  * Basic correctness: tridiagonal k=1 (upper/lower), pentadiagonal k=2, diagonal k=0
+  * Scaling: alpha=2/beta=0.5, alpha=0/beta=1 (no-op), alpha=1/beta=0 (overwrite)
+  * Error handling: 3 dimension mismatch tests (A rows, A cols, x/y length)
+  * Type support: f32, f64 precision validation
+  * Edge cases: large matrix n=10/k=2
+  * Memory safety: 10 iterations with leak detection
+- **Files**: src/linalg/blas.zig (+625 lines: 98 implementation, 527 tests)
+- **Commit**: 8d07754 (feature implementation)
+- **Total Tests**: 3021 → 3035 (14 new sbmv tests)
+- **Use Cases**:
+  * Tridiagonal symmetric systems (k=1): 1D heat equation, Laplacian discretization
+  * Pentadiagonal symmetric systems (k=2): biharmonic PDE, beam bending simulation
+  * Finite difference methods with local coupling (nearest/next-nearest neighbor)
+  * Symmetric sparse matrix operations (memory-efficient banded storage)
+- **Rationale**: sbmv is standard BLAS Level 2 for symmetric banded matrices (dsbmv/ssbmv in reference BLAS)
+  * Complements gbmv (general banded, session 516) and symv (symmetric dense, session 517)
+  * Exploits both symmetry (half storage) and band structure (O(nk) vs O(n²))
+  * Essential for numerical PDEs: tridiagonal systems ubiquitous in 1D problems
+  * Foundation for iterative solvers on symmetric banded systems
+- **BLAS Level 2 Status**: ✅ **FULLY EXTENDED** — 10 operations complete
+  * General matrix-vector: gemv ✅, gbmv ✅
+  * Symmetric matrix-vector: symv ✅, sbmv ✅
+  * Rank updates: ger ✅, syr ✅, syr2 ✅
+  * Triangular: trmv ✅, trsv ✅
+  * Total Level 2: 10 operations (core 6 + extended 4)
+
 **Session 520 Update (2026-05-15) — STABILIZATION MODE:**
 
 ✅ **FULL SYSTEM VALIDATION COMPLETE**:
