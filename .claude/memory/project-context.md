@@ -1,3 +1,55 @@
+**Session 522 Update (2026-05-15) — FEATURE MODE:**
+
+✅ **BLAS Level 2 tbmv() COMPLETE** — Triangular banded matrix-vector multiplication:
+- **Feature**: Implemented BLAS Level 2 tbmv() operation: x := A*x where A is triangular banded (in-place)
+- **Function**: tbmv(uplo, trans, diag, k, A, x)
+  * Operation: x := A*x (modifies x in-place)
+  * Triangle: uplo='U' (upper) uses A_banded[k+i-j,j], uplo='L' (lower) uses A_banded[i-j,j]
+  * Transpose: trans='N' (no transpose), trans='T' (A^T*x)
+  * Diagonal: diag='N' (non-unit, read from A), diag='U' (unit diagonal, implicitly 1.0, not stored)
+  * Bandwidth: k = number of super-diagonals (upper) or sub-diagonals (lower)
+  * Banded storage: (k+1)×n array stores k off-diagonals + main diagonal
+  * Time: O(n·k) vs O(n²) for dense trmv
+  * Space: O(n) temporary buffer for in-place computation
+- **Algorithm**:
+  * Allocate temporary result vector (initialized to zero)
+  * Four cases: (uplo='U'/'L') × (trans='N'/'T')
+  * Upper no-transpose: for i in 0..n, for j in i..min(n,i+k+1): temp[i] += A[i,j]*x[j]
+  * Upper transpose: for i in 0..n, for j in max(0,i-k)..=i: temp[j] += A[i,j]*x[i]
+  * Lower no-transpose: for i in 0..n, for j in max(0,i-k)..=i: temp[i] += A[i,j]*x[j]
+  * Lower transpose: for i in 0..n, for j in i..min(n,i+k+1): temp[j] += A[i,j]*x[i]
+  * Unit diagonal (diag='U'): add x[i] to temp[i], skip diagonal from A storage
+  * Copy temp back to x.data
+- **Tests**: 15 comprehensive tests (all passing)
+  * Basic correctness: upper/lower bidiagonal, diagonal-only, transpose operation
+  * Unit diagonal: upper/lower with diag='U' (diagonal implicitly 1)
+  * Larger bandwidth: pentadiagonal upper/lower (k=2)
+  * Error handling: 2 dimension mismatch tests (A rows, A cols vs x)
+  * Type support: f32, f64 precision validation
+  * Edge cases: single element (n=1, k=0), large matrix (n=10, k=2)
+  * Memory safety: 10 iterations with leak detection
+- **Files**: src/linalg/blas.zig (+763 lines: 98 implementation, 665 tests)
+- **Commit**: 4924917 (feature implementation)
+- **Total Tests**: 3035 → 3050 (15 new tbmv tests)
+- **TDD Workflow**: test-writer agent a7d64f6 (15 RED tests) → zig-developer agent a7d64f6 (GREEN implementation)
+- **Use Cases**:
+  * Tridiagonal triangular systems (k=1): Cholesky factored tridiagonal matrices
+  * Banded LU factorization: forward/backward solve with banded L/U factors
+  * Finite element methods: banded stiffness matrices with triangular solves
+  * Signal processing: banded Toeplitz triangular systems (moving average with causality)
+- **Rationale**: tbmv is standard BLAS Level 2 for triangular banded matrices (dtbmv/stbmv in reference BLAS)
+  * Complements trmv (triangular dense) and trsv (triangular solve)
+  * Essential for banded LU/Cholesky solvers: L/U factors stored in banded format
+  * Memory-efficient: O(nk) storage vs O(n²) for dense, O(nk) time vs O(n²)
+  * Foundation for tbsv (triangular banded solve) — next natural extension
+- **BLAS Level 2 Status**: ✅ **FULLY EXTENDED** — 11 operations complete
+  * General matrix-vector: gemv ✅, gbmv ✅
+  * Symmetric matrix-vector: symv ✅, sbmv ✅
+  * Triangular matrix-vector: trmv ✅, tbmv ✅
+  * Triangular solve: trsv ✅
+  * Rank updates: ger ✅, syr ✅, syr2 ✅
+  * Total Level 2: 11 operations (core 6 + extended 5)
+
 **Session 521 Update (2026-05-15) — FEATURE MODE:**
 
 ✅ **BLAS Level 2 sbmv() COMPLETE** — Symmetric banded matrix-vector multiplication:
