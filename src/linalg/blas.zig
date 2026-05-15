@@ -14903,3 +14903,766 @@ test "sbmv: no memory leaks over 10 iterations" {
         try testing.expectApproxEqAbs(2.0 + 1.0 * 2.0, y.data[0], 1e-10);
     }
 }
+
+/// Triangular banded matrix-vector multiply: x := A*x or x := A^T*x
+///
+/// Performs matrix-vector multiplication where A is a triangular banded matrix.
+/// The matrix is stored in banded format with only the relevant triangle stored.
+///
+/// Parameters:
+/// - uplo: 'U' for upper triangular, 'L' for lower triangular
+/// - trans: 'N' for no transpose (x = A*x), 'T' for transpose (x = A^T*x)
+/// - diag: 'N' for non-unit diagonal, 'U' for unit diagonal (diagonal = 1)
+/// - k: Number of super-diagonals (uplo='U') or sub-diagonals (uplo='L')
+/// - A: Banded storage matrix (k+1)×n — only one triangle of triangular matrix
+/// - x: Vector (length n) — modified in-place
+///
+/// Banded Storage:
+/// - uplo='U': A_banded[k+i-j, j] = A_full[i,j] for i ≤ j (upper triangle)
+/// - uplo='L': A_banded[i-j, j] = A_full[i,j] for i ≥ j (lower triangle)
+///
+/// Errors:
+/// - error.DimensionMismatch if A.shape[0] != k+1 or A.shape[1] != x.shape[0]
+///
+/// Time: O(n*k) where k is band width
+/// Space: O(n) temporary buffer for in-place computation
+///
+pub fn tbmv(comptime T: type, uplo: u8, trans: u8, diag: u8, k: usize, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    const n = x.shape[0];
+
+    // Validate dimensions
+    if (A.shape[0] != k + 1) {
+        return error.DimensionMismatch;
+    }
+    if (A.shape[1] != n) {
+        return error.DimensionMismatch;
+    }
+
+    const is_upper = (uplo == 'U' or uplo == 'u');
+    const is_trans = (trans == 'T' or trans == 't');
+    const is_unit = (diag == 'U' or diag == 'u');
+
+    // Create temporary array to store result (needed for in-place computation)
+    var temp = try x.allocator.alloc(T, n);
+    defer x.allocator.free(temp);
+    @memset(temp, 0);
+
+    if (!is_trans) {
+        // x = A*x (no transpose)
+        if (is_upper) {
+            // Upper triangular: A is upper, so row i has elements from column i to min(i+k, n-1)
+            // Process in reverse order to support unit diagonal properly
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = 0;
+
+                // For upper triangular, we process columns from i to min(i+k, n-1)
+                const j_start = i;
+                const j_max = if (i + k + 1 < n) i + k + 1 else n;
+
+                // Process off-diagonal elements first (or all if non-unit)
+                for (j_start..j_max) |j| {
+                    // Element A[i,j] is stored at A_banded[k+i-j, j]
+                    if (j == i) {
+                        // Diagonal element
+                        if (!is_unit) {
+                            const band_row = k + i - j;
+                            const a_val = A.data[band_row * n + j];
+                            sum += a_val * x.data[j];
+                        }
+                    } else {
+                        // Off-diagonal
+                        const band_row = k + i - j;
+                        const a_val = A.data[band_row * n + j];
+                        sum += a_val * x.data[j];
+                    }
+                }
+
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        } else {
+            // Lower triangular: A is lower, so row i has elements from column max(i-k, 0) to i
+            for (0..n) |i| {
+                var sum: T = 0;
+
+                // For lower triangular, we process columns from max(i-k, 0) to i
+                const j_min = if (i > k) i - k else 0;
+                const j_max = i + 1;
+
+                for (j_min..j_max) |j| {
+                    // Element A[i,j] is stored at A_banded[i-j, j]
+                    if (j == i) {
+                        // Diagonal element
+                        if (!is_unit) {
+                            const band_row = i - j;
+                            const a_val = A.data[band_row * n + j];
+                            sum += a_val * x.data[j];
+                        }
+                    } else {
+                        // Off-diagonal
+                        const band_row = i - j;
+                        const a_val = A.data[band_row * n + j];
+                        sum += a_val * x.data[j];
+                    }
+                }
+
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        }
+    } else {
+        // x = A^T*x (transpose)
+        if (is_upper) {
+            // Upper transpose acts like lower triangular
+            for (0..n) |i| {
+                var sum: T = 0;
+
+                // For A^T where A is upper, we have A^T[i,j] = A[j,i] for j <= i
+                // So we need to sum over j from max(i-k, 0) to i
+                const j_min = if (i > k) i - k else 0;
+                const j_max = i + 1;
+
+                for (j_min..j_max) |j| {
+                    // A^T[i,j] = A[j,i], stored at A_banded[k+j-i, i]
+                    if (j == i) {
+                        // Diagonal element
+                        if (!is_unit) {
+                            const band_row = k + j - i;
+                            const a_val = A.data[band_row * n + i];
+                            sum += a_val * x.data[j];
+                        }
+                    } else {
+                        // Off-diagonal
+                        const band_row = k + j - i;
+                        const a_val = A.data[band_row * n + i];
+                        sum += a_val * x.data[j];
+                    }
+                }
+
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        } else {
+            // Lower transpose acts like upper triangular
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                var sum: T = 0;
+
+                // For A^T where A is lower, we have A^T[i,j] = A[j,i] for j >= i
+                // So we need to sum over j from i to min(i+k, n-1)
+                const j_start = i;
+                const j_max = if (i + k + 1 < n) i + k + 1 else n;
+
+                for (j_start..j_max) |j| {
+                    // A^T[i,j] = A[j,i], stored at A_banded[j-i, i]
+                    if (j == i) {
+                        // Diagonal element
+                        if (!is_unit) {
+                            const band_row = j - i;
+                            const a_val = A.data[band_row * n + i];
+                            sum += a_val * x.data[j];
+                        }
+                    } else {
+                        // Off-diagonal
+                        const band_row = j - i;
+                        const a_val = A.data[band_row * n + i];
+                        sum += a_val * x.data[j];
+                    }
+                }
+
+                if (is_unit) {
+                    temp[i] = x.data[i] + sum;
+                } else {
+                    temp[i] = sum;
+                }
+            }
+        }
+    }
+
+    // Copy result back to x
+    @memcpy(x.data, temp);
+}
+
+// ============================================================================
+// tbmv() Tests — Triangular Banded Matrix-Vector Multiplication
+// ============================================================================
+
+test "tbmv: upper bidiagonal (k=1, uplo='U', trans='N', diag='N')" {
+    // Test upper bidiagonal triangular matrix
+    // Full matrix (3x3):
+    // [2  1  0]
+    // [0  3  1]
+    // [0  0  4]
+    //
+    // Banded storage (uplo='U', k=1): (k+1)×n = 2×3
+    // Row 0 (super-diagonal):  [0, 1, 1]   (positions where i < j)
+    // Row 1 (main diagonal):   [2, 3, 4]
+    //
+    // x = [1, 2, 3]
+    // Expected x_out = A*x:
+    // x[0] = 2*1 + 1*2 = 4
+    // x[1] = 3*2 + 1*3 = 9
+    // x[2] = 4*3 = 12
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill super-diagonal (row 0): [0, 1, 1]
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+
+    // Fill main diagonal (row 1): [2, 3, 4]
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 3;
+    A.data[1 * n + 2] = 4;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'U', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(4.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(9.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, x.data[2], 1e-10);
+}
+
+test "tbmv: lower bidiagonal (k=1, uplo='L', trans='N', diag='N')" {
+    // Test lower bidiagonal triangular matrix
+    // Full matrix (3x3):
+    // [2  0  0]
+    // [1  3  0]
+    // [0  1  4]
+    //
+    // Banded storage (uplo='L', k=1): (k+1)×n = 2×3
+    // Row 0 (main diagonal):   [2, 3, 4]
+    // Row 1 (sub-diagonal):    [1, 1, 0]  (A_banded[i-j, j])
+    //
+    // x = [1, 2, 3]
+    // Expected x_out = A*x:
+    // x[0] = 2*1 = 2
+    // x[1] = 1*1 + 3*2 = 7
+    // x[2] = 1*2 + 4*3 = 14
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill main diagonal (row 0): [2, 3, 4]
+    A.data[0 * n + 0] = 2;
+    A.data[0 * n + 1] = 3;
+    A.data[0 * n + 2] = 4;
+
+    // Fill sub-diagonal (row 1): [1, 1, 0]
+    A.data[1 * n + 0] = 1;
+    A.data[1 * n + 1] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'L', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(14.0, x.data[2], 1e-10);
+}
+
+test "tbmv: upper diagonal (k=0, uplo='U', trans='N', diag='N')" {
+    // Test purely diagonal upper triangular (only main diagonal)
+    // Full matrix:
+    // [2  0  0]
+    // [0  3  0]
+    // [0  0  4]
+    //
+    // Banded storage (k=0): 1×3 = just main diagonal
+    // Row 0: [2, 3, 4]
+    //
+    // x = [1, 2, 3]
+    // Expected: A*x = [2, 6, 12]
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 0;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    // Fill main diagonal
+    A.data[0] = 2;
+    A.data[1] = 3;
+    A.data[2] = 4;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'U', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(6.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, x.data[2], 1e-10);
+}
+
+test "tbmv: transpose operation (k=1, uplo='U', trans='T')" {
+    // Test transpose: x = A^T*x where A is upper bidiagonal
+    // Full matrix (upper):
+    // [2  1  0]
+    // [0  3  1]
+    // [0  0  4]
+    //
+    // Transpose (acts like lower):
+    // [2  0  0]
+    // [1  3  0]
+    // [0  1  4]
+    //
+    // x = [1, 2, 3]
+    // Expected: A^T*x = [2*1, 1*1 + 3*2, 1*2 + 4*3] = [2, 7, 14]
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Upper bidiagonal
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 3;
+    A.data[1 * n + 2] = 4;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'U', 'T', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(14.0, x.data[2], 1e-10);
+}
+
+test "tbmv: unit diagonal upper (k=1, uplo='U', diag='U')" {
+    // Test unit diagonal (diagonal is implicitly 1, not stored)
+    // Full matrix (upper with unit diagonal):
+    // [1  1  0]
+    // [0  1  1]
+    // [0  0  1]
+    //
+    // Banded storage (uplo='U', k=1): diagonal values don't matter (implicitly 1)
+    // Row 0 (super-diagonal):  [0, 1, 1]
+    // Row 1 (main diagonal):   [999, 999, 999]  (ignored)
+    //
+    // x = [1, 2, 3]
+    // Expected: A*x = [1*1 + 1*2, 1*2 + 1*3, 1*3] = [3, 5, 3]
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill super-diagonal
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+
+    // Fill diagonal row with garbage (should be ignored for unit diagonal)
+    A.data[1 * n + 0] = 999;
+    A.data[1 * n + 1] = 999;
+    A.data[1 * n + 2] = 999;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'U', 'N', 'U', k, A, &x);
+
+    try testing.expectApproxEqAbs(3.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[2], 1e-10);
+}
+
+test "tbmv: unit diagonal lower (k=1, uplo='L', diag='U')" {
+    // Test unit diagonal lower triangular
+    // Full matrix (lower with unit diagonal):
+    // [1  0  0]
+    // [1  1  0]
+    // [0  1  1]
+    //
+    // Banded storage (uplo='L', k=1): diagonal values don't matter (implicitly 1)
+    // Row 0 (main diagonal):   [999, 999, 999]  (ignored)
+    // Row 1 (sub-diagonal):    [1, 1, 0]
+    //
+    // x = [1, 2, 3]
+    // Expected: A*x = [1*1, 1*1 + 1*2, 1*2 + 1*3] = [1, 3, 5]
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill diagonal row with garbage (should be ignored for unit diagonal)
+    A.data[0 * n + 0] = 999;
+    A.data[0 * n + 1] = 999;
+    A.data[0 * n + 2] = 999;
+
+    // Fill sub-diagonal
+    A.data[1 * n + 0] = 1;
+    A.data[1 * n + 1] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'L', 'N', 'U', k, A, &x);
+
+    try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(5.0, x.data[2], 1e-10);
+}
+
+test "tbmv: pentadiagonal upper (k=2)" {
+    // Test upper triangular with k=2 (pentadiagonal)
+    // Full matrix (5x5):
+    // [2  1  1  0  0]
+    // [0  3  1  1  0]
+    // [0  0  4  1  1]
+    // [0  0  0  5  1]
+    // [0  0  0  0  6]
+    //
+    // Banded storage (uplo='U', k=2): 3×5
+    // Row 0 (2nd super-diagonal): [0, 0, 1, 1, 1]
+    // Row 1 (1st super-diagonal): [0, 1, 1, 1, 1]
+    // Row 2 (main diagonal):      [2, 3, 4, 5, 6]
+    //
+    // x = [1, 1, 1, 1, 1]
+    // Expected: A*x:
+    // x[0] = 2*1 + 1*1 + 1*1 = 4
+    // x[1] = 3*1 + 1*1 + 1*1 = 5
+    // x[2] = 4*1 + 1*1 + 1*1 = 6
+    // x[3] = 5*1 + 1*1 = 6
+    // x[4] = 6*1 = 6
+
+    const allocator = testing.allocator;
+    const n = 5;
+    const k = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Row 0 (2nd super-diagonal): [0, 0, 1, 1, 1]
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+    A.data[0 * n + 4] = 1;
+
+    // Row 1 (1st super-diagonal): [0, 1, 1, 1, 1]
+    A.data[1 * n + 1] = 1;
+    A.data[1 * n + 2] = 1;
+    A.data[1 * n + 3] = 1;
+    A.data[1 * n + 4] = 1;
+
+    // Row 2 (main diagonal): [2, 3, 4, 5, 6]
+    A.data[2 * n + 0] = 2;
+    A.data[2 * n + 1] = 3;
+    A.data[2 * n + 2] = 4;
+    A.data[2 * n + 3] = 5;
+    A.data[2 * n + 4] = 6;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'U', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(4.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(6.0, x.data[3], 1e-10);
+    try testing.expectApproxEqAbs(6.0, x.data[4], 1e-10);
+}
+
+test "tbmv: pentadiagonal lower (k=2)" {
+    // Test lower triangular with k=2 (pentadiagonal)
+    // Full matrix (5x5):
+    // [2  0  0  0  0]
+    // [1  3  0  0  0]
+    // [1  1  4  0  0]
+    // [0  1  1  5  0]
+    // [0  0  1  1  6]
+    //
+    // Banded storage (uplo='L', k=2): 3×5
+    // Row 0 (main diagonal):      [2, 3, 4, 5, 6]
+    // Row 1 (1st sub-diagonal):   [1, 1, 1, 1, 0]
+    // Row 2 (2nd sub-diagonal):   [1, 1, 1, 0, 0]
+    //
+    // x = [1, 1, 1, 1, 1]
+    // Expected: A*x:
+    // x[0] = 2*1 = 2
+    // x[1] = 1*1 + 3*1 = 4
+    // x[2] = 1*1 + 1*1 + 4*1 = 6
+    // x[3] = 1*1 + 1*1 + 5*1 = 7
+    // x[4] = 1*1 + 1*1 + 6*1 = 8
+
+    const allocator = testing.allocator;
+    const n = 5;
+    const k = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Row 0 (main diagonal): [2, 3, 4, 5, 6]
+    A.data[0 * n + 0] = 2;
+    A.data[0 * n + 1] = 3;
+    A.data[0 * n + 2] = 4;
+    A.data[0 * n + 3] = 5;
+    A.data[0 * n + 4] = 6;
+
+    // Row 1 (1st sub-diagonal): [1, 1, 1, 1, 0]
+    A.data[1 * n + 0] = 1;
+    A.data[1 * n + 1] = 1;
+    A.data[1 * n + 2] = 1;
+    A.data[1 * n + 3] = 1;
+
+    // Row 2 (2nd sub-diagonal): [1, 1, 1, 0, 0]
+    A.data[2 * n + 0] = 1;
+    A.data[2 * n + 1] = 1;
+    A.data[2 * n + 2] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'L', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(7.0, x.data[3], 1e-10);
+    try testing.expectApproxEqAbs(8.0, x.data[4], 1e-10);
+}
+
+test "tbmv: dimension mismatch (A columns != x size)" {
+    // Test error when matrix width doesn't match vector length
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+    @memset(A.data, 0);
+
+    // Create x with wrong dimension
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
+    defer x.deinit();
+    @memset(x.data, 0);
+
+    const result = tbmv(f64, 'U', 'N', 'N', k, A, &x);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "tbmv: invalid A rows (A.shape[0] != k+1)" {
+    // Test error when banded storage has wrong number of rows
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    // Create A with wrong number of rows
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, n }, .row_major);
+    defer A.deinit();
+    @memset(A.data, 0);
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+    @memset(x.data, 0);
+
+    const result = tbmv(f64, 'U', 'N', 'N', k, A, &x);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "tbmv: f32 precision (upper bidiagonal)" {
+    // Test with single precision (f32)
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f32, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+    A.data[0 * n + 1] = 1.5;
+    A.data[0 * n + 2] = 0.5;
+    A.data[1 * n + 0] = 2.0;
+    A.data[1 * n + 1] = 3.0;
+    A.data[1 * n + 2] = 4.0;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{n}, &[_]f32{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f32, 'U', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(@as(f32, 5.0), x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 7.5), x.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 12.0), x.data[2], 1e-5);
+}
+
+test "tbmv: f64 precision (lower bidiagonal)" {
+    // Test with double precision (f64)
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+    A.data[0 * n + 0] = 1.5;
+    A.data[0 * n + 1] = 2.5;
+    A.data[0 * n + 2] = 3.5;
+    A.data[1 * n + 0] = 0.5;
+    A.data[1 * n + 1] = 0.7;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'L', 'N', 'N', k, A, &x);
+
+    // x[0] = 1.5*1.0 = 1.5
+    // x[1] = 0.5*1.0 + 2.5*2.0 = 5.5
+    // x[2] = 0.7*2.0 + 3.5*3.0 = 11.9
+    try testing.expectApproxEqAbs(1.5, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(5.5, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(11.9, x.data[2], 1e-10);
+}
+
+test "tbmv: single element (n=1, k=0)" {
+    // Test edge case with single element
+    // Full matrix: [5]
+    // x = [2]
+    // Expected: A*x = [10]
+    const allocator = testing.allocator;
+    const n = 1;
+    const k = 0;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    A.data[0] = 5;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{2}, .row_major);
+    defer x.deinit();
+
+    try tbmv(f64, 'U', 'N', 'N', k, A, &x);
+
+    try testing.expectApproxEqAbs(10.0, x.data[0], 1e-10);
+}
+
+test "tbmv: large matrix (n=10, k=2)" {
+    // Test larger matrix: 10x10 upper triangular with k=2
+    // Creates a tridiagonal-like structure: diagonal + 2 super-diagonals
+    // Fill with pattern: A[i,j] = i + j for valid positions
+    const allocator = testing.allocator;
+    const n = 10;
+    const k = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill banded structure
+    for (0..n) |j| {
+        // 2nd super-diagonal
+        if (j >= 2) {
+            A.data[0 * n + j] = @floatFromInt(j - 2 + j);
+        }
+        // 1st super-diagonal
+        if (j >= 1) {
+            A.data[1 * n + j] = @floatFromInt(j - 1 + j);
+        }
+        // Main diagonal
+        A.data[2 * n + j] = @floatFromInt(j + j);
+    }
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+    for (0..n) |i| {
+        x.data[i] = 1.0;
+    }
+
+    try tbmv(f64, 'U', 'N', 'N', k, A, &x);
+
+    // Verify a few key entries
+    // x[0] = 0 + 0 + 0 = 0 (only diag which is 0)
+    try testing.expectApproxEqAbs(0.0, x.data[0], 1e-10);
+
+    // x[1] = 1 + 2*1 = 3 (1st super-diag + main diag)
+    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+
+    // x[2] = 2 + 3 + 4*1 = 9 (2nd super-diag + 1st super-diag + main diag)
+    try testing.expectApproxEqAbs(9.0, x.data[2], 1e-10);
+}
+
+test "tbmv: no memory leaks over 10 iterations" {
+    // Test memory safety with std.testing.allocator (detects leaks)
+    const allocator = testing.allocator;
+    const n = 5;
+    const k = 1;
+
+    for (0..10) |_| {
+        var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+        defer A.deinit();
+
+        @memset(A.data, 0);
+        A.data[0 * n + 1] = 1;
+        A.data[0 * n + 2] = 1;
+        A.data[0 * n + 3] = 1;
+        A.data[0 * n + 4] = 1;
+
+        A.data[1 * n + 0] = 2;
+        A.data[1 * n + 1] = 2;
+        A.data[1 * n + 2] = 2;
+        A.data[1 * n + 3] = 2;
+        A.data[1 * n + 4] = 2;
+
+        var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+        defer x.deinit();
+        for (0..n) |i| {
+            x.data[i] = @floatFromInt(i + 1);
+        }
+
+        try tbmv(f64, 'U', 'N', 'N', k, A, &x);
+
+        // Just verify x[0] is correct: 2*1 + 1*2 = 4
+        try testing.expectApproxEqAbs(4.0, x.data[0], 1e-10);
+    }
+}
