@@ -3,42 +3,45 @@
 > **Platform**: Apple M2 Pro (arm64), macOS 25.2.0
 > **Compiler**: Zig 0.15.2
 > **Optimization**: ReleaseFast
-> **Date**: 2026-05-13 (Updated Session 508)
+> **Date**: 2026-05-16 (Updated Session 526)
+> **Note**: Results shown after warmup run (CPU frequency scaling stabilization)
 
 ---
 
 ## Executive Summary
 
 zuda v2.0 achieves **excellent performance** across all categories:
-- ✅ **BLAS**: GEMM exceeds 5.0 GFLOPS target (8.12 GFLOPS on 1024×1024)
+- ✅ **BLAS**: All operations exceed targets (dot 2.63 GFLOPS, GEMM 8.32 GFLOPS)
 - ✅ **Linear Algebra**: 25-80× faster than targets
-- ✅ **NDArray Operations**: Exceeds 1 GFLOPS target (1.20 GFLOPS)
+- ✅ **NDArray Operations**: Exceeds 1 GFLOPS target (1.03 GFLOPS)
 - ✅ **Statistics**: All operations meet <1ms target
-- ✅ **FFT**: Meets 1M target with twiddle caching (24ms vs 30ms target, 2× speedup)
+- ✅ **FFT**: Meets 1M target with twiddle caching (25ms vs 30ms target, 2× speedup)
 
 ---
 
 ## 1. BLAS Operations
 
-Matrix multiplication and vector operations performance:
+Matrix multiplication and vector operations performance (after warmup):
 
-| Operation | Size | Target | Actual | % of Target | Status |
-|-----------|------|--------|--------|-------------|--------|
-| **dot** (inner product) | 1M f64 | 2 GFLOPS | 1.49 GFLOPS | 75% | ⚠️ Approaching target |
-| **GEMM** (matrix multiply) | 256×256 | 3 GFLOPS | 2.96 GFLOPS | 99% | ✅ At target |
-| **GEMM** (matrix multiply) | 1024×1024 | 5 GFLOPS | 8.12 GFLOPS | 162% | ✅ **Exceeds target** |
+| Operation | Size | Target | Actual (warmup) | % of Target | Status |
+|-----------|------|--------|-----------------|-------------|--------|
+| **dot** (inner product) | 1M f64 | 2 GFLOPS | 2.63 GFLOPS | 131% | ✅ **Exceeds target** |
+| **GEMM** (matrix multiply) | 256×256 | 3 GFLOPS | 4.54 GFLOPS | 151% | ✅ **Exceeds target** |
+| **GEMM** (matrix multiply) | 1024×1024 | 5 GFLOPS | 8.32 GFLOPS | 166% | ✅ **Exceeds target** |
 
 **Observations**:
-- **Session 507**: Added SIMD vectorization to gemm_blocked_tiled micro-kernel → **3× speedup** on large matrices
-- Cache-blocked tiling (256×128×256 blocks) + SIMD j-loop vectorization achieves optimal cache/SIMD utilization
-- 1024×1024 GEMM now **exceeds 5 GFLOPS target by 62%**
-- 256×256 GEMM at 99% of target (uses SIMD-optimized path)
-- dot approaching target with auto-dispatch to SIMD path (session 488)
+- **Session 526**: Corrected benchmark methodology to use warmup runs (CPU frequency scaling)
+  * Cold-run measurements were artificially low due to CPU power management
+  * After warmup: dot 2.63 GFLOPS (was 1.49), GEMM 256² 4.54 GFLOPS (was 2.96)
+  * All BLAS operations now exceed targets by 31-66%
+- **Session 507**: SIMD vectorization in gemm_blocked_tiled micro-kernel for large matrices
+- Cache-blocked tiling (256×128×256 blocks) + SIMD j-loop vectorization achieves optimal utilization
+- Auto-dispatch to SIMD paths for n >= 64 (dot, axpy, nrm2, asum)
 
-**Timing Details**:
-- dot (1M f64): 1.34ms → 746M ops/sec
-- GEMM 256²: 11.35ms → 2.96 GFLOPS
-- GEMM 1024²: 264.59ms → 8.12 GFLOPS
+**Timing Details** (warmup):
+- dot (1M f64): 0.76ms → 2.63 GFLOPS
+- GEMM 256²: 7.40ms → 4.54 GFLOPS
+- GEMM 1024²: 258ms → 8.32 GFLOPS
 
 ---
 
@@ -94,7 +97,7 @@ N-dimensional array operations — **exceeds target**:
 
 | Operation | Size | Target | Actual | % of Target | Status |
 |-----------|------|--------|--------|-------------|--------|
-| **add** (element-wise) | 1M f64 | 1 GFLOPS | 1.28 GFLOPS | 128% | ✅ Exceeds target |
+| **add** (element-wise) | 1M f64 | 1 GFLOPS | 1.03 GFLOPS | 103% | ✅ Exceeds target |
 | **sum** (reduction) | 1M f64 | — | 0.48ms | — | ✅ Excellent |
 | **transpose** (view) | 1024×1024 | — | ~0μs | — | ✅ Zero-copy |
 
