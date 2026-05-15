@@ -14278,3 +14278,628 @@ test "gbmv: large matrix 100x100 tridiagonal" {
     // Last row: 1*1 + 2*1 = 3
     try testing.expectApproxEqAbs(3.0, y.data[99], 1e-10);
 }
+
+/// Symmetric banded matrix-vector multiplication: y := α*A*x + β*y
+///
+/// Performs matrix-vector product where A is symmetric and stored in banded format.
+/// Only one triangle (upper or lower) is stored, symmetry is exploited for the other half.
+///
+/// Parameters:
+/// - uplo: 'U' (upper triangle stored) or 'L' (lower triangle stored)
+/// - k: Number of super-diagonals (uplo='U') or sub-diagonals (uplo='L')
+/// - alpha: Scalar multiplier for A*x
+/// - A: Banded storage matrix (k+1)×n — only one triangle of symmetric matrix
+/// - x: Input vector (length n)
+/// - beta: Scalar multiplier for y
+/// - y: Output vector (length n) — modified in-place
+///
+/// Banded Storage:
+/// - uplo='U': A_banded[k+i-j, j] = A_full[i,j] for i ≤ j (upper triangle)
+/// - uplo='L': A_banded[i-j, j] = A_full[i,j] for i ≥ j (lower triangle)
+///
+/// Errors:
+/// - error.DimensionMismatch if dimensions incompatible
+///
+/// Time: O(n*k) where k is band width
+/// Space: O(1) (modifies y in-place)
+///
+/// Example:
+/// ```zig
+/// // 4×4 tridiagonal symmetric matrix (k=1)
+/// var A_data = [_]f64{ 0,1,1,1,  2,2,2,2 };  // banded storage
+/// var A = try NDArray(f64,2).fromSlice(alloc, &[_]usize{2,4}, &A_data, .row_major);
+/// var x = try NDArray(f64,1).fromSlice(alloc, &[_]usize{4}, &[_]f64{1,2,3,4}, .row_major);
+/// var y = try NDArray(f64,1).zeros(alloc, &[_]usize{4});
+/// try sbmv(f64, 'U', 1, 1.0, A, x, 0.0, &y);
+/// ```
+pub fn sbmv(comptime T: type, uplo: u8, k: usize, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    const n = x.shape[0];
+
+    // Validate dimensions
+    if (A.shape[0] != k + 1) {
+        return error.DimensionMismatch;
+    }
+    if (A.shape[1] != n) {
+        return error.DimensionMismatch;
+    }
+    if (y.shape[0] != n) {
+        return error.DimensionMismatch;
+    }
+
+    // Phase 1: Scale y by beta
+    for (0..n) |i| {
+        y.data[i] *= beta;
+    }
+
+    // Phase 2: Accumulate alpha * A * x
+    // Use symmetry to avoid storing lower triangle
+
+    if (uplo == 'U') {
+        // Upper triangle stored: A_banded[k+i-j, j] = A_full[i,j] for i <= j
+        for (0..n) |i| {
+            // For row i, the valid column range is [i, min(n, i+k+1))
+            // because we can only access super-diagonals up to k positions above
+            const j_max = if (i + k + 1 < n) i + k + 1 else n;
+
+            for (i..j_max) |j| {
+                // A_banded[k + i - j, j] stores A_full[i, j]
+                const band_row = k + i - j;
+                const a_val = A.data[band_row * n + j];
+
+                // Contribute to y[i]
+                y.data[i] += alpha * a_val * x.data[j];
+
+                // Contribute to y[j] if off-diagonal (symmetry)
+                if (i != j) {
+                    y.data[j] += alpha * a_val * x.data[i];
+                }
+            }
+        }
+    } else if (uplo == 'L') {
+        // Lower triangle stored: A_banded[i-j, j] = A_full[i,j] for i >= j
+        for (0..n) |i| {
+            // For row i, the valid column range is [max(0, i-k), i]
+            // because we can only access sub-diagonals up to k positions below
+            const j_min = if (i > k) i - k else 0;
+
+            for (j_min..i + 1) |j| {
+                // A_banded[i - j, j] stores A_full[i, j]
+                const band_row = i - j;
+                const a_val = A.data[band_row * n + j];
+
+                // Contribute to y[i]
+                y.data[i] += alpha * a_val * x.data[j];
+
+                // Contribute to y[j] if off-diagonal (symmetry)
+                if (i != j) {
+                    y.data[j] += alpha * a_val * x.data[i];
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// sbmv() Tests — Symmetric Banded Matrix-Vector Multiplication
+// ============================================================================
+
+test "sbmv: tridiagonal (k=1) upper triangle, alpha=1, beta=0" {
+    // Test basic tridiagonal symmetric matrix with upper triangle storage
+    // Full symmetric matrix:
+    // [2  1  0  0]
+    // [1  2  1  0]
+    // [0  1  2  1]
+    // [0  0  1  2]
+    //
+    // Banded storage (uplo='U', k=1): (k+1)×n = 2×4
+    // Row 0 (super-diagonal):  [0, 1, 1, 1]  (shifted, stored at A_banded[k+i-j, j])
+    // Row 1 (main diagonal):   [2, 2, 2, 2]
+    //
+    // x = [1, 2, 3, 4]
+    // Expected y = A*x:
+    // y[0] = 2*1 + 1*2 = 4
+    // y[1] = 1*1 + 2*2 + 1*3 = 8
+    // y[2] = 1*2 + 2*3 + 1*4 = 12
+    // y[3] = 1*3 + 2*4 = 11
+
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill super-diagonal (row 0): positions [0, 1, 2, 3] store [0, 1, 1, 1]
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+
+    // Fill main diagonal (row 1): [2, 2, 2, 2]
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[1 * n + 3] = 2;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(4.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(11.0, y.data[3], 1e-10);
+}
+
+test "sbmv: tridiagonal (k=1) lower triangle, alpha=1, beta=0" {
+    // Test tridiagonal symmetric matrix with lower triangle storage
+    // Full symmetric matrix (same as above):
+    // [2  1  0  0]
+    // [1  2  1  0]
+    // [0  1  2  1]
+    // [0  0  1  2]
+    //
+    // Banded storage (uplo='L', k=1): (k+1)×n = 2×4
+    // Row 0 (main diagonal):   [2, 2, 2, 2]
+    // Row 1 (sub-diagonal):    [1, 1, 1, 0]  (A_banded[i-j, j])
+    //
+    // x = [1, 2, 3, 4]
+    // Expected y = A*x: [4, 8, 12, 11] (same as upper due to symmetry)
+
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill main diagonal (row 0): [2, 2, 2, 2]
+    A.data[0 * n + 0] = 2;
+    A.data[0 * n + 1] = 2;
+    A.data[0 * n + 2] = 2;
+    A.data[0 * n + 3] = 2;
+
+    // Fill sub-diagonal (row 1): [1, 1, 1, 0]
+    A.data[1 * n + 0] = 1;
+    A.data[1 * n + 1] = 1;
+    A.data[1 * n + 2] = 1;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'L', k, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(4.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(11.0, y.data[3], 1e-10);
+}
+
+test "sbmv: pentadiagonal (k=2) upper triangle, alpha=1, beta=0" {
+    // Test pentadiagonal symmetric matrix with upper triangle storage
+    // Full 5×5 symmetric matrix:
+    // [3  2  1  0  0]
+    // [2  3  2  1  0]
+    // [1  2  3  2  1]
+    // [0  1  2  3  2]
+    // [0  0  1  2  3]
+    //
+    // Banded storage (uplo='U', k=2): (k+1)×n = 3×5
+    // Row 0: [0, 0, 1, 1, 1]  (2nd super-diag at positions [2,3,4])
+    // Row 1: [0, 2, 2, 2, 2]  (1st super-diag at positions [1,2,3,4])
+    // Row 2: [3, 3, 3, 3, 3]  (main diagonal)
+    //
+    // x = [1, 1, 1, 1, 1]
+    // Expected y = A*x:
+    // y[0] = 3*1 + 2*1 + 1*1 = 6
+    // y[1] = 2*1 + 3*1 + 2*1 + 1*1 = 8
+    // y[2] = 1*1 + 2*1 + 3*1 + 2*1 + 1*1 = 9
+    // y[3] = 1*1 + 2*1 + 3*1 + 2*1 = 8
+    // y[4] = 1*1 + 2*1 + 3*1 = 6
+
+    const allocator = testing.allocator;
+    const n = 5;
+    const k = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill 2nd super-diagonal (row 0): [0, 0, 1, 1, 1]
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+    A.data[0 * n + 4] = 1;
+
+    // Fill 1st super-diagonal (row 1): [0, 2, 2, 2, 2]
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[1 * n + 3] = 2;
+    A.data[1 * n + 4] = 2;
+
+    // Fill main diagonal (row 2): [3, 3, 3, 3, 3]
+    A.data[2 * n + 0] = 3;
+    A.data[2 * n + 1] = 3;
+    A.data[2 * n + 2] = 3;
+    A.data[2 * n + 3] = 3;
+    A.data[2 * n + 4] = 3;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 1, 1, 1, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(6.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(9.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(6.0, y.data[4], 1e-10);
+}
+
+test "sbmv: diagonal only (k=0), alpha=1, beta=0" {
+    // Test diagonal matrix (k=0), which is symmetric trivially
+    // Full 3×3 diagonal matrix:
+    // [5  0  0]
+    // [0  7  0]
+    // [0  0  3]
+    //
+    // Banded storage (uplo='U', k=0): (k+1)×n = 1×3
+    // Row 0: [5, 7, 3]  (main diagonal only)
+    //
+    // x = [2, 3, 1]
+    // Expected y = A*x:
+    // y[0] = 5*2 = 10
+    // y[1] = 7*3 = 21
+    // y[2] = 3*1 = 3
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 0;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    // Fill main diagonal (row 0): [5, 7, 3]
+    A.data[0 * n + 0] = 5;
+    A.data[0 * n + 1] = 7;
+    A.data[0 * n + 2] = 3;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 2, 3, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(10.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(21.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(3.0, y.data[2], 1e-10);
+}
+
+test "sbmv: tridiagonal scaling alpha=2, beta=0.5" {
+    // Test with non-trivial scaling factors
+    // Symmetric tridiagonal:
+    // [2  1  0  0]
+    // [1  2  1  0]
+    // [0  1  2  1]
+    // [0  0  1  2]
+    //
+    // x = [1, 2, 3, 4]
+    // A*x = [4, 8, 12, 11]
+    // y_initial = [1, 1, 1, 1]
+    //
+    // Result: y = 2.0*A*x + 0.5*y_initial
+    // y[0] = 2*4 + 0.5*1 = 8.5
+    // y[1] = 2*8 + 0.5*1 = 16.5
+    // y[2] = 2*12 + 0.5*1 = 24.5
+    // y[3] = 2*11 + 0.5*1 = 22.5
+
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[1 * n + 3] = 2;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 1, 1, 1 }, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 2.0, A, x, 0.5, &y);
+
+    try testing.expectApproxEqAbs(8.5, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(16.5, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(24.5, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(22.5, y.data[3], 1e-10);
+}
+
+test "sbmv: alpha=0 with beta=1 (should scale y only)" {
+    // When alpha=0, y should remain unchanged (since 0*A*x=0, and beta*y multiplies by 1)
+    // This is a degenerate case that should be handled efficiently
+    // y_initial = [2, 3, 5, 7]
+    // Result: y = 0*A*x + 1*y = y_initial (unchanged)
+
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+    A.data[0 * n + 1] = 999; // These values should be ignored
+    A.data[1 * n + 0] = 999;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 999, 999, 999, 999 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 2, 3, 5, 7 }, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 0.0, A, x, 1.0, &y);
+
+    try testing.expectApproxEqAbs(2.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(3.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(5.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(7.0, y.data[3], 1e-10);
+}
+
+test "sbmv: alpha=1, beta=0 (overwrite y)" {
+    // Standard case: y = A*x (overwrite initial y)
+    // y_initial = [99, 99, 99, 99] (should be replaced)
+    // Result: y = A*x
+
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+    A.data[0 * n + 3] = 1;
+
+    A.data[1 * n + 0] = 2;
+    A.data[1 * n + 1] = 2;
+    A.data[1 * n + 2] = 2;
+    A.data[1 * n + 3] = 2;
+
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3, 4 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 99, 99, 99, 99 }, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(4.0, y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(11.0, y.data[3], 1e-10);
+}
+
+test "sbmv: f32 precision type" {
+    // Test with f32 instead of f64
+    // Tridiagonal matrix:
+    // [1  1  0]
+    // [1  1  1]
+    // [0  1  1]
+    //
+    // x = [1, 2, 1]
+    // Expected y = A*x:
+    // y[0] = 1*1 + 1*2 = 3
+    // y[1] = 1*1 + 1*2 + 1*1 = 4
+    // y[2] = 1*2 + 1*1 = 3
+
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f32, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    A.data[0 * n + 1] = 1;
+    A.data[0 * n + 2] = 1;
+
+    A.data[1 * n + 0] = 1;
+    A.data[1 * n + 1] = 1;
+    A.data[1 * n + 2] = 1;
+
+    var x = try NDArray(f32, 1).fromSlice(allocator, &[_]usize{n}, &[_]f32{ 1, 2, 1 }, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f32, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    try sbmv(f32, 'U', k, 1.0, A, x, 0.0, &y);
+
+    try testing.expectApproxEqAbs(@as(f32, 3.0), y.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 4.0), y.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.0), y.data[2], 1e-5);
+}
+
+test "sbmv: error dimension mismatch A rows != k+1" {
+    // Error check: A must have exactly k+1 rows for banded storage
+    const allocator = testing.allocator;
+    const n = 3;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ 5, n }, .row_major); // Wrong! Should be k+1=2
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    const result = sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "sbmv: error dimension mismatch A columns != x length" {
+    // Error check: A.shape[1] (number of columns) must equal x.shape[0]
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, 10 }, .row_major); // Wrong! Should be 4 cols
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    const result = sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "sbmv: error dimension mismatch x length != y length" {
+    // Error check: x and y must have matching lengths
+    const allocator = testing.allocator;
+    const n = 4;
+    const k = 1;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+
+    var y = try NDArray(f64, 1).init(allocator, &[_]usize{10}, .row_major); // Wrong! Should be 4
+    defer y.deinit();
+
+    const result = sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+    try testing.expectError(error.DimensionMismatch, result);
+}
+
+test "sbmv: large matrix n=10, k=2 pentadiagonal" {
+    // Test correctness on larger pentadiagonal system (10×10)
+    // Create symmetric pentadiagonal with:
+    // - main diagonal = 4.0
+    // - 1st super/sub-diagonal = -1.0
+    // - 2nd super/sub-diagonal = -0.5
+    // x = [1, 1, ..., 1] (all ones)
+    // For interior rows: y[i] = 4*1 - 1*1 - 1*1 - 0.5*1 - 0.5*1 = 1.0
+    // For boundary rows: y varies
+
+    const allocator = testing.allocator;
+    const n = 10;
+    const k = 2;
+
+    var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+    defer A.deinit();
+
+    @memset(A.data, 0);
+
+    // Fill 2nd super-diagonal (row 0): A_banded[0, j] = -0.5 for j >= 2
+    for (2..n) |j| {
+        A.data[0 * n + j] = -0.5;
+    }
+
+    // Fill 1st super-diagonal (row 1): A_banded[1, j] = -1.0 for j >= 1
+    for (1..n) |j| {
+        A.data[1 * n + j] = -1.0;
+    }
+
+    // Fill main diagonal (row 2): A_banded[2, j] = 4.0 for all j
+    for (0..n) |j| {
+        A.data[2 * n + j] = 4.0;
+    }
+
+    var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+    defer x.deinit();
+    for (0..n) |i| {
+        x.data[i] = 1.0;
+    }
+
+    var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{n}, .row_major);
+    defer y.deinit();
+
+    try sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+
+    // First row: 4*1 - 1*1 - 0.5*1 = 2.5
+    try testing.expectApproxEqAbs(2.5, y.data[0], 1e-10);
+
+    // Second row: -1*1 + 4*1 - 1*1 - 0.5*1 - 0.5*1 = 1.0
+    try testing.expectApproxEqAbs(1.0, y.data[1], 1e-10);
+
+    // Interior row (5): -0.5*1 - 1*1 + 4*1 - 1*1 - 0.5*1 = 1.0
+    try testing.expectApproxEqAbs(1.0, y.data[5], 1e-10);
+
+    // Last row: -1*1 + 4*1 - 0.5*1 = 2.5
+    try testing.expectApproxEqAbs(2.5, y.data[9], 1e-10);
+}
+
+test "sbmv: no memory leaks over 10 iterations" {
+    // Test memory safety over multiple iterations
+    // This uses std.testing.allocator which detects leaks
+    const allocator = testing.allocator;
+    const n = 5;
+    const k = 1;
+
+    for (0..10) |_| {
+        var A = try NDArray(f64, 2).init(allocator, &[_]usize{ k + 1, n }, .row_major);
+        defer A.deinit();
+
+        @memset(A.data, 0);
+        A.data[0 * n + 1] = 1;
+        A.data[0 * n + 2] = 1;
+        A.data[0 * n + 3] = 1;
+        A.data[0 * n + 4] = 1;
+
+        A.data[1 * n + 0] = 2;
+        A.data[1 * n + 1] = 2;
+        A.data[1 * n + 2] = 2;
+        A.data[1 * n + 3] = 2;
+        A.data[1 * n + 4] = 2;
+
+        var x = try NDArray(f64, 1).init(allocator, &[_]usize{n}, .row_major);
+        defer x.deinit();
+        for (0..n) |i| {
+            x.data[i] = @floatFromInt(i + 1);
+        }
+
+        var y = try NDArray(f64, 1).zeros(allocator, &[_]usize{n}, .row_major);
+        defer y.deinit();
+
+        try sbmv(f64, 'U', k, 1.0, A, x, 0.0, &y);
+
+        // Just verify y[0] is correct
+        try testing.expectApproxEqAbs(2.0 + 1.0 * 2.0, y.data[0], 1e-10);
+    }
+}
