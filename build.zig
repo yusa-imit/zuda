@@ -447,6 +447,24 @@ pub fn build(b: *std.Build) void {
     robotics_example_step.dependOn(&run_robotics_example.step);
     run_robotics_example.step.dependOn(b.getInstallStep());
 
+    // Matrix operations demo
+    const matrix_demo_example = b.addExecutable(.{
+        .name = "matrix_operations_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/matrix_operations_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(matrix_demo_example);
+    const run_matrix_demo_example = b.addRunArtifact(matrix_demo_example);
+    const matrix_demo_example_step = b.step("example-matrix", "Run the matrix operations demo");
+    matrix_demo_example_step.dependOn(&run_matrix_demo_example.step);
+    run_matrix_demo_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {

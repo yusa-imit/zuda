@@ -244,7 +244,7 @@ pub fn axpy_simd(comptime T: type, alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)
         const x_vec: Vec = x.data[idx..][0..vec_width].*;
         const y_vec: Vec = y.data[idx..][0..vec_width].*;
         const result = alpha_vec * x_vec + y_vec;
-        @memcpy(y.data[idx..][0..vec_width], &result);
+        y.data[idx..][0..vec_width].* = result;
     }
 
     // Tail loop (scalar)
