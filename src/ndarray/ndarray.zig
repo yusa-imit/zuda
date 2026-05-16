@@ -40,6 +40,9 @@ const io = stdlib.io;
 const builtin = stdlib.builtin;
 const sorting = stdlib.sort;
 
+// Import for random number generation
+const random_module = @import("../stats/random.zig");
+
 /// Memory layout order for N-dimensional array
 pub const Layout = enum {
     /// C order (row-major): last dimension varies fastest in memory
@@ -519,6 +522,99 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     const frac = @as(T, @floatFromInt(@as(isize, @intCast(i)))) * step;
                     arr.data[i] = start + (stop - start) * frac;
                 }
+            }
+
+            return arr;
+        }
+
+        /// Create an array filled with random values from uniform distribution [0, 1)
+        ///
+        /// Generates random elements using the PCG64 pseudo-random number generator.
+        /// Each element is uniformly distributed in the range [0, 1).
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - shape: Array shape (ndim elements)
+        /// - seed: Seed for the PRNG (same seed produces identical arrays)
+        /// - layout: Row-major or column-major
+        ///
+        /// Returns: Initialized NDArray with random values in [0, 1)
+        ///
+        /// Errors:
+        /// - error.ZeroDimension if any dimension is 0
+        /// - error.CapacityExceeded if prod(shape) > usize.max
+        /// - error.OutOfMemory if allocation fails
+        ///
+        /// Time: O(prod(shape)) — one random number generated per element
+        /// Space: O(prod(shape))
+        pub fn rand(allocator: Allocator, shape: []const usize, seed: u64, layout: Layout) (Error || AllocatorError)!Self {
+            // Validate shape before allocation
+            if (shape.len != ndim) {
+                return error.ZeroDimension;
+            }
+
+            // Check for zero dimensions
+            for (shape) |dim| {
+                if (dim == 0) {
+                    return error.ZeroDimension;
+                }
+            }
+
+            // Initialize the array
+            var arr = try Self.init(allocator, shape, layout);
+            errdefer arr.deinit();
+
+            // Initialize PCG64 RNG and fill with random values
+            var rng = random_module.Pcg64.init(seed);
+            for (arr.data) |*val| {
+                val.* = rng.random().float(T);
+            }
+
+            return arr;
+        }
+
+        /// Create an array filled with random values from standard normal distribution N(0, 1)
+        ///
+        /// Generates random elements using the PCG64 pseudo-random number generator
+        /// with Box-Muller transform for standard normal distribution.
+        /// Each element follows a standard normal distribution (mean=0, std=1).
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - shape: Array shape (ndim elements)
+        /// - seed: Seed for the PRNG (same seed produces identical arrays)
+        /// - layout: Row-major or column-major
+        ///
+        /// Returns: Initialized NDArray with random normally-distributed values
+        ///
+        /// Errors:
+        /// - error.ZeroDimension if any dimension is 0
+        /// - error.CapacityExceeded if prod(shape) > usize.max
+        /// - error.OutOfMemory if allocation fails
+        ///
+        /// Time: O(prod(shape)) — Box-Muller transform per element
+        /// Space: O(prod(shape))
+        pub fn randn(allocator: Allocator, shape: []const usize, seed: u64, layout: Layout) (Error || AllocatorError)!Self {
+            // Validate shape before allocation
+            if (shape.len != ndim) {
+                return error.ZeroDimension;
+            }
+
+            // Check for zero dimensions
+            for (shape) |dim| {
+                if (dim == 0) {
+                    return error.ZeroDimension;
+                }
+            }
+
+            // Initialize the array
+            var arr = try Self.init(allocator, shape, layout);
+            errdefer arr.deinit();
+
+            // Initialize PCG64 RNG and fill with normal random values
+            var rng = random_module.Pcg64.init(seed);
+            for (arr.data) |*val| {
+                val.* = random_module.normal(T, rng.random());
             }
 
             return arr;
@@ -23745,4 +23841,379 @@ test "maxAxis: memory safety (10 iterations)" {
 
         try testing.expectEqual(@as(usize, 4), result.shape[0]);
     }
+}
+
+// ================== rand() factory function tests ==================
+
+test "ndarray: rand() 1D creates array with values in [0, 1)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).rand(allocator, &[_]usize{100}, 42, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(100, arr.count());
+    for (arr.data) |val| {
+        try testing.expect(val >= 0.0);
+        try testing.expect(val < 1.0);
+    }
+}
+
+test "ndarray: rand() 2D [5,10] creates correct shape" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).rand(allocator, &[_]usize{ 5, 10 }, 123, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(50, arr.count());
+    try testing.expectEqual(5, arr.shape[0]);
+    try testing.expectEqual(10, arr.shape[1]);
+    for (arr.data) |val| {
+        try testing.expect(val >= 0.0);
+        try testing.expect(val < 1.0);
+    }
+}
+
+test "ndarray: rand() 3D [2,3,4] all values in [0, 1)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).rand(allocator, &[_]usize{ 2, 3, 4 }, 999, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(24, arr.count());
+    try testing.expectEqual(2, arr.shape[0]);
+    try testing.expectEqual(3, arr.shape[1]);
+    try testing.expectEqual(4, arr.shape[2]);
+    for (arr.data) |val| {
+        try testing.expect(val >= 0.0);
+        try testing.expect(val < 1.0);
+    }
+}
+
+test "ndarray: rand() respects row-major layout" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).rand(allocator, &[_]usize{ 3, 4 }, 555, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(Layout.row_major, arr.layout);
+    try testing.expectEqual(4, arr.strides[0]);
+    try testing.expectEqual(1, arr.strides[1]);
+}
+
+test "ndarray: rand() respects column-major layout" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).rand(allocator, &[_]usize{ 3, 4 }, 666, .column_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(Layout.column_major, arr.layout);
+    try testing.expectEqual(1, arr.strides[0]);
+    try testing.expectEqual(3, arr.strides[1]);
+}
+
+test "ndarray: rand() with f32 type produces values in [0, 1)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f32, 1).rand(allocator, &[_]usize{50}, 777, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(50, arr.count());
+    for (arr.data) |val| {
+        try testing.expect(val >= 0.0);
+        try testing.expect(val < 1.0);
+    }
+}
+
+test "ndarray: rand() same seed produces identical arrays (reproducibility)" {
+    const allocator = testing.allocator;
+    var arr1 = try NDArray(f64, 1).rand(allocator, &[_]usize{100}, 12345, .row_major);
+    defer arr1.deinit();
+
+    var arr2 = try NDArray(f64, 1).rand(allocator, &[_]usize{100}, 12345, .row_major);
+    defer arr2.deinit();
+
+    for (0..100) |i| {
+        try testing.expectEqual(arr1.data[i], arr2.data[i]);
+    }
+}
+
+test "ndarray: rand() different seeds produce different values" {
+    const allocator = testing.allocator;
+    var arr1 = try NDArray(f64, 1).rand(allocator, &[_]usize{100}, 11111, .row_major);
+    defer arr1.deinit();
+
+    var arr2 = try NDArray(f64, 1).rand(allocator, &[_]usize{100}, 22222, .row_major);
+    defer arr2.deinit();
+
+    var same_count: usize = 0;
+    for (0..100) |i| {
+        if (arr1.data[i] == arr2.data[i]) {
+            same_count += 1;
+        }
+    }
+    // With 100 random values, probability of same seed producing identical sequence is negligible
+    try testing.expect(same_count < 100);
+}
+
+test "ndarray: rand() single element creates valid array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).rand(allocator, &[_]usize{1}, 444, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(1, arr.count());
+    try testing.expect(arr.data[0] >= 0.0);
+    try testing.expect(arr.data[0] < 1.0);
+}
+
+test "ndarray: rand() large array 1M elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).rand(allocator, &[_]usize{1_000_000}, 8888, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(1_000_000, arr.count());
+    // Spot check random values
+    for (0..100) |i| {
+        try testing.expect(arr.data[i * 10_000] >= 0.0);
+        try testing.expect(arr.data[i * 10_000] < 1.0);
+    }
+}
+
+test "ndarray: rand() memory safety (10 iterations, leak detection)" {
+    const allocator = testing.allocator;
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).rand(allocator, &[_]usize{ 5, 5 }, 9999, .row_major);
+        arr.deinit();
+    }
+}
+
+test "ndarray: rand() zero dimension rejected" {
+    const allocator = testing.allocator;
+    const result = NDArray(f64, 2).rand(allocator, &[_]usize{ 3, 0 }, 1234, .row_major);
+
+    try testing.expectError(error.ZeroDimension, result);
+}
+
+test "ndarray: rand() statistical properties: 10k samples mean ~0.5" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).rand(allocator, &[_]usize{10000}, 777888, .row_major);
+    defer arr.deinit();
+
+    var sum: f64 = 0.0;
+    for (arr.data) |val| {
+        sum += val;
+    }
+    const mean = sum / 10000.0;
+
+    // For uniform [0, 1), expected mean is 0.5, with tolerance for sampling variation
+    try testing.expect(mean > 0.45 and mean < 0.55);
+}
+
+test "ndarray: rand() 2D [100,100] produces varied values" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).rand(allocator, &[_]usize{ 100, 100 }, 55555, .row_major);
+    defer arr.deinit();
+
+    // Collect min/max to verify distribution
+    var min_val = arr.data[0];
+    var max_val = arr.data[0];
+    for (arr.data) |val| {
+        if (val < min_val) min_val = val;
+        if (val > max_val) max_val = val;
+    }
+
+    // Should have reasonable spread across [0, 1) range
+    try testing.expect(min_val < 0.1);
+    try testing.expect(max_val > 0.9);
+}
+
+// ================== randn() factory function tests ==================
+
+test "ndarray: randn() 1D creates 100 standard normal values" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).randn(allocator, &[_]usize{100}, 42, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(100, arr.count());
+    // Normal distribution values can be arbitrarily large/small, but extreme values rare
+    for (arr.data) |val| {
+        try testing.expect(@abs(val) < 100.0); // Within reasonable bounds
+    }
+}
+
+test "ndarray: randn() 2D [10,10] creates correct shape" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).randn(allocator, &[_]usize{ 10, 10 }, 123, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(100, arr.count());
+    try testing.expectEqual(10, arr.shape[0]);
+    try testing.expectEqual(10, arr.shape[1]);
+}
+
+test "ndarray: randn() 3D [3,4,5] all values in reasonable range" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 3).randn(allocator, &[_]usize{ 3, 4, 5 }, 999, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(60, arr.count());
+    for (arr.data) |val| {
+        try testing.expect(@abs(val) < 100.0);
+    }
+}
+
+test "ndarray: randn() respects row-major layout" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).randn(allocator, &[_]usize{ 4, 5 }, 555, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(Layout.row_major, arr.layout);
+    try testing.expectEqual(5, arr.strides[0]);
+    try testing.expectEqual(1, arr.strides[1]);
+}
+
+test "ndarray: randn() respects column-major layout" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).randn(allocator, &[_]usize{ 4, 5 }, 666, .column_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(Layout.column_major, arr.layout);
+    try testing.expectEqual(1, arr.strides[0]);
+    try testing.expectEqual(4, arr.strides[1]);
+}
+
+test "ndarray: randn() with f32 type" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f32, 1).randn(allocator, &[_]usize{50}, 777, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(50, arr.count());
+    for (arr.data) |val| {
+        try testing.expect(@abs(val) < 100.0);
+    }
+}
+
+test "ndarray: randn() same seed produces identical arrays" {
+    const allocator = testing.allocator;
+    var arr1 = try NDArray(f64, 1).randn(allocator, &[_]usize{100}, 12345, .row_major);
+    defer arr1.deinit();
+
+    var arr2 = try NDArray(f64, 1).randn(allocator, &[_]usize{100}, 12345, .row_major);
+    defer arr2.deinit();
+
+    for (0..100) |i| {
+        try testing.expectEqual(arr1.data[i], arr2.data[i]);
+    }
+}
+
+test "ndarray: randn() different seeds produce different values" {
+    const allocator = testing.allocator;
+    var arr1 = try NDArray(f64, 1).randn(allocator, &[_]usize{100}, 11111, .row_major);
+    defer arr1.deinit();
+
+    var arr2 = try NDArray(f64, 1).randn(allocator, &[_]usize{100}, 22222, .row_major);
+    defer arr2.deinit();
+
+    var same_count: usize = 0;
+    for (0..100) |i| {
+        if (arr1.data[i] == arr2.data[i]) {
+            same_count += 1;
+        }
+    }
+    try testing.expect(same_count < 100);
+}
+
+test "ndarray: randn() single element creates valid array" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).randn(allocator, &[_]usize{1}, 444, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(1, arr.count());
+    try testing.expect(@abs(arr.data[0]) < 100.0);
+}
+
+test "ndarray: randn() large array 100k elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).randn(allocator, &[_]usize{100_000}, 8888, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(100_000, arr.count());
+    // Spot check values
+    for (0..100) |i| {
+        try testing.expect(@abs(arr.data[i * 1000]) < 100.0);
+    }
+}
+
+test "ndarray: randn() memory safety (10 iterations, leak detection)" {
+    const allocator = testing.allocator;
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 2).randn(allocator, &[_]usize{ 5, 5 }, 9999, .row_major);
+        arr.deinit();
+    }
+}
+
+test "ndarray: randn() zero dimension rejected" {
+    const allocator = testing.allocator;
+    const result = NDArray(f64, 2).randn(allocator, &[_]usize{ 3, 0 }, 1234, .row_major);
+
+    try testing.expectError(error.ZeroDimension, result);
+}
+
+test "ndarray: randn() statistical properties: 10k samples mean ~0, std ~1" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).randn(allocator, &[_]usize{10000}, 777888, .row_major);
+    defer arr.deinit();
+
+    // Calculate sample mean
+    var sum: f64 = 0.0;
+    for (arr.data) |val| {
+        sum += val;
+    }
+    const sample_mean = sum / 10000.0;
+
+    // Calculate sample variance
+    var var_sum: f64 = 0.0;
+    for (arr.data) |val| {
+        const diff = val - sample_mean;
+        var_sum += diff * diff;
+    }
+    const sample_std = @sqrt(var_sum / 10000.0);
+
+    // Standard normal has mean 0 and std 1; check with tolerance
+    try testing.expect(@abs(sample_mean) < 0.1); // mean close to 0
+    try testing.expect(sample_std > 0.9 and sample_std < 1.1); // std close to 1
+}
+
+test "ndarray: randn() 2D [100,100] produces symmetric distribution" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 2).randn(allocator, &[_]usize{ 100, 100 }, 55555, .row_major);
+    defer arr.deinit();
+
+    // Count negative vs positive values (should be roughly balanced)
+    var neg_count: usize = 0;
+    var pos_count: usize = 0;
+    for (arr.data) |val| {
+        if (val < 0.0) {
+            neg_count += 1;
+        } else {
+            pos_count += 1;
+        }
+    }
+
+    // Both should be roughly 50% (within 10% variation)
+    const total = arr.count();
+    try testing.expect(neg_count > (total * 40) / 100);
+    try testing.expect(pos_count > (total * 40) / 100);
+}
+
+test "ndarray: randn() contains both small and large magnitude values" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).randn(allocator, &[_]usize{1000}, 33333, .row_major);
+    defer arr.deinit();
+
+    var has_small = false;
+    var has_medium = false;
+    var has_large = false;
+
+    for (arr.data) |val| {
+        const abs_val = @abs(val);
+        if (abs_val < 0.5) has_small = true;
+        if (abs_val >= 0.5 and abs_val < 2.0) has_medium = true;
+        if (abs_val >= 2.0) has_large = true;
+    }
+
+    try testing.expect(has_small and has_medium and has_large);
 }
