@@ -1,3 +1,40 @@
+**Session 529 Update (2026-05-16) — FEATURE MODE:**
+
+✅ **NDARRAY LOGSPACE() FACTORY FUNCTION** — NumPy-compatible logarithmic spacing:
+- **Feature**: Implemented `logspace()` factory function for logarithmically-spaced arrays
+- **Function**: `logspace(allocator, start, stop, num, base, layout)`
+  * Creates 1D array of `num` values logarithmically spaced from base^start to base^stop
+  * Formula: arr[i] = base^(start + i*step) where step = (stop - start) / (num - 1)
+  * Default base 10.0 (decades), also supports base 2.0 (octaves), e (natural), custom
+  * Time: O(num), Space: O(num)
+- **Tests**: 21 comprehensive tests (all passing)
+  * Basic correctness: powers of 10 [1, 10, 100], powers of 2 [1, 2, 4, 8]
+  * Edge cases: single element, negative exponents, identical start/stop
+  * Alternative bases: e (natural exponential), 2.0, 0.1 (inverted scale)
+  * Type support: f32, f64 with appropriate tolerances
+  * Large scales: -6 to 6 (13 points, 12 orders of magnitude), 10K elements
+  * Layout: row-major and column-major
+  * Numerical properties: monotonic, endpoint precision, intermediate values
+  * Error handling: num=0 → error.ZeroDimension
+  * Memory safety: 10-iteration leak detection
+- **Use Cases**:
+  * Frequency sweeps in signal processing (Bode plots, spectrum analysis)
+  * Power-law distributions (Zipf, Pareto, scale-free networks)
+  * Logarithmic scales for visualization (log-log plots)
+  * Multi-decade parameter sweeps (optimization, sensitivity analysis)
+  * Scientific computing where phenomena span orders of magnitude
+- **Files**: src/ndarray/ndarray.zig (+246 lines: 61 implementation, 182 tests, 3 doc)
+- **Commits**: c18f1da (feature implementation), 0c71d9b (test fix)
+- **Total Tests**: 3050 → 3071 (21 new logspace tests)
+- **TDD Workflow**: test-writer agent a8ab196 (21 RED tests) → zig-developer agent a706cd7 (GREEN implementation) → manual test fix
+- **Test Bug Fixed**: test-writer had typo expecting shape[0]=1 instead of 3 for 3-element array, fixed manually
+- **Rationale**: NumPy compatibility — `np.logspace()` is ubiquitous in scientific Python
+  * Complements `linspace()` (linear spacing) with logarithmic counterpart
+  * Essential for frequency-domain analysis, Bode plots, power-law modeling
+  * Improves ergonomics for NumPy users migrating to Zig
+  * Completes factory function suite: zeros, ones, full, arange, linspace, eye, rand, randn, logspace
+- **Impact**: zuda now has comprehensive NumPy-compatible array creation API
+
 **Session 528 Update (2026-05-16) — FEATURE MODE:**
 
 ✅ **NDARRAY RANDOM FACTORY FUNCTIONS** — NumPy-compatible random array creation:
