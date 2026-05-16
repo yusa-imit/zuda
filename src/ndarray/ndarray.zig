@@ -24286,7 +24286,7 @@ test "NDArray.logspace: basic powers of 10 [0,2,3]" {
     defer arr.deinit();
 
     try testing.expectEqual(@as(usize, 3), arr.count());
-    try testing.expectEqual(@as(usize, 1), arr.shape[0]);
+    try testing.expectEqual(@as(usize, 3), arr.shape[0]);
 
     // logspace(0, 2, 3, 10) → [10^0, 10^1, 10^2] = [1, 10, 100]
     try testing.expectApproxEqRel(1.0, arr.data[0], 1e-10);
