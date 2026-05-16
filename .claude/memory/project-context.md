@@ -1,3 +1,27 @@
+**Session 532 Update (2026-05-17) — FEATURE MODE:**
+
+✅ **EXAMPLE: MATRIX OPERATIONS DEMO + SIMD BUG FIX** — Comprehensive BLAS tutorial:
+- **Feature**: Added `examples/matrix_operations_demo.zig` for BLAS and linear algebra operations
+- **Content**:
+  * BLAS Level 1 operations: dot product (x·y = 32), L2 norm (||x||₂ = 3.7417), axpy (2*x + y)
+  * BLAS Level 2 operations: matrix-vector multiplication (gemv: M*v = [14, 32])
+  * BLAS Level 3 operations: matrix-matrix multiplication (gemm: A*B = [[19, 22], [43, 50]])
+  * Linear system solving: solve 2x+y=5, x+3y=11 → x=[0.80, 3.40] with verification
+  * Helper functions: printMatrix(), printVector() with proper NDArray.get() usage
+  * All operations include expected output annotations for educational clarity
+- **Bug Fix**: Fixed compilation error in `simd_blas.zig:247`
+  * Issue: `@memcpy(y.data[idx..][0..vec_width], &result)` — @memcpy expected slice, not vector pointer
+  * Fix: Direct assignment `y.data[idx..][0..vec_width].* = result`
+  * Impact: axpy_simd now compiles correctly, all 3071 tests still pass
+- **Files**: examples/matrix_operations_demo.zig (new, 257 lines), build.zig (+16 lines), src/linalg/simd_blas.zig (-1/+1 line)
+- **Commit**: b31d937 (feature + bug fix)
+- **Rationale**: v2.0 complete, maintenance mode focuses on documentation and examples
+  * Examples directory had 24 files but no comprehensive BLAS tutorial
+  * Users learning zuda's linear algebra APIs need hands-on demonstrations
+  * Demonstrates correct usage patterns: NDArray factory methods, BLAS parameter order, pointer handling
+- **Impact**: Lowers barrier to entry for BLAS module usage, provides clear API reference example
+- **Total Tests**: 3071/3078 passing (100%, 7 skipped)
+
 **Session 531 Update (2026-05-17) — FEATURE MODE:**
 
 ✅ **EXAMPLE: SIMPLE LINEAR REGRESSION** — Concise regression tutorial:
