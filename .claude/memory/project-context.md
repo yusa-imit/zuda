@@ -1,3 +1,28 @@
+**Session 527 Update (2026-05-16) — FEATURE MODE:**
+
+✅ **BENCHMARK METHODOLOGY EXAMPLE** — Educational example for proper benchmarking:
+- **Feature**: Created `examples/benchmark_methodology.zig` demonstrating warmup-aware benchmarking
+- **Purpose**: Help users understand CPU frequency scaling impact on benchmark results
+- **Content**:
+  * `benchmarkWithWarmup()` helper function for proper measurement
+  * Dot product (1M f64) example showing cold vs warmup performance
+  * Matrix multiply (256×256) example demonstrating scaling behavior
+  * Comprehensive documentation explaining warmup necessity
+- **Key Insights**:
+  * Cold run: CPU at lower frequency → 40-80% slower results
+  * Warmup runs: CPU ramps to full performance → stable measurements
+  * Best practice: Run 2+ iterations, report min/avg of runs 2+ (skip run 1)
+  * Apple M2/M3: aggressive frequency scaling → higher variance
+- **Implementation**:
+  * Standalone example (179 lines) with detailed comments
+  * Uses simple algorithms (no external BLAS) for clarity
+  * Prints cold run, min warmup, avg warmup, and speedup
+  * References docs/BENCHMARKS.md for official zuda results
+- **Files**: examples/benchmark_methodology.zig (new file, 179 lines)
+- **Commit**: 72fbfc2 (feature implementation)
+- **Rationale**: Session 526 discovered warmup methodology importance — this example teaches users the same technique
+- **Impact**: Helps users avoid reporting artificially slow cold-run performance in their own benchmarks
+
 **Session 526 Update (2026-05-16) — FEATURE MODE:**
 
 ✅ **BENCHMARK METHODOLOGY CORRECTION** — Discovered and fixed measurement inaccuracy:
