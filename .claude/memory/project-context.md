@@ -1,3 +1,25 @@
+**Session 531 Update (2026-05-17) — FEATURE MODE:**
+
+✅ **EXAMPLE: SIMPLE LINEAR REGRESSION** — Concise regression tutorial:
+- **Feature**: Added `examples/linear_regression_simple.zig` for quick regression demo
+- **Content**:
+  * Synthetic data generation: y = 2.5x + 1.0 + noise (50 points)
+  * stats.regression.polyfit() usage (degree=1 for linear fit)
+  * Coefficient extraction: intercept and slope from result
+  * R² score display (built-in from PolyFitResult)
+  * Prediction on new data points with error comparison
+- **Purpose**: Focused tutorial on regression without extra complexity
+  * Complements scientific_workflow.zig (which includes FFT/residuals)
+  * Targets users who need simple OLS fitting
+  * 71 lines vs 270+ lines in scientific_workflow
+- **Files**: examples/linear_regression_simple.zig (new file, 71 lines)
+- **Commit**: 05c16a9 (example documentation)
+- **Rationale**: v2.0 complete, maintenance mode focuses on documentation and accessibility
+  * Examples directory had 24 files but no standalone regression tutorial
+  * Users often need just regression without full scientific workflow
+  * Demonstrates stats.regression.polyfit() API clearly
+- **Impact**: Lowers barrier to entry for stats module usage
+
 **Session 530 Update (2026-05-17) — STABILIZATION MODE:**
 
 ✅ **COMPREHENSIVE SYSTEM VALIDATION** — All quality checks passed:
