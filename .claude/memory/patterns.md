@@ -1,5 +1,41 @@
 # zuda Code Patterns
 
+## Random NDArray Factory Pattern (Session 528)
+Create random arrays with seeded PRNGs for reproducibility:
+
+```zig
+pub fn rand(allocator: Allocator, shape: []const usize, seed: u64, layout: Layout) !Self {
+    // 1. Validate shape (no zero dimensions)
+    for (shape) |dim| {
+        if (dim == 0) return error.ZeroDimension;
+    }
+
+    // 2. Create array structure
+    var arr = try Self.init(allocator, shape, layout);
+    errdefer arr.deinit();
+
+    // 3. Initialize PRNG with seed
+    const random_module = @import("../stats/random.zig");
+    var rng = random_module.Pcg64.init(seed);
+
+    // 4. Fill with random values
+    for (arr.data) |*val| {
+        val.* = rng.random().float(T);  // Uniform [0, 1) for rand()
+        // OR
+        val.* = random_module.normal(T, rng.random());  // N(0,1) for randn()
+    }
+
+    return arr;
+}
+```
+
+**Key Points**:
+- Validate before allocation (fail fast)
+- Use errdefer for cleanup on error paths
+- Seed-based reproducibility (same seed → same array)
+- Generic over float types (f32, f64)
+- Respects layout (row-major/column-major)
+
 ## Quasi-Newton Optimization Pattern (BFGS)
 Implement approximate Hessian (inverse) iteratively to accelerate convergence:
 

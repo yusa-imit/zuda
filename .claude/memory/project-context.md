@@ -1,3 +1,36 @@
+**Session 528 Update (2026-05-16) — FEATURE MODE:**
+
+✅ **NDARRAY RANDOM FACTORY FUNCTIONS** — NumPy-compatible random array creation:
+- **Feature**: Implemented `rand()` and `randn()` factory functions for NDArray
+- **Functions**:
+  * `rand(allocator, shape, seed, layout)`: Uniform distribution [0, 1)
+    - Uses PCG64 PRNG for high-quality randomness
+    - Seed reproducibility: same seed produces identical arrays
+    - Generic over float types (f32, f64)
+    - Time: O(prod(shape)), Space: O(prod(shape))
+  * `randn(allocator, shape, seed, layout)`: Standard normal N(0, 1)
+    - Uses Box-Muller transform via stats.random.normal
+    - Mean ≈ 0, std ≈ 1 statistical properties
+    - Same validation and generics as rand()
+- **Tests**: 29 comprehensive tests (all passing)
+  * rand(): 15 tests (shape, range, layout, types, seeding, stats, memory)
+  * randn(): 14 tests (shape, bounds, layout, types, seeding, stats, memory)
+- **Use Cases**:
+  * Monte Carlo simulation initialization
+  * Neural network weight initialization (randn for Xavier/He init)
+  * Statistical sampling and hypothesis testing
+  * Matrix conditioning and numerical stability testing
+  * Scientific computing workflows (replacing NumPy np.random.rand/randn)
+- **Files**: src/ndarray/ndarray.zig (+471 lines: 48 implementation, 423 tests)
+- **Commits**: 594b6fa (feature implementation), 5c8a42e (agent log)
+- **Total Tests**: 3021 → 3050 (29 new random factory tests)
+- **TDD Workflow**: test-writer agent a0486b8 (29 RED tests) → zig-developer agent a6ba657 (GREEN implementation)
+- **Rationale**: NumPy compatibility — users expect `np.random.rand()` and `np.random.randn()` equivalents
+  * Improves ergonomics for scientific computing workflows
+  * Seed-based reproducibility essential for ML/simulation experiments
+  * Complements existing factory functions (zeros, ones, full, arange, linspace, eye)
+- **Impact**: Makes zuda more accessible to NumPy users migrating to Zig for performance
+
 **Session 527 Update (2026-05-16) — FEATURE MODE:**
 
 ✅ **BENCHMARK METHODOLOGY EXAMPLE** — Educational example for proper benchmarking:
