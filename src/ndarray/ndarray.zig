@@ -527,6 +527,68 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             return arr;
         }
 
+        /// Create 1D array with logarithmically spaced values
+        ///
+        /// Generates `num` values evenly spaced on a log scale from base^start to base^stop.
+        /// The spacing between consecutive points is exponential: arr[i] = base^(start + i*step)
+        /// where step = (stop - start) / (num - 1).
+        ///
+        /// This is useful for creating arrays that span multiple orders of magnitude,
+        /// common in scientific computing (frequency scales, physical unit ranges, etc.).
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator
+        /// - start: Exponent for the starting value (base^start)
+        /// - stop: Exponent for the ending value (base^stop)
+        /// - num: Number of samples to generate
+        /// - base: Logarithm base (commonly 10.0 for decades, 2.0 for octaves, e for natural)
+        /// - layout: Row-major or column-major (1D arrays typically use row-major)
+        ///
+        /// Returns: Initialized 1D NDArray with logarithmically spaced values
+        ///
+        /// Errors:
+        /// - error.ZeroDimension if num is 0
+        /// - error.OutOfMemory if allocation fails
+        ///
+        /// Time: O(num) — one exponentiation per element
+        /// Space: O(num)
+        ///
+        /// Examples:
+        /// ```zig
+        /// // Powers of 10: [1, 10, 100]
+        /// const arr = try NDArray(f64, 1).logspace(allocator, 0, 2, 3, 10.0, .row_major);
+        ///
+        /// // Powers of 2: [1, 2, 4, 8]
+        /// const arr2 = try NDArray(f64, 1).logspace(allocator, 0, 3, 4, 2.0, .row_major);
+        ///
+        /// // Frequencies spanning octaves (base 2): [1 Hz, 2 Hz, 4 Hz, 8 Hz]
+        /// const freqs = try NDArray(f64, 1).logspace(allocator, 0, 3, 4, 2.0, .row_major);
+        /// ```
+        pub fn logspace(allocator: Allocator, start: T, stop: T, num: usize, base: T, layout: Layout) (Error || AllocatorError)!Self {
+            if (num == 0) {
+                return error.ZeroDimension;
+            }
+
+            var arr = try Self.init(allocator, &[_]usize{num}, layout);
+            errdefer arr.deinit();
+
+            if (num == 1) {
+                // Single element: return base^start
+                arr.data[0] = math.pow(T, base, start);
+            } else {
+                // Calculate step size: (stop - start) / (num - 1)
+                const step = (stop - start) / @as(T, @floatFromInt(@as(isize, @intCast(num - 1))));
+                for (0..num) |i| {
+                    // Calculate exponent: start + i * step
+                    const exponent = start + @as(T, @floatFromInt(@as(isize, @intCast(i)))) * step;
+                    // arr[i] = base^exponent
+                    arr.data[i] = math.pow(T, base, exponent);
+                }
+            }
+
+            return arr;
+        }
+
         /// Create an array filled with random values from uniform distribution [0, 1)
         ///
         /// Generates random elements using the PCG64 pseudo-random number generator.
@@ -24216,4 +24278,265 @@ test "ndarray: randn() contains both small and large magnitude values" {
     }
 
     try testing.expect(has_small and has_medium and has_large);
+}
+
+test "NDArray.logspace: basic powers of 10 [0,2,3]" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 2, 3, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 3), arr.count());
+    try testing.expectEqual(@as(usize, 1), arr.shape[0]);
+
+    // logspace(0, 2, 3, 10) → [10^0, 10^1, 10^2] = [1, 10, 100]
+    try testing.expectApproxEqRel(1.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(10.0, arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(100.0, arr.data[2], 1e-10);
+}
+
+test "NDArray.logspace: powers of 2" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 3, 4, 2.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 4), arr.count());
+
+    // logspace(0, 3, 4, 2) → [2^0, 2^1, 2^2, 2^3] = [1, 2, 4, 8]
+    try testing.expectApproxEqRel(1.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(2.0, arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(4.0, arr.data[2], 1e-10);
+    try testing.expectApproxEqRel(8.0, arr.data[3], 1e-10);
+}
+
+test "NDArray.logspace: single element returns base^start" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 5, 10, 1, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 1), arr.count());
+    // logspace(5, 10, 1, 10) → [10^5]
+    try testing.expectApproxEqRel(100000.0, arr.data[0], 1e-8);
+}
+
+test "NDArray.logspace: negative exponents" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, -2, 1, 4, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 4), arr.count());
+
+    // logspace(-2, 1, 4, 10) → [10^-2, 10^-1, 10^0, 10^1]
+    // = [0.01, 0.1, 1.0, 10.0]
+    try testing.expectApproxEqRel(0.01, arr.data[0], 1e-12);
+    try testing.expectApproxEqRel(0.1, arr.data[1], 1e-12);
+    try testing.expectApproxEqRel(1.0, arr.data[2], 1e-12);
+    try testing.expectApproxEqRel(10.0, arr.data[3], 1e-12);
+}
+
+test "NDArray.logspace: base e (natural exponential)" {
+    const allocator = testing.allocator;
+    const e = math.e;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 1, 3, e, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 3), arr.count());
+
+    // logspace(0, 1, 3, e) → [e^0, e^0.5, e^1] = [1, sqrt(e), e]
+    try testing.expectApproxEqRel(1.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(math.sqrt(e), arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(e, arr.data[2], 1e-10);
+}
+
+test "NDArray.logspace: large range spanning many orders of magnitude" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, -6, 6, 13, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 13), arr.count());
+
+    // Verify endpoints
+    try testing.expectApproxEqRel(1e-6, arr.data[0], 1e-14);
+    try testing.expectApproxEqRel(1e6, arr.data[12], 1e-2);
+
+    // Verify monotonic increase
+    for (1..arr.count()) |i| {
+        try testing.expect(arr.data[i] > arr.data[i - 1]);
+    }
+}
+
+test "NDArray.logspace: f32 type support" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f32, 1).logspace(allocator, 0, 2, 3, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 3), arr.count());
+    try testing.expectApproxEqRel(@as(f32, 1.0), arr.data[0], 1e-5);
+    try testing.expectApproxEqRel(@as(f32, 10.0), arr.data[1], 1e-5);
+    try testing.expectApproxEqRel(@as(f32, 100.0), arr.data[2], 1e-5);
+}
+
+test "NDArray.logspace: f64 type support" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 2, 3, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 3), arr.count());
+    try testing.expectApproxEqRel(1.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(10.0, arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(100.0, arr.data[2], 1e-10);
+}
+
+test "NDArray.logspace: zero dimension rejected" {
+    const allocator = testing.allocator;
+    const result = NDArray(f64, 1).logspace(allocator, 0, 1, 0, 10.0, .row_major);
+    try testing.expectError(error.ZeroDimension, result);
+}
+
+test "NDArray.logspace: numerical precision endpoints match base^start and base^stop" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 2, 5, 4, 10.0, .row_major);
+    defer arr.deinit();
+
+    // Start should equal 10^2 = 100
+    try testing.expectApproxEqRel(math.pow(f64, 10.0, 2), arr.data[0], 1e-10);
+
+    // End should equal 10^5 = 100000
+    try testing.expectApproxEqRel(math.pow(f64, 10.0, 5), arr.data[3], 1e-8);
+}
+
+test "NDArray.logspace: row-major layout" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 2, 5, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 5), arr.count());
+    try testing.expect(arr.layout == .row_major);
+}
+
+test "NDArray.logspace: column-major layout" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 2, 5, 10.0, .column_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 5), arr.count());
+    try testing.expect(arr.layout == .column_major);
+}
+
+test "NDArray.logspace: values are monotonically increasing" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, -5, 5, 100, 10.0, .row_major);
+    defer arr.deinit();
+
+    for (1..arr.count()) |i| {
+        try testing.expect(arr.data[i] > arr.data[i - 1]);
+    }
+}
+
+test "NDArray.logspace: intermediate values correct (formula check)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 4, 5, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 5), arr.count());
+
+    // With 5 elements: step = (4 - 0) / (5 - 1) = 1
+    // arr[i] = 10^(0 + i * 1) = 10^i
+    try testing.expectApproxEqRel(math.pow(f64, 10, 0), arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(math.pow(f64, 10, 1), arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(math.pow(f64, 10, 2), arr.data[2], 1e-10);
+    try testing.expectApproxEqRel(math.pow(f64, 10, 3), arr.data[3], 1e-10);
+    try testing.expectApproxEqRel(math.pow(f64, 10, 4), arr.data[4], 1e-10);
+}
+
+test "NDArray.logspace: two elements creates correct endpoints" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 1, 4, 2, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 2), arr.count());
+    try testing.expectApproxEqRel(10.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(10000.0, arr.data[1], 1e-8);
+}
+
+test "NDArray.logspace: memory safety no leaks (10 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..10) |_| {
+        var arr = try NDArray(f64, 1).logspace(allocator, 0, 3, 50, 10.0, .row_major);
+        defer arr.deinit();
+
+        try testing.expectEqual(@as(usize, 50), arr.count());
+    }
+}
+
+test "NDArray.logspace: non-integer exponents (0.5, 1.5 spacing)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 0, 2, 5, 10.0, .row_major);
+    defer arr.deinit();
+
+    // step = (2 - 0) / (5 - 1) = 0.5
+    // Values: 10^0, 10^0.5, 10^1, 10^1.5, 10^2
+    try testing.expectApproxEqRel(1.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(math.sqrt(10.0), arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(10.0, arr.data[2], 1e-10);
+    try testing.expectApproxEqRel(10.0 * math.sqrt(10.0), arr.data[3], 1e-10);
+    try testing.expectApproxEqRel(100.0, arr.data[4], 1e-10);
+}
+
+test "NDArray.logspace: asymmetric range (2 to 8 with base 2)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 2, 8, 7, 2.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 7), arr.count());
+
+    // step = (8 - 2) / (7 - 1) = 1
+    // Values: 2^2, 2^3, 2^4, 2^5, 2^6, 2^7, 2^8
+    const expected = [_]f64{ 4, 8, 16, 32, 64, 128, 256 };
+    for (0..7) |i| {
+        try testing.expectApproxEqRel(expected[i], arr.data[i], 1e-10);
+    }
+}
+
+test "NDArray.logspace: large num value 10000 elements" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, -3, 3, 10000, 10.0, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 10000), arr.count());
+
+    // Verify first and last endpoints
+    try testing.expectApproxEqRel(0.001, arr.data[0], 1e-12);
+    try testing.expectApproxEqRel(1000.0, arr.data[9999], 1e-6);
+
+    // Spot check a few intermediate values
+    try testing.expect(arr.data[5000] > arr.data[2500]);
+    try testing.expect(arr.data[7500] > arr.data[5000]);
+}
+
+test "NDArray.logspace: identical start and stop (num > 1 case)" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, 3, 3, 5, 10.0, .row_major);
+    defer arr.deinit();
+
+    // When start == stop, all values should be 10^3 = 1000
+    const expected = 1000.0;
+    for (arr.data) |val| {
+        try testing.expectApproxEqRel(expected, val, 1e-10);
+    }
+}
+
+test "NDArray.logspace: very small base (0.1) with negative exponent range" {
+    const allocator = testing.allocator;
+    var arr = try NDArray(f64, 1).logspace(allocator, -2, 2, 5, 0.1, .row_major);
+    defer arr.deinit();
+
+    try testing.expectEqual(@as(usize, 5), arr.count());
+
+    // With base 0.1: 0.1^-2=100, 0.1^-1=10, 0.1^0=1, 0.1^1=0.1, 0.1^2=0.01
+    try testing.expectApproxEqRel(100.0, arr.data[0], 1e-10);
+    try testing.expectApproxEqRel(10.0, arr.data[1], 1e-10);
+    try testing.expectApproxEqRel(1.0, arr.data[2], 1e-10);
+    try testing.expectApproxEqRel(0.1, arr.data[3], 1e-10);
+    try testing.expectApproxEqRel(0.01, arr.data[4], 1e-12);
 }
