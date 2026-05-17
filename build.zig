@@ -465,6 +465,24 @@ pub fn build(b: *std.Build) void {
     matrix_demo_example_step.dependOn(&run_matrix_demo_example.step);
     run_matrix_demo_example.step.dependOn(b.getInstallStep());
 
+    // Data structures showcase
+    const data_structures_example = b.addExecutable(.{
+        .name = "data_structures_showcase",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/data_structures_showcase.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(data_structures_example);
+    const run_data_structures_example = b.addRunArtifact(data_structures_example);
+    const data_structures_example_step = b.step("example-data-structures", "Run the data structures showcase");
+    data_structures_example_step.dependOn(&run_data_structures_example.step);
+    run_data_structures_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
