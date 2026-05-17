@@ -519,6 +519,24 @@ pub fn build(b: *std.Build) void {
     skip_list_example_step.dependOn(&run_skip_list_example.step);
     run_skip_list_example.step.dependOn(b.getInstallStep());
 
+    // HyperLogLog API demo
+    const hyperloglog_example = b.addExecutable(.{
+        .name = "hyperloglog_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/hyperloglog_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(hyperloglog_example);
+    const run_hyperloglog_example = b.addRunArtifact(hyperloglog_example);
+    const hyperloglog_example_step = b.step("example-hyperloglog", "Run the HyperLogLog API demo");
+    hyperloglog_example_step.dependOn(&run_hyperloglog_example.step);
+    run_hyperloglog_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
