@@ -501,6 +501,24 @@ pub fn build(b: *std.Build) void {
     lru_cache_example_step.dependOn(&run_lru_cache_example.step);
     run_lru_cache_example.step.dependOn(b.getInstallStep());
 
+    // SkipList API demo
+    const skip_list_example = b.addExecutable(.{
+        .name = "skip_list_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/skip_list_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(skip_list_example);
+    const run_skip_list_example = b.addRunArtifact(skip_list_example);
+    const skip_list_example_step = b.step("example-skip-list", "Run the SkipList API demo");
+    skip_list_example_step.dependOn(&run_skip_list_example.step);
+    run_skip_list_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
