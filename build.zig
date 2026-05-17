@@ -483,6 +483,24 @@ pub fn build(b: *std.Build) void {
     data_structures_example_step.dependOn(&run_data_structures_example.step);
     run_data_structures_example.step.dependOn(b.getInstallStep());
 
+    // LRU Cache API demo
+    const lru_cache_example = b.addExecutable(.{
+        .name = "lru_cache_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/lru_cache_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(lru_cache_example);
+    const run_lru_cache_example = b.addRunArtifact(lru_cache_example);
+    const lru_cache_example_step = b.step("example-lru-cache", "Run the LRU cache API demo");
+    lru_cache_example_step.dependOn(&run_lru_cache_example.step);
+    run_lru_cache_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
