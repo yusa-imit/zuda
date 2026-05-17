@@ -1,3 +1,35 @@
+**Session 536 Update (2026-05-18) — FEATURE MODE:**
+
+✅ **EXAMPLE: LRU CACHE API DEMO** — Practical API usage example for high-value container:
+- **Feature**: Added `examples/lru_cache_demo.zig` demonstrating LRUCache API with 4 real-world examples
+- **Examples**:
+  * Web request cache: URL → HTML caching with automatic eviction (capacity=3, demonstrates MRU/LRU behavior)
+  * Fibonacci memoization: Computation cache with eviction callbacks (capacity=5, shows callback invocation)
+  * Custom hash context: User struct keys with custom hash/equality functions
+  * Buffer pool simulation: Replicates silica's 1237-line buffer pool use case (page_id → page_data, 16KB pool)
+- **API Showcase**:
+  * Basic operations: put/get/remove (all O(1))
+  * Automatic LRU eviction when capacity exceeded (oldest unused entry evicted)
+  * Custom hash contexts (StringContext for strings, custom HashContext for structs)
+  * Eviction callbacks for cleanup (dirty page flushing, resource deallocation)
+  * Iterator for MRU → LRU traversal
+  * count(), isEmpty() utility methods
+- **Format**: Live executable with 4 standalone demos + API summary
+  * Each example demonstrates different aspect: eviction, callbacks, custom keys, buffer pool
+  * Output shows cache state, evictions, and operations clearly
+  * 242 lines total (60 lines per example average)
+- **Files**: examples/lru_cache_demo.zig (242 lines), build.zig (+16 lines for example-lru-cache step)
+- **Commit**: 1dccff2 (feature implementation)
+- **Rationale**: Session 534 noted "Future work: Create focused API usage examples for high-value containers (LRUCache, etc.)"
+  * LRUCache is high-value: used by silica (buffer pool), zoltraak (request cache), general caching
+  * Previous data_structures_showcase.zig was documentation-only (no live code)
+  * This provides hands-on executable example showing actual API usage patterns
+  * Addresses API discovery challenges by demonstrating correct usage (StringContext for strings, custom contexts for structs)
+- **Impact**: Lowers barrier to entry for LRUCache adoption, demonstrates consumer migration path (silica buffer pool → zuda LRUCache)
+- **Consumer Use Cases Demonstrated**: silica buffer pool (4KB pages, LRU eviction), zoltraak request cache, general memoization
+- **Total Tests**: 3071 passing (100%, no changes to test suite)
+- **Run**: `zig build example-lru-cache`
+
 **Session 534 Update (2026-05-17) — FEATURE MODE:**
 
 ✅ **EXAMPLE: DATA STRUCTURES CATALOG SHOWCASE** — Comprehensive container documentation:
