@@ -1,3 +1,43 @@
+**Session 537 Update (2026-05-18) — FEATURE MODE:**
+
+✅ **EXAMPLE: SKIPLIST API DEMO** — Practical API usage for probabilistic balanced tree:
+- **Feature**: Added `examples/skip_list_demo.zig` demonstrating SkipList API with 4 real-world examples
+- **Demos**:
+  * Basic operations: Integer key-value store with CRUD and sorted iteration
+  * Custom comparator: Descending order with f64 keys (3.14 → 2.71 → 1.61 → 1.41)
+  * Range queries: Student scores filtered by range [70, 90] (demonstrates O(log n) search)
+  * Leaderboard: Player rankings by score (zoltraak sorted set use case)
+- **API Showcase**:
+  * init(allocator, ctx) → !Self (error union initialization)
+  * insert(key, value) → !?V (O(log n) amortized, returns old value if replaced)
+  * get(key) → ?V, contains(key) → bool, remove(key) → ?V (all O(log n))
+  * iterator() → sorted traversal (O(1) per next())
+  * count(), isEmpty() utilities
+  * Custom Context with hash(), eql(), compare() functions
+- **Consumer Use Case Demonstrated**: zoltraak sorted set (HashMap + sorted ArrayList → SkipList)
+  * Current: HashMap for O(1) membership + sorted ArrayList for ranking → O(n) insert/remove
+  * With SkipList: O(log n) insert/remove/search, natural sorted order
+  * Advantages: No array shifting, O(k + log n) range queries for k results
+  * Memory: ~2× overhead (tower) vs 2× (hash + array), comparable
+- **Format**: Live executable with 4 standalone demos + API summary
+  * Demo 1: Basic CRUD (4 items, sorted iteration, remove)
+  * Demo 2: Descending order via custom comparator
+  * Demo 3: Range query (5 students, filter 70-90 → 3 results)
+  * Demo 4: Leaderboard (5 players, score update demonstration)
+  * Output shows SkipList state, sorted order, and operations clearly
+  * 246 lines total (61 lines per demo average)
+- **Files**: examples/skip_list_demo.zig (246 lines), build.zig (+18 lines for example-skip-list step)
+- **Commit**: 1cae9a5 (feature implementation)
+- **Rationale**: Session 536 created lru_cache_demo.zig for LRUCache API examples
+  * SkipList is high-value: used by zoltraak (sorted set), probabilistic balanced tree
+  * Provides hands-on executable example showing correct API usage
+  * Demonstrates consumer migration path (zoltraak: 1800 LOC sorted set → zuda SkipList)
+  * Addresses API discovery challenges by showing Context requirements (hash, eql, compare)
+- **Impact**: Lowers barrier to entry for SkipList adoption, demonstrates zoltraak sorted set migration
+- **Consumer Migration Opportunity**: zoltraak sorted set (1800 lines) → zuda SkipList
+- **Total Tests**: 3071 passing (100%, no changes to test suite)
+- **Run**: `zig build example-skip-list`
+
 **Session 536 Update (2026-05-18) — FEATURE MODE:**
 
 ✅ **EXAMPLE: LRU CACHE API DEMO** — Practical API usage example for high-value container:
