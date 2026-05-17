@@ -1,3 +1,44 @@
+**Session 538 Update (2026-05-18) — FEATURE MODE:**
+
+✅ **EXAMPLE: HYPERLOGLOG API DEMO** — Probabilistic cardinality estimation for massive datasets:
+- **Feature**: Added `examples/hyperloglog_demo.zig` demonstrating HyperLogLog API with 4 practical examples
+- **Demos**:
+  * Demo 1: Unique visitor counting (website analytics) — 8 IPs with duplicates → 6 unique (0.00% error)
+  * Demo 2: Stream cardinality (search queries) — 12 queries → 7-8 unique (33.3% deduplication rate)
+  * Demo 3: Distributed merge (3 data centers) — 100+100+100 users → 199/200 global unique (0.50% error)
+  * Demo 4: Memory efficiency vs HashSet — 100K items: 16KB (HLL) vs 1.5MB (HashSet), 97.7x savings
+- **API Showcase**:
+  * init(allocator, p, ctx) → !Self (p=precision bits, 4≤p≤18)
+  * add(item) → void (O(1) time, updates sketch)
+  * count() → u64 (O(m) time, m=2^p, estimates cardinality with bias correction)
+  * merge(other) → !void (O(m) time, aggregates distributed sketches)
+  * clear() → void (resets all registers)
+  * memoryUsage() → usize (returns m bytes)
+- **Consumer Use Case Demonstrated**: zoltraak HyperLogLog for PFCOUNT (Redis compatibility)
+  * Current: 80 lines custom implementation in src/storage/memory.zig
+  * With zuda: @import("zuda").containers.probabilistic.HyperLogLog
+  * Redis PFCOUNT: Count unique elements in sets with 0.81% error, 16KB memory (p=14)
+  * Advantages: Logarithmic space O(2^p), merge operation for distributed counting
+- **Format**: Live executable with 4 standalone demos + API summary
+  * Demo 1: Basic usage (visitor IPs, perfect accuracy on small dataset)
+  * Demo 2: Stream processing (high-volume queries with many duplicates)
+  * Demo 3: Distributed systems (merge 3 servers, 0.50% error on 200 unique)
+  * Demo 4: Space/accuracy trade-off (100K items: 0.03% error for 97.7x memory savings)
+  * Output shows estimated vs actual counts, error percentages, memory usage
+  * 251 lines total (62 lines per demo average)
+- **Files**: examples/hyperloglog_demo.zig (251 lines), build.zig (+18 lines for example-hyperloglog step)
+- **Commit**: 70eabbb (feature implementation)
+- **Rationale**: Session 537 created skip_list_demo.zig, session 536 lru_cache_demo.zig
+  * HyperLogLog is high-value probabilistic structure: used by zoltraak (PFCOUNT), analytics platforms
+  * Consumer migration opportunity: zoltraak 80 LOC → zuda HyperLogLog
+  * Demonstrates precision parameter (p=14 → 16KB, ~0.81% error), merge for distributed counting
+  * Shows Context requirements (StringContext, IntContext for custom hashing)
+  * Practical comparison: HLL vs HashSet memory efficiency (97.7x savings for <1% error)
+- **Impact**: Lowers barrier to entry for HyperLogLog adoption, demonstrates zoltraak PFCOUNT migration
+- **Consumer Migration Opportunity**: zoltraak HyperLogLog (80 lines) → zuda HyperLogLog
+- **Total Tests**: 3071 passing (100%, no changes to test suite)
+- **Run**: `zig build example-hyperloglog`
+
 **Session 537 Update (2026-05-18) — FEATURE MODE:**
 
 ✅ **EXAMPLE: SKIPLIST API DEMO** — Practical API usage for probabilistic balanced tree:
