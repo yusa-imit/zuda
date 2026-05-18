@@ -537,6 +537,24 @@ pub fn build(b: *std.Build) void {
     hyperloglog_example_step.dependOn(&run_hyperloglog_example.step);
     run_hyperloglog_example.step.dependOn(b.getInstallStep());
 
+    // Red-Black Tree API demo
+    const rbt_example = b.addExecutable(.{
+        .name = "red_black_tree_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/red_black_tree_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(rbt_example);
+    const run_rbt_example = b.addRunArtifact(rbt_example);
+    const rbt_example_step = b.step("example-red-black-tree", "Run the Red-Black Tree API demo");
+    rbt_example_step.dependOn(&run_rbt_example.step);
+    run_rbt_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
