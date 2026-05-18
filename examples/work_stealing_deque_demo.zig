@@ -29,7 +29,15 @@ pub fn main() !void {
 
     try demo1_basic_operations(allocator);
     try demo2_lifo_fifo_behavior(allocator);
-    try demo3_parallel_work_stealing(allocator);
+
+    // Skip parallel demo on single-threaded targets (e.g., wasm32-wasi)
+    if (@import("builtin").single_threaded) {
+        std.debug.print("--- Demo 3: Parallel Work Stealing ---\n", .{});
+        std.debug.print("(Skipped — target does not support threading)\n\n", .{});
+    } else {
+        try demo3_parallel_work_stealing(allocator);
+    }
+
     try demo4_task_queue_simulation(allocator);
 
     std.debug.print("\n=== API Summary ===\n", .{});
