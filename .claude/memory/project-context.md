@@ -1,3 +1,27 @@
+**Session 539 Update (2026-05-18) — STABILIZATION MODE (CI Failure):**
+
+🐛 **WASM32 CROSS-COMPILE FIX** — Fixed type mismatch breaking wasm32-wasi builds:
+- **Problem**: CI failed on wasm32-wasi target (latest run on main)
+  * Error: `hyperloglog.zig:92:28: expected type 'usize', found 'u64'`
+  * Root cause: Array index `j = hash >> shift_amount` inferred as `u64`
+  * Platform difference: `usize` is 32-bit on wasm32, 64-bit on x86_64/aarch64
+  * Code worked on 64-bit targets, failed on 32-bit wasm32
+- **Fix**: Explicit type casting for platform portability
+  * Line 86: `const j: usize = @intCast(hash >> shift_amount);` (was untyped)
+  * Line 89: `const leading_zeros: u8 = rho(hash, self.p);` (explicit type)
+  * Ensures array indexing uses platform-native `usize` on all targets
+- **Validation**:
+  * ✅ `zig build test` — all tests passing (exit code 0)
+  * ✅ `zig build -Dtarget=wasm32-wasi` — now compiles successfully
+  * ✅ CI will validate all 6 cross-compile targets after push
+- **Files**: src/containers/probabilistic/hyperloglog.zig (2 lines changed)
+- **Commit**: b9aa1a0 (bug fix + push)
+- **Impact**: Restores CI green status, enables wasm32 usage of HyperLogLog
+- **Learning**: Always use explicit `usize` for array indices in cross-platform code
+  * Type inference can hide platform-specific issues (u64 vs usize)
+  * wasm32 is 32-bit platform, catches portability bugs that 64-bit targets miss
+  * Critical for library code consumed by diverse targets
+
 **Session 538 Update (2026-05-18) — FEATURE MODE:**
 
 ✅ **EXAMPLE: HYPERLOGLOG API DEMO** — Probabilistic cardinality estimation for massive datasets:
