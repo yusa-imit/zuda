@@ -83,10 +83,10 @@ pub fn HyperLogLog(
 
             // Use first p bits as bucket index
             const shift_amount: u6 = @intCast(@as(u8, 64) - @as(u8, self.p));
-            const j = hash >> shift_amount;
+            const j: usize = @intCast(hash >> shift_amount);
 
             // Count leading zeros in remaining bits + 1
-            const leading_zeros = rho(hash, self.p);
+            const leading_zeros: u8 = rho(hash, self.p);
 
             // Update register with maximum
             self.registers[j] = @max(self.registers[j], leading_zeros);
