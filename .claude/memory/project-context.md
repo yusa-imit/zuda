@@ -1,3 +1,48 @@
+**Session 542 Update (2026-05-19) — FEATURE MODE:**
+
+✅ **EXAMPLE: WORK-STEALING DEQUE API DEMO** — Lock-free parallel task execution:
+- **Feature**: Added `examples/work_stealing_deque_demo.zig` demonstrating Chase-Lev work-stealing deque with 4 practical examples
+- **Demos**:
+  * Demo 1: Basic operations (push/pop, LIFO behavior, size/isEmpty queries)
+  * Demo 2: LIFO (owner) vs FIFO (stealer) behavior comparison
+  * Demo 3: Parallel work stealing (20 tasks distributed: owner + 2 stealer threads)
+  * Demo 4: Task queue simulation (zr use case: compile/link/test task scheduling)
+- **API Showcase**:
+  * init(allocator) → !Self — Create deque (O(1))
+  * push(task) → !void — Owner adds to bottom (O(1) amortized)
+  * pop() → ?T — Owner removes from bottom, LIFO (O(1))
+  * steal() → ?T — Stealer removes from top, FIFO (O(1))
+  * size() → usize, isEmpty() → bool — Queries (O(1))
+- **Consumer Use Case Demonstrated**: zr task runner (replaces src/exec/workstealing.zig — 130 LOC)
+  * Current: Custom 130-line Chase-Lev implementation
+  * With zuda: @import("zuda").containers.queues.WorkStealingDeque
+  * Advantages: Lock-free stealing (no contention), cache-friendly owner pops, proven algorithm
+  * Used by: Java ForkJoinPool, Cilk, Go scheduler, Tokio runtime
+- **Key Concepts**:
+  * Owner thread: push/pop from bottom (LIFO for cache locality — recent tasks likely cache-hot)
+  * Stealer threads: steal from top (FIFO for load balancing — take old tasks, help owner)
+  * Lock-free: Common case (pop/steal) requires no locks, only atomic CAS
+  * Dynamic resizing: Protected by mutex, rare due to amortized growth
+- **Format**: Live executable with 4 standalone demos + API summary
+  * Demo 1: Basic owner operations (push 3, pop 3, LIFO order: 300→200→100)
+  * Demo 2: Owner vs stealer (5 items: owner pops 5,4 from bottom, stealer steals 1,2 from top)
+  * Demo 3: Parallel (20 tasks: owner processed 5 recent tasks [19,18,17,16,15], stealers processed 15 old tasks [0-14])
+  * Demo 4: Real-world zr (4 build tasks: owner executes recent tasks, stealer helps with oldest)
+  * Output shows LIFO/FIFO behavior, load balancing, race conditions clearly
+  * 232 lines total (58 lines per demo average)
+- **Files**: examples/work_stealing_deque_demo.zig (232 lines), build.zig (+18 lines for example-work-stealing-deque step)
+- **Commit**: 42bac7b (feature implementation)
+- **Rationale**: Session 541 created red_black_tree_demo (sorted data), 538 hyperloglog_demo, 537 skip_list_demo
+  * Work-Stealing Deque is high-value concurrent data structure for parallel execution
+  * zr task runner (130 LOC) can migrate to zuda WorkStealingDeque
+  * Demonstrates lock-free concurrent programming patterns
+  * Shows practical parallel work distribution: owner keeps recent tasks (cache-warm), stealers take old tasks (load balancing)
+  * Chase-Lev algorithm: industry-proven (Java, Cilk, Go, Rust Tokio)
+- **Impact**: Provides migration path for zr task runner, demonstrates lock-free concurrent data structure usage
+- **Consumer Migration Opportunity**: zr work-stealing deque (130 lines) → zuda WorkStealingDeque
+- **Total Tests**: 3071 passing (100%, no changes to test suite)
+- **Run**: `zig build example-work-stealing-deque`
+
 **Session 541 Update (2026-05-19) — FEATURE MODE:**
 
 ✅ **EXAMPLE: RED-BLACK TREE API DEMO** — Deterministic balanced tree for ordered data:
