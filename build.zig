@@ -555,6 +555,24 @@ pub fn build(b: *std.Build) void {
     rbt_example_step.dependOn(&run_rbt_example.step);
     run_rbt_example.step.dependOn(b.getInstallStep());
 
+    // Work-Stealing Deque API demo
+    const wsd_example = b.addExecutable(.{
+        .name = "work_stealing_deque_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/work_stealing_deque_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zuda", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(wsd_example);
+    const run_wsd_example = b.addRunArtifact(wsd_example);
+    const wsd_example_step = b.step("example-work-stealing-deque", "Run the Work-Stealing Deque API demo");
+    wsd_example_step.dependOn(&run_wsd_example.step);
+    run_wsd_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
