@@ -1,3 +1,50 @@
+**Session 541 Update (2026-05-19) — FEATURE MODE:**
+
+✅ **EXAMPLE: RED-BLACK TREE API DEMO** — Deterministic balanced tree for ordered data:
+- **Feature**: Added `examples/red_black_tree_demo.zig` demonstrating Red-Black Tree API with 5 practical examples
+- **Demos**:
+  * Demo 1: Basic operations (insert, update, remove, min/max, sorted iteration)
+  * Demo 2: Reverse iteration (descending order with reverseIterator)
+  * Demo 3: Custom keys (Player struct with multi-field comparison: score desc, ID asc)
+  * Demo 4: Range query simulation (manual bounds checking with iterator [200, 500])
+  * Demo 5: Sorted set for zoltraak (Redis ZADD/ZRANGE/ZREM equivalent)
+- **API Showcase**:
+  * init(allocator, context) → Self (error union initialization with custom Context)
+  * insert(key, value) → !?V (O(log n), returns old value if replaced)
+  * remove(key) → ?Entry (O(log n), returns removed entry)
+  * min() → ?Entry, max() → ?Entry (O(log n), smallest/largest keys)
+  * iterator() → Iterator (ascending order, O(log n) amortized per next())
+  * reverseIterator() → ReverseIterator (descending order)
+  * count() → usize, isEmpty() → bool (O(1))
+  * Custom Context with compare(a, b) function for key ordering
+- **Consumer Use Case Demonstrated**: zoltraak sorted set (HashMap + sorted ArrayList → RedBlackTree)
+  * Current: 1800 LOC with O(n) insert/remove (array shifting)
+  * With RedBlackTree: O(log n) insert/remove/search + natural sorted order
+  * Advantages: No array reallocation, faster mutations, deterministic balancing
+  * Memory: Similar overhead (tree pointers vs hash + array)
+  * Complements SkipList (probabilistic) with deterministic alternative
+- **Format**: Live executable with 5 standalone demos + API summary
+  * Demo 1: Basic CRUD with string values (4 items → remove → 3 items)
+  * Demo 2: Reverse iteration (5 scores, ascending vs descending)
+  * Demo 3: Leaderboard (5 players sorted by score desc, ID asc for ties)
+  * Demo 4: Range query (6 events, filter [200, 500] → 3 results)
+  * Demo 5: Redis sorted set operations (ZADD with duplicate detection, ZRANGE, ZREM)
+  * Output shows tree state, operations, sorted order clearly
+  * 310 lines total (62 lines per demo average)
+- **Files**: examples/red_black_tree_demo.zig (310 lines), build.zig (+18 lines for example-red-black-tree step)
+- **Commit**: 7e5b3b1 (feature implementation)
+- **Rationale**: Session 538 created hyperloglog_demo, 537 skip_list_demo (probabilistic sorted structure)
+  * Red-Black Tree is high-value deterministic alternative for sorted data
+  * zoltraak sorted set (1800 LOC) can use either SkipList or RedBlackTree
+  * Demonstrates custom Context (Player struct with multi-field comparison)
+  * Shows practical patterns: leaderboards, range queries, ordered maps
+  * RedBlackTree: deterministic O(log n), worst-case guarantees
+  * SkipList: probabilistic O(log n) expected, simpler implementation
+- **Impact**: Provides second migration path for zoltraak sorted set, demonstrates deterministic balanced tree usage
+- **Consumer Migration Opportunity**: zoltraak sorted set (1800 lines) → zuda RedBlackTree or SkipList
+- **Total Tests**: 3071 passing (100%, no changes to test suite)
+- **Run**: `zig build example-red-black-tree`
+
 **Session 540 Update (2026-05-18) — STABILIZATION MODE:**
 
 ✅ **COMPREHENSIVE SYSTEM VALIDATION** — All quality checks passed:
