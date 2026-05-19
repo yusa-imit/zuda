@@ -1,3 +1,35 @@
+**Session 546 Update (2026-05-19) — FEATURE MODE:**
+
+⚡ **ZERO-ALLOCATION IN-PLACE FFT** — Memory-efficient FFT variant for embedded systems:
+- **Feature**: Implemented fftInPlace(comptime T, data: []Complex(T)) !void
+- **Characteristics**:
+  * Zero allocations (no allocator parameter)
+  * O(1) space complexity (in-place mutation)
+  * Identical Cooley-Tukey algorithm to fft()
+  * Error handling: InvalidSize (n=0), NotPowerOfTwo
+- **Performance** (Apple M2 Pro, ReleaseFast):
+  * FFT 4K: 106.75μs (similar to baseline 105.54μs, +1.1% overhead)
+  * FFT 1M: 49.29ms (similar to baseline 50.06ms, -1.5% improvement)
+  * Result: Memory allocation overhead is negligible vs twiddle computation
+- **Rationale**: Main FFT bottleneck is @cos/@sin calls, not allocations. In-place variant valuable for:
+  * Embedded systems where allocations are expensive
+  * Deterministic memory usage (no runtime allocations)
+  * Memory-constrained environments
+  * Real-time systems requiring predictable memory footprint
+- **Tests**: 21 comprehensive tests (520 lines)
+  * Edge cases: n=1, n=2
+  * Correctness: 8/64/256/1024/4096 point FFTs vs existing fft()
+  * Types: f32 (1e-5 tolerance), f64 (1e-10 to 1e-6 tolerance scaled by size)
+  * Error handling: InvalidSize, NotPowerOfTwo
+  * Signal patterns: sine, impulse, complex exponential, random
+  * Mathematical properties: Parseval energy conservation, conjugate symmetry
+- **Total Tests**: 3399 → 3420 (21 new fftInPlace tests)
+- **Files**: src/signal/fft.zig (+40 lines impl, +520 lines tests), bench/scientific_computing.zig (+38 lines benchmarks)
+- **Commit**: 58ff136 (feature addition)
+- **TDD Workflow**: test-writer agent (21 RED tests) → zig-developer agent (GREEN implementation) → benchmarks
+- **Key Insight**: For further FFT optimization, cached twiddles (fftCached) provide 2× speedup. In-place alone doesn't improve speed significantly but offers zero-allocation guarantee for specialized use cases.
+- **Discovery**: Benchmarks show cached FFT (51.29μs @ 4K, 25.96ms @ 1M) still best performance. In-place is alternative trade-off: deterministic memory vs speed.
+
 **Session 545 Update (2026-05-19) — STABILIZATION MODE:**
 
 ✅ **CI FIX: TASK DEPENDENCY GRAPH DEMO API COMPATIBILITY**:
@@ -48,6 +80,7 @@
 ", .{});
   } else {
       try demo3_parallel_work_stealing(allocator);
+
   }
   ```
 - **Verification**: Local wasm32-wasi cross-compile now succeeds: `zig build -Dtarget=wasm32-wasi -Doptimize=ReleaseSafe` ✅
