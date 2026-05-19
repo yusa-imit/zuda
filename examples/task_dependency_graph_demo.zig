@@ -95,7 +95,7 @@ fn demo1_basic_dag_topo_sort(allocator: std.mem.Allocator) !void {
 
     std.debug.print("Topological Order (execution sequence):\n", .{});
     for (topo_order, 0..) |task, i| {
-        std.debug.print("  {}: {} ({})\n", .{ i + 1, task.name, task.command });
+        std.debug.print("  {}: {s} ({s})\n", .{ i + 1, task.name, task.command });
     }
 
     // Verify execution order respects dependencies
@@ -192,13 +192,8 @@ fn demo3_parallel_execution_levels(allocator: std.mem.Allocator) !void {
     // Group tasks by level (simple greedy assignment based on max dependency depth)
     // Level 0: No dependencies
     // Level N: Depends on at least one task in level N-1
-    var levels = std.ArrayList(std.ArrayList(Task)).init(allocator);
-    defer {
-        for (levels.items) |level| {
-            level.deinit();
-        }
-        levels.deinit();
-    }
+    var task_levels = std.HashMap(Task, usize, TaskContext, std.hash_map.default_max_load_percentage).init(allocator);
+    defer task_levels.deinit();
 
     // Simple level assignment: compute in-degree-based levels
     var in_degree = std.HashMap(Task, usize, TaskContext, std.hash_map.default_max_load_percentage).init(allocator);
@@ -211,49 +206,40 @@ fn demo3_parallel_execution_levels(allocator: std.mem.Allocator) !void {
 
     // Count in-degrees
     for (tasks) |source| {
-        var neighbors = graph.neighbors(source);
-        while (neighbors.next()) |target_edge| {
-            const target = target_edge.target;
-            const current = in_degree.get(target) orelse 0;
-            try in_degree.put(target, current + 1);
+        if (graph.getNeighbors(source)) |edges| {
+            for (edges) |edge| {
+                const target = edge.target;
+                const current = in_degree.get(target) orelse 0;
+                try in_degree.put(target, current + 1);
+            }
         }
     }
 
     // Assign levels greedily
+    var max_level: usize = 0;
     for (topo_order) |task| {
-        _ = in_degree.get(task) orelse 0;
-
-        // Compute max predecessor level
-        var max_level: usize = 0;
-        var predecessors = graph.inNeighbors(task);
-        while (predecessors.next()) |pred_edge| {
-            const pred = pred_edge.source;
-            // Find pred's level
-            for (levels.items, 0..) |level, level_idx| {
-                for (level.items) |level_task| {
-                    if (level_task.eql(pred)) {
-                        max_level = @max(max_level, level_idx + 1);
-                        break;
-                    }
-                }
+        // Compute max predecessor level by checking all tasks
+        var task_level: usize = 0;
+        for (tasks) |potential_pred| {
+            if (graph.containsEdge(potential_pred, task)) {
+                const pred_level = task_levels.get(potential_pred) orelse 0;
+                task_level = @max(task_level, pred_level + 1);
             }
         }
-
-        // Ensure we have enough levels
-        while (levels.items.len <= max_level) {
-            try levels.append(std.ArrayList(Task).init(allocator));
-        }
-
-        // Add task to its level
-        try levels.items[max_level].append(task);
+        try task_levels.put(task, task_level);
+        max_level = @max(max_level, task_level);
     }
 
     std.debug.print("Parallel Execution Levels (tasks in same level can run concurrently):\n", .{});
-    for (levels.items, 0..) |level, i| {
-        std.debug.print("  Level {}: ", .{i});
-        for (level.items, 0..) |task, j| {
-            if (j > 0) std.debug.print(", ", .{});
-            std.debug.print("{s}", .{task.name});
+    for (0..max_level + 1) |level| {
+        std.debug.print("  Level {}: ", .{level});
+        var first = true;
+        for (tasks) |task| {
+            if (task_levels.get(task) orelse 0 == level) {
+                if (!first) std.debug.print(", ", .{});
+                std.debug.print("{s}", .{task.name});
+                first = false;
+            }
         }
         std.debug.print("\n", .{});
     }
@@ -308,11 +294,12 @@ fn demo4_critical_path(allocator: std.mem.Allocator) !void {
     for (topo_order) |task| {
         var max_pred_finish: u32 = 0;
 
-        var predecessors = graph.inNeighbors(task);
-        while (predecessors.next()) |pred_edge| {
-            const pred = pred_edge.source;
-            const pred_finish = (earliest.get(pred) orelse 0) + pred.duration_ms;
-            max_pred_finish = @max(max_pred_finish, pred_finish);
+        // Find all predecessors by checking all vertices
+        for (tasks) |potential_pred| {
+            if (graph.containsEdge(potential_pred, task)) {
+                const pred_finish = (earliest.get(potential_pred) orelse 0) + potential_pred.duration_ms;
+                max_pred_finish = @max(max_pred_finish, pred_finish);
+            }
         }
 
         try earliest.put(task, max_pred_finish);
@@ -348,12 +335,12 @@ pub fn main() !void {
     std.debug.print("==============================================\n", .{});
     std.debug.print("API Summary:\n", .{});
     std.debug.print("==============================================\n", .{});
-    std.debug.print("AdjacencyList(V, E, Context):\n", .{});
-    std.debug.print("  - init(allocator, config, ctx) → Graph\n", .{});
+    std.debug.print("AdjacencyList(V, W, Context, hashFn, eqlFn):\n", .{});
+    std.debug.print("  - init(allocator, ctx, directed) → Graph\n", .{});
     std.debug.print("  - addVertex(v) → !void (O(1) amortized)\n", .{});
-    std.debug.print("  - addEdge(u, v, data) → !void (O(1) amortized)\n", .{});
-    std.debug.print("  - neighbors(v) → Iterator (O(out-degree) per iteration)\n", .{});
-    std.debug.print("  - inNeighbors(v) → Iterator (O(in-degree) per iteration)\n", .{});
+    std.debug.print("  - addEdge(u, v, weight) → !void (O(1) amortized)\n", .{});
+    std.debug.print("  - getNeighbors(v) → ?[]const Edge (O(1))\n", .{});
+    std.debug.print("  - containsEdge(u, v) → bool (O(deg(u)))\n", .{});
     std.debug.print("  - vertexCount() → usize (O(1))\n", .{});
     std.debug.print("  - edgeCount() → usize (O(1))\n", .{});
     std.debug.print("\n", .{});
