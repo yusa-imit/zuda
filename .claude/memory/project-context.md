@@ -1,3 +1,19 @@
+**Session 548 Update (2026-05-20) — FEATURE MODE:**
+
+🐛 **BUG FIX: TASK DEPENDENCY GRAPH DEMO API COMPATIBILITY** — Issue #26 resolved:
+- **Problem**: task_dependency_graph_demo.zig used non-existent inNeighbors() API
+- **Root Cause**: Demo was written assuming inNeighbors() iterator existed, but AdjacencyList only provides getNeighbors() for outgoing edges
+- **Solution**:
+  * Replaced `graph.inNeighbors(task)` with manual predecessor search using `graph.containsEdge(potential_pred, task)` loops
+  * Updated API summary documentation to reflect actual AdjacencyList methods (getNeighbors, containsEdge)
+  * Fixed format strings: `{}` → `{s}` for string printing
+  * Simplified demo3 level assignment using HashMap instead of nested ArrayLists
+- **Impact**: Example now compiles and runs successfully, demonstrates correct usage patterns for zr migration
+- **Files**: examples/task_dependency_graph_demo.zig (-51 lines, +38 lines)
+- **Commit**: 2d7d559 (bug fix)
+- **Tests**: All tests passing (exit code 0), example runs successfully with all 4 demos
+- **Performance Note**: O(V²) predecessor lookup for demo4 is acceptable for demonstration purposes. Production code needing frequent in-neighbor queries should maintain reverse adjacency lists.
+
 **Session 546 Update (2026-05-19) — FEATURE MODE:**
 
 ⚡ **ZERO-ALLOCATION IN-PLACE FFT** — Memory-efficient FFT variant for embedded systems:
