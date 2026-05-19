@@ -107,6 +107,47 @@ pub fn fft(comptime T: type, allocator: Allocator, input: []const Complex(T)) ![
     return output;
 }
 
+/// Compute FFT in-place (mutates input slice, no allocations)
+///
+/// Time: O(n log n) where n is the input length
+/// Space: O(1) - no allocations, performs all operations on input slice
+///
+/// The input size must be a power of 2.
+/// Mutates the input slice to contain frequency domain representation.
+///
+/// Performance: Most memory-efficient FFT variant, suitable for embedded/real-time systems.
+pub fn fftInPlace(comptime T: type, data: []Complex(T)) !void {
+    const n = data.len;
+
+    if (n == 0) return error.InvalidSize;
+    if (!isPowerOfTwo(n)) return error.NotPowerOfTwo;
+
+    // Bit-reversal permutation
+    bitReversePermutation(Complex(T), data);
+
+    // Cooley-Tukey FFT
+    var size: usize = 2;
+    while (size <= n) : (size *= 2) {
+        const half_size = size / 2;
+        const theta = -2.0 * math.pi / @as(T, @floatFromInt(size));
+
+        var k: usize = 0;
+        while (k < n) : (k += size) {
+            var j: usize = 0;
+            while (j < half_size) : (j += 1) {
+                const angle = theta * @as(T, @floatFromInt(j));
+                const twiddle = Complex(T).init(@cos(angle), @sin(angle));
+
+                const t = twiddle.mul(data[k + j + half_size]);
+                const u = data[k + j];
+
+                data[k + j] = u.add(t);
+                data[k + j + half_size] = u.sub(t);
+            }
+        }
+    }
+}
+
 /// Compute FFT with pre-computed twiddle factors for improved performance
 ///
 /// Time: O(n log n) with 2-3× speedup from twiddle factor caching
@@ -1013,4 +1054,531 @@ test "fft cached - magnitude preservation (Parseval)" {
 
     const n: f64 = @floatFromInt(input.len);
     try testing.expectApproxEqAbs(total_power * n, freq_power, 1e-6);
+}
+
+// ===== FFT IN-PLACE TESTS =====
+// Tests for fftInPlace() function - mutates input slice, performs FFT in-place with no allocations
+// These RED tests validate fftInPlace() produces identical results to fft()
+
+test "fftInPlace - single element (n=1)" {
+    const C = Complex(f64);
+
+    var input = [_]C{C.init(5.0, 3.0)};
+
+    // InPlace should mutate the array directly
+    try fftInPlace(f64, input[0..]);
+
+    // For n=1, FFT output equals input
+    try testing.expectApproxEqAbs(5.0, input[0].real, 1e-10);
+    try testing.expectApproxEqAbs(3.0, input[0].imag, 1e-10);
+}
+
+test "fftInPlace - two elements (n=2)" {
+    const C = Complex(f64);
+
+    var input = [_]C{
+        C.init(1.0, 0.0),
+        C.init(2.0, 0.0),
+    };
+
+    try fftInPlace(f64, input[0..]);
+
+    // n=2: output[0] = input[0] + input[1], output[1] = input[0] - input[1]
+    try testing.expectApproxEqAbs(3.0, input[0].real, 1e-10);
+    try testing.expectApproxEqAbs(-1.0, input[1].real, 1e-10);
+}
+
+test "fftInPlace - impulse signal (n=8)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input = [_]C{
+        C.init(1.0, 0.0),
+        C.init(0.0, 0.0),
+        C.init(0.0, 0.0),
+        C.init(0.0, 0.0),
+        C.init(0.0, 0.0),
+        C.init(0.0, 0.0),
+        C.init(0.0, 0.0),
+        C.init(0.0, 0.0),
+    };
+
+    // Get reference from standard FFT
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset input array
+    for (input[0..]) |*v| {
+        v.* = C.init(0.0, 0.0);
+    }
+    input[0] = C.init(1.0, 0.0);
+
+    // Apply in-place FFT
+    try fftInPlace(f64, input[0..]);
+
+    // Compare results element-wise
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-10);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-10);
+    }
+}
+
+test "fftInPlace - DC signal (n=8)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input = [_]C{
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+        C.init(1.0, 0.0),
+    };
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and run in-place
+    for (input[0..]) |*v| {
+        v.* = C.init(1.0, 0.0);
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-10);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-10);
+    }
+}
+
+test "fftInPlace - 64-point correctness (vs fft)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [64]C = undefined;
+    for (0..64) |i| {
+        const t = @as(f64, @floatFromInt(i)) / 64.0;
+        input[i] = C.init(@sin(2.0 * math.pi * t), @cos(2.0 * math.pi * t));
+    }
+
+    // Get reference from standard FFT
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..64) |i| {
+        const t = @as(f64, @floatFromInt(i)) / 64.0;
+        input[i] = C.init(@sin(2.0 * math.pi * t), @cos(2.0 * math.pi * t));
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-9);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-9);
+    }
+}
+
+test "fftInPlace - 256-point correctness (vs fft)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [256]C = undefined;
+    var rng = std.Random.DefaultPrng.init(11111);
+    for (0..256) |i| {
+        const r = rng.random().float(f64);
+        const theta = rng.random().float(f64) * 2.0 * math.pi;
+        input[i] = C.init(r * @cos(theta), r * @sin(theta));
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset with same values
+    var rng2 = std.Random.DefaultPrng.init(11111);
+    for (0..256) |i| {
+        const r = rng2.random().float(f64);
+        const theta = rng2.random().float(f64) * 2.0 * math.pi;
+        input[i] = C.init(r * @cos(theta), r * @sin(theta));
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-8);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-8);
+    }
+}
+
+test "fftInPlace - 1024-point correctness (vs fft)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [1024]C = undefined;
+    for (0..1024) |i| {
+        const val = @as(f64, @floatFromInt(i)) / 1024.0;
+        input[i] = C.init(val * val, val);
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..1024) |i| {
+        const val = @as(f64, @floatFromInt(i)) / 1024.0;
+        input[i] = C.init(val * val, val);
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-7);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-7);
+    }
+}
+
+test "fftInPlace - 4096-point correctness (vs fft)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [4096]C = undefined;
+    var rng = std.Random.DefaultPrng.init(22222);
+    for (0..4096) |i| {
+        const r = rng.random().float(f64) * 0.5;
+        input[i] = C.init(r, -r);
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset with same seed
+    var rng2 = std.Random.DefaultPrng.init(22222);
+    for (0..4096) |i| {
+        const r = rng2.random().float(f64) * 0.5;
+        input[i] = C.init(r, -r);
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-6);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-6);
+    }
+}
+
+test "fftInPlace - f32 precision (64-point)" {
+    const allocator = testing.allocator;
+    const C = Complex(f32);
+
+    var input: [64]C = undefined;
+    for (0..64) |i| {
+        const angle = 2.0 * math.pi * @as(f32, @floatFromInt(i)) / 64.0;
+        input[i] = C.init(@cos(angle), @sin(angle));
+    }
+
+    // Get reference
+    const reference = try fft(f32, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..64) |i| {
+        const angle = 2.0 * math.pi * @as(f32, @floatFromInt(i)) / 64.0;
+        input[i] = C.init(@cos(angle), @sin(angle));
+    }
+    try fftInPlace(f32, input[0..]);
+
+    // f32 tolerance: 1e-5
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-5);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-5);
+    }
+}
+
+test "fftInPlace - f32 precision (256-point)" {
+    const allocator = testing.allocator;
+    const C = Complex(f32);
+
+    var input: [256]C = undefined;
+    var rng = std.Random.DefaultPrng.init(33333);
+    for (0..256) |i| {
+        const r = rng.random().float(f32);
+        const theta = rng.random().float(f32) * 2.0 * math.pi;
+        input[i] = C.init(r * @cos(theta), r * @sin(theta));
+    }
+
+    // Get reference
+    const reference = try fft(f32, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset with same seed
+    var rng2 = std.Random.DefaultPrng.init(33333);
+    for (0..256) |i| {
+        const r = rng2.random().float(f32);
+        const theta = rng2.random().float(f32) * 2.0 * math.pi;
+        input[i] = C.init(r * @cos(theta), r * @sin(theta));
+    }
+    try fftInPlace(f32, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-5);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-5);
+    }
+}
+
+test "fftInPlace - empty input (error: InvalidSize)" {
+    const C = Complex(f64);
+
+    var input: [0]C = .{};
+
+    try testing.expectError(error.InvalidSize, fftInPlace(f64, &input));
+}
+
+test "fftInPlace - non-power-of-two (n=3, error: NotPowerOfTwo)" {
+    const C = Complex(f64);
+
+    var input = [_]C{
+        C.init(1.0, 0.0),
+        C.init(2.0, 0.0),
+        C.init(3.0, 0.0),
+    };
+
+    try testing.expectError(error.NotPowerOfTwo, fftInPlace(f64, input[0..]));
+}
+
+test "fftInPlace - non-power-of-two (n=5, error: NotPowerOfTwo)" {
+    const C = Complex(f64);
+
+    var input = [_]C{
+        C.init(1.0, 0.0),
+        C.init(2.0, 0.0),
+        C.init(3.0, 0.0),
+        C.init(4.0, 0.0),
+        C.init(5.0, 0.0),
+    };
+
+    try testing.expectError(error.NotPowerOfTwo, fftInPlace(f64, input[0..]));
+}
+
+test "fftInPlace - non-power-of-two (n=100, error: NotPowerOfTwo)" {
+    const C = Complex(f64);
+
+    var input: [100]C = undefined;
+    for (0..100) |i| {
+        input[i] = C.init(@as(f64, @floatFromInt(i)), 0.0);
+    }
+
+    try testing.expectError(error.NotPowerOfTwo, fftInPlace(f64, input[0..]));
+}
+
+test "fftInPlace - sine wave pattern (n=32)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [32]C = undefined;
+    for (0..32) |i| {
+        const t = @as(f64, @floatFromInt(i)) / 32.0;
+        const sine_val = @sin(2.0 * math.pi * 3.0 * t);
+        input[i] = C.init(sine_val, 0.0);
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..32) |i| {
+        const t = @as(f64, @floatFromInt(i)) / 32.0;
+        const sine_val = @sin(2.0 * math.pi * 3.0 * t);
+        input[i] = C.init(sine_val, 0.0);
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-9);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-9);
+    }
+}
+
+test "fftInPlace - complex exponential pattern (n=16)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [16]C = undefined;
+    for (0..16) |i| {
+        const t = @as(f64, @floatFromInt(i)) / 16.0;
+        const angle = 2.0 * math.pi * 2.0 * t;
+        input[i] = C.init(@cos(angle), @sin(angle));
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..16) |i| {
+        const t = @as(f64, @floatFromInt(i)) / 16.0;
+        const angle = 2.0 * math.pi * 2.0 * t;
+        input[i] = C.init(@cos(angle), @sin(angle));
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-9);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-9);
+    }
+}
+
+test "fftInPlace - multiple impulse positions (n=8)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    // Test impulse at different positions
+    for (0..8) |impulse_pos| {
+        var input = [_]C{
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+            C.init(0.0, 0.0),
+        };
+        input[impulse_pos] = C.init(1.0, 0.0);
+
+        // Get reference
+        const reference = try fft(f64, allocator, &input);
+        defer allocator.free(reference);
+
+        // Reset and apply in-place
+        for (input[0..]) |*v| {
+            v.* = C.init(0.0, 0.0);
+        }
+        input[impulse_pos] = C.init(1.0, 0.0);
+        try fftInPlace(f64, input[0..]);
+
+        for (reference, input[0..]) |ref, in| {
+            try testing.expectApproxEqAbs(ref.magnitude(), in.magnitude(), 1e-9);
+        }
+    }
+}
+
+test "fftInPlace - alternating pattern (n=16)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [16]C = undefined;
+    for (0..16) |i| {
+        if (i % 2 == 0) {
+            input[i] = C.init(1.0, 0.0);
+        } else {
+            input[i] = C.init(-1.0, 0.0);
+        }
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..16) |i| {
+        if (i % 2 == 0) {
+            input[i] = C.init(1.0, 0.0);
+        } else {
+            input[i] = C.init(-1.0, 0.0);
+        }
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-9);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-9);
+    }
+}
+
+test "fftInPlace - random complex (n=128)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [128]C = undefined;
+    var rng = std.Random.DefaultPrng.init(44444);
+    for (0..128) |i| {
+        const r = rng.random().float(f64);
+        const im = rng.random().float(f64);
+        input[i] = C.init(r, im);
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset with same seed
+    var rng2 = std.Random.DefaultPrng.init(44444);
+    for (0..128) |i| {
+        const r = rng2.random().float(f64);
+        const im = rng2.random().float(f64);
+        input[i] = C.init(r, im);
+    }
+    try fftInPlace(f64, input[0..]);
+
+    for (reference, input[0..]) |ref, in| {
+        try testing.expectApproxEqAbs(ref.real, in.real, 1e-8);
+        try testing.expectApproxEqAbs(ref.imag, in.imag, 1e-8);
+    }
+}
+
+test "fftInPlace - Parseval energy preservation (n=64)" {
+    const C = Complex(f64);
+
+    var input: [64]C = undefined;
+    var total_power: f64 = 0.0;
+    for (0..64) |i| {
+        const val = @as(f64, @floatFromInt(i)) + 1.0;
+        input[i] = C.init(val, 0.0);
+        total_power += val * val;
+    }
+
+    // Apply in-place FFT
+    try fftInPlace(f64, input[0..]);
+
+    // Verify Parseval: sum(|time|²) * N = sum(|freq|²)
+    var freq_power: f64 = 0.0;
+    for (input[0..]) |c| {
+        freq_power += c.magnitude_squared();
+    }
+
+    const n: f64 = @floatFromInt(input.len);
+    try testing.expectApproxEqAbs(total_power * n, freq_power, 1e-5);
+}
+
+test "fftInPlace - symmetry preservation for real input (n=16)" {
+    const allocator = testing.allocator;
+    const C = Complex(f64);
+
+    var input: [16]C = undefined;
+    for (0..16) |i| {
+        input[i] = C.init(@as(f64, @floatFromInt(i)), 0.0);
+    }
+
+    // Get reference
+    const reference = try fft(f64, allocator, &input);
+    defer allocator.free(reference);
+
+    // Reset and apply in-place
+    for (0..16) |i| {
+        input[i] = C.init(@as(f64, @floatFromInt(i)), 0.0);
+    }
+    try fftInPlace(f64, input[0..]);
+
+    // For real input, FFT has conjugate symmetry: X[N-k] = conj(X[k])
+    for (1..8) |k| {
+        const sym_k = 16 - k;
+        try testing.expectApproxEqAbs(reference[k].real, reference[sym_k].real, 1e-9);
+        try testing.expectApproxEqAbs(-reference[k].imag, reference[sym_k].imag, 1e-9);
+
+        try testing.expectApproxEqAbs(input[k].real, input[sym_k].real, 1e-9);
+        try testing.expectApproxEqAbs(-input[k].imag, input[sym_k].imag, 1e-9);
+    }
 }
