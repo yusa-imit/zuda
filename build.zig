@@ -573,6 +573,26 @@ pub fn build(b: *std.Build) void {
     wsd_example_step.dependOn(&run_wsd_example.step);
     run_wsd_example.step.dependOn(b.getInstallStep());
 
+    // Task Dependency Graph API demo
+    // TODO: This example needs API updates to match current zuda API (see issue #26)
+    // Temporarily disabled to unblock stabilization builds
+    // const tdg_example = b.addExecutable(.{
+    //     .name = "task_dependency_graph_demo",
+    //     .root_module = b.createModule(.{
+    //         .root_source_file = b.path("examples/task_dependency_graph_demo.zig"),
+    //         .target = target,
+    //         .optimize = optimize,
+    //         .imports = &.{
+    //             .{ .name = "zuda", .module = mod },
+    //         },
+    //     }),
+    // });
+    // b.installArtifact(tdg_example);
+    // const run_tdg_example = b.addRunArtifact(tdg_example);
+    // const tdg_example_step = b.step("example-task-dependency-graph", "Run the Task Dependency Graph API demo");
+    // tdg_example_step.dependOn(&run_tdg_example.step);
+    // run_tdg_example.step.dependOn(b.getInstallStep());
+
     // Shared library with C API for FFI
     const shared = b.option(bool, "shared", "Build shared library with C API") orelse false;
     if (shared) {
