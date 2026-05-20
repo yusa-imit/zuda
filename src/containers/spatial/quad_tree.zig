@@ -510,3 +510,197 @@ test "QuadTree: stress test" {
     // Should find some points in the center region
     try std.testing.expect(result.items.len > 0);
 }
+
+test "QuadTree: out of bounds insertion" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Insert valid point
+    try tree.insert(.{ .x = 50, .y = 50, .id = 1 });
+    try std.testing.expectEqual(@as(usize, 1), tree.size());
+
+    // Insert out-of-bounds points (should be silently ignored)
+    try tree.insert(.{ .x = -10, .y = 50, .id = 2 });
+    try tree.insert(.{ .x = 50, .y = 150, .id = 3 });
+    try tree.insert(.{ .x = 200, .y = 200, .id = 4 });
+
+    // Size should remain 1 (only valid point counted)
+    try std.testing.expectEqual(@as(usize, 1), tree.size());
+    try tree.validate();
+}
+
+test "QuadTree: boundary edge cases" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 2);
+    defer tree.deinit();
+
+    // Insert points exactly on boundaries
+    try tree.insert(.{ .x = 0, .y = 0, .id = 1 }); // min corner
+    try tree.insert(.{ .x = 100, .y = 100, .id = 2 }); // max corner
+    try tree.insert(.{ .x = 0, .y = 100, .id = 3 }); // top-left corner
+    try tree.insert(.{ .x = 100, .y = 0, .id = 4 }); // bottom-right corner
+    try tree.insert(.{ .x = 50, .y = 0, .id = 5 }); // bottom edge midpoint
+    try tree.insert(.{ .x = 50, .y = 100, .id = 6 }); // top edge midpoint
+
+    try std.testing.expectEqual(@as(usize, 6), tree.size());
+    try tree.validate();
+
+    // Test range query that includes boundaries
+    const query = QT.Rect{ .min_x = 0, .max_x = 50, .min_y = 0, .max_y = 50 };
+    var result = try tree.rangeQuery(std.testing.allocator, query);
+    defer result.deinit(std.testing.allocator);
+
+    // Should include points on the boundary
+    try std.testing.expect(result.items.len >= 2);
+}
+
+test "QuadTree: empty range query" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Insert points in one region
+    try tree.insert(.{ .x = 10, .y = 10, .id = 1 });
+    try tree.insert(.{ .x = 20, .y = 20, .id = 2 });
+
+    // Query a completely different region (no matches)
+    const query = QT.Rect{ .min_x = 70, .max_x = 90, .min_y = 70, .max_y = 90 };
+    var result = try tree.rangeQuery(std.testing.allocator, query);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), result.items.len);
+}
+
+test "QuadTree: nearest neighbor on empty tree" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Query nearest on empty tree
+    const nn = tree.nearest(50, 50);
+    try std.testing.expect(nn == null);
+}
+
+test "QuadTree: memory safety with multiple operations" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    // Multiple allocations and deallocations to detect memory leaks
+    for (0..10) |_| {
+        var tree = try QT.init(std.testing.allocator, ctx, bounds, 3);
+        defer tree.deinit();
+
+        // Mix operations
+        for (0..20) |i| {
+            const x = @as(f64, @floatFromInt(i * 5));
+            const y = @as(f64, @floatFromInt(i * 5));
+            try tree.insert(.{ .x = x, .y = y, .id = @intCast(i) });
+        }
+
+        const query = QT.Rect{ .min_x = 20, .max_x = 60, .min_y = 20, .max_y = 60 };
+        var result = try tree.rangeQuery(std.testing.allocator, query);
+        result.deinit(std.testing.allocator);
+
+        _ = tree.nearest(50, 50);
+        try tree.validate();
+    }
+}
