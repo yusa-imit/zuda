@@ -163,29 +163,27 @@ while (true) {
 
 ## Code Quality Issues
 
-### Allocator-First Violations (Tracked Issue - Session 440)
+### Allocator-First Violations (RESOLVED - Session 554)
 **Issue**: Hardcoded `std.heap.page_allocator` in library code (violates allocator-first principle)
 
 **Impact**: Prevents memory leak detection, custom allocation strategies, embedded use
 
-**Status**: 27 violations remaining (as of Session 440)
+**Status**: ✅ **ALL FIXED** (0 violations remaining as of Session 554)
+
+**Verification**: `grep -r "std\.heap\.page_allocator" src | grep -v "///"` returns 0 instances
+
+**Remaining acceptable uses** (2 instances):
+- algorithms/combinatorics/permutations.zig:44 — documentation example (`//!` comment)
+- ffi/c_api.zig:16 — FFI layer using `std.heap.c_allocator` (correct for C interop)
 
 **Fixed**:
 - Session 440: tsp.zig (isValidTour), ridge_regression.zig (gaussianElimination)
 - Session 417-419: LCS, LIS, catalan_numbers, perfect_squares, unique_paths
+- Sessions 441-553: All remaining 27 violations resolved
 
-**Remaining modules** (27 instances):
-- algorithms/backtracking/knights_tour.zig (1 instance)
-- algorithms/dynamic_programming/edit_distance.zig (2 instances)
-- algorithms/dynamic_programming/regex_matching.zig (2 instances)
-- algorithms/dynamic_programming/knapsack.zig (4 instances)
-- algorithms/greedy/coin_change.zig (4 instances)
-- algorithms/greedy/knapsack.zig (2 instances)
-- (12 more instances in other algorithm modules)
-
-**Solution Pattern**:
+**Solution Pattern** (for reference):
 1. Add `allocator: Allocator` parameter to function signature
 2. Thread through all call sites (tests and library code)
 3. Update all test calls to use `std.testing.allocator`
 
-**Priority**: Fix in future stabilization sessions (every 5th session, or when count exceeds 50)
+**Lesson**: All library code now properly accepts allocators as parameters, enabling memory leak detection, custom allocation strategies, and embedded use cases.
