@@ -261,7 +261,7 @@ pub const DAG = struct {
 
         // Return cycle vertices if found
         if (result.cycle_vertices) |*cv| {
-            return cv.toOwnedSlice(self.allocator);
+            return try cv.toOwnedSlice(self.allocator);
         }
 
         return null;
