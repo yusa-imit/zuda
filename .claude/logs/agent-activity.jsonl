@@ -381,3 +381,4 @@
 {"timestamp":"2026-05-19T23:02:00Z","action":"direct_fix","task":"Fix wasm32-wasi cross-compile failure in work_stealing_deque_demo.zig","project":"zuda"}
 {"timestamp":"2026-05-19T15:35:00Z","action":"subagent","agent_type":"test-writer","task":"Write FFT in-place tests","project":"zuda"}
 {"timestamp":"2026-05-19T15:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement FFT in-place function","project":"zuda"}
+{"timestamp":"2026-05-20T19:02:29Z","action":"direct_fix","task":"Fix bug #28 zr_dag.detectCycle() type mismatch","project":"zuda","files_changed":["src/compat/zr_dag.zig"],"result":"success"}
