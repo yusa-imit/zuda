@@ -1,3 +1,18 @@
+**Session 553 Update (2026-05-21) — FEATURE MODE:**
+
+🐛 **BUG FIX: zr_dag detectCycle() type mismatch** — Issue #28 resolved:
+- **Problem**: zr_dag.zig detectCycle() returned `![][]const u8` but signature declared `!?[][]const u8` (nullable)
+- **Root Cause**: Line 264 called `cv.toOwnedSlice(self.allocator)` without `try`, causing type mismatch
+- **Solution**: Added `try` keyword → `return try cv.toOwnedSlice(self.allocator);`
+  * `try` unwraps the error, return implicitly wraps in optional
+  * Now matches function signature: `!?[][]const u8`
+- **Impact**: Unblocks zr migration to zuda.compat.zr_dag (zr #65)
+- **Files**: src/compat/zr_dag.zig (1 line changed)
+- **Commit**: 35581ca (fix)
+- **Issue**: #28 closed
+- **Build**: ✅ Compiles successfully, no errors
+- **CI**: GREEN before and after fix
+
 **Session 552 Update (2026-05-20) — FEATURE MODE:**
 
 ✅ **MAINTENANCE VERIFICATION** — Project health check and status review:
