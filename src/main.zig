@@ -6,7 +6,7 @@ const std = @import("std");
 pub fn main() !void {
     std.debug.print("zuda - Zig Universal Datastructures and Algorithms\n", .{});
     std.debug.print("This is a library. Import it with: const zuda = @import(\"zuda\");\n", .{});
-    std.debug.print("Version: 0.4.0\n", .{});
+    std.debug.print("Version: 2.0.4\n", .{});
 }
 
 test "simple test" {
