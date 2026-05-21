@@ -455,3 +455,121 @@ test "XorLinkedList: single element" {
     try std.testing.expect(list.isEmpty());
     try list.validate();
 }
+
+test "XorLinkedList: iterator on empty list" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    var it = list.iterator();
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next()); // Multiple calls should still return null
+}
+
+test "XorLinkedList: alternating push and pop" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    // Alternating push/pop pattern to stress XOR pointer updates
+    try list.pushFront(1);
+    try std.testing.expectEqual(@as(i32, 1), list.popFront().?);
+    try std.testing.expect(list.isEmpty());
+
+    try list.pushBack(2);
+    try std.testing.expectEqual(@as(i32, 2), list.popBack().?);
+    try std.testing.expect(list.isEmpty());
+
+    try list.pushFront(3);
+    try list.pushBack(4);
+    try std.testing.expectEqual(@as(i32, 3), list.popFront().?);
+    try list.pushFront(5);
+    try std.testing.expectEqual(@as(i32, 5), list.popFront().?);
+    try std.testing.expectEqual(@as(i32, 4), list.popBack().?);
+    try std.testing.expect(list.isEmpty());
+
+    try list.validate();
+}
+
+test "XorLinkedList: iterator after partial removal" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    // Build list: 5 -> 4 -> 3 -> 2 -> 1
+    var i: i32 = 1;
+    while (i <= 5) : (i += 1) {
+        try list.pushFront(i);
+    }
+
+    // Remove some elements
+    _ = list.popFront(); // Remove 5
+    _ = list.popBack();  // Remove 1
+
+    // Remaining: 4 -> 3 -> 2
+    var it = list.iterator();
+    try std.testing.expectEqual(@as(i32, 4), it.next().?);
+    try std.testing.expectEqual(@as(i32, 3), it.next().?);
+    try std.testing.expectEqual(@as(i32, 2), it.next().?);
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "XorLinkedList: two element edge cases" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    // Two elements via pushFront
+    try list.pushFront(1);
+    try list.pushFront(2);
+    try std.testing.expectEqual(@as(usize, 2), list.count());
+    try list.validate();
+
+    try std.testing.expectEqual(@as(i32, 2), list.popFront().?);
+    try std.testing.expectEqual(@as(usize, 1), list.count());
+    try list.validate();
+
+    try std.testing.expectEqual(@as(i32, 1), list.popFront().?);
+    try std.testing.expect(list.isEmpty());
+
+    // Two elements via pushBack
+    try list.pushBack(3);
+    try list.pushBack(4);
+    try std.testing.expectEqual(@as(usize, 2), list.count());
+    try list.validate();
+
+    try std.testing.expectEqual(@as(i32, 4), list.popBack().?);
+    try std.testing.expectEqual(@as(usize, 1), list.count());
+    try list.validate();
+
+    try std.testing.expectEqual(@as(i32, 3), list.popBack().?);
+    try std.testing.expect(list.isEmpty());
+}
+
+test "XorLinkedList: multiple iterator instances" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    try list.pushBack(1);
+    try list.pushBack(2);
+    try list.pushBack(3);
+
+    // Multiple independent iterators should work correctly
+    var it1 = list.iterator();
+    var it2 = list.iterator();
+
+    try std.testing.expectEqual(@as(i32, 1), it1.next().?);
+    try std.testing.expectEqual(@as(i32, 1), it2.next().?);
+    try std.testing.expectEqual(@as(i32, 2), it1.next().?);
+    try std.testing.expectEqual(@as(i32, 2), it2.next().?);
+    try std.testing.expectEqual(@as(i32, 3), it1.next().?);
+    try std.testing.expectEqual(@as(i32, 3), it2.next().?);
+    try std.testing.expectEqual(@as(?i32, null), it1.next());
+    try std.testing.expectEqual(@as(?i32, null), it2.next());
+}
