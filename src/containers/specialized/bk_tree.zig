@@ -476,3 +476,188 @@ test "BKTree - stress test" {
     }
     try testing.expect(found);
 }
+
+test "BKTree - search with tolerance 0 (exact match only)" {
+    var tree = BKTree([]const u8, void, levenshteinDistance).init(testing.allocator, {});
+    defer tree.deinit();
+
+    try tree.insert("apple");
+    try tree.insert("apply");  // distance 2 from apple
+    try tree.insert("ape");    // distance 2 from apple
+    try tree.insert("append"); // distance 3 from apple
+
+    // Search with tolerance 0 should only find exact matches
+    var iter = try tree.search("apple", 0);
+    defer iter.deinit(testing.allocator);
+
+    var count: usize = 0;
+    while (iter.next()) |result| {
+        count += 1;
+        // All results must have distance exactly 0
+        try testing.expectEqual(@as(usize, 0), result.distance);
+        try testing.expect(std.mem.eql(u8, result.value, "apple"));
+    }
+    try testing.expectEqual(@as(usize, 1), count);
+
+    // Search for non-existent word with tolerance 0 should find nothing
+    var iter2 = try tree.search("xyz", 0);
+    defer iter2.deinit(testing.allocator);
+    try testing.expect(iter2.next() == null);
+}
+
+test "BKTree - multiple results at different distances" {
+    var tree = BKTree([]const u8, void, levenshteinDistance).init(testing.allocator, {});
+    defer tree.deinit();
+
+    try tree.insert("cat");
+    try tree.insert("bat");    // distance 1 from cat (c->b)
+    try tree.insert("rat");    // distance 1 from cat (c->r)
+    try tree.insert("cats");   // distance 1 from cat (insert s)
+    try tree.insert("cast");   // distance 2 from cat (c->c, a->a, t->s, insert t)
+    try tree.insert("hat");    // distance 1 from cat (c->h)
+
+    // Search with tolerance 1 should find exact match plus distance-1 items
+    var iter = try tree.search("cat", 1);
+    defer iter.deinit(testing.allocator);
+
+    var distance_counts = [2]usize{ 0, 0 }; // counts for distance 0 and 1
+    var found_values: std.ArrayList([]const u8) = .{};
+    defer found_values.deinit(testing.allocator);
+
+    while (iter.next()) |result| {
+        try testing.expect(result.distance <= 1);
+        if (result.distance < 2) {
+            distance_counts[result.distance] += 1;
+            try found_values.append(testing.allocator, result.value);
+        }
+    }
+
+    // Should find 1 item at distance 0 (cat itself)
+    try testing.expectEqual(@as(usize, 1), distance_counts[0]);
+    // Should find multiple items at distance 1 (bat, rat, cats, hat)
+    try testing.expectEqual(@as(usize, 4), distance_counts[1]);
+}
+
+test "BKTree - iterator exhaustion behavior" {
+    var tree = BKTree([]const u8, void, levenshteinDistance).init(testing.allocator, {});
+    defer tree.deinit();
+
+    try tree.insert("hello");
+    try tree.insert("hell");
+    try tree.insert("held");
+
+    var iter = try tree.search("hello", 1);
+    defer iter.deinit(testing.allocator);
+
+    // Exhaust the iterator
+    var count: usize = 0;
+    while (iter.next()) |_| {
+        count += 1;
+    }
+    try testing.expect(count > 0);
+
+    // Call next() multiple times after exhaustion
+    // Each subsequent call should return null (not crash or loop)
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+
+    // Verify iterator index is beyond results length
+    try testing.expect(iter.index >= iter.results.items.len);
+}
+
+test "BKTree - single element tree" {
+    var tree = BKTree([]const u8, void, levenshteinDistance).init(testing.allocator, {});
+    defer tree.deinit();
+
+    try tree.insert("single");
+
+    // Count and isEmpty checks
+    try testing.expectEqual(@as(usize, 1), tree.count());
+    try testing.expect(!tree.isEmpty());
+
+    // Contains check for exact match
+    try testing.expect(tree.contains("single"));
+    try testing.expect(!tree.contains("single2"));
+
+    // Search with different tolerances
+    var iter0 = try tree.search("single", 0);
+    defer iter0.deinit(testing.allocator);
+    var count0: usize = 0;
+    while (iter0.next()) |result| {
+        count0 += 1;
+        try testing.expectEqual(@as(usize, 0), result.distance);
+        try testing.expect(std.mem.eql(u8, result.value, "single"));
+    }
+    try testing.expectEqual(@as(usize, 1), count0);
+
+    var iter1 = try tree.search("single", 5);
+    defer iter1.deinit(testing.allocator);
+    var count1: usize = 0;
+    while (iter1.next()) |result| {
+        count1 += 1;
+        try testing.expect(std.mem.eql(u8, result.value, "single"));
+    }
+    try testing.expectEqual(@as(usize, 1), count1);
+
+    // Search for different word should fail with tolerance 0
+    var iter_no_match = try tree.search("double", 0);
+    defer iter_no_match.deinit(testing.allocator);
+    try testing.expect(iter_no_match.next() == null);
+
+    // Validate single-node tree
+    try tree.validate();
+}
+
+test "BKTree - sequential similar words (unbalanced insertion)" {
+    var tree = BKTree([]const u8, void, levenshteinDistance).init(testing.allocator, {});
+    defer tree.deinit();
+
+    // Insert words in a pattern that creates unbalanced tree structure
+    // Each word is close to the previous one
+    try tree.insert("cat");
+    try tree.insert("cats");    // distance 1: append s
+    try tree.insert("catty");   // distance 2: append ty
+    try tree.insert("cattle");  // distance 3 from cat, but distance 3 from cats
+    try tree.insert("catfish"); // distance 4: append fish
+
+    // Verify all insertions worked
+    try testing.expectEqual(@as(usize, 5), tree.count());
+
+    // Verify all items are findable via contains
+    try testing.expect(tree.contains("cat"));
+    try testing.expect(tree.contains("cats"));
+    try testing.expect(tree.contains("catty"));
+    try testing.expect(tree.contains("cattle"));
+    try testing.expect(tree.contains("catfish"));
+
+    // Search from the first item with various tolerances
+    var iter1 = try tree.search("cat", 1);
+    defer iter1.deinit(testing.allocator);
+    var count1: usize = 0;
+    while (iter1.next()) |_| {
+        count1 += 1;
+    }
+    try testing.expect(count1 >= 2); // cat and cats
+
+    var iter2 = try tree.search("cat", 2);
+    defer iter2.deinit(testing.allocator);
+    var count2: usize = 0;
+    while (iter2.next()) |_| {
+        count2 += 1;
+    }
+    try testing.expect(count2 >= 3); // cat, cats, catty
+
+    // Search from an intermediate item
+    var iter_middle = try tree.search("cats", 2);
+    defer iter_middle.deinit(testing.allocator);
+    var middle_count: usize = 0;
+    while (iter_middle.next()) |_| {
+        middle_count += 1;
+    }
+    try testing.expect(middle_count >= 2); // At least cats itself and nearby words
+
+    // Verify tree invariants hold after unbalanced insertions
+    try tree.validate();
+}
