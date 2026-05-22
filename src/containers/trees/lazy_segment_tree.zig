@@ -617,3 +617,271 @@ test "LazySegmentTree: range max with range add" {
     const max_left = try tree.query(0, 1);
     try testing.expectEqual(@as(i32, 5), max_left);
 }
+
+test "LazySegmentTree: boundary query at rightmost index (n-1)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const combineFn = struct {
+        fn f(_: SumContext, a: i64, b: i64) i64 {
+            return a + b;
+        }
+    }.f;
+    const applyFn = struct {
+        fn f(_: SumContext, value: i64, lazy: i64, range_size: usize) i64 {
+            return value + lazy * @as(i64, @intCast(range_size));
+        }
+    }.f;
+    const composeFn = struct {
+        fn f(_: SumContext, old_lazy: i64, new_lazy: i64) i64 {
+            return old_lazy + new_lazy;
+        }
+    }.f;
+
+    const Tree = LazySegmentTree(i64, SumContext, combineFn, applyFn, composeFn);
+
+    const data = [_]i64{ 10, 20, 30, 40, 50 };
+    var tree = try Tree.init(allocator, &data, .{}, 0);
+    defer tree.deinit();
+
+    // Query at exact rightmost index: n=5, query [4, 4]
+    const query_right = try tree.query(4, 4);
+    try testing.expectEqual(@as(i64, 50), query_right);
+
+    // Update at exact rightmost index: [4, 4]
+    try tree.updateRange(4, 4, 100);
+    const updated_right = try tree.query(4, 4);
+    try testing.expectEqual(@as(i64, 150), updated_right);
+
+    // Verify no contamination to left side
+    const query_left = try tree.query(0, 3);
+    try testing.expectEqual(@as(i64, 100), query_left); // 10+20+30+40
+}
+
+test "LazySegmentTree: lazy propagation isolation (no cross-contamination)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const combineFn = struct {
+        fn f(_: SumContext, a: i64, b: i64) i64 {
+            return a + b;
+        }
+    }.f;
+    const applyFn = struct {
+        fn f(_: SumContext, value: i64, lazy: i64, range_size: usize) i64 {
+            return value + lazy * @as(i64, @intCast(range_size));
+        }
+    }.f;
+    const composeFn = struct {
+        fn f(_: SumContext, old_lazy: i64, new_lazy: i64) i64 {
+            return old_lazy + new_lazy;
+        }
+    }.f;
+
+    const Tree = LazySegmentTree(i64, SumContext, combineFn, applyFn, composeFn);
+
+    const data = [_]i64{ 1, 1, 1, 1, 1, 1, 1, 1 };
+    var tree = try Tree.init(allocator, &data, .{}, 0);
+    defer tree.deinit();
+
+    // Update range [2, 4] with value 10
+    try tree.updateRange(2, 4, 10);
+
+    // Query non-overlapping range [0, 1] — should NOT include the update
+    const left_unchanged = try tree.query(0, 1);
+    try testing.expectEqual(@as(i64, 2), left_unchanged); // 1+1, not affected
+
+    // Query non-overlapping range [5, 7] — should NOT include the update
+    const right_unchanged = try tree.query(5, 7);
+    try testing.expectEqual(@as(i64, 3), right_unchanged); // 1+1+1, not affected
+
+    // Query updated range [2, 4] — should reflect update
+    const updated_range = try tree.query(2, 4);
+    try testing.expectEqual(@as(i64, 33), updated_range); // (1+10) + (1+10) + (1+10) = 11*3
+}
+
+test "LazySegmentTree: cascading updates to same range (composeFn stress)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const combineFn = struct {
+        fn f(_: SumContext, a: i64, b: i64) i64 {
+            return a + b;
+        }
+    }.f;
+    const applyFn = struct {
+        fn f(_: SumContext, value: i64, lazy: i64, range_size: usize) i64 {
+            return value + lazy * @as(i64, @intCast(range_size));
+        }
+    }.f;
+    const composeFn = struct {
+        fn f(_: SumContext, old_lazy: i64, new_lazy: i64) i64 {
+            // Accumulate multiple lazy updates: old + new
+            return old_lazy + new_lazy;
+        }
+    }.f;
+
+    const Tree = LazySegmentTree(i64, SumContext, combineFn, applyFn, composeFn);
+
+    const data = [_]i64{ 5, 5, 5, 5, 5 };
+    var tree = try Tree.init(allocator, &data, .{}, 0);
+    defer tree.deinit();
+
+    // Apply 3 cascading updates to the same range [1, 3]
+    try tree.updateRange(1, 3, 2);  // Add 2 to [1,3]
+    try tree.updateRange(1, 3, 3);  // Add 3 to [1,3]
+    try tree.updateRange(1, 3, 5);  // Add 5 to [1,3]
+
+    // After 3 updates, each element in [1,3] receives +2+3+5=+10
+    // Elements: [5, 15, 15, 15, 5]
+    const result = try tree.query(1, 3);
+    try testing.expectEqual(@as(i64, 45), result); // 15+15+15
+}
+
+test "LazySegmentTree: full range update then individual point queries" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const combineFn = struct {
+        fn f(_: SumContext, a: i64, b: i64) i64 {
+            return a + b;
+        }
+    }.f;
+    const applyFn = struct {
+        fn f(_: SumContext, value: i64, lazy: i64, range_size: usize) i64 {
+            return value + lazy * @as(i64, @intCast(range_size));
+        }
+    }.f;
+    const composeFn = struct {
+        fn f(_: SumContext, old_lazy: i64, new_lazy: i64) i64 {
+            return old_lazy + new_lazy;
+        }
+    }.f;
+
+    const Tree = LazySegmentTree(i64, SumContext, combineFn, applyFn, composeFn);
+
+    const data = [_]i64{ 1, 2, 3, 4, 5 };
+    var tree = try Tree.init(allocator, &data, .{}, 0);
+    defer tree.deinit();
+
+    // Update entire range [0, 4] with value 10
+    try tree.updateRange(0, 4, 10);
+
+    // Query each individual element and verify correct lazy propagation
+    const q0 = try tree.query(0, 0);
+    try testing.expectEqual(@as(i64, 11), q0); // 1 + 10
+
+    const q1 = try tree.query(1, 1);
+    try testing.expectEqual(@as(i64, 12), q1); // 2 + 10
+
+    const q2 = try tree.query(2, 2);
+    try testing.expectEqual(@as(i64, 13), q2); // 3 + 10
+
+    const q3 = try tree.query(3, 3);
+    try testing.expectEqual(@as(i64, 14), q3); // 4 + 10
+
+    const q4 = try tree.query(4, 4);
+    try testing.expectEqual(@as(i64, 15), q4); // 5 + 10
+}
+
+test "LazySegmentTree: non-commutative operations (multiplication)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const MulContext = struct {};
+    // Product combine function
+    const combineFn = struct {
+        fn f(_: MulContext, a: i64, b: i64) i64 {
+            return a * b;
+        }
+    }.f;
+    // Multiply: value *= (lazy ^ range_size) — each element multiplied by lazy value
+    const applyFn = struct {
+        fn f(_: MulContext, value: i64, lazy: i64, range_size: usize) i64 {
+            var result = value;
+            for (0..range_size) |_| {
+                result *= lazy;
+            }
+            return result;
+        }
+    }.f;
+    // Compose for multiplication: multiply lazy factors
+    const composeFn = struct {
+        fn f(_: MulContext, old_lazy: i64, new_lazy: i64) i64 {
+            return old_lazy * new_lazy;
+        }
+    }.f;
+
+    const Tree = LazySegmentTree(i64, MulContext, combineFn, applyFn, composeFn);
+
+    const data = [_]i64{ 2, 2, 2, 2 };
+    var tree = try Tree.init(allocator, &data, .{}, 1); // neutral: 1
+    defer tree.deinit();
+
+    // Initial product [0, 3]: 2*2*2*2 = 16
+    const product_before = try tree.query(0, 3);
+    try testing.expectEqual(@as(i64, 16), product_before);
+
+    // Multiply range [1, 2] by 3: [2, 6, 6, 2]
+    try tree.updateRange(1, 2, 3);
+
+    // Product [1, 2]: 6*6 = 36
+    const product_updated = try tree.query(1, 2);
+    try testing.expectEqual(@as(i64, 36), product_updated);
+
+    // Product [0, 3]: 2*6*6*2 = 144
+    const product_total = try tree.query(0, 3);
+    try testing.expectEqual(@as(i64, 144), product_total);
+}
+
+test "LazySegmentTree: query at boundaries after middle range updates" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const combineFn = struct {
+        fn f(_: SumContext, a: i64, b: i64) i64 {
+            return a + b;
+        }
+    }.f;
+    const applyFn = struct {
+        fn f(_: SumContext, value: i64, lazy: i64, range_size: usize) i64 {
+            return value + lazy * @as(i64, @intCast(range_size));
+        }
+    }.f;
+    const composeFn = struct {
+        fn f(_: SumContext, old_lazy: i64, new_lazy: i64) i64 {
+            return old_lazy + new_lazy;
+        }
+    }.f;
+
+    const Tree = LazySegmentTree(i64, SumContext, combineFn, applyFn, composeFn);
+
+    var data: [10]i64 = undefined;
+    for (&data, 0..) |*val, i| {
+        val.* = @intCast(i + 1);
+    }
+
+    var tree = try Tree.init(allocator, &data, .{}, 0);
+    defer tree.deinit();
+
+    // Update middle range [3, 6] with value 20
+    try tree.updateRange(3, 6, 20);
+
+    // Query left boundary [0, 0]: unaffected
+    const left_boundary = try tree.query(0, 0);
+    try testing.expectEqual(@as(i64, 1), left_boundary);
+
+    // Query right boundary [9, 9]: unaffected
+    const right_boundary = try tree.query(9, 9);
+    try testing.expectEqual(@as(i64, 10), right_boundary);
+
+    // Query middle updated range
+    const middle_sum = try tree.query(3, 6);
+    // [4, 5, 6, 7] become [24, 25, 26, 27]
+    try testing.expectEqual(@as(i64, 102), middle_sum); // 24+25+26+27
+}
