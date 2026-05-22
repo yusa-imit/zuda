@@ -481,3 +481,222 @@ test "CuckooFilter - edge cases" {
     try testing.expect(filter.remove(1));
     try testing.expect(!filter.contains(1));
 }
+
+test "CuckooFilter - capacity enforcement at maximum" {
+    const Filter = CuckooFilter(u32, void, defaultHashInt(u32), defaultFingerprintInt(u32));
+    var filter = try Filter.init(testing.allocator, 10, {}); // 10 buckets * 4 = 40 capacity
+    defer filter.deinit();
+
+    // Try to fill to capacity: add up to 50 items (will hit FilterFull)
+    var hit_full = false;
+    for (0..50) |i| {
+        if (filter.add(@intCast(i))) |_| {
+            // Successfully added
+        } else |err| {
+            try testing.expectEqual(error.FilterFull, err);
+            hit_full = true;
+            break;
+        }
+    }
+
+    // Must eventually hit capacity
+    try testing.expect(hit_full);
+
+    // Count should be at or near capacity (cuckoo hashing can displace)
+    const count = filter.count();
+    try testing.expect(count >= 30); // Should have most of the capacity filled
+    try testing.expect(count <= 40);
+
+    // Verify load factor is high
+    const lf = filter.loadFactor();
+    try testing.expect(lf >= 0.75); // At least 75% full
+}
+
+test "CuckooFilter - capacity overflow behavior" {
+    const Filter = CuckooFilter(u32, void, defaultHashInt(u32), defaultFingerprintInt(u32));
+    var filter = try Filter.init(testing.allocator, 5, {}); // 5 buckets * 4 = 20 capacity, small to trigger full
+    defer filter.deinit();
+
+    // Fill filter until full
+    var filled: usize = 0;
+    for (0..30) |i| {
+        if (filter.add(@intCast(i))) |_| {
+            filled += 1;
+        } else |err| {
+            try testing.expectEqual(error.FilterFull, err);
+            break;
+        }
+    }
+
+    // Should be reasonably full
+    try testing.expect(filled >= 10);
+    const before_count = filter.count();
+
+    // Attempt to add after full
+    const result = filter.add(999);
+    try testing.expectError(error.FilterFull, result);
+
+    // Count unchanged after failed add
+    try testing.expectEqual(before_count, filter.count());
+}
+
+test "CuckooFilter - delete non-existent items is idempotent" {
+    const Filter = CuckooFilter(u32, void, defaultHashInt(u32), defaultFingerprintInt(u32));
+    var filter = try Filter.init(testing.allocator, 100, {});
+    defer filter.deinit();
+
+    // Delete from empty filter
+    try testing.expect(!filter.remove(123));
+    try testing.expectEqual(@as(usize, 0), filter.count());
+
+    // Delete non-existent items multiple times
+    try testing.expect(!filter.remove(999));
+    try testing.expect(!filter.remove(888));
+    try testing.expect(!filter.remove(999)); // Same item again - idempotent
+    try testing.expectEqual(@as(usize, 0), filter.count());
+
+    // Add item, delete it, then attempt to delete again (should fail)
+    try filter.add(777);
+    try testing.expectEqual(@as(usize, 1), filter.count());
+    try testing.expect(filter.remove(777));
+    try testing.expectEqual(@as(usize, 0), filter.count());
+    try testing.expect(!filter.remove(777)); // Already deleted
+    try testing.expectEqual(@as(usize, 0), filter.count());
+}
+
+test "CuckooFilter - fingerprint collision handling with similar hashes" {
+    // Custom fingerprint function that produces collisions for testing
+    const TestContext = struct {};
+    const testHash = struct {
+        fn hash(_: TestContext, key: u32) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            const bytes = std.mem.asBytes(&key);
+            hasher.update(bytes);
+            return hasher.final();
+        }
+    }.hash;
+
+    const testFingerprint = struct {
+        fn fingerprint(_: TestContext, key: u32) u32 {
+            // Deliberately create collisions by mapping to same fingerprint
+            // Keys 0-15 all map to fingerprint 1, 16-31 to fingerprint 2, etc.
+            const fp = @as(u32, @truncate((key / 16) & 0xFF)) + 1;
+            return if (fp == 0) 1 else fp;
+        }
+    }.fingerprint;
+
+    const Filter = CuckooFilter(u32, TestContext, testHash, testFingerprint);
+    var filter = try Filter.init(testing.allocator, 100, TestContext{});
+    defer filter.deinit();
+
+    // Add multiple items with same fingerprint (0-15 all map to fp=1)
+    for (0..16) |i| {
+        try filter.add(@intCast(i));
+    }
+
+    // All should be findable
+    for (0..16) |i| {
+        try testing.expect(filter.contains(@intCast(i)));
+    }
+
+    // Count should be correct even with collisions
+    try testing.expectEqual(@as(usize, 16), filter.count());
+
+    // Remove half of them
+    for (0..8) |i| {
+        try testing.expect(filter.remove(@intCast(i)));
+    }
+
+    // Verify removed items are gone, remaining are present
+    for (0..8) |i| {
+        try testing.expect(!filter.contains(@intCast(i)));
+    }
+    for (8..16) |i| {
+        try testing.expect(filter.contains(@intCast(i)));
+    }
+
+    try testing.expectEqual(@as(usize, 8), filter.count());
+}
+
+test "CuckooFilter - repeated insertions with counting" {
+    const Filter = CuckooFilter(u32, void, defaultHashInt(u32), defaultFingerprintInt(u32));
+    var filter = try Filter.init(testing.allocator, 100, {});
+    defer filter.deinit();
+
+    // Insert same item multiple times (each counts as separate entry)
+    const num_copies = 5;
+    for (0..num_copies) |_| {
+        try filter.add(42);
+    }
+
+    // Count should reflect all insertions
+    try testing.expectEqual(@as(usize, num_copies), filter.count());
+
+    // Contains should return true
+    try testing.expect(filter.contains(42));
+
+    // Remove half
+    const half = num_copies / 2;
+    for (0..half) |_| {
+        try testing.expect(filter.remove(42));
+    }
+
+    // Item should still be present (copies remaining)
+    try testing.expect(filter.contains(42));
+    try testing.expectEqual(@as(usize, num_copies - half), filter.count());
+
+    // Remove all remaining
+    for (0..num_copies - half) |_| {
+        try testing.expect(filter.remove(42));
+    }
+
+    // Now it should be gone
+    try testing.expect(!filter.contains(42));
+    try testing.expectEqual(@as(usize, 0), filter.count());
+
+    // Further removes should fail (idempotent)
+    try testing.expect(!filter.remove(42));
+    try testing.expect(!filter.remove(42));
+    try testing.expectEqual(@as(usize, 0), filter.count());
+}
+
+test "CuckooFilter - duplicate keys with mixed operations" {
+    const Filter = CuckooFilter(u32, void, defaultHashInt(u32), defaultFingerprintInt(u32));
+    var filter = try Filter.init(testing.allocator, 100, {});
+    defer filter.deinit();
+
+    // Add multiple different items with some duplicates
+    try filter.add(10);
+    try filter.add(20);
+    try filter.add(10); // Duplicate
+    try filter.add(30);
+    try filter.add(20); // Duplicate
+    try filter.add(10); // Duplicate
+
+    // Should have 6 entries total
+    try testing.expectEqual(@as(usize, 6), filter.count());
+
+    // All keys should be findable
+    try testing.expect(filter.contains(10));
+    try testing.expect(filter.contains(20));
+    try testing.expect(filter.contains(30));
+
+    // Remove one copy of 10
+    try testing.expect(filter.remove(10));
+    try testing.expectEqual(@as(usize, 5), filter.count());
+
+    // 10 should still be present (2 copies left)
+    try testing.expect(filter.contains(10));
+
+    // Remove all copies of 20
+    try testing.expect(filter.remove(20));
+    try testing.expect(filter.remove(20));
+    try testing.expectEqual(@as(usize, 3), filter.count());
+
+    // 20 should now be absent
+    try testing.expect(!filter.contains(20));
+
+    // 10 and 30 still present
+    try testing.expect(filter.contains(10));
+    try testing.expect(filter.contains(30));
+}
