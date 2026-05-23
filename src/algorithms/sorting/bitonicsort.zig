@@ -51,13 +51,12 @@ pub fn bitonicSort(
     items: []T,
     context: anytype,
     comptime compareFn: fn (@TypeOf(context), T, T) bool,
-) void {
+) error{InvalidLength}!void {
     const n = items.len;
     if (n < 2) return;
 
-    // Verify power of 2
     if (!std.math.isPowerOfTwo(n)) {
-        @panic("bitonicSort requires array length to be power of 2. Use bitonicSortAny for arbitrary lengths.");
+        return error.InvalidLength;
     }
 
     bitonicSortRecursive(T, items, 0, n, true, context, compareFn);
@@ -67,16 +66,16 @@ pub fn bitonicSort(
 ///
 /// Time: O(n log² n)
 /// Space: O(1)
-pub fn bitonicSortAsc(comptime T: type, items: []T) void {
-    bitonicSort(T, items, {}, comptime asc(T));
+pub fn bitonicSortAsc(comptime T: type, items: []T) error{InvalidLength}!void {
+    try bitonicSort(T, items, {}, comptime asc(T));
 }
 
 /// Bitonic Sort for descending order (convenience wrapper)
 ///
 /// Time: O(n log² n)
 /// Space: O(1)
-pub fn bitonicSortDesc(comptime T: type, items: []T) void {
-    bitonicSort(T, items, {}, comptime desc(T));
+pub fn bitonicSortDesc(comptime T: type, items: []T) error{InvalidLength}!void {
+    try bitonicSort(T, items, {}, comptime desc(T));
 }
 
 /// Bitonic Sort with std.math.Order-based comparison
@@ -88,13 +87,13 @@ pub fn bitonicSortBy(
     items: []T,
     context: anytype,
     comptime orderFn: fn (@TypeOf(context), T, T) Order,
-) void {
+) error{InvalidLength}!void {
     const Wrapper = struct {
         fn lessThan(ctx: @TypeOf(context), a: T, b: T) bool {
             return orderFn(ctx, a, b) == .lt;
         }
     };
-    bitonicSort(T, items, context, Wrapper.lessThan);
+    try bitonicSort(T, items, context, Wrapper.lessThan);
 }
 
 /// Bitonic Sort for arbitrary array lengths (pads to next power of 2)
@@ -242,67 +241,67 @@ fn desc(comptime T: type) fn (void, T, T) bool {
 
 test "bitonicSort: basic ascending (power of 2)" {
     var arr = [_]i32{ 3, 7, 4, 8, 6, 2, 1, 5 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "bitonicSort: basic descending (power of 2)" {
     var arr = [_]i32{ 3, 7, 4, 8, 6, 2, 1, 5 };
-    bitonicSortDesc(i32, &arr);
+    try bitonicSortDesc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 8, 7, 6, 5, 4, 3, 2, 1 }, &arr);
 }
 
 test "bitonicSort: empty array" {
     var arr = [_]i32{};
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqual(0, arr.len);
 }
 
 test "bitonicSort: single element" {
     var arr = [_]i32{42};
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{42}, &arr);
 }
 
 test "bitonicSort: two elements" {
     var arr = [_]i32{ 5, 3 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 3, 5 }, &arr);
 }
 
 test "bitonicSort: already sorted" {
     var arr = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "bitonicSort: reverse sorted" {
     var arr = [_]i32{ 8, 7, 6, 5, 4, 3, 2, 1 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "bitonicSort: duplicates" {
     var arr = [_]i32{ 3, 1, 3, 2, 2, 1, 3, 2 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 1, 2, 2, 2, 3, 3, 3 }, &arr);
 }
 
 test "bitonicSort: all equal" {
     var arr = [_]i32{ 5, 5, 5, 5, 5, 5, 5, 5 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 5, 5, 5, 5, 5, 5, 5, 5 }, &arr);
 }
 
 test "bitonicSort: negative numbers" {
     var arr = [_]i32{ -3, 7, -4, 8, -6, 2, -1, 5 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ -6, -4, -3, -1, 2, 5, 7, 8 }, &arr);
 }
 
 test "bitonicSort: floating point (f64)" {
     var arr = [_]f64{ 3.5, 1.2, 4.8, 2.1, 5.9, 0.3, 7.6, 6.4 };
-    bitonicSortAsc(f64, &arr);
+    try bitonicSortAsc(f64, &arr);
     try testing.expectEqualSlices(f64, &[_]f64{ 0.3, 1.2, 2.1, 3.5, 4.8, 5.9, 6.4, 7.6 }, &arr);
 }
 
@@ -329,7 +328,7 @@ test "bitonicSort: custom comparison (struct by age)" {
         .{ .name = "Henry", .age = 27 },
     };
 
-    bitonicSort(Person, &people, {}, compareByAge);
+    try bitonicSort(Person, &people, {}, compareByAge);
 
     try testing.expectEqual(20, people[0].age);
     try testing.expectEqual(22, people[1].age);
@@ -351,20 +350,25 @@ test "bitonicSort: Order-based comparison" {
     }.order;
 
     var arr = [_]i32{ 3, 7, 4, 8, 6, 2, 1, 5 };
-    bitonicSortBy(i32, &arr, {}, compareOrder);
+    try bitonicSortBy(i32, &arr, {}, compareOrder);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "bitonicSort: u8 type" {
     var arr = [_]u8{ 200, 50, 150, 100, 250, 25, 175, 75 };
-    bitonicSortAsc(u8, &arr);
+    try bitonicSortAsc(u8, &arr);
     try testing.expectEqualSlices(u8, &[_]u8{ 25, 50, 75, 100, 150, 175, 200, 250 }, &arr);
 }
 
 test "bitonicSort: larger array (16 elements)" {
     var arr = [_]i32{ 15, 3, 9, 8, 5, 2, 7, 1, 6, 11, 4, 13, 10, 14, 12, 16 };
-    bitonicSortAsc(i32, &arr);
+    try bitonicSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, &arr);
+}
+
+test "bitonicSort: error on non-power-of-2 length" {
+    var arr = [_]i32{ 3, 1, 4, 1, 5 }; // length 5, not power of 2
+    try testing.expectError(error.InvalidLength, bitonicSortAsc(i32, &arr));
 }
 
 test "bitonicSortAny: arbitrary length (5 elements)" {

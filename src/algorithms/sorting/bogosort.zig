@@ -38,7 +38,7 @@ pub fn bogoSort(comptime T: type, arr: []T, compareFn: fn (T, T) Order) !void {
 
     var prng = std.Random.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
-        std.posix.getrandom(std.mem.asBytes(&seed)) catch @panic("getrandom failed");
+        try std.posix.getrandom(std.mem.asBytes(&seed));
         break :blk seed;
     });
     const random = prng.random();
@@ -138,7 +138,7 @@ pub fn bogoSortBounded(comptime T: type, arr: []T, compareFn: fn (T, T) Order, m
 
     var prng = std.Random.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
-        std.posix.getrandom(std.mem.asBytes(&seed)) catch @panic("getrandom failed");
+        try std.posix.getrandom(std.mem.asBytes(&seed));
         break :blk seed;
     });
     const random = prng.random();

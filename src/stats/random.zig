@@ -254,12 +254,12 @@ pub fn normal(comptime T: type, rng: std.Random) T {
 ///
 /// Time: O(1)
 /// Space: O(1)
-pub fn exponential(comptime T: type, lambda: T, rng: std.Random) T {
+pub fn exponential(comptime T: type, lambda: T, rng: std.Random) error{InvalidLambda}!T {
     if (T != f32 and T != f64) {
         @compileError("exponential only supports f32 and f64");
     }
     if (lambda <= 0) {
-        @panic("exponential: lambda must be positive");
+        return error.InvalidLambda;
     }
 
     const u = rng.float(T);
@@ -562,7 +562,7 @@ test "exponential - mean λ=1" {
     const n = 10000;
 
     for (0..n) |_| {
-        const value = exponential(f64, 1.0, r);
+        const value = try exponential(f64, 1.0, r);
         sum += value;
     }
 
@@ -579,7 +579,7 @@ test "exponential - mean λ=2" {
     const n = 10000;
 
     for (0..n) |_| {
-        const value = exponential(f64, 2.0, r);
+        const value = try exponential(f64, 2.0, r);
         sum += value;
     }
 

@@ -27,7 +27,6 @@ pub const SubsetIterator = struct {
     total: u64,
 
     pub fn init(n: u6) SubsetIterator {
-        if (n > 63) @panic("SubsetIterator supports at most 63 elements");
         const total = @as(u64, 1) << @intCast(n);
         return .{
             .n = n,
@@ -67,11 +66,9 @@ pub const SubsetOfSizeIterator = struct {
     k: u6,
     current: ?u64,
 
-    pub fn init(n: u6, k: u6) SubsetOfSizeIterator {
-        if (n > 63) @panic("SubsetOfSizeIterator supports at most 63 elements");
-        if (k > n) @panic("k must be <= n");
+    pub fn init(n: u6, k: u6) error{InvalidK}!SubsetOfSizeIterator {
+        if (k > n) return error.InvalidK;
 
-        // Initial subset: k rightmost bits set
         const initial = if (k == 0) null else (@as(u64, 1) << @intCast(k)) - 1;
 
         return .{
@@ -177,7 +174,7 @@ pub fn generateSubsetsOfSize(allocator: Allocator, n: u6, k: u6) !ArrayList(u64)
     var result = ArrayList(u64).init(allocator);
     errdefer result.deinit();
 
-    var iter = SubsetOfSizeIterator.init(n, k);
+    var iter = try SubsetOfSizeIterator.init(n, k);
     while (iter.next()) |mask| {
         try result.append(mask);
     }
@@ -289,7 +286,7 @@ test "SubsetIterator - reset" {
 }
 
 test "SubsetOfSizeIterator - k=2, n=4" {
-    var iter = SubsetOfSizeIterator.init(4, 2);
+    var iter = try SubsetOfSizeIterator.init(4, 2);
 
     var masks = ArrayList(u64).init(testing.allocator);
     defer masks.deinit();
@@ -304,22 +301,26 @@ test "SubsetOfSizeIterator - k=2, n=4" {
 }
 
 test "SubsetOfSizeIterator - k=0" {
-    var iter = SubsetOfSizeIterator.init(5, 0);
+    var iter = try SubsetOfSizeIterator.init(5, 0);
     try testing.expect(iter.next() == null);
 }
 
 test "SubsetOfSizeIterator - k=n" {
-    var iter = SubsetOfSizeIterator.init(3, 3);
+    var iter = try SubsetOfSizeIterator.init(3, 3);
     try testing.expectEqual(0b111, iter.next().?);
     try testing.expect(iter.next() == null);
 }
 
 test "SubsetOfSizeIterator - reset" {
-    var iter = SubsetOfSizeIterator.init(4, 2);
+    var iter = try SubsetOfSizeIterator.init(4, 2);
     const first = iter.next().?;
     _ = iter.next();
     iter.reset();
     try testing.expectEqual(first, iter.next().?);
+}
+
+test "SubsetOfSizeIterator - error on k > n" {
+    try testing.expectError(error.InvalidK, SubsetOfSizeIterator.init(3, 5));
 }
 
 test "subsetSize - basic" {
