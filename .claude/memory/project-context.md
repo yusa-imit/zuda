@@ -1,3 +1,22 @@
+**Session 571 Update (2026-05-24) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — AVLTree rotation and edge case tests added:
+- **Mode**: FEATURE MODE (counter: 571, not divisible by 5)
+- **CI Status**: ✅ GREEN — Latest run successful, 0 open issues
+- **Deliverable**: Added 6 comprehensive edge case tests to AVLTree (10 → 16 tests, +60% coverage)
+- **Rationale**: AVLTree had only 10 tests for 820 LOC. Enhanced with tests covering all 4 rotation cases (the core correctness invariant of AVL trees) plus remove-root and iterator exhaustion:
+  * **LL rotation** — Insert 3,2,1 → triggers right rotation → height 2 (not 3), validate() passes
+  * **RR rotation** — Insert 1,2,3 → triggers left rotation → height 2 (not 3), validate() passes
+  * **LR rotation** — Insert 3,1,2 → triggers left-right double rotation → height 2, min/max correct
+  * **RL rotation** — Insert 1,3,2 → triggers right-left double rotation → height 2, min/max correct
+  * **Remove root with two children** — Insert 5,3,7,6,8, remove 5 → in-order successor (6) replaces root, all other keys accessible, validate() passes
+  * **Iterator exhaustion consistency** — After 3-element traversal, additional next() calls all return null (idempotent)
+- **Files**: src/containers/trees/avl_tree.zig (+137 lines, now 957 LOC, 16 tests)
+- **Commits**: 6fd7bd0 (test)
+- **Tests**: ✅ 16/16 AVLTree tests passing (was 10/10), all tests exit code 0
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage improvements for under-tested containers (segment_tree, interval_tree, radix_tree all at 10 tests) or add more distribution tests
+
 **Session 570 Update (2026-05-24) — STABILIZATION MODE:**
 
 ✅ **STABILIZATION AUDIT COMPLETE** — Code quality fixes committed:
