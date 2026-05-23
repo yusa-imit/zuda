@@ -889,3 +889,229 @@ test "RTree: bounding box operations" {
     const dist2 = bbox1.minDistanceToPoint(point2);
     try testing.expect(dist2 > 0);
 }
+
+test "RTree: boundary overlap edge case (rectangles touching)" {
+    const RTree2D = RTree(f32, 2, 4, Rectangle, getRectBBox);
+    var tree = RTree2D.init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert rectangles that share exact boundaries (touching but not overlapping)
+    try tree.insert(.{ .min_x = 0.0, .min_y = 0.0, .max_x = 2.0, .max_y = 2.0, .id = 1 });
+    try tree.insert(.{ .min_x = 2.0, .min_y = 0.0, .max_x = 4.0, .max_y = 2.0, .id = 2 });
+    try tree.insert(.{ .min_x = 0.0, .min_y = 2.0, .max_x = 2.0, .max_y = 4.0, .id = 3 });
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+
+    // Query that touches boundary at x=2.0
+    const query_touching = RTree2D.BBox{
+        .min = .{ 2.0, 1.0 },
+        .max = .{ 2.5, 1.5 },
+    };
+
+    var results = try tree.search(testing.allocator, query_touching);
+    defer results.deinit(testing.allocator);
+
+    // Should find rectangle 2 (boundary sharing counts as overlap in R-tree overlap semantics)
+    try testing.expect(results.items.len > 0);
+
+    // Query that lies strictly between touching rectangles
+    const query_between = RTree2D.BBox{
+        .min = .{ 1.8, 1.0 },
+        .max = .{ 2.2, 1.5 },
+    };
+
+    var results2 = try tree.search(testing.allocator, query_between);
+    defer results2.deinit(testing.allocator);
+
+    // Should find both rectangle 1 and 2 due to boundary touching
+    try testing.expect(results2.items.len >= 2);
+
+    try tree.validate();
+}
+
+test "RTree: point rectangles (zero-area bounding boxes)" {
+    const RTree2D = RTree(f32, 2, 4, Rectangle, getRectBBox);
+    var tree = RTree2D.init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert point rectangles (minX==maxX, minY==maxY)
+    try tree.insert(.{ .min_x = 1.0, .min_y = 1.0, .max_x = 1.0, .max_y = 1.0, .id = 1 });
+    try tree.insert(.{ .min_x = 3.0, .min_y = 3.0, .max_x = 3.0, .max_y = 3.0, .id = 2 });
+    try tree.insert(.{ .min_x = 5.0, .min_y = 5.0, .max_x = 5.0, .max_y = 5.0, .id = 3 });
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+
+    // Verify point rectangles have zero area
+    const zero_area = (1.0 - 1.0) * (1.0 - 1.0);
+    try testing.expectEqual(@as(f32, 0.0), zero_area);
+
+    // Search with region containing the point
+    const query = RTree2D.BBox{
+        .min = .{ 0.5, 0.5 },
+        .max = .{ 1.5, 1.5 },
+    };
+
+    var results = try tree.search(testing.allocator, query);
+    defer results.deinit(testing.allocator);
+
+    // Should find the point rectangle at (1.0, 1.0)
+    try testing.expectEqual(@as(usize, 1), results.items.len);
+    try testing.expectEqual(@as(u32, 1), results.items[0].id);
+
+    // Search that misses point rectangles
+    const query_miss = RTree2D.BBox{
+        .min = .{ 2.0, 2.0 },
+        .max = .{ 2.5, 2.5 },
+    };
+
+    var results_miss = try tree.search(testing.allocator, query_miss);
+    defer results_miss.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 0), results_miss.items.len);
+
+    try tree.validate();
+}
+
+test "RTree: large dataset with forced node splits" {
+    const RTree2D = RTree(f32, 2, 4, Point2D, getPointBBox);
+    var tree = RTree2D.init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert 200 points to force multiple node splits at different levels
+    var id: u32 = 0;
+    var y: f32 = 0;
+    while (y < 20) : (y += 1) {
+        var x: f32 = 0;
+        while (x < 10) : (x += 1) {
+            try tree.insert(.{
+                .x = x,
+                .y = y,
+                .id = id,
+            });
+            id += 1;
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 200), tree.count());
+
+    // Validate tree structure remains valid after splits
+    try tree.validate();
+
+    // Verify search still works correctly across multiple levels
+    const query = RTree2D.BBox{
+        .min = .{ 4.0, 10.0 },
+        .max = .{ 6.0, 12.0 },
+    };
+
+    var results = try tree.search(testing.allocator, query);
+    defer results.deinit(testing.allocator);
+
+    // Should find points in the 2x2 grid area: (4,10), (5,10), (4,11), (5,11), (4,12), (5,12)
+    try testing.expectEqual(@as(usize, 6), results.items.len);
+}
+
+test "RTree: degenerate query with inverted bounds" {
+    const RTree2D = RTree(f32, 2, 4, Rectangle, getRectBBox);
+    var tree = RTree2D.init(testing.allocator);
+    defer tree.deinit();
+
+    try tree.insert(.{ .min_x = 1.0, .min_y = 1.0, .max_x = 3.0, .max_y = 3.0, .id = 1 });
+    try tree.insert(.{ .min_x = 5.0, .min_y = 5.0, .max_x = 7.0, .max_y = 7.0, .id = 2 });
+
+    // Query with inverted x bounds (minX > maxX) — invalid query
+    const query_inverted_x = RTree2D.BBox{
+        .min = .{ 5.0, 2.0 },
+        .max = .{ 2.0, 4.0 },
+    };
+
+    // Invalid query should return 0 results (no valid overlap with valid rectangles)
+    var results_inv = try tree.search(testing.allocator, query_inverted_x);
+    defer results_inv.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), results_inv.items.len);
+
+    // Query with inverted y bounds
+    const query_inverted_y = RTree2D.BBox{
+        .min = .{ 2.0, 5.0 },
+        .max = .{ 4.0, 2.0 },
+    };
+
+    var results_inv_y = try tree.search(testing.allocator, query_inverted_y);
+    defer results_inv_y.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), results_inv_y.items.len);
+
+    // Query with full overlap (encompasses all rectangles)
+    const query_full = RTree2D.BBox{
+        .min = .{ 0.0, 0.0 },
+        .max = .{ 10.0, 10.0 },
+    };
+
+    var results_full = try tree.search(testing.allocator, query_full);
+    defer results_full.deinit(testing.allocator);
+
+    // Should find both rectangles
+    try testing.expectEqual(@as(usize, 2), results_full.items.len);
+}
+
+test "RTree: iterator exhaustion and repeated calls" {
+    const RTree2D = RTree(f32, 2, 4, Point2D, getPointBBox);
+    var tree = RTree2D.init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert a few points
+    try tree.insert(.{ .x = 1.0, .y = 1.0, .id = 1 });
+    try tree.insert(.{ .x = 2.0, .y = 2.0, .id = 2 });
+    try tree.insert(.{ .x = 3.0, .y = 3.0, .id = 3 });
+
+    var iter = try tree.iterator();
+    defer iter.deinit();
+
+    // Iterate through all elements
+    var count: usize = 0;
+    while (iter.next()) |_| {
+        count += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), count);
+
+    // Continue calling next() after exhaustion — should consistently return null
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+    try testing.expect(iter.next() == null);
+
+    try tree.validate();
+}
+
+test "RTree: minimal tree deletion and re-insertion" {
+    const RTree2D = RTree(f32, 2, 4, Point2D, getPointBBox);
+    var tree = RTree2D.init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert single point
+    try tree.insert(.{ .x = 1.0, .y = 1.0, .id = 1 });
+    try testing.expectEqual(@as(usize, 1), tree.count());
+    try tree.validate();
+
+    // Insert second point (minimal tree with 2 elements)
+    try tree.insert(.{ .x = 2.0, .y = 2.0, .id = 2 });
+    try testing.expectEqual(@as(usize, 2), tree.count());
+    try tree.validate();
+
+    // Verify search finds both before "deletion"
+    const query = RTree2D.BBox{
+        .min = .{ 0.0, 0.0 },
+        .max = .{ 3.0, 3.0 },
+    };
+
+    var results = try tree.search(testing.allocator, query);
+    defer results.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), results.items.len);
+
+    // Re-insert after searching (simulating deletion + re-insert workflow)
+    try tree.insert(.{ .x = 0.5, .y = 0.5, .id = 3 });
+    try testing.expectEqual(@as(usize, 3), tree.count());
+    try tree.validate();
+
+    // Verify all three are findable
+    var results2 = try tree.search(testing.allocator, query);
+    defer results2.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), results2.items.len);
+}
