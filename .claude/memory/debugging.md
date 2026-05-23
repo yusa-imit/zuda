@@ -187,3 +187,19 @@ while (true) {
 3. Update all test calls to use `std.testing.allocator`
 
 **Lesson**: All library code now properly accepts allocators as parameters, enabling memory leak detection, custom allocation strategies, and embedded use cases.
+
+## @panic in Library Code (Session 570, 2026-05-24)
+
+**Issue**: 4 library functions used `@panic` instead of returning errors, violating the "No @panic" coding standard.
+
+**Locations**:
+1. `src/algorithms/sorting/bitonicsort.zig:60` — panic on non-power-of-2 length
+2. `src/algorithms/sorting/bogosort.zig:41,141` — panic on getrandom failure
+3. `src/algorithms/bitwise/subsets.zig:30,71,72` — panic on k>n or n>63 (n>63 was dead code since param is u6)
+4. `src/stats/random.zig:262` — panic on lambda <= 0
+
+**Fix Pattern**: Change return type from T/void to `error{ErrorName}!T/void`, replace `@panic` with `return error.ErrorName`.
+- Callers inside the same file: add `try`
+- Tests: update to use `try` or `expectError` for error cases
+
+**Dead Code Discovery**: `subsets.zig` checked `n > 63` but parameter type is `u6` (max value = 63), making the condition always false. Removed the unreachable check.
