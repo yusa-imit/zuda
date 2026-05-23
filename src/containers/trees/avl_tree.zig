@@ -818,3 +818,140 @@ test "AVLTree: memory leak detection" {
 
     // testing.allocator will detect leaks automatically
 }
+
+test "AVLTree: LL rotation (right rotation)" {
+    // Insert in descending order — creates left-heavy tree requiring right rotation
+    // Insert 3, 2, 1: after inserting 1, node 3 has balance factor +2 (LL case)
+    const Tree = AVLTree(i32, i32, void, testCompare);
+    var tree = Tree.init(testing.allocator, {});
+    defer tree.deinit();
+
+    _ = try tree.insert(3, 30);
+    _ = try tree.insert(2, 20);
+    _ = try tree.insert(1, 10);
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+    // After LL rotation, height must be 2 (balanced), not 3 (degenerate)
+    try testing.expectEqual(@as(i32, 2), tree.height());
+    try testing.expectEqual(@as(i32, 10), tree.get(1).?);
+    try testing.expectEqual(@as(i32, 20), tree.get(2).?);
+    try testing.expectEqual(@as(i32, 30), tree.get(3).?);
+    try tree.validate();
+}
+
+test "AVLTree: RR rotation (left rotation)" {
+    // Insert in ascending order — creates right-heavy tree requiring left rotation
+    // Insert 1, 2, 3: after inserting 3, node 1 has balance factor -2 (RR case)
+    const Tree = AVLTree(i32, i32, void, testCompare);
+    var tree = Tree.init(testing.allocator, {});
+    defer tree.deinit();
+
+    _ = try tree.insert(1, 10);
+    _ = try tree.insert(2, 20);
+    _ = try tree.insert(3, 30);
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+    // After RR rotation, height must be 2 (balanced), not 3
+    try testing.expectEqual(@as(i32, 2), tree.height());
+    try testing.expectEqual(@as(i32, 10), tree.get(1).?);
+    try testing.expectEqual(@as(i32, 20), tree.get(2).?);
+    try testing.expectEqual(@as(i32, 30), tree.get(3).?);
+    try tree.validate();
+}
+
+test "AVLTree: LR rotation (left-right double rotation)" {
+    // Insert 3, 1, 2: node 3 left-heavy with 1 right-heavy child (LR case)
+    // Requires left rotation on child 1, then right rotation on node 3
+    const Tree = AVLTree(i32, i32, void, testCompare);
+    var tree = Tree.init(testing.allocator, {});
+    defer tree.deinit();
+
+    _ = try tree.insert(3, 30);
+    _ = try tree.insert(1, 10);
+    _ = try tree.insert(2, 20);
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+    // After LR rotation, height must be 2, not 3
+    try testing.expectEqual(@as(i32, 2), tree.height());
+    // 2 becomes root (verify via min/max and in-order traversal)
+    try testing.expectEqual(@as(i32, 1), tree.min().?.key);
+    try testing.expectEqual(@as(i32, 3), tree.max().?.key);
+    try testing.expectEqual(@as(i32, 10), tree.get(1).?);
+    try testing.expectEqual(@as(i32, 20), tree.get(2).?);
+    try testing.expectEqual(@as(i32, 30), tree.get(3).?);
+    try tree.validate();
+}
+
+test "AVLTree: RL rotation (right-left double rotation)" {
+    // Insert 1, 3, 2: node 1 right-heavy with 3 left-heavy child (RL case)
+    // Requires right rotation on child 3, then left rotation on node 1
+    const Tree = AVLTree(i32, i32, void, testCompare);
+    var tree = Tree.init(testing.allocator, {});
+    defer tree.deinit();
+
+    _ = try tree.insert(1, 10);
+    _ = try tree.insert(3, 30);
+    _ = try tree.insert(2, 20);
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+    // After RL rotation, height must be 2, not 3
+    try testing.expectEqual(@as(i32, 2), tree.height());
+    try testing.expectEqual(@as(i32, 1), tree.min().?.key);
+    try testing.expectEqual(@as(i32, 3), tree.max().?.key);
+    try testing.expectEqual(@as(i32, 10), tree.get(1).?);
+    try testing.expectEqual(@as(i32, 20), tree.get(2).?);
+    try testing.expectEqual(@as(i32, 30), tree.get(3).?);
+    try tree.validate();
+}
+
+test "AVLTree: remove root with two children uses in-order successor" {
+    // Build tree rooted at 5 with children 3 and 7, then remove root
+    // In-order successor of 5 is 6 (smallest in right subtree)
+    const Tree = AVLTree(i32, i32, void, testCompare);
+    var tree = Tree.init(testing.allocator, {});
+    defer tree.deinit();
+
+    _ = try tree.insert(5, 50);
+    _ = try tree.insert(3, 30);
+    _ = try tree.insert(7, 70);
+    _ = try tree.insert(6, 60);
+    _ = try tree.insert(8, 80);
+
+    const removed = tree.remove(5);
+    try testing.expect(removed != null);
+    try testing.expectEqual(@as(i32, 5), removed.?.key);
+    try testing.expectEqual(@as(i32, 50), removed.?.value);
+    try testing.expectEqual(@as(usize, 4), tree.count());
+
+    // All other keys must still be accessible
+    try testing.expectEqual(@as(i32, 30), tree.get(3).?);
+    try testing.expectEqual(@as(i32, 60), tree.get(6).?);
+    try testing.expectEqual(@as(i32, 70), tree.get(7).?);
+    try testing.expectEqual(@as(i32, 80), tree.get(8).?);
+    try testing.expect(tree.get(5) == null);
+    try tree.validate();
+}
+
+test "AVLTree: iterator exhaustion returns null consistently" {
+    // Verify that calling next() after the iterator is exhausted always returns null
+    const Tree = AVLTree(i32, i32, void, testCompare);
+    var tree = Tree.init(testing.allocator, {});
+    defer tree.deinit();
+
+    _ = try tree.insert(10, 100);
+    _ = try tree.insert(20, 200);
+    _ = try tree.insert(30, 300);
+
+    var iter = try tree.iterator();
+    defer iter.deinit();
+
+    // Exhaust the iterator
+    try testing.expect((try iter.next()) != null); // 10
+    try testing.expect((try iter.next()) != null); // 20
+    try testing.expect((try iter.next()) != null); // 30
+
+    // All subsequent calls must return null (idempotent exhaustion)
+    try testing.expect((try iter.next()) == null);
+    try testing.expect((try iter.next()) == null);
+    try testing.expect((try iter.next()) == null);
+}
