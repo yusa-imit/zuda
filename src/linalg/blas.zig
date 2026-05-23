@@ -13409,9 +13409,13 @@ test "rotm: flag=-2 (f64)" {
 
     try rotm(f64, &x, &y, param);
 
-    // With flag=-2, vectors may remain unchanged or apply identity
-    // At minimum, test that it doesn't crash
-    try testing.expect(true);
+    // flag=-2 means identity transformation — vectors must be unchanged
+    try testing.expectApproxEqAbs(@as(f64, 1.0), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 6.0), y.data[2], 1e-10);
 }
 
 test "rotm: single element vector (f64)" {
@@ -13430,8 +13434,10 @@ test "rotm: single element vector (f64)" {
 
     try rotm(f64, &x, &y, param);
 
-    // Single element should still transform
-    try testing.expect(true);
+    // flag=0: x' = h[1]*x + h[2]*y = 0.8*2 + (-0.8)*3 = -0.8
+    //          y' = h[3]*x + h[0]*y = 0.6*2 + 0.6*3   =  3.0
+    try testing.expectApproxEqAbs(@as(f64, -0.8), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), y.data[0], 1e-10);
 }
 
 test "rotm: large vector n=1000 (f64)" {
@@ -13477,7 +13483,13 @@ test "rotm: type support f32" {
 
     try rotm(f32, &x, &y, param);
 
-    try testing.expect(true);
+    // flag=0: x' = h[1]*x + h[2]*y; y' = h[3]*x + h[0]*y
+    // x'[0] = 0.8*1 + (-0.8)*3 = -1.6;  y'[0] = 0.6*1 + 0.6*3 = 2.4
+    // x'[1] = 0.8*2 + (-0.8)*4 = -1.6;  y'[1] = 0.6*2 + 0.6*4 = 3.6
+    try testing.expectApproxEqAbs(@as(f32, -1.6), x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, -1.6), x.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 2.4), y.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 3.6), y.data[1], 1e-5);
 }
 
 test "rotm: type support f64" {
@@ -13496,7 +13508,13 @@ test "rotm: type support f64" {
 
     try rotm(f64, &x, &y, param);
 
-    try testing.expect(true);
+    // flag=0: x' = h[1]*x + h[2]*y; y' = h[3]*x + h[0]*y
+    // x'[0] = 0.8*1 + (-0.8)*3 = -1.6;  y'[0] = 0.6*1 + 0.6*3 = 2.4
+    // x'[1] = 0.8*2 + (-0.8)*4 = -1.6;  y'[1] = 0.6*2 + 0.6*4 = 3.6
+    try testing.expectApproxEqAbs(@as(f64, -1.6), x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -1.6), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2.4), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 3.6), y.data[1], 1e-10);
 }
 
 test "rotm: error dimension mismatch (f64)" {
