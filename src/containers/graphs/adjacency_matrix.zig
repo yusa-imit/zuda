@@ -660,3 +660,248 @@ test "AdjacencyMatrix: remove vertex" {
 
     try graph.validate();
 }
+
+test "AdjacencyMatrix: empty graph operations" {
+    const IntContext = struct {
+        fn index(_: @This(), v: u32) usize {
+            return v;
+        }
+        fn vertex(_: @This(), i: usize) u32 {
+            return @intCast(i);
+        }
+    };
+
+    const Graph = AdjacencyMatrix(u32, f32, IntContext, IntContext.index, IntContext.vertex);
+    var graph = try Graph.init(testing.allocator, .{}, true, 4);
+    defer graph.deinit();
+
+    // Verify empty graph state
+    try testing.expectEqual(@as(usize, 0), graph.vertexCount());
+    try testing.expectEqual(@as(usize, 0), graph.edgeCount());
+
+    // hasEdge on empty graph returns false
+    try testing.expect(!graph.hasEdge(0, 1));
+    try testing.expect(!graph.hasEdge(1, 0));
+    try testing.expect(!graph.hasEdge(0, 0));
+
+    // getEdge on empty graph returns null
+    try testing.expectEqual(@as(?f32, null), graph.getEdge(0, 1));
+    try testing.expectEqual(@as(?f32, null), graph.getEdge(1, 1));
+
+    // Degree queries on non-existent vertices return 0
+    try testing.expectEqual(@as(usize, 0), graph.outDegree(0));
+    try testing.expectEqual(@as(usize, 0), graph.inDegree(0));
+    try testing.expectEqual(@as(usize, 0), graph.outDegree(99));
+    try testing.expectEqual(@as(usize, 0), graph.inDegree(99));
+
+    // Neighbors iterator on empty graph yields nothing
+    var iter = graph.neighbors(0);
+    try testing.expectEqual(@as(?Graph.Neighbor, null), iter.next());
+
+    try graph.validate();
+}
+
+test "AdjacencyMatrix: iterator exhaustion behavior" {
+    const IntContext = struct {
+        fn index(_: @This(), v: u32) usize {
+            return v;
+        }
+        fn vertex(_: @This(), i: usize) u32 {
+            return @intCast(i);
+        }
+    };
+
+    const Graph = AdjacencyMatrix(u32, f32, IntContext, IntContext.index, IntContext.vertex);
+    var graph = try Graph.init(testing.allocator, .{}, true, 8);
+    defer graph.deinit();
+
+    // Create vertex with exactly 3 neighbors
+    try graph.addEdge(0, 1, 1.0);
+    try graph.addEdge(0, 2, 2.0);
+    try graph.addEdge(0, 3, 3.0);
+
+    // Iterate all 3 neighbors
+    var iter = graph.neighbors(0);
+    var count: usize = 0;
+    while (iter.next()) |_| {
+        count += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), count);
+
+    // Continue calling next() 3 more times after exhaustion
+    try testing.expectEqual(@as(?Graph.Neighbor, null), iter.next());
+    try testing.expectEqual(@as(?Graph.Neighbor, null), iter.next());
+    try testing.expectEqual(@as(?Graph.Neighbor, null), iter.next());
+
+    // Verify iterator is permanently exhausted
+    try testing.expectEqual(@as(?Graph.Neighbor, null), iter.next());
+
+    try graph.validate();
+}
+
+test "AdjacencyMatrix: duplicate edge insertion with different weights" {
+    const IntContext = struct {
+        fn index(_: @This(), v: u32) usize {
+            return v;
+        }
+        fn vertex(_: @This(), i: usize) u32 {
+            return @intCast(i);
+        }
+    };
+
+    const Graph = AdjacencyMatrix(u32, f32, IntContext, IntContext.index, IntContext.vertex);
+    var graph = try Graph.init(testing.allocator, .{}, true, 4);
+    defer graph.deinit();
+
+    // Add edge with weight 1.0
+    try graph.addEdge(0, 1, 1.0);
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+    try testing.expectEqual(@as(?f32, 1.0), graph.getEdge(0, 1));
+
+    // Add same edge again with weight 5.0 (should update, not duplicate)
+    try graph.addEdge(0, 1, 5.0);
+
+    // Edge count should NOT increase (no duplicate)
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+
+    // Weight should be updated to latest value (last write wins)
+    try testing.expectEqual(@as(?f32, 5.0), graph.getEdge(0, 1));
+
+    // Add third time with weight 10.0
+    try graph.addEdge(0, 1, 10.0);
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+    try testing.expectEqual(@as(?f32, 10.0), graph.getEdge(0, 1));
+
+    try graph.validate();
+}
+
+test "AdjacencyMatrix: remove non-existent edge" {
+    const IntContext = struct {
+        fn index(_: @This(), v: u32) usize {
+            return v;
+        }
+        fn vertex(_: @This(), i: usize) u32 {
+            return @intCast(i);
+        }
+    };
+
+    const Graph = AdjacencyMatrix(u32, f32, IntContext, IntContext.index, IntContext.vertex);
+    var graph = try Graph.init(testing.allocator, .{}, true, 4);
+    defer graph.deinit();
+
+    // Try to remove edge that doesn't exist
+    const result = graph.removeEdge(0, 1);
+    try testing.expectError(error.EdgeNotFound, result);
+
+    // Edge count should remain 0
+    try testing.expectEqual(@as(usize, 0), graph.edgeCount());
+
+    // Add an edge, then try to remove a different edge
+    try graph.addEdge(0, 1, 1.0);
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+
+    // Remove non-existent edge on existing vertices
+    const result2 = graph.removeEdge(0, 2);
+    try testing.expectError(error.EdgeNotFound, result2);
+
+    // Original edge should still exist
+    try testing.expect(graph.hasEdge(0, 1));
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+
+    // Remove non-existent edge from non-existent vertices
+    const result3 = graph.removeEdge(99, 100);
+    try testing.expectError(error.EdgeNotFound, result3);
+
+    try graph.validate();
+}
+
+test "AdjacencyMatrix: undirected self-loop edge count" {
+    const IntContext = struct {
+        fn index(_: @This(), v: u32) usize {
+            return v;
+        }
+        fn vertex(_: @This(), i: usize) u32 {
+            return @intCast(i);
+        }
+    };
+
+    const Graph = AdjacencyMatrix(u32, f32, IntContext, IntContext.index, IntContext.vertex);
+    var graph = try Graph.init(testing.allocator, .{}, false, 4); // Undirected
+    defer graph.deinit();
+
+    // Add self-loop on vertex 0
+    try graph.addEdge(0, 0, 5.0);
+
+    // Edge count should be 1 (not 2), since self-loop isn't duplicated in undirected graphs
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+
+    // Self-loop should exist
+    try testing.expect(graph.hasEdge(0, 0));
+    try testing.expectEqual(@as(?f32, 5.0), graph.getEdge(0, 0));
+
+    // Add a regular undirected edge
+    try graph.addEdge(0, 1, 3.0);
+    try testing.expectEqual(@as(usize, 2), graph.edgeCount());
+
+    // Verify symmetry for regular edge
+    try testing.expect(graph.hasEdge(0, 1));
+    try testing.expect(graph.hasEdge(1, 0));
+    try testing.expectEqual(@as(?f32, 3.0), graph.getEdge(1, 0));
+
+    // Remove self-loop
+    try graph.removeEdge(0, 0);
+    try testing.expectEqual(@as(usize, 1), graph.edgeCount());
+    try testing.expect(!graph.hasEdge(0, 0));
+
+    // Regular edge should still exist
+    try testing.expect(graph.hasEdge(0, 1));
+    try testing.expect(graph.hasEdge(1, 0));
+
+    try graph.validate();
+}
+
+test "AdjacencyMatrix: matrix resize preserves all edges" {
+    const IntContext = struct {
+        fn index(_: @This(), v: u32) usize {
+            return v;
+        }
+        fn vertex(_: @This(), i: usize) u32 {
+            return @intCast(i);
+        }
+    };
+
+    const Graph = AdjacencyMatrix(u32, f32, IntContext, IntContext.index, IntContext.vertex);
+    var graph = try Graph.init(testing.allocator, .{}, true, 2);
+    defer graph.deinit();
+
+    // Add edges within initial capacity (0->1, 1->0)
+    try graph.addEdge(0, 1, 1.0);
+    try graph.addEdge(1, 0, 2.0);
+    try testing.expectEqual(@as(usize, 2), graph.edgeCount());
+    const initial_capacity = graph.capacity;
+
+    // Add vertex 10, which forces resize
+    try graph.addVertex(10);
+    try testing.expect(graph.capacity > initial_capacity);
+
+    // Verify old edges still exist with correct weights
+    try testing.expect(graph.hasEdge(0, 1));
+    try testing.expect(graph.hasEdge(1, 0));
+    try testing.expectEqual(@as(?f32, 1.0), graph.getEdge(0, 1));
+    try testing.expectEqual(@as(?f32, 2.0), graph.getEdge(1, 0));
+
+    // Add new edge at higher indices
+    try graph.addEdge(5, 10, 5.0);
+    try testing.expect(graph.hasEdge(5, 10));
+    try testing.expectEqual(@as(?f32, 5.0), graph.getEdge(5, 10));
+
+    // Total edge count should be 3 (2 old + 1 new)
+    try testing.expectEqual(@as(usize, 3), graph.edgeCount());
+
+    // All original edges must still be present
+    try testing.expect(graph.hasEdge(0, 1));
+    try testing.expect(graph.hasEdge(1, 0));
+    try testing.expect(graph.hasEdge(5, 10));
+
+    try graph.validate();
+}
