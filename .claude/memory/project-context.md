@@ -1,3 +1,22 @@
+**Session 572 Update (2026-05-24) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — SegmentTree edge case tests added:
+- **Mode**: FEATURE MODE (counter: 572, not divisible by 5)
+- **CI Status**: ✅ GREEN — Latest run successful, 0 open issues
+- **Deliverable**: Added 6 comprehensive edge case tests to SegmentTree (10 → 16 tests, +60% coverage)
+- **Rationale**: SegmentTree had 10 tests for 525 LOC. Enhanced with structural edge cases:
+  * **Power-of-2 size (8 elements)** — perfectly balanced tree: total sum, half-range, and individual element queries
+  * **Boundary element updates (first and last)** — index 0 and index n-1 updates propagate to root correctly
+  * **Two-element tree** — smallest non-trivial structure (1 internal + 2 leaves): max query and updates
+  * **Consecutive single-element queries after update** — 7-element non-power-of-2 tree, verify neighbor integrity after middle update
+  * **Bulk overwrite then re-query** — update every element sequentially, verify total sum and partial range
+  * **Memory safety (init/deinit ×10)** — loop using testing.allocator detects any leaks
+- **Files**: src/containers/trees/segment_tree.zig (+231 lines, now 756 LOC, 16 tests)
+- **Commits**: e7843c6 (test)
+- **Tests**: ✅ 16/16 SegmentTree tests passing (was 10/10), all tests exit code 0
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage for under-tested containers (interval_tree: 10 tests, radix_tree: 10 tests, bloom_filter: 10 tests, count_min_sketch: 10 tests)
+
 **Session 571 Update (2026-05-24) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE ENHANCEMENT** — AVLTree rotation and edge case tests added:
