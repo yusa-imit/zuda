@@ -519,3 +519,234 @@ test "SegmentTree: multiple updates" {
 
     try tree.validate();
 }
+
+test "SegmentTree: power-of-2 size (8 elements)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const sumFn = struct {
+        fn f(_: SumContext, a: i32, b: i32) i32 {
+            return a + b;
+        }
+    }.f;
+
+    // Power-of-2 size creates perfectly balanced tree
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var tree = try SegmentTree(i32, SumContext, sumFn).init(allocator, &data, .{});
+    defer tree.deinit();
+
+    // Total sum [0,7] = 36
+    const sum_all = try tree.query(0, 7);
+    try testing.expectEqual(@as(i32, 36), sum_all);
+
+    // Left half [0,3] = 10
+    const sum_left = try tree.query(0, 3);
+    try testing.expectEqual(@as(i32, 10), sum_left);
+
+    // Right half [4,7] = 26
+    const sum_right = try tree.query(4, 7);
+    try testing.expectEqual(@as(i32, 26), sum_right);
+
+    // Each individual element query matches original value
+    for (0..8) |i| {
+        const elem = try tree.query(i, i);
+        try testing.expectEqual(@as(i32, @intCast(i + 1)), elem);
+    }
+
+    try tree.validate();
+}
+
+test "SegmentTree: update boundary elements (first and last)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const sumFn = struct {
+        fn f(_: SumContext, a: i32, b: i32) i32 {
+            return a + b;
+        }
+    }.f;
+
+    const data = [_]i32{ 10, 20, 30, 40, 50 };
+    var tree = try SegmentTree(i32, SumContext, sumFn).init(allocator, &data, .{});
+    defer tree.deinit();
+
+    // Initial query [0,4] = 150
+    const sum_before = try tree.query(0, 4);
+    try testing.expectEqual(@as(i32, 150), sum_before);
+
+    // Update index 0 (first) to 1
+    try tree.update(0, 1);
+    const sum_after_first = try tree.query(0, 4);
+    try testing.expectEqual(@as(i32, 141), sum_after_first);
+
+    // Verify [0,0] = 1 and [1,4] = 140
+    const first_elem = try tree.query(0, 0);
+    try testing.expectEqual(@as(i32, 1), first_elem);
+    const rest = try tree.query(1, 4);
+    try testing.expectEqual(@as(i32, 140), rest);
+
+    try tree.validate();
+
+    // Update index 4 (last) to 1
+    try tree.update(4, 1);
+    const sum_after_last = try tree.query(0, 4);
+    try testing.expectEqual(@as(i32, 92), sum_after_last);
+
+    // Verify [4,4] = 1 and [0,3] = 91
+    const last_elem = try tree.query(4, 4);
+    try testing.expectEqual(@as(i32, 1), last_elem);
+    const prefix = try tree.query(0, 3);
+    try testing.expectEqual(@as(i32, 91), prefix);
+
+    try tree.validate();
+}
+
+test "SegmentTree: two-element tree" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const MaxContext = struct {};
+    const maxFn = struct {
+        fn f(_: MaxContext, a: i32, b: i32) i32 {
+            return @max(a, b);
+        }
+    }.f;
+
+    const data = [_]i32{ 5, 3 };
+    var tree = try SegmentTree(i32, MaxContext, maxFn).init(allocator, &data, .{});
+    defer tree.deinit();
+
+    // Verify initial queries
+    const max_both = try tree.query(0, 1);
+    try testing.expectEqual(@as(i32, 5), max_both);
+    const max_left = try tree.query(0, 0);
+    try testing.expectEqual(@as(i32, 5), max_left);
+    const max_right = try tree.query(1, 1);
+    try testing.expectEqual(@as(i32, 3), max_right);
+
+    try tree.validate();
+
+    // Update index 0 to 1
+    try tree.update(0, 1);
+    const after_left_update = try tree.query(0, 1);
+    try testing.expectEqual(@as(i32, 3), after_left_update);
+    const left_single = try tree.query(0, 0);
+    try testing.expectEqual(@as(i32, 1), left_single);
+
+    try tree.validate();
+
+    // Update index 1 to 10
+    try tree.update(1, 10);
+    const after_right_update = try tree.query(0, 1);
+    try testing.expectEqual(@as(i32, 10), after_right_update);
+    const right_single = try tree.query(1, 1);
+    try testing.expectEqual(@as(i32, 10), right_single);
+
+    try tree.validate();
+}
+
+test "SegmentTree: consecutive single-element queries after updates" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const sumFn = struct {
+        fn f(_: SumContext, a: i32, b: i32) i32 {
+            return a + b;
+        }
+    }.f;
+
+    // Non-power-of-2 size
+    const data = [_]i32{ 1, 2, 3, 4, 5, 6, 7 };
+    var tree = try SegmentTree(i32, SumContext, sumFn).init(allocator, &data, .{});
+    defer tree.deinit();
+
+    // Update index 3 (middle) to 100
+    try tree.update(3, 100);
+
+    // Query each individual element and verify
+    const expected = [_]i32{ 1, 2, 3, 100, 5, 6, 7 };
+    for (expected, 0..) |exp_val, i| {
+        const elem = try tree.query(i, i);
+        try testing.expectEqual(exp_val, elem);
+    }
+
+    // Specifically verify neighbors of updated index
+    const before_update = try tree.query(2, 2);
+    try testing.expectEqual(@as(i32, 3), before_update);
+    const after_update = try tree.query(4, 4);
+    try testing.expectEqual(@as(i32, 5), after_update);
+
+    try tree.validate();
+}
+
+test "SegmentTree: bulk overwrite then re-query" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const sumFn = struct {
+        fn f(_: SumContext, a: i32, b: i32) i32 {
+            return a + b;
+        }
+    }.f;
+
+    const data = [_]i32{ 1, 1, 1, 1, 1 };
+    var tree = try SegmentTree(i32, SumContext, sumFn).init(allocator, &data, .{});
+    defer tree.deinit();
+
+    // Initial sum [0,4] = 5
+    const initial_sum = try tree.query(0, 4);
+    try testing.expectEqual(@as(i32, 5), initial_sum);
+
+    // Update each index to its index+1
+    try tree.update(0, 1);
+    try tree.update(1, 2);
+    try tree.update(2, 3);
+    try tree.update(3, 4);
+    try tree.update(4, 5);
+
+    // Final sum [0,4] = 15
+    const final_sum = try tree.query(0, 4);
+    try testing.expectEqual(@as(i32, 15), final_sum);
+
+    // Query [1,3] = 2+3+4 = 9
+    const middle_sum = try tree.query(1, 3);
+    try testing.expectEqual(@as(i32, 9), middle_sum);
+
+    try tree.validate();
+}
+
+test "SegmentTree: memory safety (init/deinit repeated)" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const SumContext = struct {};
+    const sumFn = struct {
+        fn f(_: SumContext, a: i32, b: i32) i32 {
+            return a + b;
+        }
+    }.f;
+
+    // Loop 10 times to detect memory leaks via testing.allocator
+    for (0..10) |_| {
+        const data = [_]i32{ 1, 2, 3 };
+        var tree = try SegmentTree(i32, SumContext, sumFn).init(allocator, &data, .{});
+
+        // Initial query [0,2] = 6
+        const sum_before = try tree.query(0, 2);
+        try testing.expectEqual(@as(i32, 6), sum_before);
+
+        // Update index 1 to 10
+        try tree.update(1, 10);
+
+        // Query [0,2] = 14
+        const sum_after = try tree.query(0, 2);
+        try testing.expectEqual(@as(i32, 14), sum_after);
+
+        try tree.validate();
+        tree.deinit();
+    }
+}
