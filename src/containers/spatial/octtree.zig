@@ -758,3 +758,231 @@ test "OctTree - empty tree" {
 
     try tree.validate();
 }
+
+test "OctTree - boundary points inclusion" {
+    const allocator = testing.allocator;
+    const Tree = OctTree(u32, 4);
+
+    const boundary = Tree.AABB{
+        .min = .{ .x = 0, .y = 0, .z = 0 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var tree = Tree.init(allocator, boundary);
+    defer tree.deinit();
+
+    // Insert points at exact corner coordinates (min boundary)
+    try tree.insert(.{ .x = 0, .y = 0, .z = 0 }, 1);
+    try tree.insert(.{ .x = 100, .y = 100, .z = 100 }, 2);
+
+    // Verify points at exact boundaries are contained and retrievable
+    try testing.expect(tree.contains(.{ .x = 0, .y = 0, .z = 0 }));
+    try testing.expect(tree.contains(.{ .x = 100, .y = 100, .z = 100 }));
+
+    try testing.expectEqual(@as(?u32, 1), tree.get(.{ .x = 0, .y = 0, .z = 0 }));
+    try testing.expectEqual(@as(?u32, 2), tree.get(.{ .x = 100, .y = 100, .z = 100 }));
+
+    try testing.expectEqual(@as(usize, 2), tree.count());
+    try tree.validate();
+}
+
+test "OctTree - iterator exhaustion consistency" {
+    const allocator = testing.allocator;
+    const Tree = OctTree(u32, 4);
+
+    const boundary = Tree.AABB{
+        .min = .{ .x = 0, .y = 0, .z = 0 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var tree = Tree.init(allocator, boundary);
+    defer tree.deinit();
+
+    try tree.insert(.{ .x = 10, .y = 10, .z = 10 }, 1);
+    try tree.insert(.{ .x = 20, .y = 20, .z = 20 }, 2);
+    try tree.insert(.{ .x = 30, .y = 30, .z = 30 }, 3);
+
+    var iter = try tree.iterator(allocator);
+    defer iter.deinit(allocator);
+
+    // Exhaust the iterator
+    var count: usize = 0;
+    while (iter.next(allocator)) |_| {
+        count += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), count);
+
+    // Call next() 3 more times - all should return null
+    try testing.expectEqual(@as(?Tree.Entry, null), iter.next(allocator));
+    try testing.expectEqual(@as(?Tree.Entry, null), iter.next(allocator));
+    try testing.expectEqual(@as(?Tree.Entry, null), iter.next(allocator));
+}
+
+test "OctTree - sphere query radius precision" {
+    const allocator = testing.allocator;
+    const Tree = OctTree(u32, 4);
+
+    const boundary = Tree.AABB{
+        .min = .{ .x = 0, .y = 0, .z = 0 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var tree = Tree.init(allocator, boundary);
+    defer tree.deinit();
+
+    const center = Tree.Point3D{ .x = 50, .y = 50, .z = 50 };
+    const radius = 10.0;
+
+    // Point exactly at distance r from center: sqrt(6^2 + 8^2 + 0^2) = 10.0
+    const point_at_radius = Tree.Point3D{ .x = 56, .y = 58, .z = 50 };
+
+    // Point beyond radius: sqrt(7^2 + 8^2 + 0^2) = sqrt(113) ≈ 10.63 > 10
+    const point_beyond_radius = Tree.Point3D{ .x = 57, .y = 58, .z = 50 };
+
+    // Point well within radius
+    const point_inside = Tree.Point3D{ .x = 55, .y = 55, .z = 55 };
+
+    try tree.insert(point_at_radius, 1);
+    try tree.insert(point_beyond_radius, 2);
+    try tree.insert(point_inside, 3);
+
+    var results = try tree.querySphere(center, radius);
+    defer results.deinit(allocator);
+
+    // Should contain point_at_radius and point_inside, but not point_beyond_radius
+    try testing.expectEqual(@as(usize, 2), results.items.len);
+
+    // Verify that point_at_radius and point_inside are in results
+    var found_inside = false;
+    var found_at_radius = false;
+    for (results.items) |entry| {
+        if (entry.value == 3) found_inside = true;
+        if (entry.value == 1) found_at_radius = true;
+    }
+    try testing.expect(found_inside);
+    try testing.expect(found_at_radius);
+}
+
+test "OctTree - remove from subdivided tree" {
+    const allocator = testing.allocator;
+    const Tree = OctTree(u32, 4);
+
+    const boundary = Tree.AABB{
+        .min = .{ .x = 0, .y = 0, .z = 0 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var tree = Tree.init(allocator, boundary);
+    defer tree.deinit();
+
+    // Insert 8 points to cause subdivision (capacity=4)
+    try tree.insert(.{ .x = 10, .y = 10, .z = 10 }, 1);
+    try tree.insert(.{ .x = 20, .y = 20, .z = 20 }, 2);
+    try tree.insert(.{ .x = 30, .y = 30, .z = 30 }, 3);
+    try tree.insert(.{ .x = 40, .y = 40, .z = 40 }, 4);
+    try tree.insert(.{ .x = 50, .y = 50, .z = 50 }, 5);
+    try tree.insert(.{ .x = 60, .y = 60, .z = 60 }, 6);
+    try tree.insert(.{ .x = 70, .y = 70, .z = 70 }, 7);
+    try tree.insert(.{ .x = 80, .y = 80, .z = 80 }, 8);
+
+    // Verify subdivision occurred
+    try testing.expect(tree.getHeight() > 1);
+    try testing.expectEqual(@as(usize, 8), tree.count());
+
+    // Remove 3 points from different regions
+    try testing.expect(tree.remove(.{ .x = 10, .y = 10, .z = 10 }));
+    try testing.expect(tree.remove(.{ .x = 50, .y = 50, .z = 50 }));
+    try testing.expect(tree.remove(.{ .x = 80, .y = 80, .z = 80 }));
+
+    // Verify count decreased correctly
+    try testing.expectEqual(@as(usize, 5), tree.count());
+
+    // Verify removed points are no longer retrievable
+    try testing.expectEqual(@as(?u32, null), tree.get(.{ .x = 10, .y = 10, .z = 10 }));
+    try testing.expectEqual(@as(?u32, null), tree.get(.{ .x = 50, .y = 50, .z = 50 }));
+    try testing.expectEqual(@as(?u32, null), tree.get(.{ .x = 80, .y = 80, .z = 80 }));
+
+    // Verify remaining points are still accessible
+    try testing.expectEqual(@as(?u32, 2), tree.get(.{ .x = 20, .y = 20, .z = 20 }));
+    try testing.expectEqual(@as(?u32, 5), tree.get(.{ .x = 60, .y = 60, .z = 60 }));
+
+    try tree.validate();
+}
+
+test "OctTree - range query with empty result" {
+    const allocator = testing.allocator;
+    const Tree = OctTree(u32, 4);
+
+    const boundary = Tree.AABB{
+        .min = .{ .x = 0, .y = 0, .z = 0 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var tree = Tree.init(allocator, boundary);
+    defer tree.deinit();
+
+    // Insert points in one corner
+    try tree.insert(.{ .x = 10, .y = 10, .z = 10 }, 1);
+    try tree.insert(.{ .x = 20, .y = 20, .z = 20 }, 2);
+    try tree.insert(.{ .x = 30, .y = 30, .z = 30 }, 3);
+
+    // Query a completely disjoint region (other corner)
+    const disjoint_range = Tree.AABB{
+        .min = .{ .x = 60, .y = 60, .z = 60 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var results = try tree.queryRange(disjoint_range);
+    defer results.deinit(allocator);
+
+    // Result should be empty
+    try testing.expectEqual(@as(usize, 0), results.items.len);
+}
+
+test "OctTree - clustered points in small region cause deep subdivision" {
+    const allocator = testing.allocator;
+    const Tree = OctTree(u32, 4);
+
+    const boundary = Tree.AABB{
+        .min = .{ .x = 0, .y = 0, .z = 0 },
+        .max = .{ .x = 100, .y = 100, .z = 100 },
+    };
+
+    var tree = Tree.init(allocator, boundary);
+    defer tree.deinit();
+
+    // Insert 20 points all clustered in a tiny region (1% of tree boundary)
+    // Cluster around (5, 5, 5) with spread of 1.0
+    var i: u32 = 0;
+    while (i < 20) : (i += 1) {
+        const offset = @as(f64, @floatFromInt(i)) * 0.05; // 0, 0.05, 0.10, ..., 0.95
+        try tree.insert(.{ .x = 5.0 + offset, .y = 5.0 + offset, .z = 5.0 + offset }, i + 1);
+    }
+
+    // Verify all 20 points were inserted
+    try testing.expectEqual(@as(usize, 20), tree.count());
+
+    // Tree should have subdivided due to clustering
+    try testing.expect(tree.getHeight() > 1);
+
+    // Verify tree invariants still hold
+    try tree.validate();
+
+    // Verify all points are still retrievable
+    i = 0;
+    while (i < 20) : (i += 1) {
+        const offset = @as(f64, @floatFromInt(i)) * 0.05;
+        try testing.expectEqual(@as(?u32, i + 1), tree.get(.{ .x = 5.0 + offset, .y = 5.0 + offset, .z = 5.0 + offset }));
+    }
+
+    // Range query over the cluster should return all points
+    const cluster_range = Tree.AABB{
+        .min = .{ .x = 4.9, .y = 4.9, .z = 4.9 },
+        .max = .{ .x = 6.1, .y = 6.1, .z = 6.1 },
+    };
+
+    var results = try tree.queryRange(cluster_range);
+    defer results.deinit(allocator);
+
+    try testing.expectEqual(@as(usize, 20), results.items.len);
+}
