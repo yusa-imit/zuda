@@ -1,3 +1,35 @@
+**Session 576 Update (2026-05-25) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — ARCCache, CSR, QuadTree edge case tests added:
+- **Mode**: FEATURE MODE (counter: 576, not divisible by 5)
+- **CI Status**: ✅ GREEN — 3 recent runs successful, 0 open issues
+- **Deliverable**: Added 6 comprehensive edge case tests to ARCCache, CSR, QuadTree (10 → 16 tests each, +60% coverage)
+- **ARCCache new tests** (src/containers/cache/arc_cache.zig, +168 lines):
+  * **put returns old value on duplicate** — put(k,v1)=null, put(k,v2)=v1, put(k,v3)=v2; count stays 1
+  * **T2 items survive batch eviction** — access 3 items 2× (T2 promotion), insert 15 more; T2 items persist, count≤cap
+  * **capacity 1 serial replacement** — put A/B/C into cap=1 cache; each evicts previous
+  * **repeated put on same key keeps count at 1** — 5 updates to same key; count=1, final value correct
+  * **remove nonexistent key returns null** — remove(999) returns null, count unchanged; re-remove also null
+  * **init-deinit loop memory safety** — 10 init/put-5/get-5/deinit cycles via testing.allocator
+- **CSR new tests** (src/containers/graphs/compressed_sparse_row.zig, +147 lines):
+  * **isolated vertex has zero degree** — 3-vertex graph with edge 0→1; vertex 2 has out=0, in=0
+  * **iterator exhaustion is idempotent** — drain all 3 entries; 3 more next() calls all return null
+  * **undirected graph has symmetric degrees** — outDegree==inDegree for all vertices in undirected graph
+  * **single vertex with no edges** — fromEdges(1 vertex, 0 edges); isEmpty=false, edgeCount=0
+  * **getEdgeWeight returns null for missing edge** — non-existent edges return null weight
+  * **memory safety loop** — 10 init/fromEdges/validate/deinit cycles via testing.allocator
+- **QuadTree new tests** (src/containers/spatial/quad_tree.zig, +269 lines):
+  * **deep subdivision with capacity 1** — cap=1 forces split after each point; 8 points, size=8, validate() passes
+  * **range query returns correct point IDs** — 4 quadrant points; query southwest returns exactly id=1
+  * **full bounds range query returns all points** — range=entire bounds; returns all 5 inserted points
+  * **single point tree operations** — nearest finds the 1 point; range incl. it returns 1, range excl. returns 0
+  * **nearest neighbor is geometrically closest** — 3 points at (10,10), (50,50), (90,90); verify by Euclidean distance
+  * **range query after forced subdivision** — cap=1, 6 points; small rect [0,30]×[0,30] returns exactly ids 1 and 6
+- **Commit**: eab320f (test)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage for remaining 10-test containers (suffix_array, suffix_tree)
+
 **Session 575 Update (2026-05-24) — STABILIZATION MODE:**
 
 ✅ **TEST QUALITY AUDIT** — Strengthened 10 weak distribution tests:
