@@ -1,3 +1,28 @@
+**Session 574 Update (2026-05-24) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — CountMinSketch + RadixTree edge case tests added:
+- **Mode**: FEATURE MODE (counter: 574, not divisible by 5)
+- **CI Status**: ✅ GREEN — Latest run successful, 0 open issues
+- **Deliverable**: Added 6 comprehensive edge case tests to CountMinSketch and RadixTree (10 → 16 tests each)
+- **CountMinSketch new tests** (src/containers/probabilistic/count_min_sketch.zig, +176 lines):
+  * **zero-count add is no-op** — add(42, 0) doesn't change estimate or totalCount
+  * **single vs incremental adds equivalence** — add(item, 500) once == add(item, 1) x500 times
+  * **totalCount monotonically increases** — grows with each add, zero-count add doesn't change it
+  * **merge commutativity** — A.merge(B) and B.merge(A) produce same estimates and totalCount
+  * **clear then re-add fresh counts** — estimates for cleared items return 0; new items tracked correctly
+  * **memory safety loop** — 10 init/add/estimate/deinit cycles via testing.allocator
+- **RadixTree new tests** (src/containers/trees/radix_tree.zig, +133 lines):
+  * **remove leaf preserves siblings** — removing "car" keeps "card"=2 and "care"=3 intact; validate() passes
+  * **insert returns old value** — inserting same key returns previous value; count stays 1
+  * **LCP on single key** — single inserted key "computer" is the full LCP
+  * **LCP on empty tree** — longestCommonPrefix() returns empty slice (len==0)
+  * **prefix iterator exhaustion idempotence** — repeated next() after depletion all return null
+  * **memory safety loop** — 10 init/insert/verify/remove/deinit cycles via testing.allocator
+- **Commit**: 47a8b30 (test)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage for remaining 10-test containers (quad_tree, suffix_array, suffix_tree)
+
 **Session 573 Update (2026-05-24) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE ENHANCEMENT** — IntervalTree + BloomFilter edge case tests added:
