@@ -619,3 +619,146 @@ test "CSR: stress test" {
 
     try csr.validate();
 }
+
+test "CSR: isolated vertex has zero degree" {
+    const allocator = std.testing.allocator;
+
+    const edges = [_]Edge(i32){
+        .{ .from = 0, .to = 1, .weight = 5 },
+    };
+
+    var csr = try CompressedSparseRow(i32).fromEdges(allocator, 3, &edges, true);
+    defer csr.deinit();
+
+    // Vertex 2 is isolated (no edges in or out)
+    try std.testing.expectEqual(@as(usize, 0), csr.outDegree(2));
+    try std.testing.expectEqual(@as(usize, 0), csr.inDegree(2));
+
+    // Vertex 0 has outgoing edge to 1
+    try std.testing.expectEqual(@as(usize, 1), csr.outDegree(0));
+    // Vertex 1 has incoming edge from 0
+    try std.testing.expectEqual(@as(usize, 1), csr.inDegree(1));
+
+    // No edge from 2 to anywhere
+    try std.testing.expect(!csr.hasEdge(2, 0));
+    try std.testing.expect(!csr.hasEdge(0, 2));
+
+    try csr.validate();
+}
+
+test "CSR: iterator exhaustion is idempotent" {
+    const allocator = std.testing.allocator;
+
+    const edges = [_]Edge(i32){
+        .{ .from = 0, .to = 1, .weight = 10 },
+        .{ .from = 0, .to = 2, .weight = 20 },
+        .{ .from = 0, .to = 3, .weight = 30 },
+    };
+
+    var csr = try CompressedSparseRow(i32).fromEdges(allocator, 4, &edges, true);
+    defer csr.deinit();
+
+    // Get iterator and drain all entries
+    var iter = csr.iterator(0);
+    var count: usize = 0;
+    while (iter.next()) |_| {
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), count);
+
+    // Call next() 3 more times on exhausted iterator — should all return null
+    try std.testing.expectEqual(@as(?@TypeOf(iter).Entry, null), iter.next());
+    try std.testing.expectEqual(@as(?@TypeOf(iter).Entry, null), iter.next());
+    try std.testing.expectEqual(@as(?@TypeOf(iter).Entry, null), iter.next());
+
+    try csr.validate();
+}
+
+test "CSR: undirected graph has symmetric degrees" {
+    const allocator = std.testing.allocator;
+
+    const edges = [_]Edge(i32){
+        .{ .from = 0, .to = 1, .weight = null },
+        .{ .from = 1, .to = 2, .weight = null },
+    };
+
+    var csr = try CompressedSparseRow(i32).fromEdges(allocator, 3, &edges, false);
+    defer csr.deinit();
+
+    // In undirected CSR: outDegree == inDegree (both directions stored)
+    try std.testing.expectEqual(csr.outDegree(0), csr.inDegree(0));
+    try std.testing.expectEqual(csr.outDegree(1), csr.inDegree(1));
+    try std.testing.expectEqual(csr.outDegree(2), csr.inDegree(2));
+
+    // Verify specific values
+    try std.testing.expectEqual(@as(usize, 1), csr.outDegree(0)); // 0-1
+    try std.testing.expectEqual(@as(usize, 2), csr.outDegree(1)); // 1-0, 1-2
+    try std.testing.expectEqual(@as(usize, 1), csr.outDegree(2)); // 2-1
+
+    try csr.validate();
+}
+
+test "CSR: single vertex with no edges" {
+    const allocator = std.testing.allocator;
+
+    var csr = try CompressedSparseRow(i32).fromEdges(allocator, 1, &[_]Edge(i32){}, true);
+    defer csr.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), csr.vertexCount());
+    try std.testing.expectEqual(@as(usize, 0), csr.edgeCount());
+    try std.testing.expect(!csr.isEmpty()); // Has a vertex
+
+    try std.testing.expectEqual(@as(usize, 0), csr.outDegree(0));
+    try std.testing.expectEqual(@as(usize, 0), csr.inDegree(0));
+    try std.testing.expect(!csr.hasEdge(0, 0));
+
+    try csr.validate();
+}
+
+test "CSR: getEdgeWeight returns null for missing edge" {
+    const allocator = std.testing.allocator;
+
+    const edges = [_]Edge(i32){
+        .{ .from = 0, .to = 1, .weight = 42 },
+        .{ .from = 1, .to = 2, .weight = 99 },
+    };
+
+    var csr = try CompressedSparseRow(i32).fromEdges(allocator, 3, &edges, true);
+    defer csr.deinit();
+
+    // Existing edges return weights
+    try std.testing.expectEqual(@as(?i32, 42), csr.getEdgeWeight(0, 1));
+    try std.testing.expectEqual(@as(?i32, 99), csr.getEdgeWeight(1, 2));
+
+    // Reverse edges don't exist (directed graph)
+    try std.testing.expectEqual(@as(?i32, null), csr.getEdgeWeight(1, 0));
+
+    // Non-existent edges return null
+    try std.testing.expectEqual(@as(?i32, null), csr.getEdgeWeight(0, 2));
+    try std.testing.expectEqual(@as(?i32, null), csr.getEdgeWeight(2, 1));
+
+    try csr.validate();
+}
+
+test "CSR: memory safety loop" {
+    const allocator = std.testing.allocator;
+
+    var iter_count: usize = 0;
+    while (iter_count < 10) : (iter_count += 1) {
+        const edges = [_]Edge(i32){
+            .{ .from = 0, .to = 1, .weight = 10 },
+            .{ .from = 1, .to = 2, .weight = 20 },
+            .{ .from = 2, .to = 0, .weight = 30 },
+        };
+
+        var csr = try CompressedSparseRow(i32).fromEdges(allocator, 3, &edges, true);
+        defer csr.deinit();
+
+        // Verify structure
+        try std.testing.expectEqual(@as(usize, 3), csr.vertexCount());
+        try std.testing.expectEqual(@as(usize, 3), csr.edgeCount());
+        try std.testing.expect(csr.hasEdge(0, 1));
+        try std.testing.expectEqual(@as(?i32, 20), csr.getEdgeWeight(1, 2));
+    }
+    // allocator catches leaks
+}

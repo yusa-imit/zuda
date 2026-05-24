@@ -704,3 +704,274 @@ test "QuadTree: memory safety with multiple operations" {
         try tree.validate();
     }
 }
+
+test "QuadTree: deep subdivision with capacity 1" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    // capacity=1 forces subdivision after each point
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 1);
+    defer tree.deinit();
+
+    // Insert 8 points in all four quadrants
+    try tree.insert(.{ .x = 10, .y = 10, .id = 1 }); // SW
+    try tree.insert(.{ .x = 90, .y = 10, .id = 2 }); // SE
+    try tree.insert(.{ .x = 10, .y = 90, .id = 3 }); // NW
+    try tree.insert(.{ .x = 90, .y = 90, .id = 4 }); // NE
+    try tree.insert(.{ .x = 50, .y = 10, .id = 5 }); // S-center
+    try tree.insert(.{ .x = 10, .y = 50, .id = 6 }); // W-center
+    try tree.insert(.{ .x = 90, .y = 50, .id = 7 }); // E-center
+    try tree.insert(.{ .x = 50, .y = 90, .id = 8 }); // N-center
+
+    try std.testing.expectEqual(@as(usize, 8), tree.size());
+    try tree.validate();
+}
+
+test "QuadTree: range query returns correct point IDs" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Insert 4 points with distinct IDs
+    try tree.insert(.{ .x = 10, .y = 10, .id = 1 });
+    try tree.insert(.{ .x = 80, .y = 10, .id = 2 });
+    try tree.insert(.{ .x = 10, .y = 80, .id = 3 });
+    try tree.insert(.{ .x = 80, .y = 80, .id = 4 });
+
+    // Query rect covering only southwest region (10,10)
+    const query = QT.Rect{ .min_x = 0, .max_x = 50, .min_y = 0, .max_y = 50 };
+    var result = try tree.rangeQuery(std.testing.allocator, query);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), result.items.len);
+    try std.testing.expectEqual(@as(u32, 1), result.items[0].id);
+
+    try tree.validate();
+}
+
+test "QuadTree: full bounds range query returns all points" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Insert 5 points at various coordinates
+    try tree.insert(.{ .x = 10, .y = 10, .id = 1 });
+    try tree.insert(.{ .x = 30, .y = 30, .id = 2 });
+    try tree.insert(.{ .x = 50, .y = 50, .id = 3 });
+    try tree.insert(.{ .x = 70, .y = 70, .id = 4 });
+    try tree.insert(.{ .x = 90, .y = 90, .id = 5 });
+
+    // Query entire bounds
+    const query = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+    var result = try tree.rangeQuery(std.testing.allocator, query);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 5), result.items.len);
+
+    try tree.validate();
+}
+
+test "QuadTree: single point tree operations" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Insert exactly 1 point
+    try tree.insert(.{ .x = 40, .y = 60, .id = 7 });
+    try std.testing.expectEqual(@as(usize, 1), tree.size());
+
+    // Nearest neighbor at exact same location
+    const nn = tree.nearest(40, 60);
+    try std.testing.expect(nn != null);
+    try std.testing.expectEqual(@as(u32, 7), nn.?.id);
+
+    // Range query covering the point
+    const query1 = QT.Rect{ .min_x = 30, .max_x = 50, .min_y = 50, .max_y = 70 };
+    var result1 = try tree.rangeQuery(std.testing.allocator, query1);
+    defer result1.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), result1.items.len);
+    try std.testing.expectEqual(@as(u32, 7), result1.items[0].id);
+
+    // Range query NOT covering the point
+    const query2 = QT.Rect{ .min_x = 70, .max_x = 90, .min_y = 70, .max_y = 90 };
+    var result2 = try tree.rangeQuery(std.testing.allocator, query2);
+    defer result2.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 0), result2.items.len);
+
+    try tree.validate();
+}
+
+test "QuadTree: nearest neighbor is geometrically closest" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 4);
+    defer tree.deinit();
+
+    // Insert 3 points
+    try tree.insert(.{ .x = 10, .y = 10, .id = 1 });
+    try tree.insert(.{ .x = 50, .y = 50, .id = 2 });
+    try tree.insert(.{ .x = 90, .y = 90, .id = 3 });
+
+    // Query (15, 15): closest is (10, 10) with distance ~7.07
+    const nn1 = tree.nearest(15, 15);
+    try std.testing.expect(nn1 != null);
+    try std.testing.expectEqual(@as(u32, 1), nn1.?.id);
+
+    // Query (85, 85): closest is (90, 90) with distance ~7.07
+    const nn2 = tree.nearest(85, 85);
+    try std.testing.expect(nn2 != null);
+    try std.testing.expectEqual(@as(u32, 3), nn2.?.id);
+
+    try tree.validate();
+}
+
+test "QuadTree: range query after forced subdivision" {
+    const Point2D = struct {
+        x: f64,
+        y: f64,
+        id: u32,
+    };
+
+    const ctx = {};
+    const getX = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.x;
+        }
+    }.f;
+    const getY = struct {
+        fn f(_: @TypeOf(ctx), p: Point2D) f64 {
+            return p.y;
+        }
+    }.f;
+
+    const QT = QuadTree(Point2D, @TypeOf(ctx), getX, getY);
+    const bounds = QT.Rect{ .min_x = 0, .max_x = 100, .min_y = 0, .max_y = 100 };
+
+    // capacity=1 forces subdivision at every insert
+    var tree = try QT.init(std.testing.allocator, ctx, bounds, 1);
+    defer tree.deinit();
+
+    // Insert 6 points, spreading across quadrants
+    try tree.insert(.{ .x = 5, .y = 5, .id = 1 });     // SW
+    try tree.insert(.{ .x = 5, .y = 95, .id = 2 });    // NW
+    try tree.insert(.{ .x = 95, .y = 5, .id = 3 });    // SE
+    try tree.insert(.{ .x = 95, .y = 95, .id = 4 });   // NE
+    try tree.insert(.{ .x = 50, .y = 50, .id = 5 });   // Center
+    try tree.insert(.{ .x = 25, .y = 25, .id = 6 });   // SW-ish
+
+    // Query small rect [0, 30] × [0, 30] should include id=1 and id=6
+    const query = QT.Rect{ .min_x = 0, .max_x = 30, .min_y = 0, .max_y = 30 };
+    var result = try tree.rangeQuery(std.testing.allocator, query);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), result.items.len);
+
+    // Verify both id=1 and id=6 are present
+    var found_1 = false;
+    var found_6 = false;
+    for (result.items) |point| {
+        if (point.id == 1) found_1 = true;
+        if (point.id == 6) found_6 = true;
+    }
+    try std.testing.expect(found_1);
+    try std.testing.expect(found_6);
+
+    try tree.validate();
+}

@@ -618,3 +618,172 @@ test "ARCCache: memory leak check" {
 
     // All allocations should be freed on deinit
 }
+
+test "ARCCache: put returns old value on duplicate" {
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 5);
+    defer cache.deinit();
+
+    // First put returns null (key was absent)
+    const old1 = try cache.put(1, 100);
+    try testing.expectEqual(@as(?u32, null), old1);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(u32, 100), cache.get(1).?);
+
+    // Second put returns old value
+    const old2 = try cache.put(1, 200);
+    try testing.expectEqual(@as(?u32, 100), old2);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(u32, 200), cache.get(1).?);
+
+    // Third put returns previous old value
+    const old3 = try cache.put(1, 300);
+    try testing.expectEqual(@as(?u32, 200), old3);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(u32, 300), cache.get(1).?);
+
+    try cache.validate();
+}
+
+test "ARCCache: T2 items survive batch eviction" {
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 10);
+    defer cache.deinit();
+
+    // Fill cache with items 0..10
+    var i: u32 = 0;
+    while (i < 10) : (i += 1) {
+        _ = try cache.put(i, i * 10);
+    }
+    try testing.expectEqual(@as(usize, 10), cache.count());
+
+    // Access items 0, 1, 2 multiple times to promote them to T2 (frequent)
+    _ = cache.get(0);
+    _ = cache.get(0);
+    _ = cache.get(1);
+    _ = cache.get(1);
+    _ = cache.get(2);
+    _ = cache.get(2);
+
+    // Insert 15 more items (keys 10..25) to force evictions
+    var j: u32 = 10;
+    while (j < 25) : (j += 1) {
+        _ = try cache.put(j, j * 10);
+    }
+
+    // Cache should be at capacity
+    try testing.expectEqual(@as(usize, 10), cache.count());
+
+    // Items 0, 1, 2 should STILL be present (they're in T2/frequent)
+    try testing.expectEqual(@as(u32, 0), cache.get(0).?);
+    try testing.expectEqual(@as(u32, 10), cache.get(1).?);
+    try testing.expectEqual(@as(u32, 20), cache.get(2).?);
+
+    try cache.validate();
+}
+
+test "ARCCache: capacity 1 serial replacement" {
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 1);
+    defer cache.deinit();
+
+    // Insert first key
+    _ = try cache.put(1, 10);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(u32, 10), cache.get(1).?);
+
+    // Insert second key, evicts first
+    _ = try cache.put(2, 20);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(?u32, null), cache.get(1));
+    try testing.expectEqual(@as(u32, 20), cache.get(2).?);
+
+    // Insert third key, evicts second
+    _ = try cache.put(3, 30);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(?u32, null), cache.get(2));
+    try testing.expectEqual(@as(u32, 30), cache.get(3).?);
+
+    try cache.validate();
+}
+
+test "ARCCache: repeated put on same key keeps count at 1" {
+    const Cache = ARCCache(u32, []const u8, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 10);
+    defer cache.deinit();
+
+    // Put key 42 five times with different string values
+    _ = try cache.put(42, "a");
+    try testing.expectEqual(@as(usize, 1), cache.count());
+
+    _ = try cache.put(42, "b");
+    try testing.expectEqual(@as(usize, 1), cache.count());
+
+    _ = try cache.put(42, "c");
+    try testing.expectEqual(@as(usize, 1), cache.count());
+
+    _ = try cache.put(42, "d");
+    try testing.expectEqual(@as(usize, 1), cache.count());
+
+    _ = try cache.put(42, "e");
+    try testing.expectEqual(@as(usize, 1), cache.count());
+
+    // After all 5 puts, get should return "e"
+    try testing.expectEqualStrings("e", cache.get(42).?);
+
+    try cache.validate();
+}
+
+test "ARCCache: remove nonexistent key returns null" {
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 5);
+    defer cache.deinit();
+
+    // Insert keys 1, 2, 3
+    _ = try cache.put(1, 10);
+    _ = try cache.put(2, 20);
+    _ = try cache.put(3, 30);
+    try testing.expectEqual(@as(usize, 3), cache.count());
+
+    // Remove nonexistent key should return null
+    const removed_nonexistent = cache.remove(999);
+    try testing.expectEqual(@as(?u32, null), removed_nonexistent);
+    try testing.expectEqual(@as(usize, 3), cache.count());
+
+    // Remove existing key 2 returns its value
+    const removed_2 = cache.remove(2);
+    try testing.expectEqual(@as(?u32, 20), removed_2);
+    try testing.expectEqual(@as(usize, 2), cache.count());
+
+    // Remove 2 again returns null
+    const removed_2_again = cache.remove(2);
+    try testing.expectEqual(@as(?u32, null), removed_2_again);
+    try testing.expectEqual(@as(usize, 2), cache.count());
+
+    try cache.validate();
+}
+
+test "ARCCache: init-deinit loop memory safety" {
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+
+    // Loop 10 times: init → put → get → deinit
+    var iter: u32 = 0;
+    while (iter < 10) : (iter += 1) {
+        var cache = Cache.init(testing.allocator, 5);
+        defer cache.deinit();
+
+        // Put keys 0..5 with values i*10
+        var i: u32 = 0;
+        while (i < 5) : (i += 1) {
+            _ = try cache.put(i, i * 10);
+        }
+
+        // Get each key and assert
+        i = 0;
+        while (i < 5) : (i += 1) {
+            const expected = i * 10;
+            try testing.expectEqual(expected, cache.get(i).?);
+        }
+    }
+    // testing.allocator will catch any leaks
+}
