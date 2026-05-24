@@ -1,3 +1,28 @@
+**Session 577 Update (2026-05-25) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — SuffixArray + SuffixTree edge case tests added:
+- **Mode**: FEATURE MODE (counter: 577, not divisible by 5)
+- **CI Status**: ✅ GREEN — 3 recent runs successful, 0 open issues
+- **Deliverable**: Added 6 comprehensive edge case tests to SuffixArray and SuffixTree (10 → 16 tests each, +60% coverage)
+- **SuffixArray new tests** (src/containers/strings/suffix_array.zig, +89 lines):
+  * **LCP values correctness** — verify lcp[rank[3]]=1 ("a"↔"ana"), lcp[rank[1]]=3 ("ana"↔"anana"), lcp[rank[2]]=2 ("na"↔"nana")
+  * **buildLCP is idempotent** — second buildLCP() call is no-op (same ptr, no re-allocation)
+  * **findAll empty slice for missing pattern** — "xyz" → len=0 slice (not null); defer free works; count=0, contains=false agree
+  * **full text as pattern** — contains("banana")=true, count=1, findAll→[0]
+  * **pattern longer than text** — contains("bananana")=false, count=0, findAll→len=0
+  * **memory safety init/deinit loop** — 10 cycles: init("mississippi")/validate/count("issi"=2)/findAll/deinit
+- **SuffixTree new tests** (src/containers/strings/suffix_tree.zig, +61 lines):
+  * **init empty text returns error** — init("") → error.EmptyText confirmed
+  * **empty pattern matches everywhere** — contains("") → true; findAll("") → 0 items (empty pattern returns empty slice)
+  * **pattern longer than text not found** — contains("bananana")=false, findAll→0 items
+  * **all identical characters** — "aaaa": contains("aaa")=true, !contains("aaaaa"), findAll("aa")=3 positions, validate() passes
+  * **full text as pattern** — contains("banana")=true, findAll→[0] (1 occurrence at pos 0)
+  * **memory safety init/deinit loop** — 10 cycles: init("mississippi")/validate/findAll("issi"=2)/deinit
+- **Commit**: 52baaeb (test)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage for remaining containers with 10 tests (double_array_trie?)
+
 **Session 576 Update (2026-05-25) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE ENHANCEMENT** — ARCCache, CSR, QuadTree edge case tests added:
