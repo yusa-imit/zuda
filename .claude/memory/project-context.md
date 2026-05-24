@@ -1,3 +1,26 @@
+**Session 578 Update (2026-05-25) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — LFUCache + ConcurrentSkipList edge case tests added:
+- **Mode**: FEATURE MODE (counter: 578, not divisible by 5)
+- **CI Status**: ✅ GREEN — 3 recent runs successful, 0 open issues
+- **Deliverable**: Added 5 edge case tests each to LFUCache and ConcurrentSkipList (11 → 16 tests each, +45% coverage)
+- **LFUCache new tests** (src/containers/cache/lfu_cache.zig, +~150 lines):
+  * **capacity 1 serial replacement** — cap=1: each put evicts previous; validate() called between each
+  * **get nonexistent does not create entry** — get(42) on empty cache returns null, count=0, isEmpty=true unchanged
+  * **frequency monotonically increases** — put(1,10)→freq=1, get→2, get→3, get→4, put(1,20)→freq=5; getFreq=5
+  * **iterator exhaustion is idempotent** — drain iterator, then 3 more next() calls all return null
+  * **init-deinit loop memory safety** — 10 cycles: init/put-5/get-5/remove-1/validate/deinit via testing.allocator
+- **ConcurrentSkipList new tests** (src/containers/lists/concurrent_skip_list.zig, +~140 lines):
+  * **remove first element preserves rest** — insert (1,10),(2,20),(3,30); remove(1)=10; rest intact
+  * **remove last element preserves rest** — insert (10,100),(20,200),(30,300); remove(30)=300; rest intact
+  * **get on empty list returns null** — 3 get() calls + contains on empty list, all false/null; validate()
+  * **insert many then remove all leaves empty** — insert 20 items; remove all 20; get/contains all null/false
+  * **init-deinit loop memory safety** — 10 cycles: init/insert-3/get-3/remove-1/validate/deinit via testing.allocator
+- **Commit**: 78ac709 (test)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage — containers still at 11 tests: HyperLogLog, LockFreeQueue, FenwickTree
+
 **Session 577 Update (2026-05-25) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE ENHANCEMENT** — SuffixArray + SuffixTree edge case tests added:
