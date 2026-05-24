@@ -870,3 +870,136 @@ test "RadixTree: memory leak check" {
 
     try testing.expectEqual(@as(usize, 50), tree.count());
 }
+
+test "RadixTree: remove leaf preserves sibling" {
+    var tree = try RadixTree(u8, i32).init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert keys that form a tree structure with shared prefixes
+    _ = try tree.insert("car", 1);
+    _ = try tree.insert("card", 2);
+    _ = try tree.insert("care", 3);
+
+    try testing.expectEqual(@as(usize, 3), tree.count());
+
+    // Remove "car" — a prefix of "card" and "care"
+    const removed = tree.remove("car");
+    try testing.expectEqual(@as(?i32, 1), removed);
+    try testing.expectEqual(@as(usize, 2), tree.count());
+
+    // Verify "car" is gone but siblings remain
+    try testing.expectEqual(@as(?i32, null), tree.get("car"));
+    try testing.expectEqual(@as(?i32, 2), tree.get("card"));
+    try testing.expectEqual(@as(?i32, 3), tree.get("care"));
+
+    // Tree structure must still be valid
+    try tree.validate();
+}
+
+test "RadixTree: insert same key twice returns old value" {
+    var tree = try RadixTree(u8, i32).init(testing.allocator);
+    defer tree.deinit();
+
+    // First insert — no old value
+    const old1 = try tree.insert("hello", 1);
+    try testing.expectEqual(@as(?i32, null), old1);
+    try testing.expectEqual(@as(usize, 1), tree.count());
+    try testing.expectEqual(@as(?i32, 1), tree.get("hello"));
+
+    // Second insert — returns old value
+    const old2 = try tree.insert("hello", 2);
+    try testing.expectEqual(@as(?i32, 1), old2);
+    try testing.expectEqual(@as(usize, 1), tree.count());
+    try testing.expectEqual(@as(?i32, 2), tree.get("hello"));
+
+    // Third insert — returns old value again
+    const old3 = try tree.insert("hello", 3);
+    try testing.expectEqual(@as(?i32, 2), old3);
+    try testing.expectEqual(@as(usize, 1), tree.count());
+    try testing.expectEqual(@as(?i32, 3), tree.get("hello"));
+
+    try tree.validate();
+}
+
+test "RadixTree: LCP on single key" {
+    var tree = try RadixTree(u8, i32).init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert only one key
+    _ = try tree.insert("computer", 42);
+
+    // LCP of a single-key tree should be the full key
+    const lcp = try tree.longestCommonPrefix();
+    defer testing.allocator.free(lcp);
+
+    try testing.expect(std.mem.eql(u8, lcp, "computer"));
+}
+
+test "RadixTree: LCP on empty tree" {
+    var tree = try RadixTree(u8, i32).init(testing.allocator);
+    defer tree.deinit();
+
+    // LCP of empty tree should be empty slice
+    const lcp = try tree.longestCommonPrefix();
+    defer testing.allocator.free(lcp);
+
+    try testing.expectEqual(@as(usize, 0), lcp.len);
+}
+
+test "RadixTree: prefix iterator exhaustion idempotence" {
+    var tree = try RadixTree(u8, i32).init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert keys with "ca" prefix
+    _ = try tree.insert("cat", 1);
+    _ = try tree.insert("can", 2);
+    _ = try tree.insert("cap", 3);
+
+    var iter = try tree.prefixIterator("ca");
+    defer iter.deinit();
+
+    // Drain all entries
+    var count: usize = 0;
+    while (try iter.next()) |entry| {
+        defer testing.allocator.free(entry.key);
+        count += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), count);
+
+    // Further calls to next() should return null (idempotence)
+    try testing.expectEqual(@as(?RadixTree(u8, i32).Entry, null), try iter.next());
+    try testing.expectEqual(@as(?RadixTree(u8, i32).Entry, null), try iter.next());
+    try testing.expectEqual(@as(?RadixTree(u8, i32).Entry, null), try iter.next());
+}
+
+test "RadixTree: memory safety loop" {
+    for (0..10) |_| {
+        var tree = try RadixTree(u8, i32).init(testing.allocator);
+        defer tree.deinit();
+
+        // Insert multiple keys
+        _ = try tree.insert("alpha", 1);
+        _ = try tree.insert("beta", 2);
+        _ = try tree.insert("gamma", 3);
+        _ = try tree.insert("delta", 4);
+        _ = try tree.insert("epsilon", 5);
+
+        // Verify all keys are present
+        try testing.expectEqual(@as(?i32, 1), tree.get("alpha"));
+        try testing.expectEqual(@as(?i32, 2), tree.get("beta"));
+        try testing.expectEqual(@as(?i32, 3), tree.get("gamma"));
+        try testing.expectEqual(@as(?i32, 4), tree.get("delta"));
+        try testing.expectEqual(@as(?i32, 5), tree.get("epsilon"));
+
+        // Remove two keys
+        _ = tree.remove("alpha");
+        _ = tree.remove("beta");
+
+        // Verify removals and remaining keys
+        try testing.expectEqual(@as(?i32, null), tree.get("alpha"));
+        try testing.expectEqual(@as(?i32, null), tree.get("beta"));
+        try testing.expectEqual(@as(?i32, 3), tree.get("gamma"));
+        try testing.expectEqual(@as(?i32, 4), tree.get("delta"));
+        try testing.expectEqual(@as(?i32, 5), tree.get("epsilon"));
+    }
+}

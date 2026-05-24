@@ -378,3 +378,179 @@ test "CountMinSketch - estimate error" {
     const error_bound = sketch.estimateError(0.01); // ε=0.01
     try testing.expectEqual(@as(u64, 10), error_bound); // 0.01 * 1000 = 10
 }
+
+test "CountMinSketch - add count zero is no-op" {
+    const Sketch = CountMinSketch(u32, void, defaultHashInt(u32));
+    var sketch = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch.deinit();
+
+    // Adding zero should not change anything
+    sketch.add(42, 0);
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(42));
+    try testing.expectEqual(@as(u64, 0), sketch.totalCount());
+
+    // Now add a real count and verify
+    sketch.add(42, 5);
+    try testing.expect(sketch.estimate(42) >= 5);
+    try testing.expectEqual(@as(u64, 5), sketch.totalCount());
+
+    // Add zero again, should be no-op
+    sketch.add(42, 0);
+    try testing.expect(sketch.estimate(42) >= 5);
+    try testing.expectEqual(@as(u64, 5), sketch.totalCount());
+}
+
+test "CountMinSketch - large single add vs incremental adds" {
+    const Sketch = CountMinSketch(u32, void, defaultHashInt(u32));
+
+    // Sketch A: single large add
+    var sketch_a = try Sketch.init(testing.allocator, 4, 1000, {});
+    defer sketch_a.deinit();
+    sketch_a.add(12345, 500);
+
+    // Sketch B: incremental small adds
+    var sketch_b = try Sketch.init(testing.allocator, 4, 1000, {});
+    defer sketch_b.deinit();
+    for (0..500) |_| {
+        sketch_b.add(12345, 1);
+    }
+
+    // Both should have same total count
+    try testing.expectEqual(sketch_a.totalCount(), sketch_b.totalCount());
+    try testing.expectEqual(@as(u64, 500), sketch_a.totalCount());
+
+    // Both should have estimates >= 500 (never underestimate)
+    try testing.expect(sketch_a.estimate(12345) >= 500);
+    try testing.expect(sketch_b.estimate(12345) >= 500);
+
+    // Estimates should be equal (since using same hash functions and parameters)
+    try testing.expectEqual(sketch_a.estimate(12345), sketch_b.estimate(12345));
+}
+
+test "CountMinSketch - totalCount monotonically increases" {
+    const Sketch = CountMinSketch(u32, void, defaultHashInt(u32));
+    var sketch = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch.deinit();
+
+    try testing.expectEqual(@as(u64, 0), sketch.totalCount());
+
+    sketch.add(1, 10);
+    try testing.expectEqual(@as(u64, 10), sketch.totalCount());
+
+    sketch.add(2, 15);
+    try testing.expectEqual(@as(u64, 25), sketch.totalCount());
+
+    sketch.add(1, 7); // Add more to existing key
+    try testing.expectEqual(@as(u64, 32), sketch.totalCount());
+
+    sketch.add(999, 0); // Zero add should not change total
+    try testing.expectEqual(@as(u64, 32), sketch.totalCount());
+
+    sketch.add(3, 18);
+    try testing.expectEqual(@as(u64, 50), sketch.totalCount());
+}
+
+test "CountMinSketch - merge commutativity" {
+    const Sketch = CountMinSketch(u32, void, defaultHashInt(u32));
+
+    // Create sketch A with items 1 and 2
+    var sketch_a = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch_a.deinit();
+    sketch_a.add(1, 10);
+    sketch_a.add(2, 20);
+
+    // Create sketch B with item 1 and 3
+    var sketch_b = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch_b.deinit();
+    sketch_b.add(1, 5);
+    sketch_b.add(3, 15);
+
+    try sketch_a.merge(&sketch_b);
+
+    // Now create fresh sketches in reverse order to test commutativity
+    var sketch_c = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch_c.deinit();
+    sketch_c.add(1, 5);
+    sketch_c.add(3, 15);
+
+    var sketch_d = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch_d.deinit();
+    sketch_d.add(1, 10);
+    sketch_d.add(2, 20);
+
+    try sketch_c.merge(&sketch_d);
+
+    // Both should have same total
+    try testing.expectEqual(sketch_a.totalCount(), sketch_c.totalCount());
+    try testing.expectEqual(@as(u64, 50), sketch_a.totalCount());
+
+    // Estimates should match for item 1
+    try testing.expectEqual(sketch_a.estimate(1), sketch_c.estimate(1));
+    try testing.expect(sketch_a.estimate(1) >= 15); // 10 + 5
+
+    // Estimates should match for item 2
+    try testing.expectEqual(sketch_a.estimate(2), sketch_c.estimate(2));
+    try testing.expect(sketch_a.estimate(2) >= 20);
+
+    // Estimates should match for item 3
+    try testing.expectEqual(sketch_a.estimate(3), sketch_c.estimate(3));
+    try testing.expect(sketch_a.estimate(3) >= 15);
+}
+
+test "CountMinSketch - clear then re-add fresh counts" {
+    const Sketch = CountMinSketch(u32, void, defaultHashInt(u32));
+    var sketch = try Sketch.init(testing.allocator, 4, 100, {});
+    defer sketch.deinit();
+
+    // Add initial batch
+    sketch.add(1, 100);
+    sketch.add(2, 200);
+    sketch.add(3, 50);
+    try testing.expectEqual(@as(u64, 350), sketch.totalCount());
+    try testing.expect(sketch.estimate(1) >= 100);
+
+    // Clear and verify all old items are gone
+    sketch.clear();
+    try testing.expectEqual(@as(u64, 0), sketch.totalCount());
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(1));
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(2));
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(3));
+
+    // Add fresh counts with different keys
+    sketch.add(10, 75);
+    sketch.add(20, 125);
+    try testing.expectEqual(@as(u64, 200), sketch.totalCount());
+    try testing.expect(sketch.estimate(10) >= 75);
+    try testing.expect(sketch.estimate(20) >= 125);
+
+    // Old keys should still be zero
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(1));
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(2));
+    try testing.expectEqual(@as(u64, 0), sketch.estimate(3));
+}
+
+test "CountMinSketch - memory safety loop" {
+    const Sketch = CountMinSketch(u32, void, defaultHashInt(u32));
+
+    var iteration: usize = 0;
+    while (iteration < 10) : (iteration += 1) {
+        var sketch = try Sketch.init(testing.allocator, 3, 50, {});
+        defer sketch.deinit();
+
+        // Add 20 items
+        for (0..20) |i| {
+            sketch.add(@intCast(i), 1);
+        }
+
+        // Estimate 10 of them
+        for (0..10) |i| {
+            _ = sketch.estimate(@intCast(i));
+        }
+
+        // Verify basic invariant
+        sketch.validate();
+        try testing.expectEqual(@as(usize, 3), sketch.d);
+        try testing.expectEqual(@as(usize, 50), sketch.w);
+        try testing.expectEqual(@as(u64, 20), sketch.totalCount());
+    }
+}
