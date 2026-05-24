@@ -3141,11 +3141,11 @@ test "distributions: memory safety" {
     // Test multiple init/deinit cycles (no memory allocation in distributions)
     for (0..10) |_| {
         const normal = try Normal(f64).init(0.0, 1.0);
-        _ = normal.pdf(0.5);
+        try expectApproxEqRel(normal.pdf(0.0), 0.3989422804014327, 1e-10);
         _ = normal.cdf(0.5);
 
         const uniform = try Uniform(f64).init(0.0, 1.0);
-        _ = uniform.pdf(0.5);
+        try expectApproxEqRel(uniform.pdf(0.5), 1.0, 1e-10);
 
         const exp = try Exponential(f64).init(1.0);
         _ = exp.pdf(0.5);
@@ -3828,7 +3828,7 @@ test "Laplace: memory safety" {
     for (0..10) |_| {
         const dist = try Laplace(f64).init(0.0, 1.0);
         _ = dist.pdf(0.5);
-        _ = dist.cdf(0.5);
+        try expectApproxEqRel(dist.cdf(0.0), 0.5, 1e-10);
         _ = try dist.quantile(0.25);
     }
 }
@@ -4162,11 +4162,11 @@ test "Weibull: special case k=1 matches Exponential" {
 test "Weibull: f32 precision support" {
     const dist = try Weibull(f32).init(2.0, 1.0);
 
-    _ = dist.pdf(0.5);
-    _ = dist.cdf(0.5);
-    _ = try dist.quantile(0.25);
-    _ = dist.mean();
-    _ = dist.variance();
+    try expectApproxEqRel(dist.pdf(0.5), @as(f32, 0.7788), 1e-4);
+    try expectApproxEqRel(dist.cdf(0.5), @as(f32, 0.2212), 1e-4);
+    try expectApproxEqRel(try dist.quantile(0.25), @as(f32, 0.5363), 1e-4);
+    try expectApproxEqRel(dist.mean(), @as(f32, 0.8862), 1e-4);
+    try expectApproxEqRel(dist.variance(), @as(f32, 0.2146), 1e-4);
 }
 
 test "Weibull: memory safety" {
@@ -4176,7 +4176,7 @@ test "Weibull: memory safety" {
     // No allocation in Weibull distribution, just verify init/usage
     for (0..10) |_| {
         const dist = try Weibull(f64).init(2.0, 1.0);
-        _ = dist.pdf(0.5);
+        try expectApproxEqRel(dist.pdf(1.0), 0.7357588824, 1e-10);
         _ = dist.cdf(0.5);
         _ = try dist.quantile(0.25);
         _ = dist.mean();
@@ -4610,15 +4610,15 @@ test "Pareto: 80/20 rule demonstration" {
 }
 
 test "Pareto: f32 precision support" {
-    const dist = try Pareto(f32).init(1.0, 2.0);
+    const dist = try Pareto(f32).init(1.0, 3.0);
 
-    _ = dist.pdf(1.5);
-    _ = dist.cdf(2.0);
-    _ = try dist.quantile(0.5);
-    _ = dist.mean();
-    _ = dist.variance();
-    _ = dist.mode();
-    _ = dist.median();
+    try expectApproxEqRel(dist.pdf(1.5), @as(f32, 0.5926), 1e-4);
+    try expectApproxEqRel(dist.cdf(2.0), @as(f32, 0.875), 1e-4);
+    try expectApproxEqRel(try dist.quantile(0.5), @as(f32, 1.2599), 1e-4);
+    try expectApproxEqRel(dist.mean(), @as(f32, 1.5), 1e-4);
+    try expectApproxEqRel(dist.variance(), @as(f32, 0.75), 1e-4);
+    try expectApproxEqRel(dist.mode(), @as(f32, 1.0), 1e-4);
+    try expectApproxEqRel(dist.median(), @as(f32, 1.2599), 1e-4);
 }
 
 test "Pareto: memory safety" {
@@ -4627,9 +4627,9 @@ test "Pareto: memory safety" {
 
     // No allocation in Pareto distribution, just verify init/usage
     for (0..10) |_| {
-        const dist = try Pareto(f64).init(1.0, 2.0);
+        const dist = try Pareto(f64).init(1.0, 3.0);
         _ = dist.pdf(2.0);
-        _ = dist.cdf(2.0);
+        try expectApproxEqRel(dist.cdf(2.0), 0.875, 1e-10);
         _ = try dist.quantile(0.5);
         _ = dist.mean();
         _ = dist.variance();
@@ -5101,14 +5101,13 @@ test "LogNormal: f32 precision support" {
     const dist = try LogNormal(f32).init(0.0, 1.0);
 
     _ = dist.pdf(1.5);
-    _ = dist.cdf(2.0);
-    _ = try dist.quantile(0.5);
-    _ = dist.mean();
-    _ = dist.variance();
-    _ = dist.mode();
-    _ = dist.median();
-    _ = dist.logpdf(1.0);
-    _ = dist.sf(2.0);
+    try expectApproxEqRel(dist.cdf(2.0), @as(f32, 0.7558), 1e-3);
+    try expectApproxEqRel(try dist.quantile(0.5), @as(f32, 1.0), 1e-3);
+    try expectApproxEqRel(dist.mean(), @as(f32, 1.6487), 1e-3);
+    try expectApproxEqRel(dist.mode(), @as(f32, 0.3679), 1e-3);
+    try expectApproxEqRel(dist.median(), @as(f32, 1.0), 1e-3);
+    try expectApproxEqRel(dist.logpdf(1.0), @as(f32, -0.9189), 1e-3);
+    try expectApproxEqRel(dist.sf(2.0), @as(f32, 0.2442), 1e-3);
 }
 
 test "LogNormal: memory safety" {
@@ -5120,7 +5119,7 @@ test "LogNormal: memory safety" {
         const dist = try LogNormal(f64).init(0.0, 1.0);
         _ = dist.pdf(1.0);
         _ = dist.cdf(1.0);
-        _ = try dist.quantile(0.5);
+        try expectApproxEqRel(try dist.quantile(0.5), 1.0, 1e-10);
         _ = dist.mean();
         _ = dist.variance();
         _ = dist.mode();
@@ -5530,15 +5529,15 @@ test "Cauchy: ratio of normals property" {
 test "Cauchy: f32 precision support" {
     const dist = try Cauchy(f32).init(0.0, 1.0);
 
-    _ = dist.pdf(1.5);
-    _ = dist.cdf(2.0);
-    _ = try dist.quantile(0.5);
-    _ = dist.mean();
-    _ = dist.variance();
-    _ = dist.mode();
-    _ = dist.median();
-    _ = dist.logpdf(1.0);
-    _ = dist.sf(2.0);
+    try expectApproxEqRel(dist.pdf(1.5), @as(f32, 0.09775), 1e-3);
+    try expectApproxEqRel(dist.cdf(2.0), @as(f32, 0.8524), 1e-3);
+    try expectApproxEqAbs(try dist.quantile(0.5), @as(f32, 0.0), 1e-5);
+    try testing.expect(math.isNan(dist.mean()));
+    try testing.expect(math.isInf(dist.variance()));
+    try expectApproxEqAbs(dist.mode(), @as(f32, 0.0), 1e-5);
+    try expectApproxEqAbs(dist.median(), @as(f32, 0.0), 1e-5);
+    try expectApproxEqRel(dist.logpdf(1.0), @as(f32, -1.8379), 1e-3);
+    try expectApproxEqRel(dist.sf(2.0), @as(f32, 0.1476), 1e-3);
 }
 
 test "Cauchy: memory safety" {
@@ -5549,7 +5548,7 @@ test "Cauchy: memory safety" {
     for (0..10) |_| {
         const dist = try Cauchy(f64).init(0.0, 1.0);
         _ = dist.pdf(1.0);
-        _ = dist.cdf(1.0);
+        try expectApproxEqRel(dist.cdf(0.0), 0.5, 1e-10);
         _ = try dist.quantile(0.5);
         _ = dist.mean();
         _ = dist.variance();
