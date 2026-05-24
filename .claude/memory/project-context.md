@@ -1,3 +1,28 @@
+**Session 573 Update (2026-05-24) — FEATURE MODE:**
+
+✅ **TEST COVERAGE ENHANCEMENT** — IntervalTree + BloomFilter edge case tests added:
+- **Mode**: FEATURE MODE (counter: 573, not divisible by 5)
+- **CI Status**: ✅ GREEN — Latest run successful, 0 open issues
+- **Deliverable**: Added 6 comprehensive edge case tests to IntervalTree and BloomFilter (10 → 16 tests each, +60% coverage)
+- **IntervalTree new tests** (src/containers/trees/interval_tree.zig, 724 → 924 LOC):
+  * **Touch-boundary overlap** — [1,5] and [5,10] touch at x=5; max(a,c)<=min(b,d) means they DO overlap; point query [5,5] returns both
+  * **Negative coordinates** — intervals with negative i32 keys; [-4,-2] returns exactly 2 entries (not the positive interval)
+  * **Single-element tree** — insert one interval, verify hit/miss queries, count==1 throughout
+  * **Iterator exhaustion idempotence** — after draining 3 entries, next() called 3 more times all return null
+  * **Large contains all** — [0,100]→"big" plus 3 small intervals; query [5,90] returns all 4
+  * **Memory safety loop** — 10 init/insert/query/deinit cycles via testing.allocator
+- **BloomFilter new tests** (src/containers/probabilistic/bloom_filter.zig, 432 → 588 LOC):
+  * **approximateCount monotonicity** — count grows with inserts, bounded by capacity
+  * **estimatedFalsePositiveRate growth** — FPR increases monotonically as filter fills
+  * **clear then re-add** — original items NOT found after clear; new items ARE found
+  * **High saturation** — 1000 items in 64-bit filter; no crash, validate() passes, FPR bounded [0,1]
+  * **defaultHashSlice with byte slices** — string key type using slice-based hashing works correctly
+  * **Memory safety loop** — 10 init/deinit cycles via testing.allocator
+- **Commits**: 2abf1c5 (test)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage for remaining 10-test containers (CSR graph, quad_tree, suffix_array, suffix_tree, radix_tree, arc_cache, count_min_sketch)
+
 **Session 572 Update (2026-05-24) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE ENHANCEMENT** — SegmentTree edge case tests added:
