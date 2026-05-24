@@ -722,3 +722,203 @@ test "IntervalTree: interval overlap logic" {
     try std.testing.expectEqual(true, iv1.overlaps(iv4, {})); // [1,5] overlaps [0,2]
     try std.testing.expectEqual(false, iv3.overlaps(iv4, {})); // [6,10] doesn't overlap [0,2]
 }
+
+test "IntervalTree: touch-boundary overlap at single point" {
+    const IT = IntervalTree(i32, []const u8, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    var tree = IT.init(std.testing.allocator, {});
+    defer tree.deinit();
+
+    // Insert [1,5] and [5,10] which touch at x=5
+    _ = try tree.insert(.{ .low = 1, .high = 5 }, "left");
+    _ = try tree.insert(.{ .low = 5, .high = 10 }, "right");
+
+    try std.testing.expectEqual(@as(usize, 2), tree.count());
+
+    // Query point at x=5 (represented as [5,5])
+    // Should return both intervals since max(1,5)=5 <= min(5,5)=5 (touching intervals overlap)
+    var it = try tree.queryOverlaps(.{ .low = 5, .high = 5 });
+    defer it.deinit();
+
+    var count: usize = 0;
+    var found_left = false;
+    var found_right = false;
+    while (it.next()) |entry| {
+        count += 1;
+        if (std.mem.eql(u8, entry.value, "left")) found_left = true;
+        if (std.mem.eql(u8, entry.value, "right")) found_right = true;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqual(true, found_left);
+    try std.testing.expectEqual(true, found_right);
+}
+
+test "IntervalTree: negative coordinate intervals" {
+    const IT = IntervalTree(i32, u32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    var tree = IT.init(std.testing.allocator, {});
+    defer tree.deinit();
+
+    // Insert intervals with negative coordinates
+    _ = try tree.insert(.{ .low = -10, .high = -3 }, 1);
+    _ = try tree.insert(.{ .low = -5, .high = 0 }, 2);
+    _ = try tree.insert(.{ .low = 2, .high = 8 }, 3);
+
+    try std.testing.expectEqual(@as(usize, 3), tree.count());
+
+    // Query [-4, -2] should overlap with intervals 1 and 2 only, not 3
+    var it = try tree.queryOverlaps(.{ .low = -4, .high = -2 });
+    defer it.deinit();
+
+    var count: usize = 0;
+    while (it.next()) |entry| {
+        count += 1;
+        try std.testing.expect(entry.value == 1 or entry.value == 2);
+        try std.testing.expect(entry.value != 3);
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "IntervalTree: single-element tree" {
+    const IT = IntervalTree(i32, u32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    var tree = IT.init(std.testing.allocator, {});
+    defer tree.deinit();
+
+    // Insert exactly one interval
+    _ = try tree.insert(.{ .low = 10, .high = 20 }, 99);
+
+    try std.testing.expectEqual(@as(usize, 1), tree.count());
+    try std.testing.expectEqual(false, tree.isEmpty());
+
+    // Query that hits the interval
+    var it1 = try tree.queryOverlaps(.{ .low = 15, .high = 15 });
+    defer it1.deinit();
+
+    try std.testing.expect(it1.next() != null);
+    try std.testing.expectEqual(@as(?IT.Entry, null), it1.next());
+
+    // Query that misses the interval
+    var it2 = try tree.queryOverlaps(.{ .low = 25, .high = 30 });
+    defer it2.deinit();
+
+    try std.testing.expectEqual(@as(?IT.Entry, null), it2.next());
+}
+
+test "IntervalTree: iterator exhaustion consistency" {
+    const IT = IntervalTree(i32, u32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    var tree = IT.init(std.testing.allocator, {});
+    defer tree.deinit();
+
+    // Insert 3 intervals
+    _ = try tree.insert(.{ .low = 1, .high = 5 }, 1);
+    _ = try tree.insert(.{ .low = 3, .high = 7 }, 2);
+    _ = try tree.insert(.{ .low = 6, .high = 10 }, 3);
+
+    // Query encompassing range [0, 15]
+    var it = try tree.queryOverlaps(.{ .low = 0, .high = 15 });
+    defer it.deinit();
+
+    // Exhaust all 3 entries
+    try std.testing.expect(it.next() != null);
+    try std.testing.expect(it.next() != null);
+    try std.testing.expect(it.next() != null);
+
+    // Call next() 3 more times after exhaustion
+    // Each must return null (idempotent exhaustion)
+    try std.testing.expectEqual(@as(?IT.Entry, null), it.next());
+    try std.testing.expectEqual(@as(?IT.Entry, null), it.next());
+    try std.testing.expectEqual(@as(?IT.Entry, null), it.next());
+}
+
+test "IntervalTree: large interval contains all small ones" {
+    const IT = IntervalTree(i32, []const u8, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+
+    var tree = IT.init(std.testing.allocator, {});
+    defer tree.deinit();
+
+    // Insert encompassing interval and three small ones
+    _ = try tree.insert(.{ .low = 0, .high = 100 }, "big");
+    _ = try tree.insert(.{ .low = 10, .high = 20 }, "a");
+    _ = try tree.insert(.{ .low = 30, .high = 40 }, "b");
+    _ = try tree.insert(.{ .low = 60, .high = 70 }, "c");
+
+    try std.testing.expectEqual(@as(usize, 4), tree.count());
+
+    // Query [5, 90] overlaps with big and all three small intervals
+    var it = try tree.queryOverlaps(.{ .low = 5, .high = 90 });
+    defer it.deinit();
+
+    var count: usize = 0;
+    var found_big = false;
+    var found_a = false;
+    var found_b = false;
+    var found_c = false;
+
+    while (it.next()) |entry| {
+        count += 1;
+        if (std.mem.eql(u8, entry.value, "big")) found_big = true;
+        if (std.mem.eql(u8, entry.value, "a")) found_a = true;
+        if (std.mem.eql(u8, entry.value, "b")) found_b = true;
+        if (std.mem.eql(u8, entry.value, "c")) found_c = true;
+    }
+    try std.testing.expectEqual(@as(usize, 4), count);
+    try std.testing.expectEqual(true, found_big);
+    try std.testing.expectEqual(true, found_a);
+    try std.testing.expectEqual(true, found_b);
+    try std.testing.expectEqual(true, found_c);
+}
+
+test "IntervalTree: memory safety loop" {
+    // Memory-leak detection via testing.allocator
+    for (0..10) |_| {
+        const IT = IntervalTree(i32, u32, void, struct {
+            fn cmp(_: void, a: i32, b: i32) std.math.Order {
+                return std.math.order(a, b);
+            }
+        }.cmp);
+
+        var tree = IT.init(std.testing.allocator, {});
+        defer tree.deinit();
+
+        // Insert 5 intervals
+        _ = try tree.insert(.{ .low = 0, .high = 10 }, 1);
+        _ = try tree.insert(.{ .low = 5, .high = 15 }, 2);
+        _ = try tree.insert(.{ .low = 12, .high = 20 }, 3);
+        _ = try tree.insert(.{ .low = 18, .high = 30 }, 4);
+        _ = try tree.insert(.{ .low = 25, .high = 40 }, 5);
+
+        try std.testing.expectEqual(@as(usize, 5), tree.count());
+
+        // Query and exhaust iterator
+        var it = try tree.queryOverlaps(.{ .low = 0, .high = 50 });
+        defer it.deinit();
+
+        var count: usize = 0;
+        while (it.next()) |_| {
+            count += 1;
+        }
+        try std.testing.expect(count >= 1);
+    }
+}

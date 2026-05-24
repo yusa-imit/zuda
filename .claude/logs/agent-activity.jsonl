@@ -395,3 +395,5 @@
 {"timestamp":"2026-05-24T00:00:00Z","action":"subagent","agent_type":"code-reviewer","task":"STABILIZATION MODE: audit test quality and @panic usage across library code","project":"zuda"}
 {"timestamp":"2026-05-24T01:00:00Z","action":"subagent","agent_type":"orchestrator","task":"Add 6 edge case tests to AVLTree covering LL/RR/LR/RL rotations, remove root with two children, iterator exhaustion (10 → 16 tests)","project":"zuda"}
 {"timestamp":"2026-05-24T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 6 edge case tests to SegmentTree (10→16 tests): power-of-2 size, boundary updates, two-element, consecutive queries, bulk overwrite, memory leak","project":"zuda"}
+{"timestamp":"2026-05-24T03:34:45Z","action":"subagent","agent_type":"test-writer","task":"Add 6 edge case tests to IntervalTree (10→16 tests)","project":"zuda"}
+{"timestamp":"2026-05-24T03:34:45Z","action":"subagent","agent_type":"test-writer","task":"Add 6 edge case tests to BloomFilter (10→16 tests)","project":"zuda"}

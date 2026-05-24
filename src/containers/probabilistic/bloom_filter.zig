@@ -430,3 +430,159 @@ test "BloomFilter - benchmark calculation verification" {
     const million_ops_per_sec = @divFloor(ops_per_sec, 1_000_000);
     try testing.expect(million_ops_per_sec >= 1);
 }
+
+test "BloomFilter - approximateCount increases monotonically" {
+    const Filter = BloomFilter(u32, void, defaultHashInt(u32));
+    var filter = try Filter.initWithFalsePositiveRate(testing.allocator, 1000, 0.01, {});
+    defer filter.deinit();
+
+    // Add items 0..49 and check count
+    for (0..50) |i| {
+        filter.add(@intCast(i));
+    }
+    const count_after_50 = filter.approximateCount();
+    try testing.expect(count_after_50 > 0);
+    try testing.expectEqual(@as(usize, 50), count_after_50);
+
+    // Add items 50..99 and verify count increased
+    for (50..100) |i| {
+        filter.add(@intCast(i));
+    }
+    const count_after_100 = filter.approximateCount();
+    try testing.expect(count_after_100 > count_after_50);
+    try testing.expectEqual(@as(usize, 100), count_after_100);
+
+    // Verify count is bounded by capacity
+    try testing.expect(count_after_100 <= 1000);
+}
+
+test "BloomFilter - estimatedFalsePositiveRate grows with fill" {
+    const Filter = BloomFilter(u32, void, defaultHashInt(u32));
+    // Create small filter to see measurable FPR growth
+    var filter = try Filter.init(testing.allocator, 100, 3, {});
+    defer filter.deinit();
+
+    // Empty filter: FPR should be 0
+    const fpr_empty = filter.estimatedFalsePositiveRate();
+    try testing.expectEqual(0.0, fpr_empty);
+
+    // Add 20 items: FPR should be > 0
+    for (0..20) |i| {
+        filter.add(@intCast(i));
+    }
+    const fpr_after_20 = filter.estimatedFalsePositiveRate();
+    try testing.expect(fpr_after_20 > 0.0);
+
+    // Add 60 more items (total 80): FPR should grow further
+    for (20..80) |i| {
+        filter.add(@intCast(i));
+    }
+    const fpr_after_80 = filter.estimatedFalsePositiveRate();
+    try testing.expect(fpr_after_80 > fpr_after_20);
+
+    // All FPRs should be in valid range
+    try testing.expect(fpr_after_80 >= 0.0 and fpr_after_80 <= 1.0);
+}
+
+test "BloomFilter - clear then re-add works correctly" {
+    const Filter = BloomFilter(u32, void, defaultHashInt(u32));
+    var filter = try Filter.init(testing.allocator, 1000, 3, {});
+    defer filter.deinit();
+
+    // Add first set of items (0..49)
+    for (0..50) |i| {
+        filter.add(@intCast(i));
+    }
+    try testing.expect(filter.contains(10));
+    try testing.expect(filter.contains(49));
+
+    // Clear the filter
+    filter.clear();
+    try testing.expectEqual(@as(usize, 0), filter.approximateCount());
+
+    // Old items should not be found
+    try testing.expect(!filter.contains(10));
+    try testing.expect(!filter.contains(49));
+
+    // Add different items (100..149)
+    for (100..150) |i| {
+        filter.add(@intCast(i));
+    }
+
+    // New items should be found
+    try testing.expect(filter.contains(110));
+    try testing.expect(filter.contains(149));
+
+    // Original items still should not be found
+    try testing.expect(!filter.contains(10));
+    try testing.expect(!filter.contains(49));
+}
+
+test "BloomFilter - high saturation behavior" {
+    const Filter = BloomFilter(u32, void, defaultHashInt(u32));
+    // Create small filter (64 bits) and add way more than expected
+    var filter = try Filter.init(testing.allocator, 64, 2, {});
+    defer filter.deinit();
+
+    // Add 1000 items to a 64-bit filter (far exceeding capacity)
+    for (0..1000) |i| {
+        filter.add(@intCast(i));
+    }
+
+    // Filter must not crash
+    // Invariant checking must pass
+    filter.validate();
+
+    // FPR should be in valid range (likely very high)
+    const fpr = filter.estimatedFalsePositiveRate();
+    try testing.expect(fpr >= 0.0 and fpr <= 1.0);
+
+    // Count should reflect added items
+    try testing.expectEqual(@as(usize, 1000), filter.approximateCount());
+}
+
+test "BloomFilter - defaultHashSlice with byte slices" {
+    const Filter = BloomFilter([]const u8, void, defaultHashSlice(u8));
+    var filter = try Filter.init(testing.allocator, 10000, 4, {});
+    defer filter.deinit();
+
+    const strings = [_][]const u8{ "foo", "bar", "baz", "hello", "world" };
+
+    // Add strings
+    for (strings) |s| {
+        filter.add(s);
+    }
+
+    // All added strings should be found
+    for (strings) |s| {
+        try testing.expect(filter.contains(s));
+    }
+
+    // Non-existent string: may or may not be found (probabilistic)
+    // Just verify it doesn't crash and validate passes
+    _ = filter.contains("qux");
+    filter.validate();
+}
+
+test "BloomFilter - memory safety loop" {
+    // Memory-leak detection via testing.allocator
+    for (0..10) |_| {
+        const Filter = BloomFilter(u32, void, defaultHashInt(u32));
+        var filter = try Filter.initWithFalsePositiveRate(testing.allocator, 100, 0.01, {});
+
+        // Add 10 items
+        for (0..10) |i| {
+            filter.add(@intCast(i));
+        }
+
+        // Call contains 10 times
+        for (0..10) |i| {
+            _ = filter.contains(@intCast(i));
+        }
+
+        filter.deinit();
+    }
+
+    // If we reach here without allocation errors, memory is safe
+    try testing.expect(true);
+}
