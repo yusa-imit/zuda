@@ -687,3 +687,144 @@ test "LFUCache: memory leak check" {
 
     try cache.validate();
 }
+
+test "LFUCache: capacity 1 serial replacement" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const Cache = LFUCache(i32, i32, std.hash_map.AutoContext(i32), null);
+    var cache = Cache.init(allocator, 1);
+    defer cache.deinit();
+
+    // Insert first entry
+    _ = try cache.put(1, 100);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    cache.validate();
+
+    // Insert second entry, should evict first
+    _ = try cache.put(2, 200);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(?i32, null), try cache.get(1)); // Evicted
+    try testing.expectEqual(@as(i32, 200), (try cache.get(2)).?);
+    cache.validate();
+
+    // Insert third entry, should evict second
+    _ = try cache.put(3, 300);
+    try testing.expectEqual(@as(usize, 1), cache.count());
+    try testing.expectEqual(@as(?i32, null), try cache.get(2)); // Evicted
+    try testing.expectEqual(@as(i32, 300), (try cache.get(3)).?);
+    cache.validate();
+}
+
+test "LFUCache: get nonexistent does not create entry" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const Cache = LFUCache(i32, i32, std.hash_map.AutoContext(i32), null);
+    var cache = Cache.init(allocator, 5);
+    defer cache.deinit();
+
+    // Verify initial state
+    try testing.expectEqual(@as(usize, 0), cache.count());
+    try testing.expect(cache.isEmpty());
+
+    // Get nonexistent key
+    const result = try cache.get(42);
+    try testing.expectEqual(@as(?i32, null), result);
+
+    // Count and isEmpty should remain unchanged
+    try testing.expectEqual(@as(usize, 0), cache.count());
+    try testing.expect(cache.isEmpty());
+    try testing.expect(!cache.contains(42));
+
+    cache.validate();
+}
+
+test "LFUCache: frequency monotonically increases" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const Cache = LFUCache(i32, i32, std.hash_map.AutoContext(i32), null);
+    var cache = Cache.init(allocator, 5);
+    defer cache.deinit();
+
+    // Insert key 1
+    _ = try cache.put(1, 10);
+    try testing.expectEqual(@as(?usize, 1), cache.getFreq(1)); // freq = 1
+
+    // Each get increments frequency
+    _ = try cache.get(1);
+    try testing.expectEqual(@as(?usize, 2), cache.getFreq(1));
+
+    _ = try cache.get(1);
+    try testing.expectEqual(@as(?usize, 3), cache.getFreq(1));
+
+    _ = try cache.get(1);
+    try testing.expectEqual(@as(?usize, 4), cache.getFreq(1));
+
+    // Put also increments frequency
+    const old = try cache.put(1, 20);
+    try testing.expectEqual(@as(?i32, 10), old);
+    try testing.expectEqual(@as(?usize, 5), cache.getFreq(1));
+
+    cache.validate();
+}
+
+test "LFUCache: iterator exhaustion is idempotent" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const Cache = LFUCache(i32, i32, std.hash_map.AutoContext(i32), null);
+    var cache = Cache.init(allocator, 5);
+    defer cache.deinit();
+
+    // Insert entries and vary their frequencies
+    _ = try cache.put(1, 10);
+    _ = try cache.put(2, 20);
+    _ = try cache.get(1); // freq(1) = 2
+
+    // First iteration: drain all entries
+    var it = cache.iterator();
+    var count: usize = 0;
+    while (it.next()) |_| {
+        count += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), count);
+
+    // Call next() three more times on exhausted iterator — should all return null
+    try testing.expectEqual(@as(?struct { key: i32, value: i32, freq: usize }, null), it.next());
+    try testing.expectEqual(@as(?struct { key: i32, value: i32, freq: usize }, null), it.next());
+    try testing.expectEqual(@as(?struct { key: i32, value: i32, freq: usize }, null), it.next());
+}
+
+test "LFUCache: init-deinit loop memory safety" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const Cache = LFUCache(i32, i32, std.hash_map.AutoContext(i32), null);
+
+    // 10 iterations of init-put-get-remove-validate-deinit
+    var iter: usize = 0;
+    while (iter < 10) : (iter += 1) {
+        var cache = Cache.init(allocator, 5);
+
+        // Put 5 items
+        for (0..5) |i| {
+            _ = try cache.put(@intCast(i), @intCast(i));
+        }
+
+        // Get all 5 (verify non-null)
+        for (0..5) |i| {
+            const val = try cache.get(@intCast(i));
+            try testing.expectEqual(@as(?i32, @intCast(i)), val);
+        }
+
+        // Remove one item
+        const removed = cache.remove(2);
+        try testing.expectEqual(@as(?i32, 2), removed);
+
+        // Validate and deinit
+        cache.validate();
+        cache.deinit();
+    }
+}

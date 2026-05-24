@@ -721,3 +721,155 @@ test "ConcurrentSkipList: with string keys" {
     try testing.expectEqual(@as(?i32, 3), list.get("cherry"));
     try testing.expectEqual(@as(?i32, null), list.get("date"));
 }
+
+test "ConcurrentSkipList: remove first element preserves rest" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
+        testing.allocator,
+        .{},
+    );
+    defer list.deinit();
+
+    // Insert in order
+    _ = try list.insert(1, 10);
+    _ = try list.insert(2, 20);
+    _ = try list.insert(3, 30);
+
+    // Remove first (minimum) element
+    const removed = list.remove(1);
+    try testing.expectEqual(@as(?i32, 10), removed);
+
+    // Verify first is gone and rest remain
+    try testing.expectEqual(@as(?i32, null), list.get(1));
+    try testing.expectEqual(@as(?i32, 20), list.get(2));
+    try testing.expectEqual(@as(?i32, 30), list.get(3));
+}
+
+test "ConcurrentSkipList: remove last element preserves rest" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
+        testing.allocator,
+        .{},
+    );
+    defer list.deinit();
+
+    // Insert in order
+    _ = try list.insert(10, 100);
+    _ = try list.insert(20, 200);
+    _ = try list.insert(30, 300);
+
+    // Remove last (maximum) element
+    const removed = list.remove(30);
+    try testing.expectEqual(@as(?i32, 300), removed);
+
+    // Verify last is gone and rest remain
+    try testing.expectEqual(@as(?i32, null), list.get(30));
+    try testing.expectEqual(@as(?i32, 100), list.get(10));
+    try testing.expectEqual(@as(?i32, 200), list.get(20));
+}
+
+test "ConcurrentSkipList: get on empty list returns null" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
+        testing.allocator,
+        .{},
+    );
+    defer list.deinit();
+
+    // Do not insert anything
+    try testing.expectEqual(@as(?i32, null), list.get(0));
+    try testing.expectEqual(@as(?i32, null), list.get(-1));
+    try testing.expectEqual(@as(?i32, null), list.get(999));
+    try testing.expect(!list.contains(42));
+
+    list.validate();
+}
+
+test "ConcurrentSkipList: insert many then remove all leaves empty" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
+        testing.allocator,
+        .{},
+    );
+    defer list.deinit();
+
+    // Insert 20 items
+    var i: i32 = 0;
+    while (i < 20) : (i += 1) {
+        _ = try list.insert(i, i * 10);
+    }
+
+    // Verify some items
+    try testing.expectEqual(@as(?i32, 0), list.get(0));
+    try testing.expectEqual(@as(?i32, 190), list.get(19));
+
+    // Remove all 20 items
+    i = 0;
+    while (i < 20) : (i += 1) {
+        _ = list.remove(i);
+    }
+
+    // Verify all are gone
+    try testing.expectEqual(@as(?i32, null), list.get(0));
+    try testing.expectEqual(@as(?i32, null), list.get(10));
+    try testing.expectEqual(@as(?i32, null), list.get(19));
+    try testing.expect(!list.contains(5));
+}
+
+test "ConcurrentSkipList: init-deinit loop memory safety" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    // 10 iterations of init-insert-get-remove-validate-deinit
+    var iter: usize = 0;
+    while (iter < 10) : (iter += 1) {
+        var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
+            testing.allocator,
+            .{},
+        );
+
+        // Insert three items
+        _ = try list.insert(1, 10);
+        _ = try list.insert(2, 20);
+        _ = try list.insert(3, 30);
+
+        // Get all three (verify non-null)
+        try testing.expectEqual(@as(?i32, 10), list.get(1));
+        try testing.expectEqual(@as(?i32, 20), list.get(2));
+        try testing.expectEqual(@as(?i32, 30), list.get(3));
+
+        // Remove one item
+        const removed = list.remove(2);
+        try testing.expectEqual(@as(?i32, 20), removed);
+
+        // Verify removal
+        try testing.expectEqual(@as(?i32, null), list.get(2));
+
+        // Validate and deinit
+        list.validate();
+        list.deinit();
+    }
+}
