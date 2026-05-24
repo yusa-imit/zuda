@@ -518,3 +518,64 @@ test "SuffixTree: stress test" {
 
     try tree.validate();
 }
+
+test "SuffixTree: init empty text returns error" {
+    const result = SuffixTree(u8).init(testing.allocator, "");
+    try testing.expectError(error.EmptyText, result);
+}
+
+test "SuffixTree: empty pattern matches everywhere" {
+    var tree = try SuffixTree(u8).init(testing.allocator, "banana");
+    defer tree.deinit();
+    try testing.expect(tree.contains("")); // empty pattern always found
+    // findAll with empty pattern returns empty slice (not all positions)
+    const positions = try tree.findAll(testing.allocator, "");
+    defer testing.allocator.free(positions);
+    try testing.expectEqual(@as(usize, 0), positions.len); // implementation returns empty for len==0
+}
+
+test "SuffixTree: pattern longer than text not found" {
+    var tree = try SuffixTree(u8).init(testing.allocator, "banana");
+    defer tree.deinit();
+    try testing.expect(!tree.contains("bananana")); // 8 > 6
+    const positions = try tree.findAll(testing.allocator, "bananana");
+    defer testing.allocator.free(positions);
+    try testing.expectEqual(@as(usize, 0), positions.len);
+}
+
+test "SuffixTree: all identical characters" {
+    var tree = try SuffixTree(u8).init(testing.allocator, "aaaa");
+    defer tree.deinit();
+    try testing.expect(tree.contains("a"));
+    try testing.expect(tree.contains("aa"));
+    try testing.expect(tree.contains("aaa"));
+    try testing.expect(!tree.contains("aaaaa")); // longer than text
+    const positions = try tree.findAll(testing.allocator, "aa");
+    defer testing.allocator.free(positions);
+    try testing.expectEqual(@as(usize, 3), positions.len); // "aa" at 0,1,2
+    try tree.validate();
+}
+
+test "SuffixTree: full text as pattern" {
+    const text = "banana";
+    var tree = try SuffixTree(u8).init(testing.allocator, text);
+    defer tree.deinit();
+    try testing.expect(tree.contains(text));
+    const positions = try tree.findAll(testing.allocator, text);
+    defer testing.allocator.free(positions);
+    try testing.expectEqual(@as(usize, 1), positions.len);
+    try testing.expectEqual(@as(usize, 0), positions[0]);
+}
+
+test "SuffixTree: memory safety init/deinit loop" {
+    for (0..10) |_| {
+        var tree = try SuffixTree(u8).init(testing.allocator, "mississippi");
+        defer tree.deinit();
+        try tree.validate();
+        try testing.expect(tree.contains("issi"));
+        try testing.expect(!tree.contains("xyz"));
+        const positions = try tree.findAll(testing.allocator, "issi");
+        defer testing.allocator.free(positions);
+        try testing.expectEqual(@as(usize, 2), positions.len);
+    }
+}

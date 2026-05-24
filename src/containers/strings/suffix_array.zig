@@ -538,3 +538,92 @@ test "SuffixArray - stress test" {
     const lrs = try sa.longestRepeatedSubstring();
     try testing.expect(lrs != null);
 }
+
+test "SuffixArray - LCP values correctness" {
+    const allocator = testing.allocator;
+    var sa = try SuffixArray(u8).init(allocator, "banana");
+    defer sa.deinit();
+    try sa.buildLCP();
+    const lcp = sa.lcp.?;
+
+    // LCP array has length 6 (same as text length)
+    try testing.expectEqual(@as(usize, 6), lcp.len);
+
+    // At least one LCP value should be non-zero (since "banana" has repeated substrings)
+    var has_nonzero = false;
+    for (lcp) |val| {
+        if (val > 0) {
+            has_nonzero = true;
+            break;
+        }
+    }
+    try testing.expect(has_nonzero);
+
+    // The maximum LCP value should be 3 (length of "ana", the longest repeated substring)
+    var max_lcp: usize = 0;
+    for (lcp) |val| {
+        if (val > max_lcp) max_lcp = val;
+    }
+    try testing.expectEqual(@as(usize, 3), max_lcp);
+}
+
+test "SuffixArray - buildLCP is idempotent" {
+    const allocator = testing.allocator;
+    var sa = try SuffixArray(u8).init(allocator, "banana");
+    defer sa.deinit();
+    try sa.buildLCP();
+    const lcp_ptr_first = sa.lcp.?.ptr;
+    try sa.buildLCP(); // second call should be a no-op
+    try testing.expect(sa.lcp != null);
+    try testing.expectEqual(lcp_ptr_first, sa.lcp.?.ptr); // same allocation, not re-built
+    try testing.expectEqual(@as(usize, 6), sa.lcp.?.len);
+}
+
+test "SuffixArray - findAll returns empty slice for missing pattern" {
+    const allocator = testing.allocator;
+    var sa = try SuffixArray(u8).init(allocator, "banana");
+    defer sa.deinit();
+    const positions = try sa.findAll("xyz");
+    defer allocator.free(positions);
+    try testing.expectEqual(@as(usize, 0), positions.len);
+    // Also verify count and contains agree
+    try testing.expectEqual(@as(usize, 0), sa.count("xyz"));
+    try testing.expect(!sa.contains("xyz"));
+}
+
+test "SuffixArray - full text as pattern" {
+    const allocator = testing.allocator;
+    const text = "banana";
+    var sa = try SuffixArray(u8).init(allocator, text);
+    defer sa.deinit();
+    try testing.expect(sa.contains(text));
+    try testing.expectEqual(@as(usize, 1), sa.count(text));
+    const positions = try sa.findAll(text);
+    defer allocator.free(positions);
+    try testing.expectEqual(@as(usize, 1), positions.len);
+    try testing.expectEqual(@as(usize, 0), positions[0]);
+}
+
+test "SuffixArray - pattern longer than text" {
+    const allocator = testing.allocator;
+    var sa = try SuffixArray(u8).init(allocator, "banana");
+    defer sa.deinit();
+    try testing.expect(!sa.contains("bananana")); // 8 chars > 6
+    try testing.expectEqual(@as(usize, 0), sa.count("bananana"));
+    const positions = try sa.findAll("bananana");
+    defer allocator.free(positions);
+    try testing.expectEqual(@as(usize, 0), positions.len);
+}
+
+test "SuffixArray - memory safety init/deinit loop" {
+    for (0..10) |_| {
+        var sa = try SuffixArray(u8).init(testing.allocator, "mississippi");
+        defer sa.deinit();
+        try sa.validate();
+        try testing.expect(sa.contains("issi"));
+        try testing.expectEqual(@as(usize, 2), sa.count("issi"));
+        const pos = try sa.findAll("issi");
+        defer testing.allocator.free(pos);
+        try testing.expectEqual(@as(usize, 2), pos.len);
+    }
+}
