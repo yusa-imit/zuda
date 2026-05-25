@@ -559,3 +559,148 @@ test "KDTree: memory leak check" {
     tree.clear();
     try testing.expectEqual(@as(usize, 0), tree.count());
 }
+
+test "KDTree: inserting duplicate points preserves structure" {
+    var tree = KDTree(Point2D, 2, f64, Point2D.getCoord).init(testing.allocator);
+    defer tree.deinit();
+
+    const point = Point2D{ .x = 5.0, .y = 7.0 };
+    try tree.insert(point);
+    try tree.insert(point);
+    try tree.insert(point);
+
+    // Duplicates are inserted as separate nodes
+    try testing.expectEqual(@as(usize, 3), tree.count());
+
+    // Validate structure after duplicate inserts
+    try tree.validate();
+
+    // Nearest neighbor should still find a matching point
+    const nearest = tree.nearestNeighbor(.{ .x = 5.0, .y = 7.0 });
+    try testing.expect(nearest != null);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), nearest.?.x, 0.001);
+    try testing.expectApproxEqAbs(@as(f64, 7.0), nearest.?.y, 0.001);
+}
+
+test "KDTree: large tree init-deinit memory safety" {
+    var tree = KDTree(Point2D, 2, f64, Point2D.getCoord).init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert 1000 points in sequential pattern
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        const x: f64 = @floatFromInt(i % 32);
+        const y: f64 = @floatFromInt(i / 32);
+        try tree.insert(.{ .x = x, .y = y });
+    }
+
+    try testing.expectEqual(@as(usize, 1000), tree.count());
+
+    // Validate tree structure after large insertion
+    try tree.validate();
+
+    // Tree deinit is called automatically by defer
+    // testing.allocator will detect any leaks
+}
+
+test "KDTree: validate invariants after extensive nearest neighbor queries" {
+    var tree = KDTree(Point2D, 2, f64, Point2D.getCoord).init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert 50 points in a regular grid
+    var x: f64 = 0;
+    while (x < 10) : (x += 1) {
+        var y: f64 = 0;
+        while (y < 5) : (y += 1) {
+            try tree.insert(.{ .x = x, .y = y });
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 50), tree.count());
+    try tree.validate();
+
+    // Perform 50 nearest neighbor queries from various points
+    var query_count: usize = 0;
+    while (query_count < 50) : (query_count += 1) {
+        const qx: f64 = @floatFromInt(query_count % 10);
+        const qy: f64 = @floatFromInt((query_count / 10) % 5);
+        const nearest = tree.nearestNeighbor(.{ .x = qx + 0.3, .y = qy + 0.7 });
+        try testing.expect(nearest != null);
+    }
+
+    // Validate structure after all queries
+    try tree.validate();
+    try testing.expectEqual(@as(usize, 50), tree.count());
+}
+
+test "KDTree: range search includes boundary points" {
+    var tree = KDTree(Point2D, 2, f64, Point2D.getCoord).init(testing.allocator);
+    defer tree.deinit();
+
+    const query = Point2D{ .x = 0.0, .y = 0.0 };
+    const radius = 5.0;
+
+    // Insert point at exactly distance radius from query
+    // For point (3, 4): distance = sqrt(9+16) = sqrt(25) = 5.0
+    try tree.insert(.{ .x = 3.0, .y = 4.0 });
+
+    // Insert point at distance < radius
+    try tree.insert(.{ .x = 2.0, .y = 2.0 }); // distance = sqrt(8) ≈ 2.828 < 5.0
+
+    // Insert point at distance > radius
+    try tree.insert(.{ .x = 4.0, .y = 4.0 }); // distance = sqrt(32) ≈ 5.657 > 5.0
+
+    const results = try tree.rangeSearch(testing.allocator, query, radius);
+    defer testing.allocator.free(results);
+
+    // Should include origin (0,0) if we inserted it, and points with dist <= radius
+    // We have (3,4) at exactly 5.0, and (2,2) at ~2.828
+    try testing.expectEqual(@as(usize, 2), results.len);
+
+    // Verify (2,2) is included and (4,4) is not
+    var found_2_2 = false;
+    var found_4_4 = false;
+    for (results) |p| {
+        if (p.x == 2.0 and p.y == 2.0) found_2_2 = true;
+        if (p.x == 4.0 and p.y == 4.0) found_4_4 = true;
+    }
+    try testing.expect(found_2_2);
+    try testing.expect(!found_4_4);
+}
+
+const Point1D = struct {
+    x: f64,
+
+    fn getCoord(p: Point1D, _: usize) f64 {
+        return p.x;
+    }
+};
+
+test "KDTree: works with 1D points" {
+    var tree = KDTree(Point1D, 1, f64, Point1D.getCoord).init(testing.allocator);
+    defer tree.deinit();
+
+    // Insert 1D points
+    try tree.insert(.{ .x = 5.0 });
+    try tree.insert(.{ .x = 2.0 });
+    try tree.insert(.{ .x = 8.0 });
+    try tree.insert(.{ .x = 1.0 });
+    try tree.insert(.{ .x = 9.0 });
+
+    try testing.expectEqual(@as(usize, 5), tree.count());
+    try tree.validate();
+
+    // Nearest neighbor should find closest 1D point
+    const nearest = tree.nearestNeighbor(.{ .x = 5.3 });
+    try testing.expect(nearest != null);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), nearest.?.x, 0.001);
+
+    // Range search in 1D
+    const results = try tree.rangeSearch(testing.allocator, .{ .x = 5.0 }, 3.0);
+    defer testing.allocator.free(results);
+
+    // Points within distance 3 of 5: [2,8]
+    // Candidates: 5.0 (dist=0), 2.0 (dist=3), 8.0 (dist=3), 1.0 (dist=4), 9.0 (dist=4)
+    // Should include 5.0, 2.0, 8.0
+    try testing.expectEqual(@as(usize, 3), results.len);
+}

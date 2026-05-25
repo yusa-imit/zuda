@@ -572,3 +572,114 @@ test "Rope: validate invariants" {
     try rope.concat(&rope2);
     try rope.validate();
 }
+
+test "Rope: large rope from repeated concatenations" {
+    const allocator = std.testing.allocator;
+    var rope = try Rope(u8).fromSlice(allocator, "abc");
+    defer rope.deinit();
+
+    // Concatenate 50 ropes of "abc" to build total length 150
+    for (0..49) |_| {
+        var temp = try Rope(u8).fromSlice(allocator, "abc");
+        defer temp.deinit();
+        try rope.concat(&temp);
+    }
+
+    try std.testing.expectEqual(@as(usize, 150), rope.length());
+    try rope.validate();
+
+    // Verify specific character at known position
+    try std.testing.expectEqual(@as(u8, 'b'), try rope.charAt(1));
+    try std.testing.expectEqual(@as(u8, 'c'), try rope.charAt(149));
+
+    // Verify slice correctness
+    const slice = try rope.toSlice();
+    defer allocator.free(slice);
+    try std.testing.expectEqual(@as(usize, 150), slice.len);
+}
+
+test "Rope: validate invariants after insert then split then concat sequence" {
+    const allocator = std.testing.allocator;
+    var rope = try Rope(u8).fromSlice(allocator, "hello world");
+    defer rope.deinit();
+
+    try rope.validate();
+
+    // Insert at position 0
+    try rope.insert(0, "prefix:");
+    try rope.validate();
+
+    // Split at midpoint
+    var right = try rope.split(10);
+    defer right.deinit();
+    try rope.validate();
+    try right.validate();
+
+    // Concatenate the halves back
+    try rope.concat(&right);
+    try rope.validate();
+
+    // Verify final content (7 + 11 = 18)
+    const result = try rope.toSlice();
+    defer allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 18), result.len);
+}
+
+test "Rope: charAt out of bounds returns error" {
+    const allocator = std.testing.allocator;
+    var rope = try Rope(u8).fromSlice(allocator, "test");
+    defer rope.deinit();
+
+    const len = rope.length();
+    try std.testing.expectEqual(@as(usize, 4), len);
+
+    // charAt at exact length should fail
+    try std.testing.expectError(error.OutOfBounds, rope.charAt(4));
+
+    // charAt far beyond length should fail
+    try std.testing.expectError(error.OutOfBounds, rope.charAt(100));
+
+    // Valid indices should succeed
+    try std.testing.expectEqual(@as(u8, 't'), try rope.charAt(0));
+    try std.testing.expectEqual(@as(u8, 'e'), try rope.charAt(1));
+}
+
+test "Rope: operations on empty rope" {
+    const allocator = std.testing.allocator;
+    var empty_rope = try Rope(u8).fromSlice(allocator, "");
+    defer empty_rope.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), empty_rope.length());
+    try empty_rope.validate();
+
+    // Concat with non-empty rope
+    var non_empty = try Rope(u8).fromSlice(allocator, "content");
+    defer non_empty.deinit();
+
+    try empty_rope.concat(&non_empty);
+    try std.testing.expectEqual(@as(usize, 7), empty_rope.length());
+    try empty_rope.validate();
+
+    // toSlice on concatenated rope
+    const result = try empty_rope.toSlice();
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(u8, "content", result);
+}
+
+test "Rope: init-deinit loop memory safety" {
+    const allocator = std.testing.allocator;
+
+    for (0..10) |_| {
+        var rope = try Rope(u8).fromSlice(allocator, "hello world");
+
+        // Perform 5 charAt operations (valid indices 0-10 for "hello world")
+        _ = try rope.charAt(0);
+        _ = try rope.charAt(5);
+        _ = try rope.charAt(6);
+        _ = try rope.charAt(10);
+        _ = try rope.charAt(1);
+
+        try rope.validate();
+        rope.deinit();
+    }
+}

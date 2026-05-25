@@ -97,7 +97,8 @@ pub fn DaryHeap(
             return self.items.items.len == 0;
         }
 
-        /// Reserve capacity for at least `additional` more elements.
+        /// Reserve capacity for at least `new_capacity` elements.
+        /// Time: O(n) amortized | Space: O(n) amortized
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) !void {
             try self.items.ensureTotalCapacity(new_capacity);
         }
@@ -170,7 +171,8 @@ pub fn DaryHeap(
             }
         }
 
-        /// Clear all elements from the heap.
+        /// Clear all elements from the heap, retaining capacity.
+        /// Time: O(n) | Space: O(1)
         pub fn clear(self: *Self) void {
             self.items.clearRetainingCapacity();
         }

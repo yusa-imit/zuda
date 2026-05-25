@@ -46,6 +46,7 @@ pub fn IntervalTree(
             high: T,
 
             /// Check if this interval overlaps with another.
+            /// Time: O(1) | Space: O(1)
             pub fn overlaps(self: Interval, other: Interval, ctx: Context) bool {
                 // Two intervals [a,b] and [c,d] overlap iff max(a,c) <= min(b,d)
                 const max_low = switch (compareFn(ctx, self.low, other.low)) {

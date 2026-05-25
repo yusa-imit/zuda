@@ -475,3 +475,147 @@ test "LockFreeStack: version counter wraparound safety" {
         try testing.expectEqual(@as(?i32, @intCast(i)), val);
     }
 }
+
+test "LockFreeStack: concurrent-like contention scenario" {
+    var stack = LockFreeStack(i32).init(testing.allocator);
+    defer stack.deinit();
+
+    // Simulate contention by doing many rapid push/pop pairs
+    // (In single thread, just tests rapid operations maintain correctness)
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        try stack.push(@intCast(i));
+        const val = stack.pop();
+        try testing.expectEqual(@as(?i32, @intCast(i)), val);
+        // Stack should be empty after each pair
+        try testing.expect(stack.isEmpty());
+    }
+
+    // Validate final state
+    stack.validate();
+    try testing.expect(stack.isEmpty());
+    try testing.expectEqual(@as(usize, 0), stack.count());
+}
+
+test "LockFreeStack: validate after mixed push and pop sequence" {
+    var stack = LockFreeStack(i32).init(testing.allocator);
+    defer stack.deinit();
+
+    // Push 10 items, validating after each push
+    var i: i32 = 0;
+    while (i < 10) : (i += 1) {
+        try stack.push(i);
+        stack.validate();
+    }
+    try testing.expectEqual(@as(usize, 10), stack.count());
+
+    // Pop 5 items, validating after each pop
+    i = 0;
+    while (i < 5) : (i += 1) {
+        _ = stack.pop();
+        stack.validate();
+    }
+    try testing.expectEqual(@as(usize, 5), stack.count());
+
+    // Push 5 more items, validating after each
+    i = 0;
+    while (i < 5) : (i += 1) {
+        try stack.push(100 + i);
+        stack.validate();
+    }
+    try testing.expectEqual(@as(usize, 10), stack.count());
+    stack.validate();
+}
+
+test "LockFreeStack: reuse after complete drain" {
+    var stack = LockFreeStack(i32).init(testing.allocator);
+    defer stack.deinit();
+
+    // Push 5 items
+    var i: i32 = 0;
+    while (i < 5) : (i += 1) {
+        try stack.push(i);
+    }
+    try testing.expectEqual(@as(usize, 5), stack.count());
+
+    // Drain to empty
+    i = 0;
+    while (i < 5) : (i += 1) {
+        _ = stack.pop();
+    }
+
+    // Verify empty
+    try testing.expect(stack.isEmpty());
+    try testing.expectEqual(@as(usize, 0), stack.count());
+    try testing.expectEqual(@as(?i32, null), stack.peek());
+
+    // Push 5 different items
+    i = 0;
+    while (i < 5) : (i += 1) {
+        try stack.push(1000 + i);
+    }
+
+    // Verify LIFO order of new items
+    i = 4;
+    while (i >= 0) : (i -= 1) {
+        const val = stack.pop();
+        try testing.expectEqual(@as(?i32, 1000 + i), val);
+    }
+
+    // Validate final state
+    try testing.expect(stack.isEmpty());
+    stack.validate();
+}
+
+test "LockFreeStack: peek does not consume - idempotent reads" {
+    var stack = LockFreeStack(i32).init(testing.allocator);
+    defer stack.deinit();
+
+    // Push 3 items
+    try stack.push(100);
+    try stack.push(200);
+    try stack.push(300);
+
+    const initial_count = stack.count();
+
+    // Peek 5 times - should all return the same top value
+    var j: usize = 0;
+    while (j < 5) : (j += 1) {
+        const peeked = stack.peek();
+        try testing.expectEqual(@as(?i32, 300), peeked);
+    }
+
+    // Count should not change
+    try testing.expectEqual(initial_count, stack.count());
+
+    // Pop once and verify correct item
+    const popped = stack.pop();
+    try testing.expectEqual(@as(?i32, 300), popped);
+
+    // Now peek should return new top
+    const new_peek = stack.peek();
+    try testing.expectEqual(@as(?i32, 200), new_peek);
+}
+
+test "LockFreeStack: init-deinit loop memory safety" {
+    var iteration: usize = 0;
+    while (iteration < 10) : (iteration += 1) {
+        var stack = LockFreeStack(i32).init(testing.allocator);
+
+        // Push 5 items in each iteration
+        var i: i32 = 0;
+        while (i < 5) : (i += 1) {
+            try stack.push(i);
+        }
+
+        // Validate before deinit
+        stack.validate();
+        try testing.expectEqual(@as(usize, 5), stack.count());
+
+        // Deinit will clean up all nodes
+        stack.deinit();
+    }
+
+    // If we reach here without memory leaks detected by testing.allocator, we're good
+    try testing.expect(true); // Memory leak detection is handled by allocator
+}

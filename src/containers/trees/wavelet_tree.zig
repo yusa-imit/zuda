@@ -319,7 +319,8 @@ pub fn WaveletTree(comptime T: type) type {
             return node.bitmap.capacity();
         }
 
-        /// Get the length of the sequence
+        /// Get the length of the sequence.
+        /// Time: O(1) | Space: O(1)
         pub fn len(self: *const Self) usize {
             return self.length;
         }

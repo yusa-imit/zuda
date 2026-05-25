@@ -574,14 +574,20 @@ pub fn AutoConsistentHashRing(comptime K: type, comptime N: type) type {
             self.ring.deinit();
         }
 
+        /// Add a node to the ring.
+        /// Time: O(R log n) | Space: O(R) where R = replicas
         pub fn addNode(self: *Self, node: N) !void {
             try self.ring.addNode(node);
         }
 
+        /// Remove a node and its virtual replicas from the ring.
+        /// Time: O(R log n) | Space: O(1)
         pub fn removeNode(self: *Self, node: N) void {
             self.ring.removeNode(node);
         }
 
+        /// Get the node responsible for the given key.
+        /// Time: O(log n) | Space: O(1)
         pub fn getNode(self: *const Self, key: K) ?N {
             return self.ring.getNode(key);
         }
