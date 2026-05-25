@@ -1,3 +1,25 @@
+**Session 583 Update (2026-05-26) — FEATURE MODE:**
+
+✅ **TEST COVERAGE** — Edge case tests added to BellmanFord + FloydWarshall:
+- **Mode**: FEATURE MODE (counter: 583)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Deliverable**: Added 5 edge case tests each to BellmanFord and FloydWarshall (7→12 each)
+- **BellmanFord new tests** (src/algorithms/graph/bellman_ford.zig):
+  * `zero-weight edges` — chain 0→1→2 (weight 0), 2→3 (weight 3); distances 0/0/0/3 verified
+  * `all vertices unreachable from start` — start=0 with no outgoing edges; others stay max_weight
+  * `chain path reconstruction` — 5-vertex linear chain; getPath(4)==[0,1,2,3,4]
+  * `two equal-weight alternate paths` — 0→2=5 and 0→1→2=5; both cost 5
+  * `init-deinit loop memory safety` — 10 cycles via testing.allocator
+- **FloydWarshall new tests** (src/algorithms/graph/floyd_warshall.zig):
+  * `two vertex directed` — A→B=7; dist(B,A)==null, dist(A,A)==0
+  * `asymmetric directed graph` — dist(1→2)=1 ≠ dist(2→1)=10
+  * `self-distance always zero` — diagonal invariant for 3-vertex graph
+  * `hasPath returns false for unreachable pair` — disconnected components {A,B} and {C,D}
+  * `init-deinit loop memory safety` — 10 cycles via testing.allocator
+- **Commit**: 54d9c51 (test)
+- **Next Priority**: Continue test coverage — more 7-test files: dinic, activity_selection, map_reduce, etc.
+
 **Session 582 Update (2026-05-26) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE** — Edge case tests added to PersistentHashMap + WorkStealingDeque:
