@@ -1,3 +1,36 @@
+**Session 579 Update (2026-05-25) — FEATURE MODE:**
+
+✅ **FIX + TEST COVERAGE** — LockFreeQueue peek() fix + edge case tests for HyperLogLog, LockFreeQueue, FenwickTree:
+- **Mode**: FEATURE MODE (counter: 579, not divisible by 5)
+- **CI Status**: ✅ GREEN — 3 recent runs successful, 0 open issues
+- **Bug Fixed**: LockFreeQueue was missing `peek() ?T` method — 2 existing tests referenced it (compile error when tested directly)
+  * Added `peek()` implementation that reads head.next.value without removing; O(1)
+  * Fixed aligned dummy address in tagged pointer pack/unpack test (misaligned pointer panic)
+- **Deliverable**: Added 5 edge case tests to HyperLogLog, LockFreeQueue, FenwickTree (11 → 16 each)
+- **HyperLogLog new tests** (src/containers/probabilistic/hyperloglog.zig, +83 lines):
+  * **clear then re-add restores cardinality** — add 50 items, clear, count=0, re-add, estimate restores
+  * **merge disjoint sketches approximates union** — hll1[0..49] merged with hll2[50..99]; count ≈ 100
+  * **validate passes before and after add** — fresh init, single add, many adds, clear all pass validate()
+  * **precision 4 minimum register count** — m=16, memoryUsage=16, count>0 after 8 adds
+  * **init-deinit loop memory safety** — 10 cycles via testing.allocator
+- **LockFreeQueue new tests** (src/containers/queues/lock_free_queue.zig, +114 lines):
+  * **single element enqueue-dequeue cycle** — enqueue/peek/count/dequeue/isEmpty/peek/count checks
+  * **multiple empty dequeues all return null** — 5 consecutive dequeues on empty, all null
+  * **re-enqueue after drain preserves FIFO** — drain then re-enqueue (10,20,30); dequeue in order
+  * **count reflects current size accurately** — count grows/shrinks correctly during enqueue/dequeue
+  * **init-deinit loop memory safety** — 10 cycles via testing.allocator
+- **FenwickTree new tests** (src/containers/trees/fenwick_tree.zig, +95 lines):
+  * **all same values correct sums** — [5,5,5,5,5]: prefix/range/get all correct
+  * **set to zero removes contribution** — set(2,0) on all-ones; rangeSum reflects removal
+  * **out-of-bounds returns errors** — add/set/get/rangeSum with idx>=n → IndexOutOfBounds; start>end → InvalidRange
+  * **initZero incremental build matches init** — both produce identical prefix/range sums
+  * **init-deinit loop memory safety** — 10 cycles via testing.allocator
+- **All 16 tests pass** in each file (verified via `zig test` directly)
+- **Commit**: 7d44f95 (fix+test)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Project Status**: v2.0.4 stable, all tests passing, CI green, 0 open issues
+- **Next Priority**: Continue test coverage for remaining 11-test files (algorithms: approximation/tsp, cache/fifo, cache/lfu, cache/lru, geometry/closest_pair, etc.)
+
 **Session 578 Update (2026-05-25) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE ENHANCEMENT** — LFUCache + ConcurrentSkipList edge case tests added:
