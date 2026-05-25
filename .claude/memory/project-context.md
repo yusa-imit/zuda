@@ -1,3 +1,25 @@
+**Session 581 Update (2026-05-25) — FEATURE MODE:**
+
+✅ **TEST COVERAGE** — Edge case tests added to XorLinkedList + DisjointSet:
+- **Mode**: FEATURE MODE (counter: 581)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Deliverable**: Added 5 edge case tests each to XorLinkedList and DisjointSet (13→18 each)
+- **XorLinkedList new tests** (src/containers/lists/xor_linked_list.zig, +147 lines):
+  * `init-deinit loop memory safety` — 10 cycles: init/pushFront+pushBack/iterate/validate/deinit
+  * `duplicate values are preserved` — pushBack 42 five times; count==5; all 42s iterated
+  * `validate after pushFront 100 elements` — 100 pushFront; count==100; reverse order verified
+  * `iterator exhaustion is idempotent` — iterate to end; 3 more next() calls all return null
+  * `u64 type support` — generic type: max u64 pushFront, 0 pushBack; popFront/popBack verified
+- **DisjointSet new tests** (src/containers/specialized/disjoint_set.zig, +134 lines):
+  * `self-union returns false` — unite(x,x) returns false; count/numSets unchanged; connected(x,x)==true
+  * `connected element to itself is always true` — self-connectivity pre/post union
+  * `numSets tracks correctly through all unions` — 5 sets progressively unioned; 5→4→3→2→1 tracked
+  * `transitive connectivity through chain union` — 8-element chain; all 64 pairs connected
+  * `init-deinit loop memory safety` — 10 cycles: init/makeSet-5/unite-4/validate/deinit
+- **Commit**: b884834 (test)
+- **Next Priority**: Continue test coverage — containers still at 13 tests: persistent_hash_map, work_stealing_deque
+
 **Session 580 Update (2026-05-25) — STABILIZATION MODE:**
 
 ✅ **STABILIZATION** — Big-O doc comments fixed + 15 edge case tests added:
