@@ -1,3 +1,25 @@
+**Session 584 Update (2026-05-26) — FEATURE MODE:**
+
+✅ **TEST COVERAGE** — Edge case tests added to HopcroftKarp + Hungarian:
+- **Mode**: FEATURE MODE (counter: 584)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Deliverable**: Added 5 edge case tests each to HopcroftKarp (4→9) and Hungarian (5→10)
+- **HopcroftKarp new tests** (src/algorithms/graph/hopcroft_karp.zig, +5 tests):
+  * `single edge matching` — U={0}, V={1}, 0→1; matching_size=1, isMatched(0), getMatch(0)==1
+  * `one contested V vertex` — U={0,1} both want V={2}; matching_size=1, exactly one matched
+  * `independent pairs perfect matching` — 0→{2}, 1→{3}; matching_size=2, deterministic assignment verified
+  * `crown graph requires augmenting paths` — C_6 crown: U={0,1,2}, V={3,4,5}; greedy finds 2, augmentation required for 3
+  * `memory safety loop` — 10 cycles init/run/deinit via testing.allocator
+- **Hungarian new tests** (src/algorithms/graph/hungarian.zig, +5 tests):
+  * `4x4 uniform cost all rows matched` — all-5 matrix; total=20, all rows matched
+  * `zero diagonal is optimal over large off-diagonal` — diag=0, rest=100; total=0, identity permutation
+  * `getMatch returns valid permutation in 2x2` — costs [[3,1],[2,4]]; optimal 0→1,1→0 total=3
+  * `arithmetic sequence matrix all matchings equal cost` — A[i][j]=3i+j+1; all matchings cost 15
+  * `memory safety loop` — 10 cycles with 2x2 matrix via testing.allocator
+- **Commit**: 567e836 (test)
+- **Next Priority**: Continue test coverage — dinic (7 tests), topological_sort (6), push_relabel (6)
+
 **Session 583 Update (2026-05-26) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE** — Edge case tests added to BellmanFord + FloydWarshall:
