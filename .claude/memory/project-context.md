@@ -1,3 +1,22 @@
+**Session 580 Update (2026-05-25) — STABILIZATION MODE:**
+
+✅ **STABILIZATION** — Big-O doc comments fixed + 15 edge case tests added:
+- **Mode**: STABILIZATION MODE (counter: 580, divisible by 5)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Cross-Compilation**: ✅ All 6 targets verified sequentially (x86_64/aarch64 linux/macos/windows/wasm32)
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Doc Comments Fixed** (7 public API functions):
+  * `dary_heap.zig`: ensureTotalCapacity (O(n) amortized), clear (O(n))
+  * `interval_tree.zig`: overlaps (O(1))
+  * `wavelet_tree.zig`: len (O(1))
+  * `consistent_hash_ring.zig` AutoConsistentHashRing: addNode (O(R log n)), removeNode (O(R log n)), getNode (O(log n))
+- **Test Coverage Enhanced** (15 new edge case tests):
+  * LockFreeStack: 12 → 17 tests (validate in mutations, idempotent peek, drain+reuse, contention pattern, memory safety loop)
+  * KDTree: 12 → 17 tests (duplicate points, 1000-node memory safety, validate after NN queries, range boundary precision, 1D support)
+  * Rope: 12 → 17 tests (large rope stress, validate across insert+split+concat, OOB charAt, empty rope, memory safety loop)
+- **Commit**: 05744bf (stabilize)
+- **Next Priority**: FEATURE MODE — continue test coverage for files with <16 tests
+
 **Session 579 Update (2026-05-25) — FEATURE MODE:**
 
 ✅ **FIX + TEST COVERAGE** — LockFreeQueue peek() fix + edge case tests for HyperLogLog, LockFreeQueue, FenwickTree:
