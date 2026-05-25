@@ -450,3 +450,132 @@ test "HopcroftKarp: asymmetric bipartite" {
 
     try testing.expectEqual(@as(usize, 2), result.matching_size);
 }
+
+// Shared test helpers for edge-case tests below
+const TestVertex = u32;
+const TestCtx = struct {
+    pub fn hash(_: @This(), v: TestVertex) u64 {
+        return v;
+    }
+    pub fn eql(_: @This(), a: TestVertex, b: TestVertex) bool {
+        return a == b;
+    }
+};
+const TestBipartiteGraph = struct {
+    edges: std.HashMap(TestVertex, []const TestVertex, TestCtx, std.hash_map.default_max_load_percentage),
+
+    fn init(alloc: Allocator) @This() {
+        return .{ .edges = std.HashMap(TestVertex, []const TestVertex, TestCtx, std.hash_map.default_max_load_percentage).init(alloc) };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.edges.deinit();
+    }
+
+    fn addEdges(self: *@This(), u: TestVertex, vs: []const TestVertex) !void {
+        try self.edges.put(u, vs);
+    }
+
+    fn iterator(self: *const @This()) std.HashMap(TestVertex, []const TestVertex, TestCtx, std.hash_map.default_max_load_percentage).Iterator {
+        return self.edges.iterator();
+    }
+};
+
+test "HopcroftKarp: single edge matching" {
+    const allocator = testing.allocator;
+    const HK = HopcroftKarp(TestVertex, TestCtx);
+
+    var graph = TestBipartiteGraph.init(allocator);
+    defer graph.deinit();
+
+    // U = {0}, V = {1}; exactly one edge 0 → 1
+    try graph.addEdges(0, &[_]TestVertex{1});
+
+    var result = try HK.run(allocator, &graph, TestCtx{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.matching_size);
+    try testing.expect(result.isMatched(0));
+    try testing.expectEqual(@as(?TestVertex, 1), result.getMatch(0));
+}
+
+test "HopcroftKarp: one contested V vertex" {
+    const allocator = testing.allocator;
+    const HK = HopcroftKarp(TestVertex, TestCtx);
+
+    var graph = TestBipartiteGraph.init(allocator);
+    defer graph.deinit();
+
+    // U = {0, 1}, V = {2}; both U vertices compete for v=2 — only one can win
+    try graph.addEdges(0, &[_]TestVertex{2});
+    try graph.addEdges(1, &[_]TestVertex{2});
+
+    var result = try HK.run(allocator, &graph, TestCtx{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.matching_size);
+    // Exactly one of {0, 1} is matched; the other is unmatched
+    try testing.expect(result.isMatched(0) or result.isMatched(1));
+    try testing.expect(!(result.isMatched(0) and result.isMatched(1)));
+}
+
+test "HopcroftKarp: independent pairs perfect matching" {
+    const allocator = testing.allocator;
+    const HK = HopcroftKarp(TestVertex, TestCtx);
+
+    var graph = TestBipartiteGraph.init(allocator);
+    defer graph.deinit();
+
+    // U = {0, 1}, V = {2, 3}; disjoint: 0 → {2}, 1 → {3}
+    // Only one perfect matching possible — no ambiguity
+    try graph.addEdges(0, &[_]TestVertex{2});
+    try graph.addEdges(1, &[_]TestVertex{3});
+
+    var result = try HK.run(allocator, &graph, TestCtx{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 2), result.matching_size);
+    try testing.expectEqual(@as(?TestVertex, 2), result.getMatch(0));
+    try testing.expectEqual(@as(?TestVertex, 3), result.getMatch(1));
+}
+
+test "HopcroftKarp: crown graph requires augmenting paths" {
+    const allocator = testing.allocator;
+    const HK = HopcroftKarp(TestVertex, TestCtx);
+
+    var graph = TestBipartiteGraph.init(allocator);
+    defer graph.deinit();
+
+    // Crown graph C_6: U={0,1,2}, V={3,4,5}
+    // Each U vertex connects to all V except the "same-index" one
+    // 0→{4,5}, 1→{3,5}, 2→{3,4}
+    // Maximum matching = 3 (perfect); greedy alone finds only 2 — augmentation required
+    try graph.addEdges(0, &[_]TestVertex{ 4, 5 });
+    try graph.addEdges(1, &[_]TestVertex{ 3, 5 });
+    try graph.addEdges(2, &[_]TestVertex{ 3, 4 });
+
+    var result = try HK.run(allocator, &graph, TestCtx{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.matching_size);
+    try testing.expect(result.isMatched(0));
+    try testing.expect(result.isMatched(1));
+    try testing.expect(result.isMatched(2));
+}
+
+test "HopcroftKarp: memory safety loop" {
+    const allocator = testing.allocator;
+    const HK = HopcroftKarp(TestVertex, TestCtx);
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var graph = TestBipartiteGraph.init(allocator);
+        defer graph.deinit();
+
+        try graph.addEdges(0, &[_]TestVertex{ 2, 3 });
+        try graph.addEdges(1, &[_]TestVertex{3});
+
+        var result = try HK.run(allocator, &graph, TestCtx{});
+        result.deinit();
+    }
+}

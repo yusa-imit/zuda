@@ -363,3 +363,107 @@ test "Hungarian: single element" {
     try testing.expectEqual(@as(usize, 1), result.assignment.len);
     try testing.expectEqual(@as(isize, 0), result.assignment[0]);
 }
+
+test "Hungarian: 4x4 uniform cost all rows matched" {
+    const allocator = testing.allocator;
+
+    // All entries equal — any perfect matching costs 4 * 5 = 20
+    const costs = [_][]const u32{
+        &[_]u32{ 5, 5, 5, 5 },
+        &[_]u32{ 5, 5, 5, 5 },
+        &[_]u32{ 5, 5, 5, 5 },
+        &[_]u32{ 5, 5, 5, 5 },
+    };
+
+    const H = Hungarian(u32);
+    var result = try H.run(allocator, &costs, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(u32, 20), result.total_cost);
+    for (0..4) |i| {
+        try testing.expect(result.isMatched(i));
+        try testing.expect(result.getMatch(i) != null);
+    }
+}
+
+test "Hungarian: zero diagonal is optimal over large off-diagonal" {
+    const allocator = testing.allocator;
+
+    // Diagonal = 0, all others = 100 → optimal is the identity permutation with cost 0
+    const costs = [_][]const u32{
+        &[_]u32{ 0, 100, 100 },
+        &[_]u32{ 100, 0, 100 },
+        &[_]u32{ 100, 100, 0 },
+    };
+
+    const H = Hungarian(u32);
+    var result = try H.run(allocator, &costs, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(u32, 0), result.total_cost);
+    try testing.expectEqual(@as(?usize, 0), result.getMatch(0));
+    try testing.expectEqual(@as(?usize, 1), result.getMatch(1));
+    try testing.expectEqual(@as(?usize, 2), result.getMatch(2));
+}
+
+test "Hungarian: getMatch returns valid permutation in 2x2" {
+    const allocator = testing.allocator;
+
+    // Optimal: 0→1 (cost 1), 1→0 (cost 2) = 3
+    const costs = [_][]const u32{
+        &[_]u32{ 3, 1 },
+        &[_]u32{ 2, 4 },
+    };
+
+    const H = Hungarian(u32);
+    var result = try H.run(allocator, &costs, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(u32, 3), result.total_cost);
+    // Both rows matched, columns are valid indices, assignment is a permutation
+    for (0..2) |i| {
+        try testing.expect(result.isMatched(i));
+        const col = result.getMatch(i);
+        try testing.expect(col != null);
+        try testing.expect(col.? < 2);
+    }
+    // No two rows share the same column
+    try testing.expect(result.getMatch(0) != result.getMatch(1));
+}
+
+test "Hungarian: arithmetic sequence matrix all matchings equal cost" {
+    const allocator = testing.allocator;
+
+    // A[i][j] = 3i + j + 1; by the arithmetic sequence property, every
+    // perfect matching sums to 15 (1+5+9 = 2+6+7 = 3+4+8 = ... = 15)
+    const costs = [_][]const u32{
+        &[_]u32{ 1, 2, 3 },
+        &[_]u32{ 4, 5, 6 },
+        &[_]u32{ 7, 8, 9 },
+    };
+
+    const H = Hungarian(u32);
+    var result = try H.run(allocator, &costs, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(u32, 15), result.total_cost);
+    for (0..3) |i| {
+        try testing.expect(result.isMatched(i));
+    }
+}
+
+test "Hungarian: memory safety loop" {
+    const allocator = testing.allocator;
+
+    const costs = [_][]const u32{
+        &[_]u32{ 1, 2 },
+        &[_]u32{ 3, 4 },
+    };
+
+    const H = Hungarian(u32);
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var result = try H.run(allocator, &costs, 0);
+        result.deinit();
+    }
+}
