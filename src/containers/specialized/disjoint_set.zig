@@ -391,3 +391,138 @@ test "DisjointSet: memory leak check" {
 
     try ds.validate();
 }
+
+test "DisjointSet: self-union returns false" {
+    var ds = DisjointSet(u32).init(std.testing.allocator);
+    defer ds.deinit();
+
+    try ds.makeSet(10);
+    try std.testing.expectEqual(@as(usize, 1), ds.count());
+    try std.testing.expectEqual(@as(usize, 1), ds.numSets());
+
+    // Uniting an element with itself should return false (already in same set)
+    try std.testing.expect(!try ds.unite(10, 10));
+
+    // State should remain unchanged
+    try std.testing.expectEqual(@as(usize, 1), ds.count());
+    try std.testing.expectEqual(@as(usize, 1), ds.numSets());
+
+    // Element should still be connected to itself
+    try std.testing.expect(try ds.connected(10, 10));
+
+    try ds.validate();
+}
+
+test "DisjointSet: connected element to itself is always true" {
+    var ds = DisjointSet(u32).init(std.testing.allocator);
+    defer ds.deinit();
+
+    try ds.makeSet(5);
+    try ds.makeSet(99);
+
+    // Before any union, each element is connected to itself
+    try std.testing.expect(try ds.connected(5, 5));
+    try std.testing.expect(try ds.connected(99, 99));
+
+    // After union, self-connection still holds
+    try std.testing.expect(try ds.unite(5, 99));
+    try std.testing.expect(try ds.connected(5, 5));
+    try std.testing.expect(try ds.connected(99, 99));
+
+    try ds.validate();
+}
+
+test "DisjointSet: numSets tracks correctly through all unions" {
+    var ds = DisjointSet(u32).init(std.testing.allocator);
+    defer ds.deinit();
+
+    // Create 5 disjoint sets
+    for (0..5) |i| {
+        try ds.makeSet(@intCast(i));
+    }
+    try std.testing.expectEqual(@as(usize, 5), ds.numSets());
+
+    // First union: 0+1
+    try std.testing.expect(try ds.unite(0, 1));
+    try std.testing.expectEqual(@as(usize, 4), ds.numSets());
+
+    // Second union: 2+3
+    try std.testing.expect(try ds.unite(2, 3));
+    try std.testing.expectEqual(@as(usize, 3), ds.numSets());
+
+    // Third union: merge {0,1} and {2,3}
+    try std.testing.expect(try ds.unite(0, 2));
+    try std.testing.expectEqual(@as(usize, 2), ds.numSets());
+
+    // Fourth union: merge {0,1,2,3} and {4}
+    try std.testing.expect(try ds.unite(1, 4));
+    try std.testing.expectEqual(@as(usize, 1), ds.numSets());
+
+    // Verify all elements are connected
+    for (0..5) |i| {
+        for (0..5) |j| {
+            try std.testing.expect(try ds.connected(@intCast(i), @intCast(j)));
+        }
+    }
+
+    try ds.validate();
+}
+
+test "DisjointSet: transitive connectivity through chain union" {
+    var ds = DisjointSet(u32).init(std.testing.allocator);
+    defer ds.deinit();
+
+    // Create 8 disjoint sets
+    for (0..8) |i| {
+        try ds.makeSet(@intCast(i));
+    }
+
+    // Unite them in a chain: 0-1, 1-2, 2-3, 3-4, 4-5, 5-6, 6-7
+    for (0..7) |i| {
+        try std.testing.expect(try ds.unite(@intCast(i), @intCast(i + 1)));
+    }
+
+    // Verify all pairs (i,j) are connected (transitive connectivity)
+    for (0..8) |i| {
+        for (0..8) |j| {
+            try std.testing.expect(try ds.connected(@intCast(i), @intCast(j)));
+        }
+    }
+
+    // Should be exactly 1 set after all unions
+    try std.testing.expectEqual(@as(usize, 1), ds.numSets());
+
+    // Verify count is still 8
+    try std.testing.expectEqual(@as(usize, 8), ds.count());
+
+    try ds.validate();
+}
+
+test "DisjointSet: init-deinit loop memory safety" {
+    // 10 iterations of init → operations → validate → deinit
+    // Tests allocator safety and leak detection
+    for (0..10) |_| {
+        var ds = DisjointSet(u32).init(std.testing.allocator);
+
+        // Create 5 elements
+        for (0..5) |i| {
+            try ds.makeSet(@intCast(i));
+        }
+
+        // Unite them in a chain (4 pairs)
+        for (0..4) |i| {
+            try std.testing.expect(try ds.unite(@intCast(i), @intCast(i + 1)));
+        }
+
+        // Verify connectivity
+        try std.testing.expect(try ds.connected(0, 4));
+        try std.testing.expect(try ds.connected(1, 3));
+        try std.testing.expectEqual(@as(usize, 1), ds.numSets());
+
+        // Validate invariants
+        try ds.validate();
+
+        // Cleanup
+        ds.deinit();
+    }
+}

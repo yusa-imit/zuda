@@ -573,3 +573,151 @@ test "XorLinkedList: multiple iterator instances" {
     try std.testing.expectEqual(@as(?i32, null), it1.next());
     try std.testing.expectEqual(@as(?i32, null), it2.next());
 }
+
+test "XorLinkedList: init-deinit loop memory safety" {
+    const allocator = std.testing.allocator;
+
+    // 10 iterations of init -> push 3 front, 3 back -> count==6 -> iterate -> validate -> deinit
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var list = XorLinkedList(i32).init(allocator);
+
+        // Push 3 to front
+        try list.pushFront(100 + @as(i32, @intCast(i)));
+        try list.pushFront(200 + @as(i32, @intCast(i)));
+        try list.pushFront(300 + @as(i32, @intCast(i)));
+
+        // Push 3 to back
+        try list.pushBack(400 + @as(i32, @intCast(i)));
+        try list.pushBack(500 + @as(i32, @intCast(i)));
+        try list.pushBack(600 + @as(i32, @intCast(i)));
+
+        // Verify count
+        try std.testing.expectEqual(@as(usize, 6), list.count());
+
+        // Iterate and collect values
+        var iter = list.iterator();
+        var count: usize = 0;
+        while (iter.next()) |_| {
+            count += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 6), count);
+
+        // Validate invariants
+        try list.validate();
+
+        // Deinit (via defer in next iteration)
+        list.deinit();
+    }
+}
+
+test "XorLinkedList: duplicate values are preserved" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    // Push the same value 5 times via pushBack
+    const duplicate: i32 = 42;
+    try list.pushBack(duplicate);
+    try list.pushBack(duplicate);
+    try list.pushBack(duplicate);
+    try list.pushBack(duplicate);
+    try list.pushBack(duplicate);
+
+    // Count must be 5
+    try std.testing.expectEqual(@as(usize, 5), list.count());
+
+    // Iterator must return 42 five times
+    var iter = list.iterator();
+    var iter_count: usize = 0;
+    while (iter.next()) |value| {
+        try std.testing.expectEqual(duplicate, value);
+        iter_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 5), iter_count);
+
+    // validate() must pass
+    try list.validate();
+}
+
+test "XorLinkedList: validate after pushFront 100 elements" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    // pushFront 100 values (0..100)
+    var i: i32 = 0;
+    while (i < 100) : (i += 1) {
+        try list.pushFront(i);
+    }
+
+    // count == 100
+    try std.testing.expectEqual(@as(usize, 100), list.count());
+
+    // validate() passes
+    try list.validate();
+
+    // Iterator should yield them in reverse insertion order (99, 98, ... 0)
+    var iter = list.iterator();
+    var expected: i32 = 99;
+    while (iter.next()) |value| {
+        try std.testing.expectEqual(expected, value);
+        expected -= 1;
+    }
+    try std.testing.expectEqual(@as(i32, -1), expected); // After loop, expected should be -1
+}
+
+test "XorLinkedList: iterator exhaustion is idempotent" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(i32).init(allocator);
+    defer list.deinit();
+
+    // pushBack 3 elements
+    try list.pushBack(10);
+    try list.pushBack(20);
+    try list.pushBack(30);
+
+    var iter = list.iterator();
+
+    // Iterate to end (3 calls)
+    try std.testing.expectEqual(@as(i32, 10), iter.next().?);
+    try std.testing.expectEqual(@as(i32, 20), iter.next().?);
+    try std.testing.expectEqual(@as(i32, 30), iter.next().?);
+
+    // Then call it.next() 3 more times — all must return null (idempotent)
+    try std.testing.expectEqual(@as(?i32, null), iter.next());
+    try std.testing.expectEqual(@as(?i32, null), iter.next());
+    try std.testing.expectEqual(@as(?i32, null), iter.next());
+
+    // Validate after iteration
+    try list.validate();
+}
+
+test "XorLinkedList: u64 type support" {
+    const allocator = std.testing.allocator;
+
+    var list = XorLinkedList(u64).init(allocator);
+    defer list.deinit();
+
+    // pushFront max u64 value
+    const max_u64 = std.math.maxInt(u64);
+    try list.pushFront(max_u64);
+
+    // pushBack 0
+    try list.pushBack(0);
+
+    // popFront should return max
+    try std.testing.expectEqual(max_u64, list.popFront().?);
+
+    // popBack should return 0
+    try std.testing.expectEqual(@as(u64, 0), list.popBack().?);
+
+    // List is now empty
+    try std.testing.expect(list.isEmpty());
+
+    // validate() passes
+    try list.validate();
+}
