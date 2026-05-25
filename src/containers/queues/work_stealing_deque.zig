@@ -518,3 +518,169 @@ test "WorkStealingDeque: pop on empty deque returns null (issue #13)" {
     try testing.expectEqual(@as(?u32, 42), deque.pop());
     try testing.expectEqual(@as(?u32, null), deque.pop());
 }
+
+test "WorkStealingDeque: size tracks accurately through push pop steal" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    try testing.expectEqual(@as(usize, 0), deque.size());
+    try deque.validate();
+
+    // Push 5 items
+    try deque.push(1);
+    try deque.push(2);
+    try deque.push(3);
+    try deque.push(4);
+    try deque.push(5);
+    try testing.expectEqual(@as(usize, 5), deque.size());
+    try deque.validate();
+
+    // Pop one; size should be 4
+    _ = deque.pop();
+    try testing.expectEqual(@as(usize, 4), deque.size());
+    try deque.validate();
+
+    // Steal one; size should be 3
+    _ = deque.steal();
+    try testing.expectEqual(@as(usize, 3), deque.size());
+    try deque.validate();
+
+    // Pop two more; size should be 1
+    _ = deque.pop();
+    _ = deque.pop();
+    try testing.expectEqual(@as(usize, 1), deque.size());
+    try deque.validate();
+
+    // Steal last; size should be 0
+    _ = deque.steal();
+    try testing.expectEqual(@as(usize, 0), deque.size());
+    try testing.expect(deque.isEmpty());
+    try deque.validate();
+}
+
+test "WorkStealingDeque: interleaved push pop steal ordering" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    // Push 1, 2, 3
+    try deque.push(1);
+    try deque.push(2);
+    try deque.push(3);
+
+    // Steal from top (FIFO) → expect 1
+    try testing.expectEqual(@as(?u32, 1), deque.steal());
+
+    // Push 4, 5
+    try deque.push(4);
+    try deque.push(5);
+
+    // Pop from bottom (LIFO) → expect 5
+    try testing.expectEqual(@as(?u32, 5), deque.pop());
+
+    // Steal from top (FIFO) → expect 2
+    try testing.expectEqual(@as(?u32, 2), deque.steal());
+
+    // Pop from bottom (LIFO) → expect 4
+    try testing.expectEqual(@as(?u32, 4), deque.pop());
+
+    // Remaining: 3 — pop should get 3
+    try testing.expectEqual(@as(?u32, 3), deque.pop());
+
+    // Now empty
+    try testing.expect(deque.isEmpty());
+}
+
+test "WorkStealingDeque: multiple sequential steal calls exhaust deque" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    // Push items 100, 200, 300, 400, 500
+    try deque.push(100);
+    try deque.push(200);
+    try deque.push(300);
+    try deque.push(400);
+    try deque.push(500);
+
+    // Steal all via steal() in a loop until null
+    var stolen_items = [_]u32{0} ** 5;
+    var count: usize = 0;
+    while (deque.steal()) |item| {
+        if (count < 5) {
+            stolen_items[count] = item;
+            count += 1;
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 5), count);
+
+    // Verify order: first steal gets 100 (FIFO), last gets 500
+    try testing.expectEqual(@as(u32, 100), stolen_items[0]);
+    try testing.expectEqual(@as(u32, 200), stolen_items[1]);
+    try testing.expectEqual(@as(u32, 300), stolen_items[2]);
+    try testing.expectEqual(@as(u32, 400), stolen_items[3]);
+    try testing.expectEqual(@as(u32, 500), stolen_items[4]);
+
+    try testing.expect(deque.isEmpty());
+}
+
+test "WorkStealingDeque: validate after resize" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    // MIN_CAPACITY = 32, so push 31 items to stay at capacity 32
+    var i: u32 = 0;
+    while (i < 31) : (i += 1) {
+        try deque.push(i);
+    }
+    try testing.expectEqual(@as(usize, 31), deque.size());
+    try testing.expectEqual(@as(usize, 32), deque.capacity);
+    try deque.validate();
+
+    // Push one more (32nd) — triggers resize to 64
+    try deque.push(31);
+    try testing.expectEqual(@as(usize, 32), deque.size());
+    try testing.expectEqual(@as(usize, 64), deque.capacity);
+    try deque.validate();
+
+    // Pop all and verify isEmpty
+    while (deque.pop()) |_| {}
+    try testing.expect(deque.isEmpty());
+    try deque.validate();
+}
+
+test "WorkStealingDeque: init-deinit loop memory safety" {
+    const testing = std.testing;
+
+    // Loop 10 times: init deque, push 50 items, pop 25, steal 25, deinit
+    var loop: usize = 0;
+    while (loop < 10) : (loop += 1) {
+        var deque = try WorkStealingDeque(u32).init(testing.allocator);
+
+        // Push 0..49
+        var i: u32 = 0;
+        while (i < 50) : (i += 1) {
+            try deque.push(i);
+        }
+        try testing.expectEqual(@as(usize, 50), deque.size());
+
+        // Pop 25 from bottom (49..25 in LIFO order)
+        var pop_count: u32 = 0;
+        while (pop_count < 25) : (pop_count += 1) {
+            _ = deque.pop();
+        }
+        try testing.expectEqual(@as(usize, 25), deque.size());
+
+        // Steal 25 from top (0..24 in FIFO order)
+        var steal_count: u32 = 0;
+        while (steal_count < 25) : (steal_count += 1) {
+            _ = deque.steal();
+        }
+        try testing.expect(deque.isEmpty());
+
+        deque.deinit();
+    }
+}

@@ -794,3 +794,188 @@ test "PersistentHashMap: memory leak check" {
 
     m.deinit();
 }
+
+test "PersistentHashMap: remove from empty map returns empty map" {
+    const Map = PersistentHashMap(u32, u32, AutoContext, AutoContext.hash, AutoContext.eql);
+
+    const m0 = Map.init(testing.allocator, .{});
+    defer m0.deinit();
+
+    // Remove from empty map
+    const m1 = try m0.remove(99);
+    defer m1.deinit();
+
+    // m1 should still be empty
+    try testing.expectEqual(@as(usize, 0), m1.count());
+    try testing.expect(m1.isEmpty());
+    try testing.expectEqual(@as(?u32, null), m1.get(99));
+
+    try m1.validate();
+}
+
+test "PersistentHashMap: deep version chain all versions accessible" {
+    const Map = PersistentHashMap(u32, u32, AutoContext, AutoContext.hash, AutoContext.eql);
+
+    const m0 = Map.init(testing.allocator, .{});
+    defer m0.deinit();
+
+    const m1 = try m0.set(1, 100);
+    defer m1.deinit();
+
+    const m2 = try m1.set(2, 200);
+    defer m2.deinit();
+
+    const m3 = try m2.set(3, 300);
+    defer m3.deinit();
+
+    const m4 = try m3.set(4, 400);
+    defer m4.deinit();
+
+    const m5 = try m4.set(5, 500);
+    defer m5.deinit();
+
+    // Verify counts
+    try testing.expectEqual(@as(usize, 0), m0.count());
+    try testing.expectEqual(@as(usize, 1), m1.count());
+    try testing.expectEqual(@as(usize, 2), m2.count());
+    try testing.expectEqual(@as(usize, 3), m3.count());
+    try testing.expectEqual(@as(usize, 4), m4.count());
+    try testing.expectEqual(@as(usize, 5), m5.count());
+
+    // Verify each version only has keys up to that version
+    try testing.expectEqual(@as(?u32, 100), m1.get(1));
+    try testing.expectEqual(@as(?u32, null), m1.get(2));
+
+    try testing.expectEqual(@as(?u32, 100), m2.get(1));
+    try testing.expectEqual(@as(?u32, 200), m2.get(2));
+    try testing.expectEqual(@as(?u32, null), m2.get(3));
+
+    try testing.expectEqual(@as(?u32, 100), m3.get(1));
+    try testing.expectEqual(@as(?u32, 200), m3.get(2));
+    try testing.expectEqual(@as(?u32, 300), m3.get(3));
+    try testing.expectEqual(@as(?u32, null), m3.get(4));
+
+    // Validate all versions
+    try m0.validate();
+    try m1.validate();
+    try m2.validate();
+    try m3.validate();
+    try m4.validate();
+    try m5.validate();
+}
+
+test "PersistentHashMap: update value in collision bucket" {
+    const CollisionContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key / 10; // Force collisions: 0-9 → 0, 10-19 → 1, etc.
+        }
+
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const Map = PersistentHashMap(u32, u32, CollisionContext, CollisionContext.hash, CollisionContext.eql);
+
+    const m0 = Map.init(testing.allocator, .{});
+    defer m0.deinit();
+
+    // Set keys 0, 1, 2 (all hash to 0 → collision bucket)
+    const m1 = try m0.set(0, 1000);
+    defer m1.deinit();
+
+    const m2 = try m1.set(1, 2000);
+    defer m2.deinit();
+
+    const m3 = try m2.set(2, 3000);
+    defer m3.deinit();
+
+    try testing.expectEqual(@as(?u32, 2000), m3.get(1));
+
+    // Update key 1 to new value
+    const m4 = try m3.set(1, 9999);
+    defer m4.deinit();
+
+    // Old version (m3) still has original value
+    try testing.expectEqual(@as(?u32, 2000), m3.get(1));
+    try testing.expectEqual(@as(usize, 3), m3.count());
+
+    // New version (m4) has updated value
+    try testing.expectEqual(@as(?u32, 9999), m4.get(1));
+    try testing.expectEqual(@as(usize, 3), m4.count());
+
+    // All collision keys accessible in new version
+    try testing.expectEqual(@as(?u32, 1000), m4.get(0));
+    try testing.expectEqual(@as(?u32, 9999), m4.get(1));
+    try testing.expectEqual(@as(?u32, 3000), m4.get(2));
+
+    try m3.validate();
+    try m4.validate();
+}
+
+test "PersistentHashMap: remove all keys results in empty map" {
+    const Map = PersistentHashMap(u32, u32, AutoContext, AutoContext.hash, AutoContext.eql);
+
+    const m0 = Map.init(testing.allocator, .{});
+    defer m0.deinit();
+
+    const m1 = try m0.set(10, 1000);
+    defer m1.deinit();
+
+    const m2 = try m1.set(20, 2000);
+    defer m2.deinit();
+
+    const m3 = try m2.set(30, 3000);
+    defer m3.deinit();
+
+    try testing.expectEqual(@as(usize, 3), m3.count());
+
+    // Remove each key one at a time
+    const m4 = try m3.remove(10);
+    defer m4.deinit();
+    try testing.expectEqual(@as(usize, 2), m4.count());
+    try testing.expectEqual(@as(?u32, null), m4.get(10));
+    try m4.validate();
+
+    const m5 = try m4.remove(20);
+    defer m5.deinit();
+    try testing.expectEqual(@as(usize, 1), m5.count());
+    try testing.expectEqual(@as(?u32, null), m5.get(20));
+    try m5.validate();
+
+    const m6 = try m5.remove(30);
+    defer m6.deinit();
+
+    // Final map has count==0, isEmpty==true
+    try testing.expectEqual(@as(usize, 0), m6.count());
+    try testing.expect(m6.isEmpty());
+
+    // All keys return null
+    try testing.expectEqual(@as(?u32, null), m6.get(10));
+    try testing.expectEqual(@as(?u32, null), m6.get(20));
+    try testing.expectEqual(@as(?u32, null), m6.get(30));
+
+    try m6.validate();
+}
+
+test "PersistentHashMap: init-deinit loop memory safety" {
+    const Map = PersistentHashMap(u32, u32, AutoContext, AutoContext.hash, AutoContext.eql);
+
+    for (0..10) |outer| {
+        var m = Map.init(testing.allocator, .{});
+
+        // Set 5 keys
+        for (0..5) |i| {
+            const key: u32 = @intCast(outer * 10 + i);
+            const val: u32 = @intCast((outer * 10 + i) * 100);
+            const new_m = try m.set(key, val);
+            m.deinit();
+            m = new_m;
+        }
+
+        // Validate and deinit
+        try testing.expectEqual(@as(usize, 5), m.count());
+        try m.validate();
+        m.deinit();
+    }
+}
