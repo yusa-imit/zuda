@@ -414,3 +414,158 @@ test "BellmanFord: self-loop with negative weight" {
     try testing.expect(result.hasNegativeCycle());
     try testing.expect(result.negative_cycle_vertices.?.len > 0);
 }
+
+test "BellmanFord: zero-weight edges" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const BF = BellmanFord(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]BF.Edge{
+        .{ .from = 0, .to = 1, .weight = 0 },
+        .{ .from = 1, .to = 2, .weight = 0 },
+        .{ .from = 2, .to = 3, .weight = 3 },
+    };
+    const vertices = [_]u32{ 0, 1, 2, 3 };
+
+    var result = try BF.run(allocator, &edges, &vertices, 0, ctx, std.math.maxInt(i32));
+    defer result.deinit();
+
+    try testing.expect(!result.hasNegativeCycle());
+    try testing.expectEqual(@as(i32, 0), result.getDistance(0).?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance(1).?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance(2).?);
+    try testing.expectEqual(@as(i32, 3), result.getDistance(3).?);
+}
+
+test "BellmanFord: all vertices unreachable from start" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const BF = BellmanFord(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]BF.Edge{
+        .{ .from = 1, .to = 2, .weight = 1 },
+        .{ .from = 2, .to = 3, .weight = 1 },
+    };
+    const vertices = [_]u32{ 0, 1, 2, 3 };
+
+    var result = try BF.run(allocator, &edges, &vertices, 0, ctx, std.math.maxInt(i32));
+    defer result.deinit();
+
+    try testing.expect(!result.hasNegativeCycle());
+    try testing.expectEqual(@as(i32, 0), result.getDistance(0).?);
+    // Vertices 1, 2, 3 unreachable from 0 — distances remain max_weight
+    try testing.expectEqual(@as(i32, std.math.maxInt(i32)), result.getDistance(1).?);
+    try testing.expectEqual(@as(i32, std.math.maxInt(i32)), result.getDistance(2).?);
+    try testing.expectEqual(@as(i32, std.math.maxInt(i32)), result.getDistance(3).?);
+}
+
+test "BellmanFord: chain path reconstruction" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const BF = BellmanFord(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]BF.Edge{
+        .{ .from = 0, .to = 1, .weight = 1 },
+        .{ .from = 1, .to = 2, .weight = 1 },
+        .{ .from = 2, .to = 3, .weight = 1 },
+        .{ .from = 3, .to = 4, .weight = 1 },
+    };
+    const vertices = [_]u32{ 0, 1, 2, 3, 4 };
+
+    var result = try BF.run(allocator, &edges, &vertices, 0, ctx, std.math.maxInt(i32));
+    defer result.deinit();
+
+    const path = (try result.getPath(4)).?;
+    defer allocator.free(path);
+
+    try testing.expectEqual(@as(usize, 5), path.len);
+    try testing.expectEqual(@as(u32, 0), path[0]);
+    try testing.expectEqual(@as(u32, 1), path[1]);
+    try testing.expectEqual(@as(u32, 2), path[2]);
+    try testing.expectEqual(@as(u32, 3), path[3]);
+    try testing.expectEqual(@as(u32, 4), path[4]);
+}
+
+test "BellmanFord: two equal-weight alternate paths" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const BF = BellmanFord(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]BF.Edge{
+        .{ .from = 0, .to = 2, .weight = 5 },
+        .{ .from = 0, .to = 1, .weight = 2 },
+        .{ .from = 1, .to = 2, .weight = 3 },
+    };
+    const vertices = [_]u32{ 0, 1, 2 };
+
+    var result = try BF.run(allocator, &edges, &vertices, 0, ctx, std.math.maxInt(i32));
+    defer result.deinit();
+
+    try testing.expect(!result.hasNegativeCycle());
+    try testing.expectEqual(@as(i32, 5), result.getDistance(2).?);
+    try testing.expectEqual(@as(i32, 2), result.getDistance(1).?);
+}
+
+test "BellmanFord: init-deinit loop memory safety" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const BF = BellmanFord(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    for (0..10) |_| {
+        const edges = [_]BF.Edge{
+            .{ .from = 0, .to = 1, .weight = 1 },
+            .{ .from = 1, .to = 2, .weight = 2 },
+        };
+        const vertices = [_]u32{ 0, 1, 2 };
+
+        var result = try BF.run(allocator, &edges, &vertices, 0, ctx, std.math.maxInt(i32));
+        defer result.deinit();
+
+        try testing.expectEqual(@as(i32, 3), result.getDistance(2).?);
+    }
+}

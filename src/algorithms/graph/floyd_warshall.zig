@@ -544,3 +544,139 @@ test "FloydWarshall - complete graph" {
 
     try testing.expect(!result.has_negative_cycle);
 }
+
+test "FloydWarshall - two vertex directed" {
+    const allocator = testing.allocator;
+
+    const Context = struct {
+        pub fn hash(_: @This(), v: u8) u64 {
+            return v;
+        }
+        pub fn eql(_: @This(), a: u8, b: u8) bool {
+            return a == b;
+        }
+    };
+    const FW = FloydWarshall(u8, i32, Context);
+    const edges = [_]FW.Edge{
+        .{ .source = 'A', .target = 'B', .weight = 7 },
+    };
+    const vertices = [_]u8{ 'A', 'B' };
+
+    var result = try FW.run(allocator, &edges, &vertices, .{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 7), result.getDistance('A', 'B').?);
+    try testing.expectEqual(@as(?i32, null), result.getDistance('B', 'A'));
+    try testing.expectEqual(@as(i32, 0), result.getDistance('A', 'A').?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance('B', 'B').?);
+    try testing.expect(!result.has_negative_cycle);
+}
+
+test "FloydWarshall - asymmetric directed graph" {
+    const allocator = testing.allocator;
+
+    const U32Context = struct {
+        pub fn hash(_: @This(), v: u32) u64 {
+            return v;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+    const FW = FloydWarshall(u32, i32, U32Context);
+    const edges = [_]FW.Edge{
+        .{ .source = 1, .target = 2, .weight = 1 },
+        .{ .source = 2, .target = 1, .weight = 10 },
+    };
+    const vertices = [_]u32{ 1, 2 };
+
+    var result = try FW.run(allocator, &edges, &vertices, .{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 1), result.getDistance(1, 2).?);
+    try testing.expectEqual(@as(i32, 10), result.getDistance(2, 1).?);
+    try testing.expect(!result.has_negative_cycle);
+}
+
+test "FloydWarshall - self-distance always zero" {
+    const allocator = testing.allocator;
+
+    const Context = struct {
+        pub fn hash(_: @This(), v: u8) u64 {
+            return v;
+        }
+        pub fn eql(_: @This(), a: u8, b: u8) bool {
+            return a == b;
+        }
+    };
+    const FW = FloydWarshall(u8, i32, Context);
+    const edges = [_]FW.Edge{
+        .{ .source = 'A', .target = 'B', .weight = 2 },
+        .{ .source = 'B', .target = 'C', .weight = 3 },
+        .{ .source = 'A', .target = 'C', .weight = 6 },
+    };
+    const vertices = [_]u8{ 'A', 'B', 'C' };
+
+    var result = try FW.run(allocator, &edges, &vertices, .{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 0), result.getDistance('A', 'A').?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance('B', 'B').?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance('C', 'C').?);
+    try testing.expect(!result.has_negative_cycle);
+}
+
+test "FloydWarshall - hasPath returns false for unreachable pair" {
+    const allocator = testing.allocator;
+
+    const Context = struct {
+        pub fn hash(_: @This(), v: u8) u64 {
+            return v;
+        }
+        pub fn eql(_: @This(), a: u8, b: u8) bool {
+            return a == b;
+        }
+    };
+    const FW = FloydWarshall(u8, i32, Context);
+    const edges = [_]FW.Edge{
+        .{ .source = 'A', .target = 'B', .weight = 1 },
+        .{ .source = 'C', .target = 'D', .weight = 2 },
+    };
+    const vertices = [_]u8{ 'A', 'B', 'C', 'D' };
+
+    var result = try FW.run(allocator, &edges, &vertices, .{});
+    defer result.deinit();
+
+    try testing.expect(!result.hasPath('A', 'C'));
+    try testing.expect(!result.hasPath('C', 'A'));
+    try testing.expect(result.hasPath('A', 'B'));
+    try testing.expect(result.hasPath('C', 'D'));
+    try testing.expect(!result.has_negative_cycle);
+}
+
+test "FloydWarshall - init-deinit loop memory safety" {
+    const allocator = testing.allocator;
+
+    const Context = struct {
+        pub fn hash(_: @This(), v: u8) u64 {
+            return v;
+        }
+        pub fn eql(_: @This(), a: u8, b: u8) bool {
+            return a == b;
+        }
+    };
+    const FW = FloydWarshall(u8, i32, Context);
+
+    for (0..10) |_| {
+        const edges = [_]FW.Edge{
+            .{ .source = 'A', .target = 'B', .weight = 1 },
+            .{ .source = 'B', .target = 'C', .weight = 2 },
+        };
+        const vertices = [_]u8{ 'A', 'B', 'C' };
+
+        var result = try FW.run(allocator, &edges, &vertices, .{});
+        defer result.deinit();
+
+        try testing.expectEqual(@as(i32, 3), result.getDistance('A', 'C').?);
+    }
+}
