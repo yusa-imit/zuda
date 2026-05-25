@@ -1,3 +1,25 @@
+**Session 582 Update (2026-05-26) — FEATURE MODE:**
+
+✅ **TEST COVERAGE** — Edge case tests added to PersistentHashMap + WorkStealingDeque:
+- **Mode**: FEATURE MODE (counter: 582)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Deliverable**: Added 5 edge case tests each to PersistentHashMap and WorkStealingDeque (13→18 each)
+- **PersistentHashMap new tests** (src/containers/hashing/persistent_hash_map.zig, +185 lines):
+  * `remove from empty map returns empty map` — remove on empty: count==0, isEmpty, get==null, validate
+  * `deep version chain all versions accessible` — 6-version chain; each version only has keys up to that point
+  * `update value in collision bucket` — CollisionContext collision bucket update; old/new versions verified
+  * `remove all keys results in empty map` — count 3→2→1→0; all intermediate versions validated
+  * `init-deinit loop memory safety` — 10 cycles: fresh map, 5 keys, validate, deinit
+- **WorkStealingDeque new tests** (src/containers/queues/work_stealing_deque.zig, +166 lines):
+  * `size tracks accurately through push pop steal` — size() decrements via pop/steal; validate after each op
+  * `interleaved push pop steal ordering` — LIFO pop + FIFO steal interleaved sequence verified
+  * `multiple sequential steal calls exhaust deque` — steal loop; count==5; FIFO order verified
+  * `validate after resize` — push 31→32 triggers resize; capacity goes 32→64; validate passes
+  * `init-deinit loop memory safety` — 10 cycles: push 50, pop 25, steal 25, deinit
+- **Commit**: 9fa08e4 (test)
+- **Next Priority**: Continue test coverage — find next batch of files at 13 tests (compression, dynamic_programming, ML algorithms)
+
 **Session 581 Update (2026-05-25) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE** — Edge case tests added to XorLinkedList + DisjointSet:

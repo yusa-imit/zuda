@@ -411,3 +411,5 @@
 {"timestamp":"2026-05-25T07:38:11Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to Rope (12→17 tests)","project":"zuda"}
 {"timestamp":"2026-05-25T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to XorLinkedList (13→18 tests)","project":"zuda"}
 {"timestamp":"2026-05-25T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to DisjointSet (13→18 tests)","project":"zuda"}
+{"timestamp":"2026-05-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to PersistentHashMap (13→18)","project":"zuda"}
+{"timestamp":"2026-05-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to WorkStealingDeque (13→18)","project":"zuda"}
