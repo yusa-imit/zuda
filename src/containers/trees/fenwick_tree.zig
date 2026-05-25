@@ -477,3 +477,98 @@ test "FenwickTree: negative values" {
     const sum_after = try tree.rangeSum(0, 4);
     try testing.expectEqual(@as(i32, -3), sum_after);
 }
+
+test "FenwickTree: all same values correct sums" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 5, 5, 5, 5, 5 };
+    var tree = try FenwickTree(i32).init(allocator, &data);
+    defer tree.deinit();
+
+    try testing.expectEqual(@as(i32, 5), tree.prefixSum(0)); // [0..0] = 5
+    try testing.expectEqual(@as(i32, 10), tree.prefixSum(1)); // [0..1] = 10
+    try testing.expectEqual(@as(i32, 25), tree.prefixSum(4)); // [0..4] = 25
+    try testing.expectEqual(@as(i32, 15), try tree.rangeSum(1, 3)); // [1..3] = 15
+    try testing.expectEqual(@as(i32, 5), try tree.get(0));
+    try testing.expectEqual(@as(i32, 5), try tree.get(4));
+    tree.validate();
+}
+
+test "FenwickTree: set to zero removes contribution" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tree = try FenwickTree(i32).initZero(allocator, 5);
+    defer tree.deinit();
+
+    // Build [1,1,1,1,1]
+    for (0..5) |i| try tree.add(i, 1);
+    try testing.expectEqual(@as(i32, 5), tree.prefixSum(4));
+
+    // Zero out index 2 → effective array [1,1,0,1,1]
+    try tree.set(2, 0);
+    try testing.expectEqual(@as(i32, 0), try tree.get(2));
+    try testing.expectEqual(@as(i32, 4), tree.prefixSum(4)); // total = 4
+    try testing.expectEqual(@as(i32, 2), try tree.rangeSum(1, 3)); // [1,0,1] = 2
+    tree.validate();
+}
+
+test "FenwickTree: out-of-bounds returns errors" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tree = try FenwickTree(i32).initZero(allocator, 3);
+    defer tree.deinit();
+    try tree.add(0, 10);
+
+    // idx == n is out of bounds
+    try testing.expectError(error.IndexOutOfBounds, tree.add(3, 1));
+    try testing.expectError(error.IndexOutOfBounds, tree.set(3, 1));
+    try testing.expectError(error.IndexOutOfBounds, tree.get(3));
+    try testing.expectError(error.IndexOutOfBounds, tree.rangeSum(0, 3));
+    // start > end is invalid range
+    try testing.expectError(error.InvalidRange, tree.rangeSum(2, 1));
+    tree.validate();
+}
+
+test "FenwickTree: initZero incremental build matches init" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+
+    var tree_direct = try FenwickTree(i32).init(allocator, &data);
+    defer tree_direct.deinit();
+
+    var tree_incremental = try FenwickTree(i32).initZero(allocator, 5);
+    defer tree_incremental.deinit();
+    for (data, 0..) |val, i| try tree_incremental.add(i, val);
+
+    // Both trees should produce identical prefix sums
+    for (0..5) |i| {
+        try testing.expectEqual(tree_direct.prefixSum(i), tree_incremental.prefixSum(i));
+    }
+    // And identical range sums
+    try testing.expectEqual(
+        try tree_direct.rangeSum(1, 4),
+        try tree_incremental.rangeSum(1, 4),
+    );
+    tree_direct.validate();
+    tree_incremental.validate();
+}
+
+test "FenwickTree: init-deinit loop memory safety" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    for (0..10) |_| {
+        var tree = try FenwickTree(i32).init(allocator, &data);
+        try testing.expectEqual(@as(i32, 15), tree.prefixSum(4));
+        try tree.add(2, 10);
+        try testing.expectEqual(@as(i32, 25), tree.prefixSum(4));
+        tree.validate();
+        tree.deinit();
+    }
+}

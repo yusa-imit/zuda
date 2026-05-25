@@ -238,6 +238,18 @@ pub fn LockFreeQueue(comptime T: type) type {
             }
         }
 
+        /// Peek at the front element without removing it.
+        /// Returns null if the queue is empty.
+        /// Time: O(1) | Space: O(1)
+        /// Note: Result may be stale immediately after return in concurrent context
+        pub fn peek(self: *const Self) ?T {
+            const head_val = self.head.load(.acquire);
+            const head = TaggedPtr.fromUsize(head_val);
+            const head_ptr = head.ptr orelse return null;
+            const next = head_ptr.next.load(.acquire);
+            return if (next) |node| node.value else null;
+        }
+
         /// Check if queue is empty
         /// Time: O(1) | Space: O(1)
         /// Note: Result may be stale immediately after return in concurrent context
@@ -496,8 +508,10 @@ test "LockFreeQueue: tagged pointer pack/unpack" {
     try testing.expectEqual(@as(?*Q.Node, null), null_unpacked.ptr);
     try testing.expectEqual(@as(usize, 0), null_unpacked.tag);
 
-    // Test non-null pointer (simulate with dummy address)
-    const dummy_addr: usize = 0x0000_1234_5678_9ABC;
+    // Test non-null pointer — use a properly aligned address (Node alignment = @alignOf(Node))
+    // Round down a base address to the required alignment to avoid misaligned pointer errors
+    const node_align: usize = @alignOf(Q.Node);
+    const dummy_addr: usize = 0x0000_0000_1234_5000 & ~(node_align - 1);
     const dummy_ptr: *Q.Node = @ptrFromInt(dummy_addr);
     const tagged = TaggedPtr.init(dummy_ptr, 42);
     const tagged_val = tagged.toUsize();
@@ -510,4 +524,100 @@ test "LockFreeQueue: tagged pointer pack/unpack" {
     const max_val = max_tag.toUsize();
     const max_unpacked = TaggedPtr.fromUsize(max_val);
     try testing.expectEqual(@as(usize, 0xFFFF), max_unpacked.tag);
+}
+
+test "LockFreeQueue: single element enqueue-dequeue cycle" {
+    const Q = LockFreeQueue(i32);
+    var q = try Q.init(testing.allocator);
+    defer q.deinit();
+
+    // Enqueue one item and verify state
+    try q.enqueue(42);
+    try testing.expectEqual(false, q.isEmpty());
+    try testing.expectEqual(@as(?i32, 42), q.peek());
+    try testing.expectEqual(@as(usize, 1), q.count());
+    try q.validate();
+
+    // Dequeue and verify queue is now empty
+    const val = q.dequeue();
+    try testing.expectEqual(@as(?i32, 42), val);
+    try testing.expectEqual(true, q.isEmpty());
+    try testing.expectEqual(@as(?i32, null), q.peek());
+    try testing.expectEqual(@as(usize, 0), q.count());
+    try q.validate();
+}
+
+test "LockFreeQueue: multiple empty dequeues all return null" {
+    const Q = LockFreeQueue(i32);
+    var q = try Q.init(testing.allocator);
+    defer q.deinit();
+
+    // All dequeues on an empty queue must return null
+    for (0..5) |_| {
+        try testing.expectEqual(@as(?i32, null), q.dequeue());
+    }
+    try testing.expectEqual(true, q.isEmpty());
+    try testing.expectEqual(@as(?i32, null), q.peek());
+    try q.validate();
+}
+
+test "LockFreeQueue: re-enqueue after drain preserves FIFO" {
+    const Q = LockFreeQueue(i32);
+    var q = try Q.init(testing.allocator);
+    defer q.deinit();
+
+    // Fill and drain
+    try q.enqueue(1);
+    try q.enqueue(2);
+    _ = q.dequeue();
+    _ = q.dequeue();
+    try testing.expectEqual(true, q.isEmpty());
+
+    // Re-enqueue new items and verify FIFO order
+    try q.enqueue(10);
+    try q.enqueue(20);
+    try q.enqueue(30);
+    try testing.expectEqual(@as(?i32, 10), q.dequeue());
+    try testing.expectEqual(@as(?i32, 20), q.dequeue());
+    try testing.expectEqual(@as(?i32, 30), q.dequeue());
+    try testing.expectEqual(@as(?i32, null), q.dequeue());
+    try q.validate();
+}
+
+test "LockFreeQueue: count reflects current size accurately" {
+    const Q = LockFreeQueue(i32);
+    var q = try Q.init(testing.allocator);
+    defer q.deinit();
+
+    // Count grows as items are enqueued
+    try testing.expectEqual(@as(usize, 0), q.count());
+    for (0..5) |i| {
+        try q.enqueue(@intCast(i));
+        try testing.expectEqual(i + 1, q.count());
+    }
+
+    // Count shrinks as items are dequeued
+    for (0..5) |i| {
+        _ = q.dequeue();
+        try testing.expectEqual(4 - i, q.count());
+    }
+    try testing.expectEqual(@as(usize, 0), q.count());
+    try q.validate();
+}
+
+test "LockFreeQueue: init-deinit loop memory safety" {
+    const Q = LockFreeQueue(i32);
+
+    // 10 cycles of init/enqueue/dequeue/deinit; testing.allocator detects leaks
+    for (0..10) |cycle| {
+        var q = try Q.init(testing.allocator);
+        for (0..5) |i| {
+            try q.enqueue(@intCast(i + cycle));
+        }
+        for (0..3) |_| {
+            _ = q.dequeue();
+        }
+        try q.validate();
+        q.deinit();
+    }
 }

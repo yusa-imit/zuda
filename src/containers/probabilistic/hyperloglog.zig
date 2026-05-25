@@ -386,3 +386,86 @@ test "HyperLogLog - memory usage" {
     defer hll14.deinit();
     try testing.expectEqual(@as(usize, 16384), hll14.memoryUsage());
 }
+
+test "HyperLogLog - clear then re-add restores cardinality" {
+    const HLL = HyperLogLog(u32, void, defaultHashInt(u32));
+    var hll = try HLL.init(testing.allocator, 12, {});
+    defer hll.deinit();
+
+    // Add 50 distinct items
+    for (0..50) |i| hll.add(@intCast(i));
+    const before = hll.count();
+    try testing.expect(before >= 40 and before <= 60); // Within ~20% of 50
+
+    // Clear brings count to 0
+    hll.clear();
+    try testing.expectEqual(@as(u64, 0), hll.count());
+
+    // Re-adding the same items restores the estimate
+    for (0..50) |i| hll.add(@intCast(i));
+    const after = hll.count();
+    try testing.expect(after >= 40 and after <= 60);
+    hll.validate();
+}
+
+test "HyperLogLog - merge disjoint sketches approximates union" {
+    const HLL = HyperLogLog(u32, void, defaultHashInt(u32));
+    var hll1 = try HLL.init(testing.allocator, 12, {});
+    defer hll1.deinit();
+    var hll2 = try HLL.init(testing.allocator, 12, {});
+    defer hll2.deinit();
+
+    // hll1: items 0..49, hll2: items 50..99 (fully disjoint)
+    for (0..50) |i| hll1.add(@intCast(i));
+    for (50..100) |i| hll2.add(@intCast(i));
+
+    try hll1.merge(&hll2);
+    const merged_count = hll1.count();
+
+    // Merged count should approximate 100 (true cardinality of union)
+    try testing.expect(merged_count >= 80 and merged_count <= 120);
+    hll1.validate();
+}
+
+test "HyperLogLog - validate passes before and after add" {
+    const HLL = HyperLogLog(u32, void, defaultHashInt(u32));
+    var hll = try HLL.init(testing.allocator, 8, {});
+    defer hll.deinit();
+
+    hll.validate(); // Must pass on fresh init
+    hll.add(1);
+    hll.validate(); // Must pass after single add
+    for (2..100) |i| hll.add(@intCast(i));
+    hll.validate(); // Must pass after many adds
+    hll.clear();
+    hll.validate(); // Must pass after clear
+}
+
+test "HyperLogLog - precision 4 minimum register count" {
+    const HLL = HyperLogLog(u32, void, defaultHashInt(u32));
+    var hll = try HLL.init(testing.allocator, 4, {});
+    defer hll.deinit();
+
+    // p=4 → m = 2^4 = 16 registers, 16 bytes
+    try testing.expectEqual(@as(usize, 16), hll.m);
+    try testing.expectEqual(@as(usize, 16), hll.memoryUsage());
+
+    // Adding a few items should still produce a non-zero estimate
+    for (0..8) |i| hll.add(@intCast(i));
+    const est = hll.count();
+    try testing.expect(est > 0);
+    hll.validate();
+}
+
+test "HyperLogLog - init-deinit loop memory safety" {
+    const HLL = HyperLogLog(u32, void, defaultHashInt(u32));
+
+    // 10 cycles via testing.allocator to detect leaks
+    for (0..10) |cycle| {
+        var hll = try HLL.init(testing.allocator, 10, {});
+        for (0..20) |i| hll.add(@intCast(i + cycle * 20));
+        _ = hll.count();
+        hll.validate();
+        hll.deinit();
+    }
+}
