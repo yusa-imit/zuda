@@ -1,3 +1,17 @@
+**Session 589 Update (2026-05-27) — FEATURE MODE:**
+
+✅ **TEST COVERAGE** — Edge case tests added to 5 algorithm files (9→14 tests each):
+- **Mode**: FEATURE MODE (counter: 589)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Commit** (918e49f): 5 files from 9→14 tests each (+458 lines):
+  * bfs.zig: star topology, two-paths-finds-shortest, binary-tree-level-distances, runToGoal-start-equals-goal, memory-safety-loop
+  * tarjan_scc.zig: two-cycles-bridged (2 SCCs of size 2), complete-4-graph (1 SCC), 5-isolated-vertices (5 SCCs), figure-eight (1 SCC size 5), memory loop
+  * knapsack.zig: capacity-exact-fit, capacity-exceeds-all, 0/1-greedy-suboptimal, detailed-fractions, memory loop
+  * jump_search.zig: single-element-found, single-element-not-found, all-same-elements, target-at-last, negative-values
+  * morris_counter.zig: fresh-estimate-zero, reset-restores-zero, non-negative, single-array-vs-counter, base-1.5-variance-range
+- **Next Priority**: Continue test coverage for other 9-test files (subsets.zig, bfs.zig DFS variants already done)
+
 **Session 588 Update (2026-05-27) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE** — Edge case tests added to 9 low-coverage algorithm files:
