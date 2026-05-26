@@ -277,3 +277,98 @@ test "0/1 knapsack greedy - all items fit" {
 
     try testing.expectEqual(@as(usize, 2), selected.items.len);
 }
+
+test "fractional knapsack - capacity exactly fits all items" {
+    const items = [_]Item{
+        .{ .value = 10, .weight = 4, .id = 0 },
+        .{ .value = 20, .weight = 6, .id = 1 },
+        .{ .value = 15, .weight = 5, .id = 2 },
+    };
+    const capacity = 15.0;
+
+    const value = try fractionalKnapsack(testing.allocator, &items, capacity);
+    try testing.expectApproxEqAbs(@as(f64, 45.0), value, 1e-9);
+}
+
+test "fractional knapsack - capacity larger than all items" {
+    const items = [_]Item{
+        .{ .value = 5, .weight = 1, .id = 0 },
+        .{ .value = 3, .weight = 2, .id = 1 },
+    };
+    const capacity = 100.0;
+
+    const value = try fractionalKnapsack(testing.allocator, &items, capacity);
+    try testing.expectApproxEqAbs(@as(f64, 8.0), value, 1e-9);
+}
+
+test "0/1 knapsack greedy - greedy suboptimal known case" {
+    const items = [_]Item{
+        .{ .value = 10, .weight = 6, .id = 0 },
+        .{ .value = 7, .weight = 4, .id = 1 },
+        .{ .value = 7, .weight = 4, .id = 2 },
+    };
+    const capacity = 8.0;
+
+    var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, capacity);
+    defer selected.deinit();
+
+    try testing.expectEqual(@as(usize, 2), selected.items.len);
+
+    var total_value: f64 = 0;
+    for (selected.items) |id| {
+        total_value += items[id].value;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 14.0), total_value, 1e-9);
+}
+
+test "fractional knapsack - detailed selection fractions sum to one item" {
+    const items = [_]Item{
+        .{ .value = 100, .weight = 50, .id = 0 },
+        .{ .value = 60, .weight = 20, .id = 1 },
+    };
+    const capacity = 30.0;
+
+    var selections = try fractionalKnapsackDetailed(testing.allocator, &items, capacity);
+    defer selections.deinit();
+
+    try testing.expectEqual(@as(usize, 2), selections.items.len);
+
+    var item_id_1_found = false;
+    var item_id_0_found = false;
+
+    for (selections.items) |sel| {
+        if (sel.item_id == 1) {
+            try testing.expectApproxEqAbs(@as(f64, 1.0), sel.fraction, 1e-9);
+            item_id_1_found = true;
+        } else if (sel.item_id == 0) {
+            try testing.expectApproxEqAbs(@as(f64, 0.2), sel.fraction, 1e-9);
+            item_id_0_found = true;
+        }
+    }
+
+    try testing.expect(item_id_0_found);
+    try testing.expect(item_id_1_found);
+
+    var total_value: f64 = 0;
+    for (selections.items) |sel| {
+        total_value += sel.value_taken;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 80.0), total_value, 1e-9);
+}
+
+test "fractional knapsack - memory safety loop" {
+    const items = [_]Item{
+        .{ .value = 10, .weight = 5, .id = 0 },
+        .{ .value = 20, .weight = 10, .id = 1 },
+    };
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        const value = try fractionalKnapsack(testing.allocator, &items, 12.0);
+        try testing.expect(value > 0);
+
+        var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, 12.0);
+        defer selected.deinit();
+        try testing.expect(selected.items.len > 0);
+    }
+}

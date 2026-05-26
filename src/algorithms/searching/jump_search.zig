@@ -237,3 +237,44 @@ test "jumpSearchCustom: edge cases with custom jump" {
     const empty = [_]i32{};
     try testing.expectEqual(@as(?usize, null), jumpSearchCustom(i32, &empty, 5, 2, {}, std.sort.asc(i32)));
 }
+
+test "jumpSearch: single element found" {
+    const arr = [_]i32{42};
+    const result = jumpSearch(i32, &arr, 42, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, 0), result);
+}
+
+test "jumpSearch: single element not found" {
+    const arr = [_]i32{42};
+    const result = jumpSearch(i32, &arr, 99, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, null), result);
+}
+
+test "jumpSearch: all same elements target present" {
+    const arr = [_]i32{ 5, 5, 5, 5, 5 };
+    const result = jumpSearch(i32, &arr, 5, {}, std.sort.asc(i32));
+    try testing.expect(result != null);
+    try testing.expectEqual(@as(i32, 5), arr[result.?]);
+}
+
+test "jumpSearch: target at last position" {
+    const arr = [_]i32{ 1, 3, 5, 7, 9, 11, 13, 15, 17, 100 };
+    const result = jumpSearch(i32, &arr, 100, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, 9), result);
+}
+
+test "jumpSearch: negative values sorted ascending" {
+    const arr = [_]i32{ -50, -30, -10, 0, 10, 30, 50 };
+
+    const r1 = jumpSearch(i32, &arr, -30, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, 1), r1);
+
+    const r2 = jumpSearch(i32, &arr, 0, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, 3), r2);
+
+    const r3 = jumpSearch(i32, &arr, -100, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, null), r3);
+
+    const r4 = jumpSearch(i32, &arr, 51, {}, std.sort.asc(i32));
+    try testing.expectEqual(@as(?usize, null), r4);
+}

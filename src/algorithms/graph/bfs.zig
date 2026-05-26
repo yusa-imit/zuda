@@ -466,3 +466,99 @@ test "BFS: stress test" {
         try testing.expectEqual(i, path[@intCast(i)]);
     }
 }
+
+test "BFS: star topology" {
+    var graph = IntGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(1, 3, {});
+    try graph.addEdge(1, 4, {});
+    try graph.addEdge(1, 5, {});
+
+    var result = try IntBFS.run(testing.allocator, &graph, 1, IntContext{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(?usize, 0), result.getDistance(1));
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(2));
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(3));
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(4));
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(5));
+    try testing.expectEqual(@as(usize, 5), result.visit_order.items.len);
+}
+
+test "BFS: two paths finds shortest" {
+    var graph = IntGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(2, 3, {});
+    try graph.addEdge(3, 4, {});
+    try graph.addEdge(4, 5, {});
+    try graph.addEdge(1, 3, {});
+
+    var result = try IntBFS.run(testing.allocator, &graph, 1, IntContext{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(3));
+    const path = (try result.getPath(3)) orelse {
+        try testing.expect(false);
+        return;
+    };
+    defer testing.allocator.free(path);
+    try testing.expectEqual(@as(usize, 2), path.len);
+    try testing.expectEqual(@as(i32, 1), path[0]);
+    try testing.expectEqual(@as(i32, 3), path[1]);
+}
+
+test "BFS: complete binary tree level distances" {
+    var graph = IntGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(1, 3, {});
+    try graph.addEdge(2, 4, {});
+    try graph.addEdge(2, 5, {});
+    try graph.addEdge(3, 6, {});
+    try graph.addEdge(3, 7, {});
+
+    var result = try IntBFS.run(testing.allocator, &graph, 1, IntContext{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(?usize, 0), result.getDistance(1));
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(2));
+    try testing.expectEqual(@as(?usize, 1), result.getDistance(3));
+    try testing.expectEqual(@as(?usize, 2), result.getDistance(4));
+    try testing.expectEqual(@as(?usize, 2), result.getDistance(5));
+    try testing.expectEqual(@as(?usize, 2), result.getDistance(6));
+    try testing.expectEqual(@as(?usize, 2), result.getDistance(7));
+}
+
+test "BFS: runToGoal start equals goal" {
+    var graph = IntGraph(void).init(testing.allocator, .{}, true);
+    defer graph.deinit();
+
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(2, 3, {});
+
+    var result = try IntBFS.runToGoal(testing.allocator, &graph, 1, 1, IntContext{});
+    defer result.deinit();
+
+    try testing.expectEqual(@as(?usize, 0), result.getDistance(1));
+    try testing.expectEqual(@as(usize, 1), result.visit_order.items.len);
+}
+
+test "BFS: memory safety loop" {
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var graph = IntGraph(void).init(testing.allocator, .{}, true);
+        defer graph.deinit();
+
+        try graph.addEdge(1, 2, {});
+        try graph.addEdge(2, 3, {});
+        try graph.addEdge(3, 1, {});
+
+        var result = try IntBFS.run(testing.allocator, &graph, 1, IntContext{});
+        result.deinit();
+    }
+}

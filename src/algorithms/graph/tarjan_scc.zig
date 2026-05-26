@@ -506,3 +506,180 @@ test "TarjanSCC: stress test (100 vertex cycle)" {
     try testing.expectEqual(@as(usize, 1), result.components.len);
     try testing.expectEqual(@as(usize, 100), result.components[0].len);
 }
+
+test "TarjanSCC: two separate cycles connected by one edge" {
+    const T = TarjanSCC(u32);
+    var tarjan = T.init(testing.allocator);
+
+    var adjacency_list = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator);
+    defer {
+        var iter = adjacency_list.valueIterator();
+        while (iter.next()) |list| {
+            list.deinit(testing.allocator);
+        }
+        adjacency_list.deinit();
+    }
+
+    var v0_neighbors: std.ArrayList(u32) = .{};
+    try v0_neighbors.append(testing.allocator, 1);
+    try adjacency_list.put(0, v0_neighbors);
+
+    var v1_neighbors: std.ArrayList(u32) = .{};
+    try v1_neighbors.append(testing.allocator, 0);
+    try v1_neighbors.append(testing.allocator, 2);
+    try adjacency_list.put(1, v1_neighbors);
+
+    var v2_neighbors: std.ArrayList(u32) = .{};
+    try v2_neighbors.append(testing.allocator, 3);
+    try adjacency_list.put(2, v2_neighbors);
+
+    var v3_neighbors: std.ArrayList(u32) = .{};
+    try v3_neighbors.append(testing.allocator, 2);
+    try adjacency_list.put(3, v3_neighbors);
+
+    var result = try tarjan.run(&adjacency_list);
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 2), result.components.len);
+    var sizes: std.ArrayList(usize) = .{};
+    defer sizes.deinit(testing.allocator);
+    for (result.components) |component| {
+        try sizes.append(testing.allocator, component.len);
+    }
+    std.mem.sort(usize, sizes.items, {}, std.sort.asc(usize));
+    try testing.expectEqual(@as(usize, 2), sizes.items[0]);
+    try testing.expectEqual(@as(usize, 2), sizes.items[1]);
+}
+
+test "TarjanSCC: complete directed graph is one SCC" {
+    const T = TarjanSCC(u32);
+    var tarjan = T.init(testing.allocator);
+
+    var adjacency_list = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator);
+    defer {
+        var iter = adjacency_list.valueIterator();
+        while (iter.next()) |list| {
+            list.deinit(testing.allocator);
+        }
+        adjacency_list.deinit();
+    }
+
+    var i: u32 = 0;
+    while (i < 4) : (i += 1) {
+        var neighbors: std.ArrayList(u32) = .{};
+        var j: u32 = 0;
+        while (j < 4) : (j += 1) {
+            if (i != j) {
+                try neighbors.append(testing.allocator, j);
+            }
+        }
+        try adjacency_list.put(i, neighbors);
+    }
+
+    var result = try tarjan.run(&adjacency_list);
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), result.components.len);
+    try testing.expectEqual(@as(usize, 4), result.components[0].len);
+}
+
+test "TarjanSCC: five isolated vertices all separate SCCs" {
+    const T = TarjanSCC(u32);
+    var tarjan = T.init(testing.allocator);
+
+    var adjacency_list = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator);
+    defer {
+        var iter = adjacency_list.valueIterator();
+        while (iter.next()) |list| {
+            list.deinit(testing.allocator);
+        }
+        adjacency_list.deinit();
+    }
+
+    var i: u32 = 0;
+    while (i < 5) : (i += 1) {
+        const neighbors: std.ArrayList(u32) = .{};
+        try adjacency_list.put(i, neighbors);
+    }
+
+    var result = try tarjan.run(&adjacency_list);
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 5), result.components.len);
+    for (result.components) |component| {
+        try testing.expectEqual(@as(usize, 1), component.len);
+    }
+}
+
+test "TarjanSCC: figure-eight two cycles sharing one vertex" {
+    const T = TarjanSCC(u32);
+    var tarjan = T.init(testing.allocator);
+
+    var adjacency_list = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator);
+    defer {
+        var iter = adjacency_list.valueIterator();
+        while (iter.next()) |list| {
+            list.deinit(testing.allocator);
+        }
+        adjacency_list.deinit();
+    }
+
+    var v0_neighbors: std.ArrayList(u32) = .{};
+    try v0_neighbors.append(testing.allocator, 1);
+    try v0_neighbors.append(testing.allocator, 3);
+    try adjacency_list.put(0, v0_neighbors);
+
+    var v1_neighbors: std.ArrayList(u32) = .{};
+    try v1_neighbors.append(testing.allocator, 2);
+    try adjacency_list.put(1, v1_neighbors);
+
+    var v2_neighbors: std.ArrayList(u32) = .{};
+    try v2_neighbors.append(testing.allocator, 0);
+    try adjacency_list.put(2, v2_neighbors);
+
+    var v3_neighbors: std.ArrayList(u32) = .{};
+    try v3_neighbors.append(testing.allocator, 4);
+    try adjacency_list.put(3, v3_neighbors);
+
+    var v4_neighbors: std.ArrayList(u32) = .{};
+    try v4_neighbors.append(testing.allocator, 0);
+    try adjacency_list.put(4, v4_neighbors);
+
+    var result = try tarjan.run(&adjacency_list);
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), result.components.len);
+    try testing.expectEqual(@as(usize, 5), result.components[0].len);
+}
+
+test "TarjanSCC: memory safety loop" {
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        const T = TarjanSCC(u32);
+        var tarjan = T.init(testing.allocator);
+
+        var adjacency_list = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator);
+        defer {
+            var iter = adjacency_list.valueIterator();
+            while (iter.next()) |list| {
+                list.deinit(testing.allocator);
+            }
+            adjacency_list.deinit();
+        }
+
+        var v0_neighbors: std.ArrayList(u32) = .{};
+        try v0_neighbors.append(testing.allocator, 1);
+        try adjacency_list.put(0, v0_neighbors);
+
+        var v1_neighbors: std.ArrayList(u32) = .{};
+        try v1_neighbors.append(testing.allocator, 2);
+        try adjacency_list.put(1, v1_neighbors);
+
+        var v2_neighbors: std.ArrayList(u32) = .{};
+        try v2_neighbors.append(testing.allocator, 0);
+        try adjacency_list.put(2, v2_neighbors);
+
+        var result = try tarjan.run(&adjacency_list);
+        result.deinit(testing.allocator);
+    }
+}

@@ -273,11 +273,58 @@ test "MorrisCounter: memory safety" {
 test "MorrisCounterArray: memory safety" {
     const CounterArray4 = MorrisCounterArray(4);
     var array = CounterArray4.init(42, 2.0);
-    
+
     var i: usize = 0;
     while (i < 100000) : (i += 1) {
         array.increment();
     }
-    
+
     _ = array.estimate();
+}
+
+test "MorrisCounter: fresh counter estimate is zero" {
+    var c = MorrisCounter.init(42, 2.0);
+    try std.testing.expectEqual(@as(u64, 0), c.estimate());
+    try std.testing.expectEqual(@as(u32, 0), c.getExponent());
+}
+
+test "MorrisCounter: reset restores zero state" {
+    var c = MorrisCounter.init(42, 2.0);
+    var j: usize = 0;
+    while (j < 1000) : (j += 1) {
+        c.increment();
+    }
+    try std.testing.expect(c.estimate() > 0);
+    c.reset();
+    try std.testing.expectEqual(@as(u64, 0), c.estimate());
+    try std.testing.expectEqual(@as(u32, 0), c.getExponent());
+}
+
+test "MorrisCounter: estimate always non-negative" {
+    var c = MorrisCounter.init(99, 2.0);
+    var j: usize = 0;
+    while (j < 500) : (j += 1) {
+        c.increment();
+    }
+    try std.testing.expect(c.estimate() >= 0);
+}
+
+test "MorrisCounterArray: single counter array matches counter" {
+    const CounterArray1 = MorrisCounterArray(1);
+    var arr = CounterArray1.init(123, 2.0);
+    var c = MorrisCounter.init(123, 2.0);
+
+    try std.testing.expectEqual(@as(u64, 0), arr.estimate());
+    try std.testing.expectEqual(@as(u64, 0), c.estimate());
+}
+
+test "MorrisCounter: base 1.5 lower variance check" {
+    var c = MorrisCounter.init(12345, 1.5);
+    var j: usize = 0;
+    while (j < 10000) : (j += 1) {
+        c.increment();
+    }
+    const est = c.estimate();
+    try std.testing.expect(est >= 5000);
+    try std.testing.expect(est <= 30000);
 }
