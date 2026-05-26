@@ -1,3 +1,24 @@
+**Session 588 Update (2026-05-27) — FEATURE MODE:**
+
+✅ **TEST COVERAGE** — Edge case tests added to 9 low-coverage algorithm files:
+- **Mode**: FEATURE MODE (counter: 588)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **First Commit** (5473675): Committed uncommitted tests for n_queens, sudoku, huffman, introsort (+374 lines)
+- **Second Commit** (3117267): 4 files from 7→12 tests each:
+  * permutations.zig: 5-element count=120, reverse present, two-pair unique (4!/2!2!=6), unique==permute for no-dup, memory loop
+  * activity_selection.zig: adjacent activities (start==finish) both selected, unsorted input correct, 10-way non-overlapping, weighted empty, memory loop
+  * crf.zig: single-state always 0, long-seq length=10, 3-state valid range, init-predict-deinit loop, 10-state valid range
+  * map_reduce.zig: single-item true/false partition, single-element groupBy, all-same-key map-reduce sums, partition loop
+- **Third Commit** (a19386a): 5 files from 8→13 tests each:
+  * combination_sum.zig: single candidate=target, candidate>target=no solution, unique single-element match, all combos sum to target, memory loop
+  * johnson.zig: two-vertex bidirectional, triangle inequality, zero-weight edges, no-negative-cycle on positive, memory loop
+  * job_sequencing.zig: single job, highest-profit wins contested slot, weighted single-job sequence, total=sum-of-selected, memory loop
+  * count_min_sketch.zig: unseen=0, never underestimates, large-single-update, clear-resets, memory loop
+  * hyperloglog.zig: empty≤5, all-duplicates≤5, merged≥each-part, single-element≥1, memory loop
+- **Commits**: 5473675, 3117267, a19386a (all pushed)
+- **Next Priority**: Continue test coverage for other files with <13 tests
+
 **Session 586 Update (2026-05-26) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE** — Edge case tests added to dinic, timsort, anagrams:
