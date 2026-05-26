@@ -778,3 +778,148 @@ test "Johnson: sparse vs dense graph performance characteristics" {
     try testing.expectEqual(@as(i32, 5), result.getDistance(0, 5).?);
     try testing.expectEqual(@as(i32, 9), result.getDistance(0, 9).?);
 }
+
+test "Johnson: two vertices with edge gives correct bidirectional distances" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const J = Johnson(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]J.Edge{
+        .{ .from = 0, .to = 1, .weight = 7 },
+        .{ .from = 1, .to = 0, .weight = 3 },
+    };
+    const vertices = [_]u32{ 0, 1 };
+
+    var result = try J.run(allocator, &edges, &vertices, ctx, 0, std.math.maxInt(i32));
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 0), result.getDistance(0, 0).?);
+    try testing.expectEqual(@as(i32, 7), result.getDistance(0, 1).?);
+    try testing.expectEqual(@as(i32, 3), result.getDistance(1, 0).?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance(1, 1).?);
+}
+
+test "Johnson: triangle satisfies triangle inequality" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const J = Johnson(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]J.Edge{
+        .{ .from = 0, .to = 1, .weight = 4 },
+        .{ .from = 1, .to = 2, .weight = 3 },
+        .{ .from = 0, .to = 2, .weight = 10 },
+    };
+    const vertices = [_]u32{ 0, 1, 2 };
+
+    var result = try J.run(allocator, &edges, &vertices, ctx, 0, std.math.maxInt(i32));
+    defer result.deinit();
+
+    // Direct path 0→2 = 10, but 0→1→2 = 7; shortest should be 7
+    try testing.expectEqual(@as(i32, 7), result.getDistance(0, 2).?);
+    // Triangle inequality: d(0,2) <= d(0,1) + d(1,2)
+    const d01 = result.getDistance(0, 1).?;
+    const d12 = result.getDistance(1, 2).?;
+    const d02 = result.getDistance(0, 2).?;
+    try testing.expect(d02 <= d01 + d12);
+}
+
+test "Johnson: all zero weight edges give zero distances" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const J = Johnson(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]J.Edge{
+        .{ .from = 0, .to = 1, .weight = 0 },
+        .{ .from = 1, .to = 2, .weight = 0 },
+        .{ .from = 0, .to = 2, .weight = 0 },
+    };
+    const vertices = [_]u32{ 0, 1, 2 };
+
+    var result = try J.run(allocator, &edges, &vertices, ctx, 0, std.math.maxInt(i32));
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 0), result.getDistance(0, 1).?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance(0, 2).?);
+    try testing.expectEqual(@as(i32, 0), result.getDistance(1, 2).?);
+}
+
+test "Johnson: no negative cycle on positive graph" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const J = Johnson(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]J.Edge{
+        .{ .from = 0, .to = 1, .weight = 2 },
+        .{ .from = 1, .to = 2, .weight = 3 },
+        .{ .from = 2, .to = 0, .weight = 4 },
+    };
+    const vertices = [_]u32{ 0, 1, 2 };
+
+    var result = try J.run(allocator, &edges, &vertices, ctx, 0, std.math.maxInt(i32));
+    defer result.deinit();
+
+    try testing.expect(!result.hasNegativeCycle());
+}
+
+test "Johnson: memory safety loop" {
+    const IntContext = struct {
+        pub fn hash(_: @This(), key: u32) u64 {
+            return key;
+        }
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+
+    const J = Johnson(u32, i32, IntContext);
+    const allocator = testing.allocator;
+    const ctx = IntContext{};
+
+    const edges = [_]J.Edge{
+        .{ .from = 0, .to = 1, .weight = 1 },
+        .{ .from = 1, .to = 2, .weight = 2 },
+    };
+    const vertices = [_]u32{ 0, 1, 2 };
+
+    for (0..10) |_| {
+        var result = try J.run(allocator, &edges, &vertices, ctx, 0, std.math.maxInt(i32));
+        defer result.deinit();
+        try testing.expect(!result.hasNegativeCycle());
+    }
+}

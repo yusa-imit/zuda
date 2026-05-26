@@ -259,3 +259,68 @@ test "weighted job sequencing - empty" {
 
     try testing.expectEqual(@as(usize, 0), sequence.items.len);
 }
+
+test "job sequencing - single job selected and profit matches" {
+    const jobs = [_]Job{
+        .{ .id = 0, .deadline = 1, .profit = 42 },
+    };
+    const result = try jobSequencing(testing.allocator, &jobs);
+    defer testing.allocator.free(result.jobs);
+
+    try testing.expectEqual(@as(i64, 42), result.total_profit);
+    try testing.expectEqual(@as(usize, 1), result.jobs.len);
+    try testing.expectEqual(@as(usize, 0), result.jobs[0]);
+}
+
+test "job sequencing - highest profit wins when slot contested" {
+    // Three jobs all need slot 1: only the highest profit (100) should be selected
+    const jobs = [_]Job{
+        .{ .id = 0, .deadline = 1, .profit = 50 },
+        .{ .id = 1, .deadline = 1, .profit = 100 },
+        .{ .id = 2, .deadline = 1, .profit = 30 },
+    };
+    const result = try jobSequencing(testing.allocator, &jobs);
+    defer testing.allocator.free(result.jobs);
+
+    try testing.expectEqual(@as(i64, 100), result.total_profit);
+    try testing.expectEqual(@as(usize, 1), result.jobs.len);
+}
+
+test "weighted job sequencing - single job sequence has one entry" {
+    const jobs = [_]WeightedJob{
+        .{ .id = 0, .processing_time = 3, .weight = 6 },
+    };
+    var sequence = try jobSequencingWeighted(testing.allocator, &jobs);
+    defer sequence.deinit();
+
+    try testing.expectEqual(@as(usize, 1), sequence.items.len);
+    try testing.expectEqual(@as(usize, 0), sequence.items[0]);
+}
+
+test "job sequencing - total profit is sum of selected jobs" {
+    const jobs = [_]Job{
+        .{ .id = 0, .deadline = 1, .profit = 20 },
+        .{ .id = 1, .deadline = 2, .profit = 15 },
+        .{ .id = 2, .deadline = 3, .profit = 10 },
+        .{ .id = 3, .deadline = 1, .profit = 5 }, // Slot 1 taken by id=0 (higher profit)
+    };
+    const result = try jobSequencing(testing.allocator, &jobs);
+    defer testing.allocator.free(result.jobs);
+
+    // Jobs 0, 1, 2 should be selected (total = 45)
+    try testing.expectEqual(@as(i64, 45), result.total_profit);
+    try testing.expectEqual(@as(usize, 3), result.jobs.len);
+}
+
+test "job sequencing - memory safety loop" {
+    const jobs = [_]Job{
+        .{ .id = 0, .deadline = 2, .profit = 100 },
+        .{ .id = 1, .deadline = 1, .profit = 50 },
+        .{ .id = 2, .deadline = 2, .profit = 10 },
+    };
+    for (0..10) |_| {
+        const result = try jobSequencing(testing.allocator, &jobs);
+        defer testing.allocator.free(result.jobs);
+        try testing.expect(result.total_profit > 0);
+    }
+}

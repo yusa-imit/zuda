@@ -269,3 +269,59 @@ test "CountMinSketch: memory safety" {
         _ = sketch.estimate(i);
     }
 }
+
+test "CountMinSketch: unseen item estimate is zero" {
+    const CMS = CountMinSketch(u32);
+    var sketch = try CMS.init(std.testing.allocator, 100, 5);
+    defer sketch.deinit();
+
+    // Only add item 1; item 999 was never added
+    sketch.update(1, 5);
+    try std.testing.expectEqual(@as(u64, 0), sketch.estimate(999));
+}
+
+test "CountMinSketch: estimate never underestimates true frequency" {
+    const CMS = CountMinSketch(u64);
+    var sketch = try CMS.init(std.testing.allocator, 500, 7);
+    defer sketch.deinit();
+
+    // Add item 42 exactly 50 times
+    var k: u32 = 0;
+    while (k < 50) : (k += 1) {
+        sketch.update(42, 1);
+    }
+
+    // Estimate must be >= 50 (CMS only overestimates, never underestimates)
+    try std.testing.expect(sketch.estimate(42) >= 50);
+}
+
+test "CountMinSketch: single large update estimate is at least that amount" {
+    const CMS = CountMinSketch(u32);
+    var sketch = try CMS.init(std.testing.allocator, 200, 5);
+    defer sketch.deinit();
+
+    sketch.update(7, 1000);
+    try std.testing.expect(sketch.estimate(7) >= 1000);
+}
+
+test "CountMinSketch: clear resets estimate to zero" {
+    const CMS = CountMinSketch(u32);
+    var sketch = try CMS.init(std.testing.allocator, 100, 5);
+    defer sketch.deinit();
+
+    sketch.update(55, 42);
+    try std.testing.expect(sketch.estimate(55) >= 42);
+
+    sketch.clear();
+    try std.testing.expectEqual(@as(u64, 0), sketch.estimate(55));
+}
+
+test "CountMinSketch: memory safety init-update-deinit loop" {
+    const CMS = CountMinSketch(u32);
+    for (0..10) |iter| {
+        var sketch = try CMS.init(std.testing.allocator, 100, 5);
+        sketch.update(@intCast(iter), 1);
+        try std.testing.expect(sketch.estimate(@intCast(iter)) >= 1);
+        sketch.deinit();
+    }
+}

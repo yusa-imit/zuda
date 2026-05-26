@@ -341,3 +341,70 @@ test "HyperLogLog: precision comparison" {
     _ = error10;
     _ = error14;
 }
+
+test "HyperLogLog: empty sketch estimate is near zero" {
+    const HLL = HyperLogLog(10);
+    var hll = try HLL.init(std.testing.allocator);
+    defer hll.deinit();
+
+    // Empty sketch should report 0 or very small estimate
+    try std.testing.expect(hll.estimate() <= 5);
+}
+
+test "HyperLogLog: all duplicates estimates near one" {
+    const HLL = HyperLogLog(12);
+    var hll = try HLL.init(std.testing.allocator);
+    defer hll.deinit();
+
+    // Add the same item 1000 times — only 1 distinct element
+    var i: u32 = 0;
+    while (i < 1000) : (i += 1) {
+        hll.add(@as(u32, 42));
+    }
+
+    // Should estimate ~1 distinct element (CMS error bounds allow some slack)
+    try std.testing.expect(hll.estimate() <= 5);
+}
+
+test "HyperLogLog: merged estimate at least as large as each part" {
+    const HLL = HyperLogLog(12);
+    var hll1 = try HLL.init(std.testing.allocator);
+    defer hll1.deinit();
+    var hll2 = try HLL.init(std.testing.allocator);
+    defer hll2.deinit();
+
+    // Add disjoint sets: hll1 gets 0-49, hll2 gets 100-149
+    var i: u32 = 0;
+    while (i < 50) : (i += 1) hll1.add(i);
+    i = 100;
+    while (i < 150) : (i += 1) hll2.add(i);
+
+    const est1 = hll1.estimate();
+    const est2 = hll2.estimate();
+
+    hll1.merge(hll2);
+    const merged = hll1.estimate();
+
+    try std.testing.expect(merged >= est1);
+    try std.testing.expect(merged >= est2);
+}
+
+test "HyperLogLog: single element estimate is at least 1" {
+    const HLL = HyperLogLog(10);
+    var hll = try HLL.init(std.testing.allocator);
+    defer hll.deinit();
+
+    hll.add(@as(u32, 12345));
+    try std.testing.expect(hll.estimate() >= 1);
+}
+
+test "HyperLogLog: memory safety init-add-estimate-deinit loop" {
+    const HLL = HyperLogLog(10);
+    for (0..10) |iter| {
+        var hll = try HLL.init(std.testing.allocator);
+        var i: u32 = 0;
+        while (i < 100) : (i += 1) hll.add(i + @as(u32, @intCast(iter)) * 100);
+        try std.testing.expect(hll.estimate() >= 50);
+        hll.deinit();
+    }
+}

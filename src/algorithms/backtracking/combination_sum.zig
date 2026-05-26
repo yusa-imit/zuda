@@ -233,3 +233,82 @@ test "Combination Sum: stress test" {
         try std.testing.expectEqual(target, sum);
     }
 }
+
+test "Combination Sum: single candidate exactly matches target" {
+    const allocator = std.testing.allocator;
+    const candidates = [_]i32{7};
+    const target: i32 = 7;
+
+    var combos = try combinationSum(allocator, &candidates, target);
+    defer {
+        for (combos.items) |combo| allocator.free(combo);
+        combos.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), combos.items.len);
+    try std.testing.expectEqual(@as(usize, 1), combos.items[0].len);
+    try std.testing.expectEqual(@as(i32, 7), combos.items[0][0]);
+}
+
+test "Combination Sum: candidate larger than target gives no solution" {
+    const allocator = std.testing.allocator;
+    const candidates = [_]i32{100};
+    const target: i32 = 5;
+
+    var combos = try combinationSum(allocator, &candidates, target);
+    defer {
+        for (combos.items) |combo| allocator.free(combo);
+        combos.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 0), combos.items.len);
+}
+
+test "Combination Sum Unique: single element matches target" {
+    const allocator = std.testing.allocator;
+    const candidates = [_]i32{ 5, 8, 3 };
+    const target: i32 = 5;
+
+    var combos = try combinationSumUnique(allocator, &candidates, target);
+    defer {
+        for (combos.items) |combo| allocator.free(combo);
+        combos.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), combos.items.len);
+    try std.testing.expectEqual(@as(usize, 1), combos.items[0].len);
+    try std.testing.expectEqual(@as(i32, 5), combos.items[0][0]);
+}
+
+test "Combination Sum Unique: all combos sum to target" {
+    const allocator = std.testing.allocator;
+    const candidates = [_]i32{ 1, 1, 2, 5, 6, 7, 10 };
+    const target: i32 = 8;
+
+    var combos = try combinationSumUnique(allocator, &candidates, target);
+    defer {
+        for (combos.items) |combo| allocator.free(combo);
+        combos.deinit();
+    }
+
+    for (combos.items) |combo| {
+        var sum: i32 = 0;
+        for (combo) |val| sum += val;
+        try std.testing.expectEqual(target, sum);
+    }
+}
+
+test "Combination Sum: memory safety loop" {
+    const allocator = std.testing.allocator;
+    const candidates = [_]i32{ 2, 3 };
+
+    for (0..10) |_| {
+        var combos = try combinationSum(allocator, &candidates, 6);
+        for (combos.items) |combo| allocator.free(combo);
+        combos.deinit();
+
+        var unique = try combinationSumUnique(allocator, &candidates, 5);
+        for (unique.items) |combo| allocator.free(combo);
+        unique.deinit();
+    }
+}
