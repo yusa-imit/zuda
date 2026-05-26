@@ -509,3 +509,109 @@ test "CRF: memory safety with testing.allocator" {
     try std.testing.expectEqual(@as(usize, 3), crf.num_states);
     try std.testing.expectEqual(@as(usize, 4), crf.num_features);
 }
+
+test "CRF: single-state model prediction always returns state 0" {
+    var crf = try CRF(f64).init(std.testing.allocator, 1, 2);
+    defer crf.deinit();
+
+    crf.weights[0] = 1.0;
+    crf.weights[1] = 0.0;
+    crf.trained = true;
+
+    const obs1 = [_]f64{1.0};
+    const obs2 = [_]f64{0.5};
+    const sequence = &[_][]const f64{ &obs1, &obs2 };
+
+    const prediction = try crf.predict(sequence, testFeatureExtractor, std.testing.allocator);
+    defer std.testing.allocator.free(prediction);
+
+    try std.testing.expectEqual(@as(usize, 2), prediction.len);
+    for (prediction) |label| {
+        try std.testing.expectEqual(@as(usize, 0), label);
+    }
+}
+
+test "CRF: long sequence prediction has correct length" {
+    var crf = try CRF(f64).init(std.testing.allocator, 2, 2);
+    defer crf.deinit();
+
+    crf.weights[0] = 0.5;
+    crf.weights[1] = 0.2;
+    crf.trained = true;
+
+    var obs_buf: [10][1]f64 = undefined;
+    var seq_ptrs: [10][]const f64 = undefined;
+    for (&obs_buf, &seq_ptrs, 0..) |*obs, *ptr, i| {
+        obs[0] = @floatFromInt(i);
+        ptr.* = obs;
+    }
+
+    const prediction = try crf.predict(&seq_ptrs, testFeatureExtractor, std.testing.allocator);
+    defer std.testing.allocator.free(prediction);
+
+    try std.testing.expectEqual(@as(usize, 10), prediction.len);
+    for (prediction) |label| {
+        try std.testing.expect(label < 2);
+    }
+}
+
+test "CRF: prediction labels always within valid state range" {
+    var crf = try CRF(f64).init(std.testing.allocator, 3, 2);
+    defer crf.deinit();
+
+    crf.weights[0] = 2.0;
+    crf.weights[1] = -1.0;
+    crf.trained = true;
+
+    const obs1 = [_]f64{1.0};
+    const obs2 = [_]f64{1.0};
+    const obs3 = [_]f64{1.0};
+    const obs4 = [_]f64{1.0};
+    const obs5 = [_]f64{1.0};
+    const sequence = &[_][]const f64{ &obs1, &obs2, &obs3, &obs4, &obs5 };
+
+    const prediction = try crf.predict(sequence, testFeatureExtractor, std.testing.allocator);
+    defer std.testing.allocator.free(prediction);
+
+    try std.testing.expectEqual(@as(usize, 5), prediction.len);
+    for (prediction) |label| {
+        try std.testing.expect(label < 3);
+    }
+}
+
+test "CRF: memory safety init-predict-deinit loop" {
+    for (0..10) |_| {
+        var crf = try CRF(f64).init(std.testing.allocator, 2, 2);
+        crf.weights[0] = 1.0;
+        crf.weights[1] = 0.5;
+        crf.trained = true;
+
+        const obs1 = [_]f64{1.0};
+        const sequence = &[_][]const f64{&obs1};
+
+        const prediction = try crf.predict(sequence, testFeatureExtractor, std.testing.allocator);
+        std.testing.allocator.free(prediction);
+        crf.deinit();
+    }
+}
+
+test "CRF: large state space prediction stays in bounds" {
+    var crf = try CRF(f64).init(std.testing.allocator, 10, 2);
+    defer crf.deinit();
+
+    crf.weights[0] = 1.5;
+    crf.weights[1] = -0.5;
+    crf.trained = true;
+
+    const obs1 = [_]f64{1.0};
+    const obs2 = [_]f64{1.0};
+    const sequence = &[_][]const f64{ &obs1, &obs2 };
+
+    const prediction = try crf.predict(sequence, testFeatureExtractor, std.testing.allocator);
+    defer std.testing.allocator.free(prediction);
+
+    try std.testing.expectEqual(@as(usize, 2), prediction.len);
+    for (prediction) |label| {
+        try std.testing.expect(label < 10);
+    }
+}

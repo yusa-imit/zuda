@@ -228,3 +228,88 @@ test "Permutations: stress test with 4 elements" {
         }
     }
 }
+
+test "Permutations: five elements gives 120 permutations" {
+    const allocator = std.testing.allocator;
+    const items = [_]i32{ 1, 2, 3, 4, 5 };
+
+    var perms = try permute(i32, allocator, &items);
+    defer {
+        for (perms.items) |perm| allocator.free(perm);
+        perms.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 120), perms.items.len);
+    for (perms.items) |perm| {
+        try std.testing.expectEqual(@as(usize, 5), perm.len);
+    }
+}
+
+test "Permutations: reverse permutation present in results" {
+    const allocator = std.testing.allocator;
+    const items = [_]i32{ 1, 2, 3 };
+
+    var perms = try permute(i32, allocator, &items);
+    defer {
+        for (perms.items) |perm| allocator.free(perm);
+        perms.deinit();
+    }
+
+    var found_reverse = false;
+    for (perms.items) |perm| {
+        if (perm[0] == 3 and perm[1] == 2 and perm[2] == 1) {
+            found_reverse = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_reverse);
+}
+
+test "Permutations: unique with two pairs of duplicates" {
+    const allocator = std.testing.allocator;
+    const items = [_]i32{ 1, 1, 2, 2 };
+
+    var perms = try permuteUnique(i32, allocator, &items);
+    defer {
+        for (perms.items) |perm| allocator.free(perm);
+        perms.deinit();
+    }
+
+    // 4! / (2! * 2!) = 6 unique permutations
+    try std.testing.expectEqual(@as(usize, 6), perms.items.len);
+}
+
+test "Permutations: unique with no duplicates matches permute count" {
+    const allocator = std.testing.allocator;
+    const items = [_]i32{ 1, 2, 3 };
+
+    var all_perms = try permute(i32, allocator, &items);
+    defer {
+        for (all_perms.items) |perm| allocator.free(perm);
+        all_perms.deinit();
+    }
+
+    var unique_perms = try permuteUnique(i32, allocator, &items);
+    defer {
+        for (unique_perms.items) |perm| allocator.free(perm);
+        unique_perms.deinit();
+    }
+
+    try std.testing.expectEqual(all_perms.items.len, unique_perms.items.len);
+}
+
+test "Permutations: memory safety loop" {
+    const allocator = std.testing.allocator;
+    const items = [_]i32{ 10, 20, 30 };
+    const dup_items = [_]i32{ 1, 1, 2 };
+
+    for (0..10) |_| {
+        var perms = try permute(i32, allocator, &items);
+        for (perms.items) |perm| allocator.free(perm);
+        perms.deinit();
+
+        var uniqs = try permuteUnique(i32, allocator, &dup_items);
+        for (uniqs.items) |perm| allocator.free(perm);
+        uniqs.deinit();
+    }
+}

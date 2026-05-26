@@ -435,3 +435,89 @@ test "partition - all false" {
     try std.testing.expectEqual(@as(usize, 0), result.true_partition.len);
     try std.testing.expectEqual(@as(usize, 3), result.false_partition.len);
 }
+
+test "partition - single item true" {
+    const allocator = std.testing.allocator;
+
+    const isPositive = struct {
+        fn f(x: i32) bool {
+            return x > 0;
+        }
+    }.f;
+
+    const arr = [_]i32{7};
+    var result = try partition(i32, allocator, &arr, isPositive);
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), result.true_partition.len);
+    try std.testing.expectEqual(@as(usize, 0), result.false_partition.len);
+    try std.testing.expectEqual(@as(i32, 7), result.true_partition[0]);
+}
+
+test "partition - single item false" {
+    const allocator = std.testing.allocator;
+
+    const isPositive = struct {
+        fn f(x: i32) bool {
+            return x > 0;
+        }
+    }.f;
+
+    const arr = [_]i32{-3};
+    var result = try partition(i32, allocator, &arr, isPositive);
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.true_partition.len);
+    try std.testing.expectEqual(@as(usize, 1), result.false_partition.len);
+    try std.testing.expectEqual(@as(i32, -3), result.false_partition[0]);
+}
+
+test "group by - single element array" {
+    const allocator = std.testing.allocator;
+
+    const Item = struct { id: i32, value: i32 };
+    const data = [_]Item{.{ .id = 42, .value = 99 }};
+
+    const getID = struct {
+        fn f(item: Item) i32 {
+            return item.id;
+        }
+    }.f;
+
+    var grouped = try groupBy(i32, Item, allocator, &data, getID);
+    defer grouped.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), grouped.keys.len);
+    try std.testing.expectEqual(@as(i32, 42), grouped.keys[0]);
+    try std.testing.expectEqual(@as(usize, 1), grouped.groups[0].len);
+    try std.testing.expectEqual(@as(i32, 99), grouped.groups[0][0].value);
+}
+
+test "map-reduce - all items map to same key sums correctly" {
+    const allocator = std.testing.allocator;
+
+    const words = [_][]const u8{ "hello", "hello", "hello" };
+    var result = try mapReduce([]const u8, i32, allocator, &words, wordCountMapper, wordCountReducer);
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), result.keys.len);
+    try std.testing.expectEqual(@as(i32, 3), result.values[0]);
+}
+
+test "partition - memory safety loop" {
+    const allocator = std.testing.allocator;
+
+    const isEven = struct {
+        fn f(x: i32) bool {
+            return @mod(x, 2) == 0;
+        }
+    }.f;
+
+    const arr = [_]i32{ 1, 2, 3, 4, 5, 6 };
+    for (0..10) |_| {
+        var result = try partition(i32, allocator, &arr, isEven);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(usize, 3), result.true_partition.len);
+        try std.testing.expectEqual(@as(usize, 3), result.false_partition.len);
+    }
+}

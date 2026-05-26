@@ -258,3 +258,69 @@ test "weighted activity selection - prefer high weight" {
     // Should select activity 1 (weight 1000) despite overlaps
     try testing.expect(total_weight >= 1000);
 }
+
+test "activity selection - adjacent activities both selected" {
+    // start == finish of previous: activity.start >= last_finish, so adjacent activities are compatible
+    const activities = [_]Activity{
+        .{ .start = 1, .finish = 5, .id = 0 },
+        .{ .start = 5, .finish = 9, .id = 1 },
+        .{ .start = 9, .finish = 12, .id = 2 },
+    };
+    var result = try activitySelection(testing.allocator, &activities);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.items.len);
+}
+
+test "activity selection - unsorted input selects correct count" {
+    // Input NOT sorted by finish time — algorithm must sort internally
+    const activities = [_]Activity{
+        .{ .start = 5, .finish = 9, .id = 0 },
+        .{ .start = 1, .finish = 3, .id = 1 },
+        .{ .start = 7, .finish = 11, .id = 2 },
+        .{ .start = 3, .finish = 6, .id = 3 },
+    };
+    var result = try activitySelection(testing.allocator, &activities);
+    defer result.deinit();
+
+    // Sorted by finish: id1(1-3), id3(3-6), id0(5-9), id2(7-11)
+    // Select id1(1-3), id3(3-6 start>=3 ✓), id2(7-11 start>=6 ✓) = 3
+    try testing.expectEqual(@as(usize, 3), result.items.len);
+}
+
+test "activity selection - ten non-overlapping activities all selected" {
+    var activities: [10]Activity = undefined;
+    for (&activities, 0..) |*a, i| {
+        a.* = .{
+            .start = @intCast(i * 2),
+            .finish = @intCast(i * 2 + 1),
+            .id = i,
+        };
+    }
+    var result = try activitySelection(testing.allocator, &activities);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 10), result.items.len);
+}
+
+test "weighted activity selection - empty gives empty result" {
+    const activities: []const Activity = &.{};
+    const weights: []const f64 = &.{};
+    var result = try weightedActivitySelection(testing.allocator, activities, weights);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 0), result.items.len);
+}
+
+test "activity selection - memory safety loop" {
+    const activities = [_]Activity{
+        .{ .start = 1, .finish = 3, .id = 0 },
+        .{ .start = 4, .finish = 6, .id = 1 },
+        .{ .start = 5, .finish = 8, .id = 2 },
+    };
+    for (0..10) |_| {
+        var result = try activitySelection(testing.allocator, &activities);
+        defer result.deinit();
+        try testing.expect(result.items.len > 0);
+    }
+}
