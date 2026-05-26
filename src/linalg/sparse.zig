@@ -3546,10 +3546,14 @@ test "CSR utilities: memory safety check" {
         const d = try csr.diag(testing.allocator);
         defer testing.allocator.free(d);
 
-        _ = try csr.trace();
-        _ = csr.density();
-        _ = csr.sparsity();
-        _ = csr.normFrobenius();
+        const tr = try csr.trace();
+        try std.testing.expectApproxEqAbs(@as(f64, 10.0), tr, 1e-10);
+        const dens = csr.density();
+        try std.testing.expectApproxEqAbs(@as(f64, 0.25), dens, 1e-10);
+        const spar = csr.sparsity();
+        try std.testing.expectApproxEqAbs(@as(f64, 0.75), spar, 1e-10);
+        const fnorm = csr.normFrobenius();
+        try std.testing.expectApproxEqAbs(@as(f64, @sqrt(30.0)), fnorm, 1e-10);
     }
 }
 

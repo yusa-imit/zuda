@@ -260,14 +260,15 @@ test "MorrisCounterArray: convergence with more counters" {
 
 test "MorrisCounter: memory safety" {
     var counter = MorrisCounter.init(42, 2.0);
-    
+
     // Many increments should not overflow or crash
     var i: usize = 0;
     while (i < 1000000) : (i += 1) {
         counter.increment();
     }
-    
-    _ = counter.estimate();
+
+    const est = counter.estimate();
+    try std.testing.expect(est > 100000);
 }
 
 test "MorrisCounterArray: memory safety" {
@@ -279,7 +280,8 @@ test "MorrisCounterArray: memory safety" {
         array.increment();
     }
 
-    _ = array.estimate();
+    const est = array.estimate();
+    try std.testing.expect(est > 10000);
 }
 
 test "MorrisCounter: fresh counter estimate is zero" {
@@ -300,13 +302,17 @@ test "MorrisCounter: reset restores zero state" {
     try std.testing.expectEqual(@as(u32, 0), c.getExponent());
 }
 
-test "MorrisCounter: estimate always non-negative" {
+test "MorrisCounter: estimate is in probabilistic range after increments" {
     var c = MorrisCounter.init(99, 2.0);
     var j: usize = 0;
     while (j < 500) : (j += 1) {
         c.increment();
     }
-    try std.testing.expect(c.estimate() >= 0);
+    // Morris counter with base 2 gives ~2x variance, so 500 increments
+    // should yield estimate in [50, 5000] with very high probability
+    const est = c.estimate();
+    try std.testing.expect(est >= 50);
+    try std.testing.expect(est <= 5000);
 }
 
 test "MorrisCounterArray: single counter array matches counter" {
