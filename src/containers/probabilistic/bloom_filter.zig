@@ -575,14 +575,12 @@ test "BloomFilter - memory safety loop" {
             filter.add(@intCast(i));
         }
 
-        // Call contains 10 times
+        // All added items must be present (bloom filter has no false negatives)
         for (0..10) |i| {
-            _ = filter.contains(@intCast(i));
+            try testing.expect(filter.contains(@intCast(i)));
         }
+        try testing.expect(filter.approximateCount() > 0);
 
         filter.deinit();
     }
-
-    // If we reach here without allocation errors, memory is safe
-    try testing.expect(true);
 }

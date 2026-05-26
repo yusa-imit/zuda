@@ -414,3 +414,4 @@
 {"timestamp":"2026-05-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to PersistentHashMap (13→18)","project":"zuda"}
 {"timestamp":"2026-05-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests to WorkStealingDeque (13→18)","project":"zuda"}
 {"timestamp":"2026-05-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 5 edge case tests each for bellman_ford.zig and floyd_warshall.zig","project":"zuda"}
+{"timestamp":"2026-05-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests each to topological_sort.zig (6→11) and push_relabel.zig (6→11)","project":"zuda"}

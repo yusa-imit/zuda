@@ -444,3 +444,162 @@ test "TopologicalSort: linear chain" {
         try testing.expectEqual(@as(u32, @intCast(i)), v);
     }
 }
+
+test "TopologicalSort: isolated vertices (Kahn)" {
+    const allocator = testing.allocator;
+    var graph = IntGraph(void).init(allocator, .{}, true);
+    defer graph.deinit();
+
+    // 5 isolated vertices, no edges
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addVertex(3);
+    try graph.addVertex(4);
+
+    var result = try IntTopoSort.sort(allocator, &graph, .{});
+    defer result.deinit();
+
+    try testing.expect(result.success);
+    try testing.expectEqual(@as(usize, 5), result.order.items.len);
+
+    // All vertices must appear in output
+    var seen = [_]bool{false} ** 5;
+    for (result.order.items) |v| {
+        if (v < 5) seen[v] = true;
+    }
+    for (seen) |was_seen| {
+        try testing.expect(was_seen);
+    }
+}
+
+test "TopologicalSort: diamond DAG both algorithms agree on reachability" {
+    const allocator = testing.allocator;
+    var graph = IntGraph(void).init(allocator, .{}, true);
+    defer graph.deinit();
+
+    // Diamond: 0 -> {1, 2} -> 3
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addVertex(3);
+    try graph.addEdge(0, 1, {});
+    try graph.addEdge(0, 2, {});
+    try graph.addEdge(1, 3, {});
+    try graph.addEdge(2, 3, {});
+
+    var kahn_result = try IntTopoSort.sort(allocator, &graph, .{});
+    defer kahn_result.deinit();
+
+    var dfs_result = try IntTopoSort.sortDFS(allocator, &graph, .{});
+    defer dfs_result.deinit();
+
+    // Both must succeed and have all 4 vertices
+    try testing.expect(kahn_result.success);
+    try testing.expect(dfs_result.success);
+    try testing.expectEqual(@as(usize, 4), kahn_result.order.items.len);
+    try testing.expectEqual(@as(usize, 4), dfs_result.order.items.len);
+
+    // 0 must come first, 3 must come last in both
+    try testing.expectEqual(@as(u32, 0), kahn_result.order.items[0]);
+    try testing.expectEqual(@as(u32, 3), kahn_result.order.items[3]);
+    try testing.expectEqual(@as(u32, 0), dfs_result.order.items[0]);
+    try testing.expectEqual(@as(u32, 3), dfs_result.order.items[3]);
+
+    // In both, 1 must come before 3, and 2 must come before 3
+    var kahn_pos = [_]usize{0} ** 4;
+    for (kahn_result.order.items, 0..) |v, i| {
+        if (v < 4) kahn_pos[v] = i;
+    }
+    try testing.expect(kahn_pos[1] < kahn_pos[3]);
+    try testing.expect(kahn_pos[2] < kahn_pos[3]);
+
+    var dfs_pos = [_]usize{0} ** 4;
+    for (dfs_result.order.items, 0..) |v, i| {
+        if (v < 4) dfs_pos[v] = i;
+    }
+    try testing.expect(dfs_pos[1] < dfs_pos[3]);
+    try testing.expect(dfs_pos[2] < dfs_pos[3]);
+}
+
+test "TopologicalSort: disconnected forest (two separate chains)" {
+    const allocator = testing.allocator;
+    var graph = IntGraph(void).init(allocator, .{}, true);
+    defer graph.deinit();
+
+    // Two chains: 0 -> 1 and 2 -> 3
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addVertex(3);
+    try graph.addEdge(0, 1, {});
+    try graph.addEdge(2, 3, {});
+
+    var result = try IntTopoSort.sort(allocator, &graph, .{});
+    defer result.deinit();
+
+    try testing.expect(result.success);
+    try testing.expectEqual(@as(usize, 4), result.order.items.len);
+
+    // Find positions
+    var pos = [_]usize{0} ** 4;
+    for (result.order.items, 0..) |v, i| {
+        if (v < 4) pos[v] = i;
+    }
+
+    // 0 must come before 1, and 2 must come before 3
+    try testing.expect(pos[0] < pos[1]);
+    try testing.expect(pos[2] < pos[3]);
+}
+
+test "TopologicalSort: large linear chain (Kahn)" {
+    const allocator = testing.allocator;
+    var graph = IntGraph(void).init(allocator, .{}, true);
+    defer graph.deinit();
+
+    // 20-vertex chain: 0 -> 1 -> 2 -> ... -> 19
+    const chain_len: u32 = 20;
+    for (0..chain_len) |i| {
+        try graph.addVertex(@intCast(i));
+    }
+    for (0..chain_len - 1) |i| {
+        try graph.addEdge(@intCast(i), @intCast(i + 1), {});
+    }
+
+    var result = try IntTopoSort.sort(allocator, &graph, .{});
+    defer result.deinit();
+
+    try testing.expect(result.success);
+    try testing.expectEqual(@as(usize, 20), result.order.items.len);
+
+    // Must be in exact order 0..19
+    for (result.order.items, 0..) |v, i| {
+        try testing.expectEqual(@as(u32, @intCast(i)), v);
+    }
+}
+
+test "TopologicalSort: DFS cycle detection matches Kahn" {
+    const allocator = testing.allocator;
+    var graph = IntGraph(void).init(allocator, .{}, true);
+    defer graph.deinit();
+
+    // Cycle: 0 -> 1 -> 2 -> 0
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addEdge(0, 1, {});
+    try graph.addEdge(1, 2, {});
+    try graph.addEdge(2, 0, {});
+
+    var kahn_result = try IntTopoSort.sort(allocator, &graph, .{});
+    defer kahn_result.deinit();
+
+    var dfs_result = try IntTopoSort.sortDFS(allocator, &graph, .{});
+    defer dfs_result.deinit();
+
+    // Both must detect the cycle and fail
+    try testing.expect(!kahn_result.success);
+    try testing.expect(!dfs_result.success);
+    try testing.expectEqual(@as(usize, 0), kahn_result.order.items.len);
+    try testing.expectEqual(@as(usize, 0), dfs_result.order.items.len);
+}

@@ -566,6 +566,10 @@ test "AdaBoost: memory safety with testing.allocator" {
     const scores = try ada.decisionFunction(&X, testing.allocator);
     defer testing.allocator.free(scores);
 
-    // If we reach here, no memory leaks detected
-    try testing.expect(true);
+    // Output lengths match input length
+    try testing.expectEqual(@as(usize, 4), predictions.len);
+    try testing.expectEqual(@as(usize, 4), scores.len);
+    // Predictions on linearly separable data must be correct labels (+1/-1)
+    try testing.expect(predictions[0] == 1 or predictions[0] == -1);
+    try testing.expect(predictions[2] == 1 or predictions[2] == -1);
 }

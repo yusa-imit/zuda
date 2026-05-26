@@ -821,3 +821,311 @@ test "PushRelabel: minimum cut" {
     try testing.expect(!result.isInMinCut(1));
     try testing.expect(!result.isInMinCut(2));
 }
+
+test "PushRelabel: path with multiple bottlenecks" {
+    const allocator = testing.allocator;
+
+    const TestGraph = struct {
+        const Vertex = u32;
+        const Edge = PushRelabel(Vertex, u32, Context).Edge;
+        const Context = struct {
+            pub fn hash(_: @This(), v: Vertex) u64 {
+                return v;
+            }
+            pub fn eql(_: @This(), a: Vertex, b: Vertex) bool {
+                return a == b;
+            }
+        };
+        const Adjacency = struct {
+            edges: std.ArrayList(Edge),
+        };
+        adjacencies: std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage),
+
+        fn init(alloc: Allocator) @This() {
+            return .{
+                .adjacencies = std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage).init(alloc),
+            };
+        }
+        fn deinit(self: *@This()) void {
+            var it = self.adjacencies.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.edges.deinit(self.adjacencies.allocator);
+            }
+            self.adjacencies.deinit();
+        }
+        fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
+            const result = try self.adjacencies.getOrPut(from);
+            if (!result.found_existing) {
+                result.value_ptr.* = .{ .edges = .{} };
+            }
+            try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
+            const result_to = try self.adjacencies.getOrPut(to);
+            if (!result_to.found_existing) {
+                result_to.value_ptr.* = .{ .edges = .{} };
+            }
+        }
+    };
+
+    var graph = TestGraph.init(allocator);
+    defer graph.deinit();
+
+    // Chain: 0 -> 1 (cap 10) -> 2 (cap 5) -> 3 (cap 8)
+    // Bottleneck at 1 -> 2 with cap=5
+    try graph.addEdge(0, 1, 10);
+    try graph.addEdge(1, 2, 5);
+    try graph.addEdge(2, 3, 8);
+
+    const PR = PushRelabel(TestGraph.Vertex, u32, TestGraph.Context);
+    var result = try PR.run(allocator, graph, 0, 3, TestGraph.Context{}, 0);
+    defer result.deinit();
+
+    // Max flow is limited by the bottleneck edge (1 -> 2)
+    try testing.expectEqual(@as(u32, 5), result.max_flow);
+}
+
+test "PushRelabel: two parallel paths different capacities" {
+    const allocator = testing.allocator;
+
+    const TestGraph = struct {
+        const Vertex = u32;
+        const Edge = PushRelabel(Vertex, u32, Context).Edge;
+        const Context = struct {
+            pub fn hash(_: @This(), v: Vertex) u64 {
+                return v;
+            }
+            pub fn eql(_: @This(), a: Vertex, b: Vertex) bool {
+                return a == b;
+            }
+        };
+        const Adjacency = struct {
+            edges: std.ArrayList(Edge),
+        };
+        adjacencies: std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage),
+
+        fn init(alloc: Allocator) @This() {
+            return .{
+                .adjacencies = std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage).init(alloc),
+            };
+        }
+        fn deinit(self: *@This()) void {
+            var it = self.adjacencies.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.edges.deinit(self.adjacencies.allocator);
+            }
+            self.adjacencies.deinit();
+        }
+        fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
+            const result = try self.adjacencies.getOrPut(from);
+            if (!result.found_existing) {
+                result.value_ptr.* = .{ .edges = .{} };
+            }
+            try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
+            const result_to = try self.adjacencies.getOrPut(to);
+            if (!result_to.found_existing) {
+                result_to.value_ptr.* = .{ .edges = .{} };
+            }
+        }
+    };
+
+    var graph = TestGraph.init(allocator);
+    defer graph.deinit();
+
+    // Parallel paths: 0 -> 2 -> 3 (cap 0->2 = 3) and 0 -> 1 -> 2 -> 3 (cap 0->1 = 7, cap 1->2 = 4)
+    try graph.addEdge(0, 2, 3);
+    try graph.addEdge(0, 1, 7);
+    try graph.addEdge(1, 2, 4);
+    try graph.addEdge(2, 3, 10);
+
+    const PR = PushRelabel(TestGraph.Vertex, u32, TestGraph.Context);
+    var result = try PR.run(allocator, graph, 0, 3, TestGraph.Context{}, 0);
+    defer result.deinit();
+
+    // Flow: 3 from direct path, 4 from indirect path = 7 total
+    try testing.expectEqual(@as(u32, 7), result.max_flow);
+}
+
+test "PushRelabel: zero capacity edge is ignored" {
+    const allocator = testing.allocator;
+
+    const TestGraph = struct {
+        const Vertex = u32;
+        const Edge = PushRelabel(Vertex, u32, Context).Edge;
+        const Context = struct {
+            pub fn hash(_: @This(), v: Vertex) u64 {
+                return v;
+            }
+            pub fn eql(_: @This(), a: Vertex, b: Vertex) bool {
+                return a == b;
+            }
+        };
+        const Adjacency = struct {
+            edges: std.ArrayList(Edge),
+        };
+        adjacencies: std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage),
+
+        fn init(alloc: Allocator) @This() {
+            return .{
+                .adjacencies = std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage).init(alloc),
+            };
+        }
+        fn deinit(self: *@This()) void {
+            var it = self.adjacencies.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.edges.deinit(self.adjacencies.allocator);
+            }
+            self.adjacencies.deinit();
+        }
+        fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
+            const result = try self.adjacencies.getOrPut(from);
+            if (!result.found_existing) {
+                result.value_ptr.* = .{ .edges = .{} };
+            }
+            try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
+            const result_to = try self.adjacencies.getOrPut(to);
+            if (!result_to.found_existing) {
+                result_to.value_ptr.* = .{ .edges = .{} };
+            }
+        }
+    };
+
+    var graph = TestGraph.init(allocator);
+    defer graph.deinit();
+
+    // 0 -> 1 with cap 0 (blocked), 0 -> 2 with cap 42 (valid path)
+    try graph.addEdge(0, 1, 0);
+    try graph.addEdge(0, 2, 42);
+
+    const PR = PushRelabel(TestGraph.Vertex, u32, TestGraph.Context);
+    var result = try PR.run(allocator, graph, 0, 2, TestGraph.Context{}, 0);
+    defer result.deinit();
+
+    // Flow should be 42 (zero-capacity edge is ignored)
+    try testing.expectEqual(@as(u32, 42), result.max_flow);
+}
+
+test "PushRelabel: larger network multiple paths" {
+    const allocator = testing.allocator;
+
+    const TestGraph = struct {
+        const Vertex = u32;
+        const Edge = PushRelabel(Vertex, u32, Context).Edge;
+        const Context = struct {
+            pub fn hash(_: @This(), v: Vertex) u64 {
+                return v;
+            }
+            pub fn eql(_: @This(), a: Vertex, b: Vertex) bool {
+                return a == b;
+            }
+        };
+        const Adjacency = struct {
+            edges: std.ArrayList(Edge),
+        };
+        adjacencies: std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage),
+
+        fn init(alloc: Allocator) @This() {
+            return .{
+                .adjacencies = std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage).init(alloc),
+            };
+        }
+        fn deinit(self: *@This()) void {
+            var it = self.adjacencies.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.edges.deinit(self.adjacencies.allocator);
+            }
+            self.adjacencies.deinit();
+        }
+        fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
+            const result = try self.adjacencies.getOrPut(from);
+            if (!result.found_existing) {
+                result.value_ptr.* = .{ .edges = .{} };
+            }
+            try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
+            const result_to = try self.adjacencies.getOrPut(to);
+            if (!result_to.found_existing) {
+                result_to.value_ptr.* = .{ .edges = .{} };
+            }
+        }
+    };
+
+    var graph = TestGraph.init(allocator);
+    defer graph.deinit();
+
+    // Network: 0 -> 1 (cap 10), 0 -> 2 (cap 10), 1 -> 3 (cap 10), 2 -> 3 (cap 10), 1 -> 2 (cap 1)
+    // Max flow s=0 to t=3 is 20 (both paths can be fully utilized)
+    try graph.addEdge(0, 1, 10);
+    try graph.addEdge(0, 2, 10);
+    try graph.addEdge(1, 3, 10);
+    try graph.addEdge(2, 3, 10);
+    try graph.addEdge(1, 2, 1);
+
+    const PR = PushRelabel(TestGraph.Vertex, u32, TestGraph.Context);
+    var result = try PR.run(allocator, graph, 0, 3, TestGraph.Context{}, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(u32, 20), result.max_flow);
+}
+
+test "PushRelabel: init-deinit loop memory safety" {
+    const allocator = testing.allocator;
+
+    const TestGraph = struct {
+        const Vertex = u32;
+        const Edge = PushRelabel(Vertex, u32, Context).Edge;
+        const Context = struct {
+            pub fn hash(_: @This(), v: Vertex) u64 {
+                return v;
+            }
+            pub fn eql(_: @This(), a: Vertex, b: Vertex) bool {
+                return a == b;
+            }
+        };
+        const Adjacency = struct {
+            edges: std.ArrayList(Edge),
+        };
+        adjacencies: std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage),
+
+        fn init(alloc: Allocator) @This() {
+            return .{
+                .adjacencies = std.HashMap(Vertex, Adjacency, Context, std.hash_map.default_max_load_percentage).init(alloc),
+            };
+        }
+        fn deinit(self: *@This()) void {
+            var it = self.adjacencies.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.edges.deinit(self.adjacencies.allocator);
+            }
+            self.adjacencies.deinit();
+        }
+        fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
+            const result = try self.adjacencies.getOrPut(from);
+            if (!result.found_existing) {
+                result.value_ptr.* = .{ .edges = .{} };
+            }
+            try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
+            const result_to = try self.adjacencies.getOrPut(to);
+            if (!result_to.found_existing) {
+                result_to.value_ptr.* = .{ .edges = .{} };
+            }
+        }
+    };
+
+    const PR = PushRelabel(TestGraph.Vertex, u32, TestGraph.Context);
+
+    // Run 10 iterations to detect memory leaks
+    for (0..10) |_| {
+        var graph = TestGraph.init(allocator);
+        defer graph.deinit();
+
+        // Simple graph: 0 -> 1 (cap 5), 0 -> 2 (cap 3), 1 -> 3 (cap 4), 2 -> 3 (cap 2)
+        try graph.addEdge(0, 1, 5);
+        try graph.addEdge(0, 2, 3);
+        try graph.addEdge(1, 3, 4);
+        try graph.addEdge(2, 3, 2);
+
+        var result = try PR.run(allocator, graph, 0, 3, TestGraph.Context{}, 0);
+        defer result.deinit();
+
+        // Max flow should be 5 (2 from path 0->1->3, 3 from path 0->2->3)
+        try testing.expectEqual(@as(u32, 5), result.max_flow);
+    }
+}
