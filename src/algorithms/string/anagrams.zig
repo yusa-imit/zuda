@@ -530,3 +530,50 @@ test "anagrams - memory safety" {
         defer result.deinit();
     }
 }
+
+test "areAnagrams - single character" {
+    // Single identical character
+    try std.testing.expect(areAnagrams("a", "a"));
+    // Single different characters
+    try std.testing.expect(!areAnagrams("a", "b"));
+    // Single vs multi-char
+    try std.testing.expect(!areAnagrams("a", "aa"));
+}
+
+test "areAnagrams - different lengths" {
+    // "abc" and "ab" have different lengths, so not anagrams
+    try std.testing.expect(!areAnagrams("abc", "ab"));
+    // "hello" and "hell" have different lengths
+    try std.testing.expect(!areAnagrams("hello", "hell"));
+    // Even same characters, different length means not anagrams
+    try std.testing.expect(!areAnagrams("aaa", "aa"));
+}
+
+test "findAllAnagrams - pattern same as text" {
+    const allocator = std.testing.allocator;
+    var result = try findAllAnagrams(allocator, "abc", "abc");
+    defer result.deinit();
+    // When pattern equals text, there is exactly one match at position 0
+    try std.testing.expectEqual(@as(usize, 1), result.items.len);
+    try std.testing.expectEqual(@as(usize, 0), result.items[0]);
+}
+
+test "groupAnagrams - single word group" {
+    const allocator = std.testing.allocator;
+    const words = [_][]const u8{"abc"};
+    var groups = try groupAnagrams(allocator, &words);
+    defer {
+        for (groups.items) |group| group.deinit();
+        groups.deinit();
+    }
+    // Single word should form one group with one element
+    try std.testing.expectEqual(@as(usize, 1), groups.items.len);
+    try std.testing.expectEqual(@as(usize, 1), groups.items[0].items.len);
+    try std.testing.expectEqualStrings("abc", groups.items[0].items[0]);
+}
+
+test "countAnagramPairs - all unique words no pairs" {
+    const words = [_][]const u8{ "abc", "def", "xyz" };
+    // No words are anagrams of each other
+    try std.testing.expectEqual(@as(usize, 0), countAnagramPairs(&words));
+}

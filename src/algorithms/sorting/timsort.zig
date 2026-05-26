@@ -503,3 +503,67 @@ test "TimSort: stress test with runs" {
         try testing.expect(items[i] <= items[i + 1]);
     }
 }
+
+test "TimSort: two element sorted array" {
+    const allocator = testing.allocator;
+    var items = [_]i32{ 1, 2 };
+    try sort(i32, allocator, &items);
+
+    try testing.expectEqual(@as(usize, 2), items.len);
+    try testing.expectEqual(@as(i32, 1), items[0]);
+    try testing.expectEqual(@as(i32, 2), items[1]);
+}
+
+test "TimSort: two element reversed array" {
+    const allocator = testing.allocator;
+    var items = [_]i32{ 2, 1 };
+    try sort(i32, allocator, &items);
+
+    try testing.expectEqual(@as(i32, 1), items[0]);
+    try testing.expectEqual(@as(i32, 2), items[1]);
+}
+
+test "TimSort: negative numbers" {
+    const allocator = testing.allocator;
+    var items = [_]i32{ -3, 1, -5, 2, -1, 0 };
+    try sort(i32, allocator, &items);
+
+    for (0..items.len - 1) |i| {
+        try testing.expect(items[i] <= items[i + 1]);
+    }
+}
+
+test "TimSort: nearly sorted array" {
+    const allocator = testing.allocator;
+    var items = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
+    // Swap elements at indices 3 and 17
+    std.mem.swap(i32, &items[3], &items[17]);
+    try sort(i32, allocator, &items);
+
+    for (0..items.len - 1) |i| {
+        try testing.expect(items[i] <= items[i + 1]);
+    }
+}
+
+test "TimSort: memory safety loop" {
+    const allocator = testing.allocator;
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        const items = try allocator.alloc(i32, 100);
+        defer allocator.free(items);
+
+        var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(i)));
+        const random = prng.random();
+
+        for (items) |*item| {
+            item.* = random.intRangeAtMost(i32, -1000, 1000);
+        }
+
+        try sort(i32, allocator, items);
+
+        for (0..items.len - 1) |j| {
+            try testing.expect(items[j] <= items[j + 1]);
+        }
+    }
+}

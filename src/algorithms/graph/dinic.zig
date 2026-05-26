@@ -468,3 +468,129 @@ test "Dinic: parallel edges" {
 
     try testing.expectEqual(@as(i32, 15), result.max_flow);
 }
+
+test "Dinic: bottleneck edge limits flow" {
+    const allocator = testing.allocator;
+    const ctx = TestContext{};
+
+    // Network: 0 -> 1 (cap 100) -> 2 (cap 3) -> 3 (cap 100)
+    // Bottleneck at edge 1->2 limits max flow to 3
+    var graph = Graph.init(allocator, ctx, true);
+    defer graph.deinit();
+
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addVertex(3);
+
+    try graph.addEdge(0, 1, 100);
+    try graph.addEdge(1, 2, 3);
+    try graph.addEdge(2, 3, 100);
+
+    const D = Dinic(u32, i32, TestContext);
+    var result = try D.run(allocator, graph, 0, 3, ctx, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 3), result.max_flow);
+}
+
+test "Dinic: sink not in graph has zero flow" {
+    const allocator = testing.allocator;
+    const ctx = TestContext{};
+
+    // Network with vertices 0, 1, 2 but source=0, sink=9 (not reachable)
+    var graph = Graph.init(allocator, ctx, true);
+    defer graph.deinit();
+
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addEdge(0, 1, 5);
+    try graph.addEdge(1, 2, 5);
+
+    const D = Dinic(u32, i32, TestContext);
+    var result = try D.run(allocator, graph, 0, 9, ctx, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 0), result.max_flow);
+}
+
+test "Dinic: flow with multiple augmenting paths" {
+    const allocator = testing.allocator;
+    const ctx = TestContext{};
+
+    // Network:    0 -> 1 -> 3
+    //             0 -> 2 -> 3
+    // All edges have capacity 5, so max flow should be 10
+    var graph = Graph.init(allocator, ctx, true);
+    defer graph.deinit();
+
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addVertex(3);
+
+    try graph.addEdge(0, 1, 5);
+    try graph.addEdge(0, 2, 5);
+    try graph.addEdge(1, 3, 5);
+    try graph.addEdge(2, 3, 5);
+
+    const D = Dinic(u32, i32, TestContext);
+    var result = try D.run(allocator, graph, 0, 3, ctx, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 10), result.max_flow);
+}
+
+test "Dinic: reverse edge capacity restores correctly" {
+    const allocator = testing.allocator;
+    const ctx = TestContext{};
+
+    // Network:    0 -> 1 -> 3
+    //             0 -> 2 -> 3
+    //          + 1 -> 2 (allows rerouting)
+    // All edges capacity 10, so max flow should be 20
+    var graph = Graph.init(allocator, ctx, true);
+    defer graph.deinit();
+
+    try graph.addVertex(0);
+    try graph.addVertex(1);
+    try graph.addVertex(2);
+    try graph.addVertex(3);
+
+    try graph.addEdge(0, 1, 10);
+    try graph.addEdge(0, 2, 10);
+    try graph.addEdge(1, 3, 10);
+    try graph.addEdge(2, 3, 10);
+    try graph.addEdge(1, 2, 5);
+
+    const D = Dinic(u32, i32, TestContext);
+    var result = try D.run(allocator, graph, 0, 3, ctx, 0);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(i32, 20), result.max_flow);
+}
+
+test "Dinic: memory safety loop" {
+    const allocator = testing.allocator;
+    const ctx = TestContext{};
+
+    // 10 iterations: build simple graph 0->1->2, run Dinic, verify max_flow==7
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        var graph = Graph.init(allocator, ctx, true);
+        defer graph.deinit();
+
+        try graph.addVertex(0);
+        try graph.addVertex(1);
+        try graph.addVertex(2);
+        try graph.addEdge(0, 1, 7);
+        try graph.addEdge(1, 2, 7);
+
+        const D = Dinic(u32, i32, TestContext);
+        var result = try D.run(allocator, graph, 0, 2, ctx, 0);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(i32, 7), result.max_flow);
+    }
+}
