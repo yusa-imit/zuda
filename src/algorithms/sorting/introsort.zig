@@ -377,3 +377,75 @@ test "IntroSort - stress test" {
         try testing.expect(items[i] <= items[i + 1]);
     }
 }
+
+test "IntroSort - two elements already sorted" {
+    var items = [_]i32{ 1, 2 };
+    const Sorter = IntroSort(i32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+    Sorter.sort(&items, {});
+    try testing.expectEqual(@as(i32, 1), items[0]);
+    try testing.expectEqual(@as(i32, 2), items[1]);
+}
+
+test "IntroSort - two elements reversed" {
+    var items = [_]i32{ 9, 3 };
+    const Sorter = IntroSort(i32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+    Sorter.sort(&items, {});
+    try testing.expectEqual(@as(i32, 3), items[0]);
+    try testing.expectEqual(@as(i32, 9), items[1]);
+}
+
+test "IntroSort - negative numbers sort correctly" {
+    var items = [_]i32{ -3, -1, -4, -1, -5, -9, -2, -6 };
+    const Sorter = IntroSort(i32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+    Sorter.sort(&items, {});
+    for (0..items.len - 1) |i| {
+        try testing.expect(items[i] <= items[i + 1]);
+    }
+    try testing.expectEqual(@as(i32, -9), items[0]);
+    try testing.expectEqual(@as(i32, -1), items[items.len - 1]);
+}
+
+test "IntroSort - result preserves all input elements" {
+    const original = [_]i32{ 5, 3, 8, 1, 9, 2, 7, 4, 6, 0 };
+    var items = original;
+    const Sorter = IntroSort(i32, void, struct {
+        fn cmp(_: void, a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+    Sorter.sort(&items, {});
+    // After sort items should be 0..9 exactly once each
+    for (0..10) |v| {
+        var found = false;
+        for (items) |x| {
+            if (x == @as(i32, @intCast(v))) { found = true; break; }
+        }
+        try testing.expect(found);
+    }
+}
+
+test "IntroSort - f64 type sort" {
+    var items = [_]f64{ 3.14, 1.41, 2.71, 0.57, 1.73, 2.23 };
+    const Sorter = IntroSort(f64, void, struct {
+        fn cmp(_: void, a: f64, b: f64) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+    Sorter.sort(&items, {});
+    for (0..items.len - 1) |i| {
+        try testing.expect(items[i] <= items[i + 1]);
+    }
+    try testing.expect(items[0] < 1.0); // 0.57 is smallest
+}

@@ -220,3 +220,107 @@ test "Sudoku: unsolvable puzzle returns false" {
     const solved = solveSudoku(&board);
     try std.testing.expect(!solved);
 }
+
+test "Sudoku: all zeros is solvable" {
+    var board = [_][9]u8{
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    };
+
+    const solved = solveSudoku(&board);
+    try std.testing.expect(solved);
+    try std.testing.expect(isValidSudoku(&board));
+}
+
+test "Sudoku: already fully solved board needs no changes" {
+    var board = [_][9]u8{
+        [_]u8{ 5, 3, 4, 6, 7, 8, 9, 1, 2 },
+        [_]u8{ 6, 7, 2, 1, 9, 5, 3, 4, 8 },
+        [_]u8{ 1, 9, 8, 3, 4, 2, 5, 6, 7 },
+        [_]u8{ 8, 5, 9, 7, 6, 1, 4, 2, 3 },
+        [_]u8{ 4, 2, 6, 8, 5, 3, 7, 9, 1 },
+        [_]u8{ 7, 1, 3, 9, 2, 4, 8, 5, 6 },
+        [_]u8{ 9, 6, 1, 5, 3, 7, 2, 8, 4 },
+        [_]u8{ 2, 8, 7, 4, 1, 9, 6, 3, 5 },
+        [_]u8{ 3, 4, 5, 2, 8, 6, 1, 7, 9 },
+    };
+
+    const board_copy = board;
+    const solved = solveSudoku(&board);
+    try std.testing.expect(solved);
+
+    // Verify board is unchanged
+    for (0..9) |i| {
+        for (0..9) |j| {
+            try std.testing.expectEqual(board_copy[i][j], board[i][j]);
+        }
+    }
+}
+
+test "Sudoku: partial solution retains pre-filled values" {
+    var board = [_][9]u8{
+        [_]u8{ 5, 3, 0, 0, 7, 0, 0, 0, 0 },
+        [_]u8{ 6, 0, 0, 1, 9, 5, 0, 0, 0 },
+        [_]u8{ 0, 9, 8, 0, 0, 0, 0, 6, 0 },
+        [_]u8{ 8, 0, 0, 0, 6, 0, 0, 0, 3 },
+        [_]u8{ 4, 0, 0, 8, 0, 3, 0, 0, 1 },
+        [_]u8{ 7, 0, 0, 0, 2, 0, 0, 0, 6 },
+        [_]u8{ 0, 6, 0, 0, 0, 0, 2, 8, 0 },
+        [_]u8{ 0, 0, 0, 4, 1, 9, 0, 0, 5 },
+        [_]u8{ 0, 0, 0, 0, 8, 0, 0, 7, 9 },
+    };
+
+    const original_values = board;
+    const solved = solveSudoku(&board);
+    try std.testing.expect(solved);
+
+    // Verify all originally non-zero values are unchanged
+    for (0..9) |i| {
+        for (0..9) |j| {
+            if (original_values[i][j] != 0) {
+                try std.testing.expectEqual(original_values[i][j], board[i][j]);
+            }
+        }
+    }
+}
+
+test "Sudoku: empty board (all zeros) is valid partial board" {
+    const board = [_][9]u8{
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    };
+
+    try std.testing.expect(isValidSudoku(&board));
+}
+
+test "Sudoku: hard puzzle solves correctly" {
+    var board = [_][9]u8{
+        [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 0, 3, 0, 8, 5 },
+        [_]u8{ 0, 0, 1, 0, 2, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 5, 0, 7, 0, 0, 0 },
+        [_]u8{ 0, 0, 4, 0, 0, 0, 1, 0, 0 },
+        [_]u8{ 0, 9, 0, 0, 0, 0, 0, 0, 0 },
+        [_]u8{ 5, 0, 0, 0, 0, 0, 0, 7, 3 },
+        [_]u8{ 0, 0, 2, 0, 1, 0, 0, 0, 0 },
+        [_]u8{ 0, 0, 0, 0, 4, 0, 0, 0, 9 },
+    };
+
+    const solved = solveSudoku(&board);
+    try std.testing.expect(solved);
+    try std.testing.expect(isValidSudoku(&board));
+}

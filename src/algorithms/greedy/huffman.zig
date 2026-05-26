@@ -357,3 +357,107 @@ test "huffman - all unique characters" {
 
     try testing.expectEqualStrings(data, decoded);
 }
+
+test "huffman - two symbols equal frequency get length-1 codes" {
+    const data = "ab";
+
+    const tree = try buildHuffmanTree(testing.allocator, data);
+    defer destroyHuffmanTree(testing.allocator, tree);
+
+    var codes = try generateHuffmanCodes(testing.allocator, tree);
+    defer {
+        for (codes.items) |code| {
+            testing.allocator.free(code.code);
+        }
+        codes.deinit();
+    }
+
+    try testing.expectEqual(@as(usize, 2), codes.items.len);
+    for (codes.items) |code| {
+        try testing.expectEqual(@as(usize, 1), code.length);
+    }
+}
+
+test "huffman - single byte input roundtrip" {
+    const data = "x";
+
+    const tree = try buildHuffmanTree(testing.allocator, data);
+    defer destroyHuffmanTree(testing.allocator, tree);
+
+    var codes = try generateHuffmanCodes(testing.allocator, tree);
+    defer {
+        for (codes.items) |code| {
+            testing.allocator.free(code.code);
+        }
+        codes.deinit();
+    }
+
+    const encoded = try huffmanEncode(testing.allocator, data, codes.items);
+    defer testing.allocator.free(encoded);
+
+    const decoded = try huffmanDecode(testing.allocator, encoded, tree);
+    defer testing.allocator.free(decoded);
+
+    try testing.expectEqualStrings(data, decoded);
+}
+
+test "huffman - frequent symbol gets shorter or equal code" {
+    const data = "aaaaaab"; // 6 a's, 1 b
+
+    const tree = try buildHuffmanTree(testing.allocator, data);
+    defer destroyHuffmanTree(testing.allocator, tree);
+
+    var codes = try generateHuffmanCodes(testing.allocator, tree);
+    defer {
+        for (codes.items) |code| {
+            testing.allocator.free(code.code);
+        }
+        codes.deinit();
+    }
+
+    var a_len: usize = 0;
+    var b_len: usize = 0;
+    for (codes.items) |code| {
+        if (code.symbol == 'a') a_len = code.length;
+        if (code.symbol == 'b') b_len = code.length;
+    }
+
+    try testing.expect(a_len <= b_len);
+}
+
+test "huffman - decode empty encoded string returns empty" {
+    const data = "ab";
+
+    const tree = try buildHuffmanTree(testing.allocator, data);
+    defer destroyHuffmanTree(testing.allocator, tree);
+
+    const decoded = try huffmanDecode(testing.allocator, "", tree);
+    defer testing.allocator.free(decoded);
+
+    try testing.expectEqual(@as(usize, 0), decoded.len);
+}
+
+test "huffman - memory safety loop" {
+    for (0..10) |_| {
+        const data = "hello world";
+
+        const tree = try buildHuffmanTree(testing.allocator, data);
+        defer destroyHuffmanTree(testing.allocator, tree);
+
+        var codes = try generateHuffmanCodes(testing.allocator, tree);
+        defer {
+            for (codes.items) |code| {
+                testing.allocator.free(code.code);
+            }
+            codes.deinit();
+        }
+
+        const encoded = try huffmanEncode(testing.allocator, data, codes.items);
+        defer testing.allocator.free(encoded);
+
+        const decoded = try huffmanDecode(testing.allocator, encoded, tree);
+        defer testing.allocator.free(decoded);
+
+        try testing.expectEqualStrings(data, decoded);
+    }
+}

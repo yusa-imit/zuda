@@ -163,3 +163,97 @@ test "N-Queens: 2x2 and 3x3 have no solutions" {
 test "N-Queens: verify 8x8 classic solution count" {
     try std.testing.expectEqual(@as(u64, 92), countNQueens(8));
 }
+
+test "N-Queens: 5x5 board has 10 solutions" {
+    const allocator = std.testing.allocator;
+    var solutions = try solveNQueens(allocator, 5);
+    defer {
+        for (solutions.items) |sol| allocator.free(sol);
+        solutions.deinit();
+    }
+
+    try std.testing.expectEqual(@as(usize, 10), solutions.items.len);
+}
+
+test "N-Queens: each 4x4 solution has exactly one Q per row" {
+    const allocator = std.testing.allocator;
+    var solutions = try solveNQueens(allocator, 4);
+    defer {
+        for (solutions.items) |sol| allocator.free(sol);
+        solutions.deinit();
+    }
+
+    for (solutions.items) |solution| {
+        var row_idx: usize = 0;
+        var current_row_start: usize = 0;
+
+        for (0..solution.len) |i| {
+            if (solution[i] == '\n') {
+                const row = solution[current_row_start..i];
+                var q_count: usize = 0;
+                for (row) |c| {
+                    if (c == 'Q') q_count += 1;
+                }
+                try std.testing.expectEqual(@as(usize, 1), q_count);
+                row_idx += 1;
+                current_row_start = i + 1;
+            }
+        }
+    }
+}
+
+test "N-Queens: no two queens share a column in 4x4 solutions" {
+    const allocator = std.testing.allocator;
+    var solutions = try solveNQueens(allocator, 4);
+    defer {
+        for (solutions.items) |sol| allocator.free(sol);
+        solutions.deinit();
+    }
+
+    for (solutions.items) |solution| {
+        var columns: [4]usize = undefined;
+        var col_idx: usize = 0;
+        var current_row_start: usize = 0;
+
+        for (0..solution.len) |i| {
+            if (solution[i] == '\n') {
+                const row = solution[current_row_start..i];
+                for (row, 0..) |c, j| {
+                    if (c == 'Q') {
+                        columns[col_idx] = j;
+                    }
+                }
+                col_idx += 1;
+                current_row_start = i + 1;
+            }
+        }
+
+        // Verify all columns are distinct
+        for (0..4) |i| {
+            for (i + 1..4) |j| {
+                try std.testing.expect(columns[i] != columns[j]);
+            }
+        }
+    }
+}
+
+test "N-Queens: 0x0 board returns empty solution list" {
+    const allocator = std.testing.allocator;
+    var solutions = try solveNQueens(allocator, 0);
+    defer solutions.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), solutions.items.len);
+}
+
+test "N-Queens: memory safety loop" {
+    const allocator = std.testing.allocator;
+
+    for (0..10) |_| {
+        var solutions = try solveNQueens(allocator, 4);
+        defer {
+            for (solutions.items) |sol| allocator.free(sol);
+            solutions.deinit();
+        }
+        try std.testing.expectEqual(@as(usize, 2), solutions.items.len);
+    }
+}
