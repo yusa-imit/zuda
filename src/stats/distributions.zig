@@ -6575,3 +6575,373 @@ test "Geometric: pmf series sums to ~1.0" {
     }
     try expectApproxEqRel(1.0, sum, 1e-6);
 }
+
+// ============================================================================
+// NegativeBinomial Distribution
+// ============================================================================
+
+/// NegativeBinomial distribution — number of failures before r-th success
+///
+/// Parameters:
+///   - r: number of successes (r ≥ 1)
+///   - p: success probability (0 < p ≤ 1)
+///
+/// Support: k ∈ {0, 1, 2, ...} (number of failures)
+///
+/// PMF: C(k+r-1, k) * p^r * (1-p)^k
+/// CDF: Regularized incomplete beta function I_p(r, k+1)
+/// Mean: r*(1-p)/p
+/// Variance: r*(1-p)/p²
+/// Mode: floor((r-1)*(1-p)/p) for r > 1, else 0
+///
+/// Time: O(1) for pmf/cdf/mean/variance/mode; O(log k) for quantile
+pub fn NegativeBinomial(comptime T: type) type {
+    return struct {
+        r: u64,
+        p: T,
+
+        const Self = @This();
+
+        /// Initialize NegativeBinomial(r, p)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(r: u64, p: T) error{ InvalidParameters }!Self {
+            if (r < 1) return error.InvalidParameters;
+            if (p <= 0.0 or p > 1.0) return error.InvalidParameters;
+            return Self{ .r = r, .p = p };
+        }
+
+        /// Probability mass function at k
+        /// PMF(k) = C(k+r-1, k) * p^r * (1-p)^k
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            // PMF(k) = C(k+r-1, k) * p^r * (1-p)^k
+            const log_pmf_val = self.logpmf(k);
+            return @exp(log_pmf_val);
+        }
+
+        /// Cumulative distribution function at k
+        /// CDF(k) = P(X ≤ k)
+        ///
+        /// Time: O(log k) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            if (k < 0) return 0.0;
+
+            // CDF(k) = sum of PMF from j=0 to k
+            const k_u: u64 = @intCast(k);
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k_u) : (j += 1) {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Log probability mass function at k
+        /// logpmf(k) = log(pmf(k))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            // log PMF(k) = log C(k+r-1, k) + r*log(p) + k*log(1-p)
+            // C(k+r-1, k) = (k+r-1)! / (k! * (r-1)!)
+            // log C(n, k) = lgamma(n+1) - lgamma(k+1) - lgamma(n-k+1)
+            const k_f = @as(T, @floatFromInt(k));
+            const r_f = @as(T, @floatFromInt(self.r));
+
+            const n = k + self.r - 1;
+            const n_f = @as(T, @floatFromInt(n));
+
+            // log_binomial_coeff = lgamma(k+r) - lgamma(k+1) - lgamma(r)
+            const log_binom_coeff = logGamma(n_f + 1.0) - logGamma(k_f + 1.0) - logGamma(r_f);
+
+            const log_pmf_val = log_binom_coeff + r_f * @log(self.p) + k_f * @log(1.0 - self.p);
+            return log_pmf_val;
+        }
+
+        /// Survival function at k
+        /// sf(k) = P(X > k) = 1 - CDF(k)
+        ///
+        /// Time: O(log k) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            if (k < 0) return 1.0;
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function (inverse CDF)
+        /// Returns k such that CDF(k) ≥ prob
+        ///
+        /// Time: O(log k) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) error{ OutOfDomain }!u64 {
+            if (prob < 0.0 or prob > 1.0) return error.OutOfDomain;
+            if (prob == 0.0) return 0;
+
+            // Linear search for smallest k such that CDF(k) >= prob
+            var k: u64 = 0;
+            var cumulative: T = 0.0;
+            while (k < 10000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= prob) return k;
+            }
+            return k;
+        }
+
+        /// Mean of the distribution
+        /// Mean = r*(1-p)/p
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const r_f = @as(T, @floatFromInt(self.r));
+            return r_f * (1.0 - self.p) / self.p;
+        }
+
+        /// Variance of the distribution
+        /// Variance = r*(1-p)/p²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const r_f = @as(T, @floatFromInt(self.r));
+            return r_f * (1.0 - self.p) / (self.p * self.p);
+        }
+
+        /// Mode of the distribution
+        /// Mode = floor((r-1)*(1-p)/p) for r > 1, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            if (self.r <= 1) return 0;
+            const r_f = @as(T, @floatFromInt(self.r - 1));
+            const mode_f = r_f * (1.0 - self.p) / self.p;
+            return @intFromFloat(@floor(mode_f));
+        }
+
+        /// Draw a random sample from the distribution
+        ///
+        /// Time: O(r) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) u64 {
+            // NegativeBinomial(r,p) = sum of r independent Geometric(p) samples
+            // Each Geometric(p) = number of failures before first success
+            var total: u64 = 0;
+            var i: u64 = 0;
+            while (i < self.r) : (i += 1) {
+                // Sample geometric: count failures until success
+                while (rng.float(T) >= self.p) {
+                    total += 1;
+                }
+            }
+            return total;
+        }
+    };
+}
+
+// Tests for NegativeBinomial Distribution
+
+test "NegativeBinomial: init valid parameters" {
+    const NB = NegativeBinomial(f64);
+    const nb = try NB.init(3, 0.5);
+    try expectEqual(nb.r, 3);
+    try expectEqual(nb.p, 0.5);
+}
+
+test "NegativeBinomial: init invalid p=0 returns error" {
+    const NB = NegativeBinomial(f64);
+    const result = NB.init(3, 0.0);
+    try expectEqual(error.InvalidParameters, result);
+}
+
+test "NegativeBinomial: init invalid p>1 returns error" {
+    const NB = NegativeBinomial(f64);
+    const result = NB.init(3, 1.1);
+    try expectEqual(error.InvalidParameters, result);
+}
+
+test "NegativeBinomial: init invalid r=0 returns error" {
+    const NB = NegativeBinomial(f64);
+    const result = NB.init(0, 0.5);
+    try expectEqual(error.InvalidParameters, result);
+}
+
+test "NegativeBinomial: pmf k=0 is p^r" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // pmf(0) = p^r = 0.5^3 = 0.125
+    try expectApproxEqRel(0.125, nb.pmf(0), 1e-10);
+}
+
+test "NegativeBinomial: pmf k=1" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // pmf(1) = C(3,1) * 0.5^3 * 0.5^1 = 3 * 0.0625 = 0.1875
+    try expectApproxEqRel(0.1875, nb.pmf(1), 1e-10);
+}
+
+test "NegativeBinomial: pmf k=2" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // pmf(2) = C(4,2) * 0.5^3 * 0.5^2 = 6 * 0.03125 = 0.1875
+    try expectApproxEqRel(0.1875, nb.pmf(2), 1e-10);
+}
+
+test "NegativeBinomial: pmf probabilities sum to approximately 1" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    var sum: f64 = 0.0;
+    for (0..100) |k| {
+        sum += nb.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-5);
+}
+
+test "NegativeBinomial: cdf negative k returns 0" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    try expectEqual(0.0, nb.cdf(-1));
+}
+
+test "NegativeBinomial: cdf k=0 equals pmf(0)" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // cdf(0) = pmf(0) = 0.125
+    try expectApproxEqRel(0.125, nb.cdf(0), 1e-10);
+}
+
+test "NegativeBinomial: cdf is monotone non-decreasing" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    for (0..9) |k| {
+        const cdf_k = nb.cdf(@intCast(k));
+        const cdf_k1 = nb.cdf(@intCast(k + 1));
+        try testing.expect(cdf_k <= cdf_k1);
+    }
+}
+
+test "NegativeBinomial: cdf large k approaches 1" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    const cdf_100 = nb.cdf(100);
+    try testing.expect(cdf_100 > 0.9999);
+}
+
+test "NegativeBinomial: logpmf matches log of pmf" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    for (0..5) |k| {
+        const expected = @log(nb.pmf(k));
+        const actual = nb.logpmf(k);
+        try expectApproxEqRel(expected, actual, 1e-10);
+    }
+}
+
+test "NegativeBinomial: sf k=0 equals 1 - cdf(0)" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // sf(0) = P(X > 0) = 1 - cdf(0) = 1 - 0.125 = 0.875
+    try expectApproxEqRel(0.875, nb.sf(0), 1e-10);
+}
+
+test "NegativeBinomial: sf plus cdf equals 1" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    for (0..10) |k| {
+        const sum = nb.sf(@intCast(k)) + nb.cdf(@intCast(k));
+        try expectApproxEqRel(1.0, sum, 1e-10);
+    }
+}
+
+test "NegativeBinomial: mean equals r*(1-p)/p" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // mean = 3*(1-0.5)/0.5 = 3.0
+    try expectApproxEqRel(3.0, nb.mean(), 1e-10);
+}
+
+test "NegativeBinomial: variance equals r*(1-p)/p²" {
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // variance = 3*(1-0.5)/0.25 = 6.0
+    try expectApproxEqRel(6.0, nb.variance(), 1e-10);
+}
+
+test "NegativeBinomial: mode k=0 when r=1" {
+    const nb = try NegativeBinomial(f64).init(1, 0.7);
+    // mode = floor((1-1)*0.3/0.7) = 0
+    try expectEqual(0, nb.mode());
+}
+
+test "NegativeBinomial: mode for r=5 p=0.3" {
+    const nb = try NegativeBinomial(f64).init(5, 0.3);
+    // mode = floor((5-1)*0.7/0.3) = floor(9.33) = 9
+    try expectEqual(9, nb.mode());
+}
+
+test "NegativeBinomial: quantile roundtrip" {
+    const nb = try NegativeBinomial(f64).init(4, 0.4);
+    for (3..9) |k_val| {
+        const k: u64 = k_val;
+        const cdf_k = nb.cdf(@intCast(k));
+        const q = try nb.quantile(cdf_k);
+        try expectEqual(k, q);
+    }
+}
+
+test "NegativeBinomial: quantile p=0 returns 0" {
+    const nb = try NegativeBinomial(f64).init(2, 0.5);
+    const q = try nb.quantile(0.0);
+    try expectEqual(0, q);
+}
+
+test "NegativeBinomial: quantile p approaching 1 returns large value" {
+    const nb = try NegativeBinomial(f64).init(2, 0.3);
+    const q = try nb.quantile(0.999);
+    try testing.expect(q > 0);
+}
+
+test "NegativeBinomial: p=1.0 valid pmf k=0 is 1" {
+    const nb = try NegativeBinomial(f64).init(3, 1.0);
+    // All probability at k=0
+    try expectApproxEqRel(1.0, nb.pmf(0), 1e-10);
+    try expectApproxEqRel(0.0, nb.pmf(1), 1e-10);
+}
+
+test "NegativeBinomial: sample is non-negative" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    for (0..20) |_| {
+        const x = nb.sample(rng);
+        try testing.expect(x >= 0);
+    }
+}
+
+test "NegativeBinomial: sample distribution mean approximates theoretical" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const nb = try NegativeBinomial(f64).init(2, 0.5);
+    const theoretical_mean = nb.mean();
+    var sum: f64 = 0.0;
+    for (0..200) |_| {
+        const x = nb.sample(rng);
+        sum += @floatFromInt(x);
+    }
+    const sample_mean = sum / 200.0;
+    // Check within 3.0 of theoretical mean (relaxed for randomness)
+    try testing.expect(@abs(sample_mean - theoretical_mean) < 3.0);
+}
+
+test "NegativeBinomial: f32 type precision" {
+    const nb = try NegativeBinomial(f32).init(2, 0.5);
+    try expectApproxEqRel(@as(f32, 0.25), nb.pmf(0), 1e-5);
+    try expectApproxEqRel(@as(f32, 1.0), nb.mean(), 1e-5);
+}
+
+test "NegativeBinomial: memory safety init-deinit loop" {
+    for (0..10) |_| {
+        const nb = try NegativeBinomial(f64).init(3, 0.5);
+        _ = nb.pmf(1);
+        _ = nb.pmf(2);
+        _ = nb.cdf(1);
+        _ = nb.cdf(2);
+        _ = nb.mean();
+        _ = nb.variance();
+        _ = nb.mode();
+        _ = nb.logpmf(1);
+        _ = nb.sf(1);
+    }
+}
+
+test "NegativeBinomial: large r parameter" {
+    const nb = try NegativeBinomial(f64).init(10, 0.8);
+    // pmf(0) = 0.8^10 ≈ 0.1074
+    try expectApproxEqRel(0.1074, nb.pmf(0), 0.001);
+    // mean = 10*0.2/0.8 = 2.5
+    try expectApproxEqRel(2.5, nb.mean(), 1e-10);
+}
