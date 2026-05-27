@@ -424,3 +424,5 @@
 {"timestamp":"2026-05-27T00:00:01Z","action":"subagent","agent_type":"zig-developer","task":"Implement Gumbel distribution in src/stats/distributions.zig","project":"zuda"}
 {"timestamp":"2026-05-27T07:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Bernoulli and Geometric distributions","project":"zuda"}
 {"timestamp":"2026-05-27T07:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Bernoulli and Geometric distributions in distributions.zig","project":"zuda"}
+{"timestamp":"2026-05-27T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for NegativeBinomial distribution in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-05-27T08:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NegativeBinomial distribution in src/stats/distributions.zig (replace stubs with real implementations)","project":"zuda"}

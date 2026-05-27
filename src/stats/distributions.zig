@@ -1079,8 +1079,8 @@ pub fn FDistribution(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
-            const chi1 = ChiSquared(T).init(self.d1) catch unreachable;
-            const chi2 = ChiSquared(T).init(self.d2) catch unreachable;
+            const chi1 = ChiSquared(T).init(@intFromFloat(self.d1)) catch unreachable;
+            const chi2 = ChiSquared(T).init(@intFromFloat(self.d2)) catch unreachable;
 
             const v1 = chi1.sample(rng);
             const v2 = chi2.sample(rng);
@@ -1801,8 +1801,11 @@ fn logBeta(a: anytype, b: anytype) @TypeOf(a) {
 /// Uses continued fraction expansion (Lentz's algorithm)
 ///
 /// Time: O(1) with finite iterations | Space: O(1)
-fn regularizedBetaI(a: anytype, b: anytype, x: anytype) @TypeOf(a) {
-    const T = @TypeOf(a);
+fn regularizedBetaI(a_in: anytype, b_in: anytype, x_in: anytype) @TypeOf(a_in + x_in) {
+    const T = @TypeOf(a_in + x_in);
+    const a: T = @floatCast(a_in);
+    const b: T = @floatCast(b_in);
+    const x: T = @floatCast(x_in);
 
     if (x <= 0.0) return 0.0;
     if (x >= 1.0) return 1.0;
@@ -3298,8 +3301,8 @@ test "F distribution: relationship to chi-squared" {
     const d2: f64 = 10.0;
 
     const f_dist = try FDistribution(f64).init(d1, d2);
-    const chi1 = try ChiSquared(f64).init(d1);
-    const chi2 = try ChiSquared(f64).init(d2);
+    const chi1 = try ChiSquared(f64).init(@intFromFloat(d1));
+    const chi2 = try ChiSquared(f64).init(@intFromFloat(d2));
 
     var prng = std.Random.DefaultPrng.init(123);
     const rng = prng.random();
@@ -3509,7 +3512,7 @@ pub fn Laplace(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
-            return try self.quantile(u) catch unreachable; // u is always valid probability
+            return self.quantile(u) catch unreachable; // u is always valid probability
         }
 
         /// Log probability density function (log PDF) at x
@@ -3673,7 +3676,7 @@ pub fn Weibull(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
-            return try self.quantile(u) catch unreachable; // u is always valid probability
+            return self.quantile(u) catch unreachable; // u is always valid probability
         }
 
         /// Log probability density function (log PDF) at x
@@ -6271,9 +6274,9 @@ test "Bernoulli: variance p*(1-p)" {
 
 test "Bernoulli: sample for p=1.0" {
     const dist = try Bernoulli(f64).init(1.0);
-    // Every sample should be 1
+    // Every sample should be 1 (null rng allowed when p=1.0)
     for (0..50) |_| {
-        const x = dist.sample();
+        const x = dist.sample(null);
         try expectEqual(1, x);
     }
 }
@@ -6655,7 +6658,9 @@ pub fn NegativeBinomial(comptime T: type) type {
             // log_binomial_coeff = lgamma(k+r) - lgamma(k+1) - lgamma(r)
             const log_binom_coeff = logGamma(n_f + 1.0) - logGamma(k_f + 1.0) - logGamma(r_f);
 
-            const log_pmf_val = log_binom_coeff + r_f * @log(self.p) + k_f * @log(1.0 - self.p);
+            // When k==0, 0*log(0) is defined as 0 by convention (0^0=1 in combinatorics)
+            const log_q_term = if (k == 0) @as(T, 0.0) else k_f * @log(1.0 - self.p);
+            const log_pmf_val = log_binom_coeff + r_f * @log(self.p) + log_q_term;
             return log_pmf_val;
         }
 
@@ -6920,7 +6925,7 @@ test "NegativeBinomial: sample distribution mean approximates theoretical" {
 test "NegativeBinomial: f32 type precision" {
     const nb = try NegativeBinomial(f32).init(2, 0.5);
     try expectApproxEqRel(@as(f32, 0.25), nb.pmf(0), 1e-5);
-    try expectApproxEqRel(@as(f32, 1.0), nb.mean(), 1e-5);
+    try expectApproxEqRel(@as(f32, 2.0), nb.mean(), 1e-5); // NB(2,0.5): mean = 2*(1-0.5)/0.5 = 2.0
 }
 
 test "NegativeBinomial: memory safety init-deinit loop" {
