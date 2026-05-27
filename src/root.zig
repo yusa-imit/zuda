@@ -813,6 +813,7 @@ test {
     _ = @import("stats/distributions/chi_squared.zig");
     _ = @import("stats/distributions/student_t.zig");
     _ = @import("stats/distributions/f_distribution.zig");
+    _ = @import("stats/distributions.zig");
 
     // Explicitly import signal modules to trigger their tests
     _ = @import("signal/fft.zig");
