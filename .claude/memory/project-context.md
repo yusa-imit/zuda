@@ -1,3 +1,25 @@
+**Session 592 Update (2026-05-27) — FEATURE MODE:**
+
+✅ **Bernoulli + Geometric Distributions** — Implemented both planned Phase 8 discrete distributions
+- **Mode**: FEATURE MODE (counter: 592)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Deliverables**:
+  * Bernoulli(T): init, pmf(u64), cdf(i64), logpmf(u64), sf(i64), mean, variance, sample(rng)
+    - Support: {0, 1}; p ∈ (0, 1]; mean=p, variance=p(1-p)
+    - Convention: p=0 is invalid (strict positive); sample returns u64 (0 or 1)
+  * Geometric(T): init, pmf(u64), cdf(i64), quantile, logpmf(u64), sf(i64), mode, mean, variance, sample(rng)
+    - Support: {1, 2, 3, ...} (number of trials until first success)
+    - mean=1/p, variance=(1-p)/p²; mode=1 always
+    - Quantile: k = ceil(log(1-prob)/log(1-p))
+  * ~30 tests per distribution covering init validation, PMF/CDF, quantile, sample, mean/variance, logpmf, sf
+- **Distribution count**: Now 18 total (14 continuous + 4 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric
+- **Note**: `distributions/` subdirectory contains older separate implementations with different conventions (Bernoulli allows p=0; Geometric uses number-of-failures convention). Main public API is from monolithic `distributions.zig`.
+- **Commit**: 43e5da3 (feat)
+- **Next Priority**: NegativeBinomial or Fréchet distribution
+
 **Session 591 Update (2026-05-27) — FEATURE MODE:**
 
 ✅ **Gumbel Distribution** — Implemented Gumbel(μ, β) Type-I Extreme Value distribution
