@@ -63,7 +63,8 @@ pub fn MLP(comptime T: type) type {
             epochs: usize = 100,
             learning_rate: T = 0.01,
             batch_size: usize = 32,
-            verbose: bool = false,
+            /// Optional writer for training progress output (e.g., pass stderr.writer() to see epoch logs)
+            log_writer: ?std.io.AnyWriter = null,
             seed: ?u64 = null,
         };
 
@@ -430,9 +431,9 @@ pub fn MLP(comptime T: type) type {
                     batch_start = batch_end;
                 }
 
-                if (options.verbose and epoch % 10 == 0) {
+                if (options.log_writer != null and epoch % 10 == 0) {
                     const avg_loss = total_loss / @as(T, @floatFromInt(n_batches));
-                    std.debug.print("Epoch {d}: loss = {d:.6}\n", .{ epoch, avg_loss });
+                    options.log_writer.?.print("Epoch {d}: loss = {d:.6}\n", .{ epoch, avg_loss }) catch {};
                 }
             }
         }

@@ -73,8 +73,8 @@ pub const Config = struct {
     /// Task type
     objective: ObjectiveType = .regression,
 
-    /// Verbosity level
-    verbose: bool = false,
+    /// Optional writer for training progress output (e.g., pass stderr.writer() to see iteration logs)
+    log_writer: ?std.io.AnyWriter = null,
 };
 
 /// Objective function type
@@ -610,15 +610,14 @@ pub fn LightGBM(comptime T: type) type {
 
                 try self.trees.append(tree);
 
-                if (self.config.verbose and iter % 10 == 0) {
-                    // Calculate MSE
+                if (self.config.log_writer != null and iter % 10 == 0) {
                     var mse: T = 0.0;
                     for (0..n) |i| {
                         const diff = predictions[i] - y[i];
                         mse += diff * diff;
                     }
                     mse /= @floatFromInt(n);
-                    std.debug.print("Iter {d}: MSE = {d:.4}\n", .{ iter, mse });
+                    self.config.log_writer.?.print("Iter {d}: MSE = {d:.4}\n", .{ iter, mse }) catch {};
                 }
             }
         }

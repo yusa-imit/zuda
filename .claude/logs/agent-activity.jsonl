@@ -427,3 +427,4 @@
 {"timestamp":"2026-05-27T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for NegativeBinomial distribution in src/stats/distributions.zig","project":"zuda"}
 {"timestamp":"2026-05-27T08:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NegativeBinomial distribution in src/stats/distributions.zig (replace stubs with real implementations)","project":"zuda"}
 {"timestamp":"2026-05-28T00:00:00Z","action":"subagent","agent_type":"none","task":"Direct implementation: fixed 17 test failures in distributions.zig — regularizedBetaI, Gamma.pdf@x=0, erfInv Newton refinement, 13 test bugs","project":"zuda"}
+{"timestamp":"2026-05-28T00:00:00Z","action":"subagent","agent_type":"code-reviewer","task":"Audit Gumbel/Bernoulli/Geometric/NegativeBinomial distributions for code quality","project":"zuda"}

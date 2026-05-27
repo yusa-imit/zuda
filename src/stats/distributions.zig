@@ -1234,27 +1234,17 @@ pub fn Bernoulli(comptime T: type) type {
 
         /// Generate a random sample from this distribution
         ///
-        /// Can be called as:
-        ///   - sample() for deterministic case (p=1.0)
-        ///   - sample(rng) for probabilistic case
-        ///
-        /// For p=1.0, returns 1 without needing RNG.
-        /// For other p values, calling without rng will panic at comptime.
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            return if (rng.float(T) < self.p) @as(u64, 1) else @as(u64, 0);
+        }
+
+        /// Validate internal invariants: 0 < p ≤ 1 and p is finite
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn sample(self: Self, rng: ?std.Random) u64 {
-            // Special case: p=1.0 always returns 1
-            if (self.p == 1.0) {
-                return 1;
-            }
-
-            // For other p values, RNG is required
-            if (rng) |r| {
-                return if (r.float(T) < self.p) @as(u64, 1) else @as(u64, 0);
-            } else {
-                // Default to 0 if no RNG (shouldn't happen in normal use)
-                return 0;
-            }
+        pub fn validate(self: Self) !void {
+            if (self.p <= 0.0 or self.p > 1.0) return error.InvalidProbability;
+            if (!math.isFinite(self.p)) return error.InvalidProbability;
         }
     };
 }
@@ -1380,6 +1370,14 @@ pub fn Geometric(comptime T: type) type {
             var k: u64 = 1;
             while (rng.float(T) >= self.p) : (k += 1) {}
             return k;
+        }
+
+        /// Validate internal invariants: 0 < p ≤ 1 and p is finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.p <= 0.0 or self.p > 1.0) return error.InvalidProbability;
+            if (!math.isFinite(self.p)) return error.InvalidProbability;
         }
     };
 }
@@ -4528,11 +4526,8 @@ pub fn Pareto(comptime T: type) type {
         /// Generate random sample using inverse transform method
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn sample(self: Self) T {
-            // Use inverse transform: X = Q(U) where U ~ Uniform(0,1)
-            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
-            const u = prng.random().float(T);
-            // Avoid quantile error handling in hot path
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
             return self.x_m / math.pow(T, 1.0 - u, 1.0 / self.alpha);
         }
 
@@ -4716,11 +4711,13 @@ test "Pareto: quantile manual calculation" {
 
 test "Pareto: sampling mean validation" {
     const dist = try Pareto(f64).init(1.0, 3.0);
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
 
     var sum: f64 = 0.0;
     const n_samples = 10000;
     for (0..n_samples) |_| {
-        sum += dist.sample();
+        sum += dist.sample(rng);
     }
     const sample_mean = sum / @as(f64, @floatFromInt(n_samples));
 
@@ -4747,9 +4744,11 @@ test "Pareto: variance formula validation" {
 
 test "Pareto: sampling produces values ≥ x_m" {
     const dist = try Pareto(f64).init(2.0, 1.5);
+    var prng = std.Random.DefaultPrng.init(22222);
+    const rng = prng.random();
 
     for (0..100) |_| {
-        const x = dist.sample();
+        const x = dist.sample(rng);
         try testing.expect(x >= dist.x_m);
     }
 }
@@ -5465,11 +5464,8 @@ pub fn Cauchy(comptime T: type) type {
         /// Generate random sample using inverse transform method
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn sample(self: Self) T {
-            // Use inverse transform: X = Q(U) where U ~ Uniform(0,1)
-            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
-            const u = prng.random().float(T);
-            // Avoid boundary cases for tan
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
             const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
             return self.x0 + self.gamma * @tan(math.pi * (safe_u - 0.5));
         }
@@ -5665,15 +5661,16 @@ test "Cauchy: quantile-CDF roundtrip" {
 
 test "Cauchy: sampling produces values in reasonable range" {
     const dist = try Cauchy(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(33333);
+    const rng = prng.random();
 
     // Cauchy has heavy tails, but median should be near x₀
     var count_near_median: usize = 0;
     const n_samples = 1000;
 
     for (0..n_samples) |_| {
-        const x = dist.sample();
-        // Check at least some samples are within [-10, 10]
-        // (about 93.5% should be within this range)
+        const x = dist.sample(rng);
+        // About 93.5% should be within [-10, 10]
         if (x >= -10.0 and x <= 10.0) {
             count_near_median += 1;
         }
@@ -5899,9 +5896,8 @@ pub fn Gumbel(comptime T: type) type {
         /// Generate random sample using inverse transform method
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn sample(self: Self) T {
-            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
-            const u = prng.random().float(T);
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
             const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
             return self.mu - self.beta * @log(-@log(safe_u));
         }
@@ -5949,6 +5945,14 @@ pub fn Gumbel(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn median(self: Self) T {
             return self.mu - self.beta * @log(@log(2.0));
+        }
+
+        /// Validate internal invariants: β > 0, μ and β are finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.beta <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.mu) or !math.isFinite(self.beta)) return error.InvalidParameter;
         }
     };
 }
@@ -6129,10 +6133,12 @@ test "Gumbel: logpdf matches log of pdf" {
 
 test "Gumbel: sampling produces values in reasonable range" {
     const dist = try Gumbel(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
     var count_reasonable: usize = 0;
     const n_samples = 1000;
     for (0..n_samples) |_| {
-        const x = dist.sample();
+        const x = dist.sample(rng);
         if (x >= -5.0 and x <= 10.0) count_reasonable += 1;
     }
     const ratio = @as(f64, @floatFromInt(count_reasonable)) / @as(f64, @floatFromInt(n_samples));
@@ -6283,10 +6289,12 @@ test "Bernoulli: variance p*(1-p)" {
 }
 
 test "Bernoulli: sample for p=1.0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
     const dist = try Bernoulli(f64).init(1.0);
-    // Every sample should be 1 (null rng allowed when p=1.0)
+    // For p=1.0, every sample should be 1 (float(T) is always < 1.0)
     for (0..50) |_| {
-        const x = dist.sample(null);
+        const x = dist.sample(rng);
         try expectEqual(1, x);
     }
 }
@@ -6607,7 +6615,7 @@ test "Geometric: pmf series sums to ~1.0" {
 /// Variance: r*(1-p)/p²
 /// Mode: floor((r-1)*(1-p)/p) for r > 1, else 0
 ///
-/// Time: O(1) for pmf/cdf/mean/variance/mode; O(log k) for quantile
+/// Time: O(1) for pmf/mean/variance/mode; O(k) for cdf/sf/quantile
 pub fn NegativeBinomial(comptime T: type) type {
     return struct {
         r: u64,
@@ -6618,9 +6626,9 @@ pub fn NegativeBinomial(comptime T: type) type {
         /// Initialize NegativeBinomial(r, p)
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn init(r: u64, p: T) error{ InvalidParameters }!Self {
-            if (r < 1) return error.InvalidParameters;
-            if (p <= 0.0 or p > 1.0) return error.InvalidParameters;
+        pub fn init(r: u64, p: T) error{InvalidParameter}!Self {
+            if (r < 1) return error.InvalidParameter;
+            if (p <= 0.0 or p > 1.0) return error.InvalidParameter;
             return Self{ .r = r, .p = p };
         }
 
@@ -6637,7 +6645,7 @@ pub fn NegativeBinomial(comptime T: type) type {
         /// Cumulative distribution function at k
         /// CDF(k) = P(X ≤ k)
         ///
-        /// Time: O(log k) | Space: O(1)
+        /// Time: O(k) | Space: O(1)
         pub fn cdf(self: Self, k: i64) T {
             if (k < 0) return 0.0;
 
@@ -6677,7 +6685,7 @@ pub fn NegativeBinomial(comptime T: type) type {
         /// Survival function at k
         /// sf(k) = P(X > k) = 1 - CDF(k)
         ///
-        /// Time: O(log k) | Space: O(1)
+        /// Time: O(k) | Space: O(1)
         pub fn sf(self: Self, k: i64) T {
             if (k < 0) return 1.0;
             return 1.0 - self.cdf(k);
@@ -6686,7 +6694,7 @@ pub fn NegativeBinomial(comptime T: type) type {
         /// Quantile function (inverse CDF)
         /// Returns k such that CDF(k) ≥ prob
         ///
-        /// Time: O(log k) | Space: O(1)
+        /// Time: O(k) linear search | Space: O(1)
         pub fn quantile(self: Self, prob: T) error{ OutOfDomain }!u64 {
             if (prob < 0.0 or prob > 1.0) return error.OutOfDomain;
             if (prob == 0.0) return 0;
@@ -6739,12 +6747,19 @@ pub fn NegativeBinomial(comptime T: type) type {
             var total: u64 = 0;
             var i: u64 = 0;
             while (i < self.r) : (i += 1) {
-                // Sample geometric: count failures until success
                 while (rng.float(T) >= self.p) {
                     total += 1;
                 }
             }
             return total;
+        }
+
+        /// Validate internal invariants: r ≥ 1 and 0 < p ≤ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.r < 1) return error.InvalidParameter;
+            if (self.p <= 0.0 or self.p > 1.0) return error.InvalidParameter;
         }
     };
 }
@@ -6761,19 +6776,19 @@ test "NegativeBinomial: init valid parameters" {
 test "NegativeBinomial: init invalid p=0 returns error" {
     const NB = NegativeBinomial(f64);
     const result = NB.init(3, 0.0);
-    try expectEqual(error.InvalidParameters, result);
+    try expectEqual(error.InvalidParameter, result);
 }
 
 test "NegativeBinomial: init invalid p>1 returns error" {
     const NB = NegativeBinomial(f64);
     const result = NB.init(3, 1.1);
-    try expectEqual(error.InvalidParameters, result);
+    try expectEqual(error.InvalidParameter, result);
 }
 
 test "NegativeBinomial: init invalid r=0 returns error" {
     const NB = NegativeBinomial(f64);
     const result = NB.init(0, 0.5);
-    try expectEqual(error.InvalidParameters, result);
+    try expectEqual(error.InvalidParameter, result);
 }
 
 test "NegativeBinomial: pmf k=0 is p^r" {
@@ -6905,15 +6920,20 @@ test "NegativeBinomial: p=1.0 valid pmf k=0 is 1" {
     try expectApproxEqRel(0.0, nb.pmf(1), 1e-10);
 }
 
-test "NegativeBinomial: sample is non-negative" {
+test "NegativeBinomial: sample empirical mean near theoretical" {
     var prng = std.Random.DefaultPrng.init(54321);
     const rng = prng.random();
 
+    // NB(3, 0.5): mean = r*(1-p)/p = 3*0.5/0.5 = 3.0
     const nb = try NegativeBinomial(f64).init(3, 0.5);
-    for (0..20) |_| {
-        const x = nb.sample(rng);
-        try testing.expect(x >= 0);
+    var sum: u64 = 0;
+    const n_samples = 2000;
+    for (0..n_samples) |_| {
+        sum += nb.sample(rng);
     }
+    const empirical_mean = @as(f64, @floatFromInt(sum)) / @as(f64, @floatFromInt(n_samples));
+    // Empirical mean should be within 1.0 of theoretical mean (3.0) with high probability
+    try testing.expect(empirical_mean >= 2.0 and empirical_mean <= 4.0);
 }
 
 test "NegativeBinomial: sample distribution mean approximates theoretical" {
