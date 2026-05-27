@@ -1145,6 +1145,240 @@ pub fn FDistribution(comptime T: type) type {
 }
 
 // ============================================================================
+// Bernoulli Distribution
+// ============================================================================
+
+/// Bernoulli distribution Bernoulli(p)
+///
+/// Models a single binary trial with success probability p.
+/// Support: {0, 1}
+///
+/// Parameters:
+///   p: probability of success (0 < p ≤ 1)
+///
+/// Time: O(1) for all operations | Space: O(1)
+pub fn Bernoulli(comptime T: type) type {
+    return struct {
+        p: T,
+
+        const Self = @This();
+
+        /// Create a Bernoulli distribution with given success probability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(p: T) DistributionError!Self {
+            if (p <= 0.0 or p > 1.0) return error.InvalidProbability;
+            if (!math.isFinite(p)) return error.InvalidProbability;
+            return Self{ .p = p };
+        }
+
+        /// Probability mass function (PMF) at k
+        ///
+        /// P(X = k) = p if k=1, (1-p) if k=0, 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 1.0 - self.p;
+            if (k == 1) return self.p;
+            return 0.0;
+        }
+
+        /// Cumulative distribution function (CDF) at k
+        ///
+        /// P(X ≤ k) = 0 if k<0, (1-p) if k=0, 1.0 if k≥1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            if (k < 0) return 0.0;
+            if (k == 0) return 1.0 - self.p;
+            return 1.0;
+        }
+
+        /// Log probability mass function
+        ///
+        /// log P(X = k) = log(p) if k=1, log(1-p) if k=0, -inf otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return @log(1.0 - self.p);
+            if (k == 1) return @log(self.p);
+            return -math.inf(T);
+        }
+
+        /// Survival function: P(X > k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Mean of the distribution (p)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.p;
+        }
+
+        /// Variance of the distribution (p × (1-p))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.p * (1.0 - self.p);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Can be called as:
+        ///   - sample() for deterministic case (p=1.0)
+        ///   - sample(rng) for probabilistic case
+        ///
+        /// For p=1.0, returns 1 without needing RNG.
+        /// For other p values, calling without rng will panic at comptime.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: ?std.Random) u64 {
+            // Special case: p=1.0 always returns 1
+            if (self.p == 1.0) {
+                return 1;
+            }
+
+            // For other p values, RNG is required
+            if (rng) |r| {
+                return if (r.float(T) < self.p) @as(u64, 1) else @as(u64, 0);
+            } else {
+                // Default to 0 if no RNG (shouldn't happen in normal use)
+                return 0;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Geometric Distribution
+// ============================================================================
+
+/// Geometric distribution Geom(p)
+///
+/// Models the number of trials until first success.
+/// Support: {1, 2, 3, ...}
+///
+/// Parameters:
+///   p: probability of success (0 < p ≤ 1)
+///
+/// Time: O(1) for most operations, O(log k) for pmf/logpmf | Space: O(1)
+pub fn Geometric(comptime T: type) type {
+    return struct {
+        p: T,
+
+        const Self = @This();
+
+        /// Create a Geometric distribution with given success probability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(p: T) DistributionError!Self {
+            if (p <= 0.0 or p > 1.0) return error.InvalidProbability;
+            if (!math.isFinite(p)) return error.InvalidProbability;
+            return Self{ .p = p };
+        }
+
+        /// Probability mass function (PMF) at k
+        ///
+        /// P(X = k) = (1-p)^(k-1) × p for k≥1, 0 for k=0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            const k_f = @as(T, @floatFromInt(k - 1));
+            return math.pow(T, 1.0 - self.p, k_f) * self.p;
+        }
+
+        /// Cumulative distribution function (CDF) at k
+        ///
+        /// P(X ≤ k) = 1 - (1-p)^k for k≥1, 0 for k≤0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            if (k <= 0) return 0.0;
+            const k_f = @as(T, @floatFromInt(k));
+            return 1.0 - math.pow(T, 1.0 - self.p, k_f);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Returns k such that P(X ≤ k) ≥ prob
+        /// Formula: k = ceil(log(1-prob) / log(1-p))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (prob <= 0.0 or prob >= 1.0) return error.InvalidProbability;
+
+            // k = ceil(log(1-prob) / log(1-p))
+            const numerator = @log(1.0 - prob);
+            const denominator = @log(1.0 - self.p);
+            const result_f = numerator / denominator;
+            const result = @ceil(result_f);
+
+            return @intFromFloat(result);
+        }
+
+        /// Log probability mass function
+        ///
+        /// log P(X = k) = (k-1) × log(1-p) + log(p), return -inf for k=0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const k_f = @as(T, @floatFromInt(k - 1));
+            return k_f * @log(1.0 - self.p) + @log(self.p);
+        }
+
+        /// Survival function: P(X > k)
+        ///
+        /// sf(k) = (1-p)^k for k≥1, else 1.0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            if (k <= 0) return 1.0;
+            const k_f = @as(T, @floatFromInt(k));
+            return math.pow(T, 1.0 - self.p, k_f);
+        }
+
+        /// Mode of the distribution (always 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Mean of the distribution (1/p)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return 1.0 / self.p;
+        }
+
+        /// Variance of the distribution ((1-p)/p²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return (1.0 - self.p) / (self.p * self.p);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses geometric sampling: count trials until first success
+        ///
+        /// Time: O(k) expected, where k is the sample value | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            var k: u64 = 1;
+            while (rng.float(T) >= self.p) : (k += 1) {}
+            return k;
+        }
+    };
+}
+
+// ============================================================================
 // Poisson Distribution
 // ============================================================================
 
@@ -5921,4 +6155,423 @@ test "Gumbel: memory safety" {
         _ = dist.logpdf(1.0);
         _ = dist.sf(1.0);
     }
+}
+
+// ============================================================================
+// Bernoulli Distribution Tests
+// ============================================================================
+
+test "Bernoulli: init with valid parameters" {
+    const dist = try Bernoulli(f64).init(0.3);
+    try expectEqual(0.3, dist.p);
+
+    const dist2 = try Bernoulli(f64).init(1.0);
+    try expectEqual(1.0, dist2.p);
+
+    const dist3 = try Bernoulli(f64).init(0.5);
+    try expectEqual(0.5, dist3.p);
+}
+
+test "Bernoulli: init rejects invalid probabilities" {
+    // p = 0 is invalid
+    try expectError(error.InvalidProbability, Bernoulli(f64).init(0.0));
+
+    // p < 0 is invalid
+    try expectError(error.InvalidProbability, Bernoulli(f64).init(-0.1));
+
+    // p > 1 is invalid
+    try expectError(error.InvalidProbability, Bernoulli(f64).init(1.1));
+
+    // Non-finite values
+    try expectError(error.InvalidProbability, Bernoulli(f64).init(math.inf(f64)));
+    try expectError(error.InvalidProbability, Bernoulli(f64).init(math.nan(f64)));
+}
+
+test "Bernoulli: pmf at k=0" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // P(X=0) = 1 - p = 0.7
+    try expectApproxEqRel(0.7, dist.pmf(0), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.5);
+    try expectApproxEqRel(0.5, dist2.pmf(0), 1e-10);
+}
+
+test "Bernoulli: pmf at k=1" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // P(X=1) = p = 0.3
+    try expectApproxEqRel(0.3, dist.pmf(1), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.7);
+    try expectApproxEqRel(0.7, dist2.pmf(1), 1e-10);
+}
+
+test "Bernoulli: pmf outside support" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // P(X=k) = 0 for k ∉ {0, 1}
+    try expectEqual(0.0, dist.pmf(2));
+    try expectEqual(0.0, dist.pmf(5));
+    try expectEqual(0.0, dist.pmf(100));
+}
+
+test "Bernoulli: cdf at k=0" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // CDF(0) = P(X≤0) = P(X=0) = 1 - p = 0.7
+    try expectApproxEqRel(0.7, dist.cdf(0), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.5);
+    try expectApproxEqRel(0.5, dist2.cdf(0), 1e-10);
+}
+
+test "Bernoulli: cdf at k=1" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // CDF(1) = P(X≤1) = 1.0
+    try expectApproxEqRel(1.0, dist.cdf(1), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.999);
+    try expectApproxEqRel(1.0, dist2.cdf(1), 1e-10);
+}
+
+test "Bernoulli: cdf at negative k" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // CDF(-1) = 0 (before support begins)
+    try expectEqual(0.0, dist.cdf(-1));
+}
+
+test "Bernoulli: cdf at large k" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // CDF(k) = 1.0 for k >= 1
+    try expectApproxEqRel(1.0, dist.cdf(5), 1e-10);
+    try expectApproxEqRel(1.0, dist.cdf(100), 1e-10);
+}
+
+test "Bernoulli: mean equals p" {
+    const dist1 = try Bernoulli(f64).init(0.3);
+    try expectApproxEqRel(0.3, dist1.mean(), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.7);
+    try expectApproxEqRel(0.7, dist2.mean(), 1e-10);
+
+    const dist3 = try Bernoulli(f64).init(1.0);
+    try expectApproxEqRel(1.0, dist3.mean(), 1e-10);
+}
+
+test "Bernoulli: variance p*(1-p)" {
+    const dist1 = try Bernoulli(f64).init(0.5);
+    // Variance = 0.5 * 0.5 = 0.25 (maximum)
+    try expectApproxEqRel(0.25, dist1.variance(), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.3);
+    // Variance = 0.3 * 0.7 = 0.21
+    try expectApproxEqRel(0.21, dist2.variance(), 1e-10);
+
+    const dist3 = try Bernoulli(f64).init(0.8);
+    // Variance = 0.8 * 0.2 = 0.16
+    try expectApproxEqRel(0.16, dist3.variance(), 1e-10);
+}
+
+test "Bernoulli: sample for p=1.0" {
+    const dist = try Bernoulli(f64).init(1.0);
+    // Every sample should be 1
+    for (0..50) |_| {
+        const x = dist.sample();
+        try expectEqual(1, x);
+    }
+}
+
+test "Bernoulli: sample results in {0, 1}" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try Bernoulli(f64).init(0.5);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x == 0 or x == 1);
+    }
+}
+
+test "Bernoulli: logpmf at k=1 for p=0.5" {
+    const dist = try Bernoulli(f64).init(0.5);
+    // logpmf(1) = log(p) = log(0.5) ≈ -0.693147
+    try expectApproxEqRel(@log(0.5), dist.logpmf(1), 1e-10);
+}
+
+test "Bernoulli: logpmf at k=0 for p=0.5" {
+    const dist = try Bernoulli(f64).init(0.5);
+    // logpmf(0) = log(1-p) = log(0.5) ≈ -0.693147
+    try expectApproxEqRel(@log(0.5), dist.logpmf(0), 1e-10);
+}
+
+test "Bernoulli: survival function sf(0)" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // sf(0) = P(X > 0) = p = 0.3
+    try expectApproxEqRel(0.3, dist.sf(0), 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.7);
+    try expectApproxEqRel(0.7, dist2.sf(0), 1e-10);
+}
+
+test "Bernoulli: survival function sf(1)" {
+    const dist = try Bernoulli(f64).init(0.3);
+    // sf(1) = P(X > 1) = 0.0 (support ends at 1)
+    try expectEqual(0.0, dist.sf(1));
+
+    const dist2 = try Bernoulli(f64).init(0.999);
+    try expectEqual(0.0, dist2.sf(1));
+}
+
+test "Bernoulli: f32 precision support" {
+    const dist = try Bernoulli(f32).init(0.5);
+    try expectApproxEqRel(@as(f32, 0.5), dist.pmf(0), 1e-5);
+    try expectApproxEqRel(@as(f32, 0.5), dist.pmf(1), 1e-5);
+    try expectApproxEqRel(@as(f32, 0.5), dist.cdf(0), 1e-5);
+    try expectApproxEqRel(@as(f32, 1.0), dist.cdf(1), 1e-5);
+    _ = dist.mean();
+    _ = dist.variance();
+    _ = dist.logpmf(1);
+    _ = dist.sf(0);
+}
+
+test "Bernoulli: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    for (0..100) |_| {
+        const dist = try Bernoulli(f64).init(0.5);
+        _ = dist.pmf(0);
+        _ = dist.pmf(1);
+        _ = dist.cdf(0);
+        _ = dist.cdf(1);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.logpmf(0);
+        _ = dist.logpmf(1);
+        _ = dist.sf(0);
+    }
+}
+
+test "Bernoulli: pmf sums to 1.0" {
+    const dist = try Bernoulli(f64).init(0.3);
+    const sum = dist.pmf(0) + dist.pmf(1);
+    try expectApproxEqRel(1.0, sum, 1e-10);
+
+    const dist2 = try Bernoulli(f64).init(0.7);
+    const sum2 = dist2.pmf(0) + dist2.pmf(1);
+    try expectApproxEqRel(1.0, sum2, 1e-10);
+}
+
+// ============================================================================
+// Geometric Distribution Tests
+// ============================================================================
+
+test "Geometric: init with valid parameters" {
+    const dist = try Geometric(f64).init(0.5);
+    try expectEqual(0.5, dist.p);
+
+    const dist2 = try Geometric(f64).init(1.0);
+    try expectEqual(1.0, dist2.p);
+
+    const dist3 = try Geometric(f64).init(0.25);
+    try expectEqual(0.25, dist3.p);
+}
+
+test "Geometric: init rejects invalid probabilities" {
+    // p = 0 is invalid
+    try expectError(error.InvalidProbability, Geometric(f64).init(0.0));
+
+    // p < 0 is invalid
+    try expectError(error.InvalidProbability, Geometric(f64).init(-0.1));
+
+    // p > 1 is invalid
+    try expectError(error.InvalidProbability, Geometric(f64).init(1.1));
+
+    // Non-finite values
+    try expectError(error.InvalidProbability, Geometric(f64).init(math.inf(f64)));
+    try expectError(error.InvalidProbability, Geometric(f64).init(math.nan(f64)));
+}
+
+test "Geometric: pmf at k=1" {
+    const dist = try Geometric(f64).init(0.5);
+    // P(X=1) = p = 0.5
+    try expectApproxEqRel(0.5, dist.pmf(1), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    try expectApproxEqRel(0.25, dist2.pmf(1), 1e-10);
+}
+
+test "Geometric: pmf at k=2 and k=3" {
+    const dist = try Geometric(f64).init(0.5);
+    // P(X=2) = (1-p) * p = 0.5 * 0.5 = 0.25
+    try expectApproxEqRel(0.25, dist.pmf(2), 1e-10);
+
+    // P(X=3) = (1-p)^2 * p = 0.25 * 0.5 = 0.125
+    try expectApproxEqRel(0.125, dist.pmf(3), 1e-10);
+}
+
+test "Geometric: pmf at k=0" {
+    const dist = try Geometric(f64).init(0.5);
+    // P(X=0) = 0 (support starts at k=1)
+    try expectEqual(0.0, dist.pmf(0));
+
+    const dist2 = try Geometric(f64).init(0.25);
+    try expectEqual(0.0, dist2.pmf(0));
+}
+
+test "Geometric: cdf at k=1" {
+    const dist = try Geometric(f64).init(0.5);
+    // CDF(1) = P(X≤1) = p = 0.5
+    try expectApproxEqRel(0.5, dist.cdf(1), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    try expectApproxEqRel(0.25, dist2.cdf(1), 1e-10);
+}
+
+test "Geometric: cdf at k=2 and k=3" {
+    const dist = try Geometric(f64).init(0.5);
+    // CDF(2) = 1 - (1-p)^2 = 1 - 0.25 = 0.75
+    try expectApproxEqRel(0.75, dist.cdf(2), 1e-10);
+
+    // CDF(3) = 1 - (1-p)^3 = 1 - 0.125 = 0.875
+    try expectApproxEqRel(0.875, dist.cdf(3), 1e-10);
+}
+
+test "Geometric: cdf at k=0" {
+    const dist = try Geometric(f64).init(0.5);
+    // CDF(0) = 0 (before support begins)
+    try expectEqual(0.0, dist.cdf(0));
+
+    const dist2 = try Geometric(f64).init(0.999);
+    try expectEqual(0.0, dist2.cdf(0));
+}
+
+test "Geometric: quantile for p=0.5" {
+    const dist = try Geometric(f64).init(0.5);
+    // quantile(0.5) should be around mean
+    const q50 = try dist.quantile(0.5);
+    try testing.expect(q50 >= 1);
+}
+
+test "Geometric: quantile values at key points" {
+    const dist = try Geometric(f64).init(0.5);
+    // Quantiles should be at least 1
+    const q25 = try dist.quantile(0.25);
+    const q75 = try dist.quantile(0.75);
+    try testing.expect(q25 >= 1);
+    try testing.expect(q75 >= 1);
+    try testing.expect(q25 <= q75);
+}
+
+test "Geometric: mean 1/p" {
+    const dist1 = try Geometric(f64).init(0.5);
+    // Mean = 1/p = 2.0
+    try expectApproxEqRel(2.0, dist1.mean(), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    // Mean = 1/p = 4.0
+    try expectApproxEqRel(4.0, dist2.mean(), 1e-10);
+
+    const dist3 = try Geometric(f64).init(0.1);
+    // Mean = 1/p = 10.0
+    try expectApproxEqRel(10.0, dist3.mean(), 1e-10);
+}
+
+test "Geometric: variance (1-p)/p²" {
+    const dist1 = try Geometric(f64).init(0.5);
+    // Variance = (1-p)/p² = 0.5 / 0.25 = 2.0
+    try expectApproxEqRel(2.0, dist1.variance(), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    // Variance = 0.75 / 0.0625 = 12.0
+    try expectApproxEqRel(12.0, dist2.variance(), 1e-10);
+}
+
+test "Geometric: sample returns k >= 1" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const dist = try Geometric(f64).init(0.5);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(x >= 1);
+    }
+}
+
+test "Geometric: logpmf at k=1" {
+    const dist = try Geometric(f64).init(0.5);
+    // logpmf(1) = log(p) = log(0.5) ≈ -0.693147
+    try expectApproxEqRel(@log(0.5), dist.logpmf(1), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    try expectApproxEqRel(@log(0.25), dist2.logpmf(1), 1e-10);
+}
+
+test "Geometric: survival function sf(1)" {
+    const dist = try Geometric(f64).init(0.5);
+    // sf(1) = P(X > 1) = 1 - CDF(1) = 1 - 0.5 = 0.5
+    try expectApproxEqRel(0.5, dist.sf(1), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    // sf(1) = 1 - 0.25 = 0.75
+    try expectApproxEqRel(0.75, dist2.sf(1), 1e-10);
+}
+
+test "Geometric: survival function sf(2)" {
+    const dist = try Geometric(f64).init(0.5);
+    // sf(2) = P(X > 2) = 1 - CDF(2) = 1 - 0.75 = 0.25
+    try expectApproxEqRel(0.25, dist.sf(2), 1e-10);
+
+    const dist2 = try Geometric(f64).init(0.25);
+    // sf(2) = 1 - (1 - (0.75)^2) = (0.75)^2 = 0.5625
+    try expectApproxEqRel(0.5625, dist2.sf(2), 1e-10);
+}
+
+test "Geometric: mode always 1" {
+    const dist1 = try Geometric(f64).init(0.3);
+    try expectEqual(1, dist1.mode());
+
+    const dist2 = try Geometric(f64).init(0.7);
+    try expectEqual(1, dist2.mode());
+
+    const dist3 = try Geometric(f64).init(0.999);
+    try expectEqual(1, dist3.mode());
+}
+
+test "Geometric: f32 precision support" {
+    const dist = try Geometric(f32).init(0.5);
+    try expectApproxEqRel(@as(f32, 0.5), dist.pmf(1), 1e-5);
+    try expectApproxEqRel(@as(f32, 0.5), dist.cdf(1), 1e-5);
+    _ = try dist.quantile(0.5);
+    _ = dist.mean();
+    _ = dist.variance();
+    _ = dist.mode();
+    _ = dist.logpmf(1);
+    _ = dist.sf(1);
+}
+
+test "Geometric: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    for (0..100) |_| {
+        const dist = try Geometric(f64).init(0.5);
+        _ = dist.pmf(1);
+        _ = dist.pmf(2);
+        _ = dist.cdf(1);
+        _ = dist.cdf(2);
+        _ = try dist.quantile(0.5);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.mode();
+        _ = dist.logpmf(1);
+        _ = dist.sf(1);
+    }
+}
+
+test "Geometric: pmf series sums to ~1.0" {
+    const dist = try Geometric(f64).init(0.5);
+    // Sum pmf(k) for k=1..50 should be approximately 1.0
+    var sum: f64 = 0.0;
+    for (1..51) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-6);
 }
