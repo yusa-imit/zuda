@@ -6980,3 +6980,437 @@ test "NegativeBinomial: large r parameter" {
     // mean = 10*0.2/0.8 = 2.5
     try expectApproxEqRel(2.5, nb.mean(), 1e-10);
 }
+
+// ============================================================================
+// Hypergeometric Distribution
+// ============================================================================
+
+/// Hypergeometric distribution — number of successes in n draws from a finite population
+///
+/// Parameters:
+///   - N: population size (N ≥ 1)
+///   - K: number of success states in population (K ≤ N)
+///   - n: number of draws without replacement (n ≤ N)
+///
+/// Support: k ∈ {max(0, n+K-N), ..., min(n, K)}
+///
+/// PMF: C(K,k) * C(N-K, n-k) / C(N,n)
+/// CDF: sum of PMF from support_min to k
+/// Mean: n*K/N
+/// Variance: n*(K/N)*((N-K)/N)*(N-n)/(N-1)  [0 if N==1]
+/// Mode: floor((n+1)*(K+1)/(N+2)) clamped to support
+///
+/// Time: O(1) for pmf/mean/variance/mode; O(k) for cdf/sf/quantile
+pub fn Hypergeometric(comptime T: type) type {
+    return struct {
+        N: u64,
+        K: u64,
+        n: u64,
+
+        const Self = @This();
+
+        /// Initialize Hypergeometric(N, K, n)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(N: u64, K: u64, n: u64) error{InvalidParameter}!Self {
+            if (N < 1) return error.InvalidParameter;
+            if (K > N) return error.InvalidParameter;
+            if (n > N) return error.InvalidParameter;
+            return Self{ .N = N, .K = K, .n = n };
+        }
+
+        /// Minimum value in support: max(0, n + K - N)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn supportMin(self: Self) u64 {
+            // Saturating subtraction: if n+K < N, result is 0
+            const nK = self.n + self.K;
+            if (nK <= self.N) return 0;
+            return nK - self.N;
+        }
+
+        /// Maximum value in support: min(n, K)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn supportMax(self: Self) u64 {
+            return @min(self.n, self.K);
+        }
+
+        /// Log probability mass function at k
+        /// logPMF(k) = logBinom(K,k) + logBinom(N-K, n-k) - logBinom(N,n)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            if (k < s_min or k > s_max) return @as(T, -std.math.inf(T));
+
+            const K_f = @as(T, @floatFromInt(self.K));
+            const k_f = @as(T, @floatFromInt(k));
+            const NK_f = @as(T, @floatFromInt(self.N - self.K));
+            const nk: u64 = self.n - k;  // safe because k <= min(n,K) <= n
+            const nk_f = @as(T, @floatFromInt(nk));
+            const N_f = @as(T, @floatFromInt(self.N));
+            const n_f = @as(T, @floatFromInt(self.n));
+
+            // logBinom(a, b) = lgamma(a+1) - lgamma(b+1) - lgamma(a-b+1)
+            const log_binom_K_k = logGamma(K_f + 1.0) - logGamma(k_f + 1.0) - logGamma(K_f - k_f + 1.0);
+            const log_binom_NK_nk = logGamma(NK_f + 1.0) - logGamma(nk_f + 1.0) - logGamma(NK_f - nk_f + 1.0);
+            const log_binom_N_n = logGamma(N_f + 1.0) - logGamma(n_f + 1.0) - logGamma(N_f - n_f + 1.0);
+
+            return log_binom_K_k + log_binom_NK_nk - log_binom_N_n;
+        }
+
+        /// Probability mass function at k
+        /// PMF(k) = C(K,k) * C(N-K, n-k) / C(N,n)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            const lp = self.logpmf(k);
+            if (lp == @as(T, -std.math.inf(T))) return 0.0;
+            return @exp(lp);
+        }
+
+        /// Cumulative distribution function P(X <= k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            const s_max = self.supportMax();
+            if (k < 0) return 0.0;
+            const k_u: u64 = @intCast(k);
+            if (k_u >= s_max) return 1.0;
+
+            const s_min = self.supportMin();
+            var sum: T = 0.0;
+            var j = s_min;
+            while (j <= k_u) : (j += 1) {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - CDF(k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            if (k < 0) return 1.0;
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function — smallest k such that CDF(k) >= prob
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) error{OutOfDomain}!u64 {
+            if (prob < 0.0 or prob > 1.0) return error.OutOfDomain;
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            if (prob == 0.0) return s_min;
+            if (prob >= 1.0) return s_max;
+            var cumulative: T = 0.0;
+            var k = s_min;
+            while (k <= s_max) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= prob) return k;
+            }
+            return s_max;
+        }
+
+        /// Mean: n * K / N
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            const K_f = @as(T, @floatFromInt(self.K));
+            const N_f = @as(T, @floatFromInt(self.N));
+            return n_f * K_f / N_f;
+        }
+
+        /// Variance: n * K * (N-K) * (N-n) / (N^2 * (N-1))
+        /// Returns 0 when N == 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.N == 1) return 0.0;
+            const n_f = @as(T, @floatFromInt(self.n));
+            const K_f = @as(T, @floatFromInt(self.K));
+            const N_f = @as(T, @floatFromInt(self.N));
+            const NK_f = @as(T, @floatFromInt(self.N - self.K));
+            const Nn_f = @as(T, @floatFromInt(self.N - self.n));
+            return n_f * K_f * NK_f * Nn_f / (N_f * N_f * (N_f - 1.0));
+        }
+
+        /// Mode: floor((n+1)*(K+1)/(N+2)) clamped to support
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            const n1 = @as(T, @floatFromInt(self.n + 1));
+            const K1 = @as(T, @floatFromInt(self.K + 1));
+            const N2 = @as(T, @floatFromInt(self.N + 2));
+            const m = @floor(n1 * K1 / N2);
+            const m_u: u64 = @intFromFloat(m);
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            return @min(@max(m_u, s_min), s_max);
+        }
+
+        /// Sample using inverse-transform method (quantile of uniform)
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.supportMin();
+        }
+
+        /// Assert internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            std.debug.assert(self.K <= self.N);
+            std.debug.assert(self.n <= self.N);
+            std.debug.assert(self.N >= 1);
+        }
+    };
+}
+
+// Tests for Hypergeometric Distribution
+
+test "Hypergeometric: init valid parameters" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    try expectEqual(hg.N, 10);
+    try expectEqual(hg.K, 4);
+    try expectEqual(hg.n, 3);
+}
+
+test "Hypergeometric: init K > N returns error" {
+    const result = Hypergeometric(f64).init(10, 15, 3);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hypergeometric: init n > N returns error" {
+    const result = Hypergeometric(f64).init(10, 4, 20);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hypergeometric: pmf basic case N=10 K=4 n=3 k=2" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // PMF(2) = C(4,2)*C(6,1)/C(10,3) = 6*6/120 = 0.3
+    try expectApproxEqRel(0.3, hg.pmf(2), 1e-10);
+}
+
+test "Hypergeometric: pmf k=0 in basic case" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // PMF(0) = C(4,0)*C(6,3)/C(10,3) = 1*20/120 = 1/6 ≈ 0.1667
+    try expectApproxEqRel(1.0 / 6.0, hg.pmf(0), 1e-10);
+}
+
+test "Hypergeometric: pmf k=1 in basic case" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // PMF(1) = C(4,1)*C(6,2)/C(10,3) = 4*15/120 = 0.5
+    try expectApproxEqRel(0.5, hg.pmf(1), 1e-10);
+}
+
+test "Hypergeometric: pmf out of support returns 0" {
+    const hg = try Hypergeometric(f64).init(10, 2, 5);
+    // support_min = max(0, 5+2-10) = 0, support_max = min(5,2) = 2
+    try expectApproxEqRel(0.0, hg.pmf(3), 1e-10);
+    try expectApproxEqRel(0.0, hg.pmf(10), 1e-10);
+}
+
+test "Hypergeometric: pmf probabilities sum to 1" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    var sum: f64 = 0.0;
+    // support_min = max(0, 3+4-10) = 0, support_max = min(3,4) = 3
+    for (0..4) |k| {
+        sum += hg.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Hypergeometric: cdf is monotone non-decreasing" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    var prev: f64 = 0.0;
+    for (0..5) |k| {
+        const cdf_val = hg.cdf(@intCast(k));
+        try testing.expect(prev <= cdf_val);
+        prev = cdf_val;
+    }
+}
+
+test "Hypergeometric: cdf k < support_min returns 0" {
+    const hg = try Hypergeometric(f64).init(10, 2, 5);
+    // support_min = max(0, 5+2-10) = 0
+    try expectEqual(0.0, hg.cdf(-1));
+}
+
+test "Hypergeometric: cdf k >= support_max returns 1" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // support_max = min(3, 4) = 3
+    try expectApproxEqRel(1.0, hg.cdf(@intCast(3)), 1e-10);
+    try expectApproxEqRel(1.0, hg.cdf(@intCast(10)), 1e-10);
+}
+
+test "Hypergeometric: mean N=10 K=4 n=3 is 1.2" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // mean = n*K/N = 3*4/10 = 1.2
+    try expectApproxEqRel(1.2, hg.mean(), 1e-10);
+}
+
+test "Hypergeometric: variance N=10 K=4 n=3" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // variance = n*(K/N)*((N-K)/N)*(N-n)/(N-1) = 3*0.4*0.6*7/9 ≈ 0.56
+    try expectApproxEqRel(0.56, hg.variance(), 1e-10);
+}
+
+test "Hypergeometric: deterministic K=N all draws succeed" {
+    const hg = try Hypergeometric(f64).init(5, 5, 3);
+    // K=N means all items succeed: P(X=3) = 1.0
+    try expectApproxEqRel(1.0, hg.pmf(3), 1e-10);
+    try expectApproxEqRel(3.0, hg.mean(), 1e-10);
+}
+
+test "Hypergeometric: deterministic K=0 no successes" {
+    const hg = try Hypergeometric(f64).init(5, 0, 3);
+    // K=0 means no items succeed: P(X=0) = 1.0
+    try expectApproxEqRel(1.0, hg.pmf(0), 1e-10);
+    try expectApproxEqRel(0.0, hg.mean(), 1e-10);
+}
+
+test "Hypergeometric: deterministic n=0 empty draw" {
+    const hg = try Hypergeometric(f64).init(5, 3, 0);
+    // n=0 means no draws: P(X=0) = 1.0
+    try expectApproxEqRel(1.0, hg.pmf(0), 1e-10);
+    try expectApproxEqRel(0.0, hg.mean(), 1e-10);
+}
+
+test "Hypergeometric: logpmf matches log of pmf" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    for (0..4) |k| {
+        const pmf_val = hg.pmf(k);
+        if (pmf_val > 0.0) {
+            const expected = @log(pmf_val);
+            const actual = hg.logpmf(k);
+            try expectApproxEqRel(expected, actual, 1e-10);
+        }
+    }
+}
+
+test "Hypergeometric: sf equals 1 - cdf" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    for (0..5) |k| {
+        const cdf_val = hg.cdf(@intCast(k));
+        const sf_val = hg.sf(@intCast(k));
+        try expectApproxEqRel(1.0 - cdf_val, sf_val, 1e-10);
+    }
+}
+
+test "Hypergeometric: quantile roundtrip at median" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    const median = try hg.quantile(0.5);
+    const cdf_median = hg.cdf(@intCast(median));
+    try testing.expect(cdf_median >= 0.5);
+}
+
+test "Hypergeometric: quantile p=0 returns support_min" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    const q = try hg.quantile(0.0);
+    // support_min = max(0, 3+4-10) = 0
+    try expectEqual(0, q);
+}
+
+test "Hypergeometric: quantile p=1.0 returns support_max" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    const q = try hg.quantile(1.0);
+    // support_max = min(3, 4) = 3
+    try expectEqual(3, q);
+}
+
+test "Hypergeometric: quantile p < 0 returns error" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    const result = hg.quantile(-0.01);
+    try expectError(error.OutOfDomain, result);
+}
+
+test "Hypergeometric: quantile p > 1 returns error" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    const result = hg.quantile(1.01);
+    try expectError(error.OutOfDomain, result);
+}
+
+test "Hypergeometric: mode N=10 K=4 n=3" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // mode = floor((3+1)*(4+1)/(10+2)) = floor(20/12) = 1
+    const mode = hg.mode();
+    try expectEqual(1, mode);
+    // mode should be in [support_min, support_max]
+    try testing.expect(mode >= 0 and mode <= 3);
+}
+
+test "Hypergeometric: sample within support range" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    // support = [0, 3]
+    for (0..20) |_| {
+        const sample_val = hg.sample(rng);
+        try testing.expect(sample_val >= 0 and sample_val <= 3);
+    }
+}
+
+test "Hypergeometric: sample support with offset support_min > 0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const hg = try Hypergeometric(f64).init(6, 4, 4);
+    // support_min = max(0, 4+4-6) = 2, support_max = min(4,4) = 4
+    for (0..20) |_| {
+        const sample_val = hg.sample(rng);
+        try testing.expect(sample_val >= 2 and sample_val <= 4);
+    }
+}
+
+test "Hypergeometric: validate passes on valid instance" {
+    const hg = try Hypergeometric(f64).init(10, 4, 3);
+    try hg.validate();
+}
+
+test "Hypergeometric: f32 type precision" {
+    const hg = try Hypergeometric(f32).init(10, 4, 3);
+    // pmf(2) ≈ 0.3
+    try expectApproxEqRel(@as(f32, 0.3), hg.pmf(2), 0.001);
+}
+
+test "Hypergeometric: large population approximation" {
+    const hg = try Hypergeometric(f64).init(1000, 200, 50);
+    // mean = n*K/N = 50*200/1000 = 10.0
+    try expectApproxEqRel(10.0, hg.mean(), 1e-10);
+    // variance ≈ n*p*(1-p)*(N-n)/(N-1) where p=K/N ≈ 8.0
+    const var_val = hg.variance();
+    try testing.expect(var_val >= 7.5 and var_val <= 8.5);
+}
+
+test "Hypergeometric: N=1 deterministic cases" {
+    const hg1 = try Hypergeometric(f64).init(1, 1, 1);
+    // K=1, n=1: P(X=1) = 1.0
+    try expectApproxEqRel(1.0, hg1.pmf(1), 1e-10);
+
+    const hg0 = try Hypergeometric(f64).init(1, 0, 1);
+    // K=0, n=1: P(X=0) = 1.0
+    try expectApproxEqRel(1.0, hg0.pmf(0), 1e-10);
+}
+
+test "Hypergeometric: memory safety cycle loop" {
+    for (0..10) |_| {
+        const hg = try Hypergeometric(f64).init(10, 4, 3);
+        for (0..4) |k| {
+            _ = hg.pmf(k);
+            _ = hg.logpmf(k);
+            _ = hg.cdf(@intCast(k));
+            _ = hg.sf(@intCast(k));
+        }
+        _ = hg.mean();
+        _ = hg.variance();
+        _ = hg.mode();
+        try hg.validate();
+    }
+}
