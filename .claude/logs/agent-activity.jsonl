@@ -420,3 +420,5 @@
 {"timestamp":"2026-05-27T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add edge case tests to 9 low-coverage algorithm files (permutations, activity_selection, crf, map_reduce, combination_sum, johnson, job_sequencing, count_min_sketch, hyperloglog)","project":"zuda"}
 {"timestamp":"2026-05-26T19:32:04Z","action":"subagent","agent_type":"test-writer","task":"Add 5 edge case tests each to bfs.zig, tarjan_scc.zig, knapsack.zig, jump_search.zig, morris_counter.zig","project":"zuda"}
 {"timestamp":"2026-05-26T23:35:48Z","action":"subagent","agent_type":"test-writer","task":"Fix 4 test quality issues: morris_counter tautological assertion, sparse.zig discarded values, affinity_propagation expect(true)","project":"zuda"}
+{"timestamp":"2026-05-27T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write Gumbel distribution tests for src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-05-27T00:00:01Z","action":"subagent","agent_type":"zig-developer","task":"Implement Gumbel distribution in src/stats/distributions.zig","project":"zuda"}

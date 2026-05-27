@@ -5558,3 +5558,367 @@ test "Cauchy: memory safety" {
         _ = dist.sf(1.0);
     }
 }
+
+// ============================================================================
+// Gumbel Distribution
+// ============================================================================
+
+/// Gumbel distribution (Type-I Extreme Value distribution) with location μ and scale β
+///
+/// Probability density function (PDF):
+///   f(x) = (1/β) × exp(-(z + exp(-z)))  where z = (x - μ) / β
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = exp(-exp(-z))  where z = (x - μ) / β
+///
+/// Parameters:
+///   - mu (μ): Location parameter (-∞ to +∞)
+///   - beta (β): Scale parameter (β > 0)
+///
+/// Properties:
+///   - Mean: μ + β × γ  where γ ≈ 0.5772156649015329 (Euler-Mascheroni constant)
+///   - Variance: π² × β² / 6
+///   - Mode: μ
+///   - Median: μ - β × ln(ln(2))
+///   - Right-skewed distribution (positive skewness = 1.14)
+///   - Used for extreme value modeling (maximum of many samples)
+///
+/// Use cases:
+///   - Extreme value theory (flood levels, wind speeds, earthquake magnitudes)
+///   - Gumbel-softmax trick for categorical sampling in machine learning
+///   - Reliability engineering and survival analysis
+///   - Modeling maximum order statistics
+///
+/// Time: O(1) for all operations
+pub fn Gumbel(comptime T: type) type {
+    return struct {
+        mu: T, // location parameter
+        beta: T, // scale parameter (β > 0)
+
+        const Self = @This();
+        const euler_mascheroni: T = 0.5772156649015329;
+
+        /// Create a Gumbel distribution with given location and scale
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, beta: T) DistributionError!Self {
+            if (beta <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .mu = mu, .beta = beta };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (1/β) × exp(-(z + exp(-z)))  where z = (x - μ) / β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.beta;
+            return (1.0 / self.beta) * @exp(-(z + @exp(-z)));
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x) = -log(β) - z - exp(-z)  where z = (x - μ) / β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.beta;
+            return -@log(self.beta) - z - @exp(-z);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = exp(-exp(-z))  where z = (x - μ) / β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.beta;
+            return @exp(-@exp(-z));
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Q(p) = μ - β × ln(-ln(p))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            return self.mu - self.beta * @log(-@log(p));
+        }
+
+        /// Generate random sample using inverse transform method
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self) T {
+            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
+            const u = prng.random().float(T);
+            const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
+            return self.mu - self.beta * @log(-@log(safe_u));
+        }
+
+        /// Survival function (complementary CDF)
+        ///
+        /// S(x) = 1 - F(x) = 1 - exp(-exp(-z))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Mean (expected value)
+        ///
+        /// E[X] = μ + β × γ  where γ ≈ 0.5772156649 (Euler-Mascheroni constant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu + self.beta * euler_mascheroni;
+        }
+
+        /// Variance
+        ///
+        /// Var[X] = π² × β² / 6
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return (math.pi * math.pi * self.beta * self.beta) / 6.0;
+        }
+
+        /// Mode (most likely value)
+        ///
+        /// Mode = μ (location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Median (50th percentile)
+        ///
+        /// Median = μ - β × ln(ln(2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.mu - self.beta * @log(@log(2.0));
+        }
+    };
+}
+
+// ============================================================================
+// Gumbel Distribution Tests
+// ============================================================================
+
+test "Gumbel: init with valid parameters" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.beta);
+
+    const dist2 = try Gumbel(f64).init(2.0, 0.5);
+    try testing.expectEqual(2.0, dist2.mu);
+    try testing.expectEqual(0.5, dist2.beta);
+}
+
+test "Gumbel: init rejects invalid parameters" {
+    try testing.expectError(error.InvalidParameter, Gumbel(f64).init(0.0, -1.0));
+    try testing.expectError(error.InvalidParameter, Gumbel(f64).init(0.0, 0.0));
+    try testing.expectError(error.InvalidParameter, Gumbel(f64).init(math.inf(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Gumbel(f64).init(0.0, math.inf(f64)));
+    try testing.expectError(error.InvalidParameter, Gumbel(f64).init(math.nan(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Gumbel(f64).init(0.0, math.nan(f64)));
+}
+
+test "Gumbel: PDF at mode equals maximum" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    const pdf_mode = dist.pdf(0.0);
+    const expected = (1.0 / 1.0) * @exp(-1.0);
+    try expectApproxEqRel(expected, pdf_mode, 1e-10);
+
+    const dist2 = try Gumbel(f64).init(2.0, 0.5);
+    const pdf_mode2 = dist2.pdf(2.0);
+    const expected2 = (1.0 / 0.5) * @exp(-1.0);
+    try expectApproxEqRel(expected2, pdf_mode2, 1e-10);
+}
+
+test "Gumbel: PDF manual calculation" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const pdf_0 = dist.pdf(0.0);
+    try expectApproxEqRel(@exp(-1.0), pdf_0, 1e-10);
+
+    const pdf_1 = dist.pdf(1.0);
+    const expected_1 = @exp(-(1.0 + @exp(-1.0)));
+    try expectApproxEqRel(expected_1, pdf_1, 1e-10);
+
+    const dist2 = try Gumbel(f64).init(2.0, 0.5);
+    const pdf_2 = dist2.pdf(2.0);
+    const expected_2 = (1.0 / 0.5) * @exp(-1.0);
+    try expectApproxEqRel(expected_2, pdf_2, 1e-10);
+}
+
+test "Gumbel: CDF properties" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const cdf_mode = dist.cdf(0.0);
+    try expectApproxEqRel(@exp(-1.0), cdf_mode, 1e-10);
+
+    const cdf_neg_large = dist.cdf(-100.0);
+    try testing.expect(cdf_neg_large < 0.01);
+
+    const cdf_pos_large = dist.cdf(100.0);
+    try testing.expect(cdf_pos_large > 0.99);
+
+    const cdf_1 = dist.cdf(-5.0);
+    const cdf_2 = dist.cdf(0.0);
+    const cdf_3 = dist.cdf(5.0);
+    try testing.expect(cdf_1 <= cdf_2);
+    try testing.expect(cdf_2 <= cdf_3);
+}
+
+test "Gumbel: CDF manual calculation" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const cdf_0 = dist.cdf(0.0);
+    try expectApproxEqRel(@exp(-1.0), cdf_0, 1e-10);
+
+    const cdf_1 = dist.cdf(1.0);
+    const expected_1 = @exp(-@exp(-1.0));
+    try expectApproxEqRel(expected_1, cdf_1, 1e-10);
+
+    const cdf_neg1 = dist.cdf(-1.0);
+    const expected_neg1 = @exp(-@exp(1.0));
+    try expectApproxEqRel(expected_neg1, cdf_neg1, 1e-10);
+}
+
+test "Gumbel: quantile properties" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const q_median = try dist.quantile(0.5);
+    const expected_median = -@log(@log(2.0));
+    try expectApproxEqRel(expected_median, q_median, 1e-10);
+
+    const q_10 = try dist.quantile(0.1);
+    try testing.expect(q_10 < q_median);
+
+    const q_90 = try dist.quantile(0.9);
+    try testing.expect(q_90 > q_median);
+
+    const q_0 = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q_0));
+
+    const q_1 = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q_1));
+}
+
+test "Gumbel: quantile error handling" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Gumbel: quantile-CDF roundtrip" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    const test_probs = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const p_back = dist.cdf(q);
+        try expectApproxEqRel(p, p_back, 1e-8);
+    }
+}
+
+test "Gumbel: mean and variance" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const m = dist.mean();
+    const expected_mean = 0.5772156649015329;
+    try expectApproxEqRel(expected_mean, m, 1e-10);
+
+    const v = dist.variance();
+    const expected_variance = (math.pi * math.pi) / 6.0;
+    try expectApproxEqRel(expected_variance, v, 1e-10);
+
+    const dist2 = try Gumbel(f64).init(2.0, 0.5);
+    try expectApproxEqRel(2.0 + 0.5 * 0.5772156649015329, dist2.mean(), 1e-10);
+    try expectApproxEqRel((math.pi * math.pi * 0.25) / 6.0, dist2.variance(), 1e-10);
+}
+
+test "Gumbel: mode and median" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.mode());
+
+    const med = dist.median();
+    const expected_median = -@log(@log(2.0));
+    try expectApproxEqRel(expected_median, med, 1e-10);
+
+    const dist2 = try Gumbel(f64).init(2.5, 0.5);
+    try testing.expectEqual(2.5, dist2.mode());
+    try expectApproxEqRel(2.5 - 0.5 * @log(@log(2.0)), dist2.median(), 1e-10);
+}
+
+test "Gumbel: survival function" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const test_x = [_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 };
+    for (test_x) |x| {
+        const sf = dist.sf(x);
+        const cdf = dist.cdf(x);
+        try expectApproxEqRel(1.0 - cdf, sf, 1e-10);
+    }
+
+    try expectApproxEqRel(1.0 - @exp(-1.0), dist.sf(0.0), 1e-10);
+}
+
+test "Gumbel: logpdf matches log of pdf" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+
+    const test_x = [_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 };
+    for (test_x) |x| {
+        const log_pdf = dist.logpdf(x);
+        const pdf = dist.pdf(x);
+        try expectApproxEqRel(@log(pdf), log_pdf, 1e-10);
+    }
+}
+
+test "Gumbel: sampling produces values in reasonable range" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    var count_reasonable: usize = 0;
+    const n_samples = 1000;
+    for (0..n_samples) |_| {
+        const x = dist.sample();
+        if (x >= -5.0 and x <= 10.0) count_reasonable += 1;
+    }
+    const ratio = @as(f64, @floatFromInt(count_reasonable)) / @as(f64, @floatFromInt(n_samples));
+    try testing.expect(ratio >= 0.80);
+}
+
+test "Gumbel: f32 precision support" {
+    const dist = try Gumbel(f32).init(0.0, 1.0);
+    try expectApproxEqRel(dist.pdf(0.0), @as(f32, @exp(-1.0)), 1e-5);
+    try expectApproxEqRel(dist.cdf(0.0), @as(f32, @exp(-1.0)), 1e-5);
+    _ = try dist.quantile(0.5);
+    _ = dist.mean();
+    _ = dist.variance();
+    try testing.expectEqual(@as(f32, 0.0), dist.mode());
+    _ = dist.median();
+    _ = dist.logpdf(0.0);
+    _ = dist.sf(0.0);
+}
+
+test "Gumbel: memory safety" {
+    const allocator = testing.allocator;
+    _ = allocator;
+
+    for (0..10) |_| {
+        const dist = try Gumbel(f64).init(0.0, 1.0);
+        _ = dist.pdf(1.0);
+        try expectApproxEqRel(dist.cdf(0.0), @exp(-1.0), 1e-10);
+        _ = try dist.quantile(0.5);
+        _ = dist.mean();
+        _ = dist.variance();
+        _ = dist.mode();
+        _ = dist.median();
+        _ = dist.logpdf(1.0);
+        _ = dist.sf(1.0);
+    }
+}
