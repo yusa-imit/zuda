@@ -1,3 +1,21 @@
+**Session 591 Update (2026-05-27) — FEATURE MODE:**
+
+✅ **Gumbel Distribution** — Implemented Gumbel(μ, β) Type-I Extreme Value distribution
+- **Mode**: FEATURE MODE (counter: 591)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0)
+- **Deliverable**: Gumbel(T) distribution added to src/stats/distributions.zig (+364 lines)
+  * Parameters: μ (location), β (scale > 0)
+  * Methods: init, pdf, cdf, quantile, logpdf, sf, sample, mean, variance, mode, median
+  * 15 tests covering: init validation, PDF/CDF manual calc, quantile roundtrip, mean/variance, mode/median, sf, logpdf, sampling, f32 precision, memory safety
+  * Math: PDF=(1/β)exp(-(z+exp(-z))), CDF=exp(-exp(-z)), Q(p)=μ-β·ln(-ln(p))
+  * Mean=μ+βγ (γ≈0.5772), Variance=π²β²/6, Mode=μ, Median=μ-β·ln(ln(2))
+- **Distribution count**: Now 16 total (14 continuous + 2 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F
+  * Discrete: Poisson, Binomial
+- **Commit**: dd15402 (feat)
+- **Next Priority**: Continue scientific computing track — next distribution (Dirichlet, NegativeBinomial, Multinomial) or next v2.0 module feature
+
 **Session 589 Update (2026-05-27) — FEATURE MODE:**
 
 ✅ **TEST COVERAGE** — Edge case tests added to 5 algorithm files (9→14 tests each):
