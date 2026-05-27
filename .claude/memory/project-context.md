@@ -1,3 +1,24 @@
+**Session 596 Update (2026-05-28) — FEATURE MODE:**
+
+✅ **Hypergeometric Distribution** — 20th distribution, 6th discrete
+- **Mode**: FEATURE MODE (counter: 596)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0); 31 new Hypergeometric tests
+- **Deliverable**: Hypergeometric(T) distribution added to src/stats/distributions.zig (+434 lines total)
+  * Parameters: N (population size, ≥1), K (successes in population, K≤N), n (draws, n≤N)
+  * Support: k ∈ {max(0, n+K-N), ..., min(n, K)} — sampling without replacement
+  * Methods: init, logpmf, pmf, cdf, sf, quantile, mean, variance, mode, sample, supportMin, supportMax, validate
+  * PMF uses log-gamma for numerical stability: logBinom(K,k) + logBinom(N-K,n-k) - logBinom(N,n)
+  * Mean=n*K/N, Variance=n*K*(N-K)*(N-n)/(N²*(N-1)), Mode=floor((n+1)*(K+1)/(N+2)) clamped to support
+  * Sample via inverse-transform (quantile of uniform random)
+  * Edge cases: K=0, K=N, n=0, N=1 all handled correctly
+  * 31 tests: init validation, PMF normalization (sums to 1), CDF monotonicity, deterministic cases, quantile roundtrip, f32 precision, memory safety loop
+- **Distribution count**: 20 total (14 continuous + 6 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric
+- **Commit**: 0bba2e8
+- **Next Priority**: Continue discrete distributions (Multinomial, Dirichlet) or next v2.0 module
+
 **Session 595 Update (2026-05-28) — STABILIZATION MODE:**
 
 ✅ **ALL SYSTEMS GREEN** — Code quality audit + 9 violations fixed
