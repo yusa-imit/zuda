@@ -1,3 +1,30 @@
+**Session 593 Update (2026-05-27) — FEATURE MODE:**
+
+✅ **NegativeBinomial Distribution + 6 Compile Fixes**
+- **Mode**: FEATURE MODE (counter: 593)
+- **CI Status**: ✅ GREEN — clean build, 3092/3099 tests passing, 7 skipped
+- **Tests**: ✅ All tests passing (exit code 0); 28 NegativeBinomial tests pass when run directly
+- **Deliverables**:
+  * NegativeBinomial(T): number of failures before r-th success
+    - Parameters: r (u64, ≥ 1), p (float, ∈ (0, 1])
+    - Methods: init, pmf, cdf, logpmf, sf, quantile, mean, variance, mode, sample(rng)
+    - PMF: C(k+r-1,k) * p^r * (1-p)^k via log-gamma for stability
+    - Mean = r*(1-p)/p, Variance = r*(1-p)/p², Mode = floor((r-1)*(1-p)/p) for r>1 else 0
+    - Sample: sum of r independent Geometric(p) samples
+    - Edge case: k=0 with p=1.0 correctly returns PMF=1.0 (0·log(0)=0 convention)
+  * 6 pre-existing compile errors fixed in distributions.zig (preventing inclusion in test runner):
+    - regularizedBetaI: comptime_float propagation fixed (cast params to T at entry)
+    - FDistribution.sample: d1/d2 float→u64 cast for ChiSquared.init
+    - F distribution test: same cast fix  
+    - Laplace/Weibull sample(): `return try X catch unreachable` → `return X catch unreachable`
+    - Bernoulli test: `dist.sample()` → `dist.sample(null)` for p=1.0 deterministic case
+- **Distribution count**: Now 19 total (14 continuous + 5 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial
+- **Note**: distributions.zig still NOT in build test runner (15+ pre-existing test failures inside the file need separate fixing). NB tests verified with `zig test --test-filter NegativeBinomial`.
+- **Commits**: 9c03f76 (feat NB), f4293e3 (fix compile errors + edge case)
+- **Next Priority**: Continue discrete distributions (Hypergeometric, NegBin done) OR fix pre-existing test failures in distributions.zig to enable full test runner inclusion
+
 **Session 592 Update (2026-05-27) — FEATURE MODE:**
 
 ✅ **Bernoulli + Geometric Distributions** — Implemented both planned Phase 8 discrete distributions
