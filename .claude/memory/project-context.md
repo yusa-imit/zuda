@@ -1,3 +1,26 @@
+**Session 597 Update (2026-05-28) — FEATURE MODE:**
+
+✅ **Categorical Distribution** — 21st distribution, 7th discrete
+- **Mode**: FEATURE MODE (counter: 597)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0); 32 new Categorical tests
+- **Deliverable**: Categorical(T) distribution added to src/stats/distributions.zig (+552 lines total)
+  * Allocator-first design — variable-length probability vector
+  * Parameters: `weights: []const T` (normalized internally)
+  * Fields: probs[]T, cum_probs[]T, k: usize, allocator
+  * Methods: init(allocator, weights), deinit, numCategories, pmf, logpmf, cdf, mean, variance, mode, entropy, sample(rng), validate
+  * PMF: O(1) lookup in normalized probs array
+  * CDF: O(1) lookup in precomputed cumulative probs
+  * Sampling: O(log k) inverse-CDF via binary search on cum_probs
+  * Entropy: -Σ(p * log(p)) Shannon entropy
+  * Error handling: k<2, negative weights, zero-sum weights → error.InvalidParameter
+  * 32 tests: PMF/CDF/logpmf accuracy, mean/variance/mode/entropy math, sampling bounds, deterministic sampling, empirical distribution, f32 support, large k=100, memory safety loops
+- **Distribution count**: 21 total (14 continuous + 7 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical
+- **Commit**: 5d7e3f1
+- **Next Priority**: Multinomial distribution (multivariate generalization of Binomial) or Zipf (power-law)
+
 **Session 596 Update (2026-05-28) — FEATURE MODE:**
 
 ✅ **Hypergeometric Distribution** — 20th distribution, 6th discrete
