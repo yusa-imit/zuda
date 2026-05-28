@@ -436,3 +436,5 @@
 {"timestamp":"2026-05-28T10:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Multinomial(T) distribution in src/stats/distributions.zig","project":"zuda"}
 {"timestamp":"2026-05-28T11:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 24 failing tests for Dirichlet(T) distribution in src/stats/distributions.zig","project":"zuda"}
 {"timestamp":"2026-05-29T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write Zipf distribution tests and implementation skeleton","project":"zuda"}
+{"timestamp":"2026-05-29T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for BetaBinomial distribution in distributions.zig","project":"zuda"}
+{"timestamp":"2026-05-29T00:00:01Z","action":"subagent","agent_type":"zig-developer","task":"Implement BetaBinomial distribution in distributions.zig to pass failing tests","project":"zuda"}

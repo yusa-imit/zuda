@@ -9883,3 +9883,431 @@ test "Zipf: entropy increases as s decreases (more uniform)" {
     // Lower s → more uniform → higher entropy
     try testing.expect(entropy_low > entropy_high);
 }
+
+// ============================================================================
+// Beta-Binomial Distribution
+// ============================================================================
+
+/// Beta-Binomial distribution BetaBin(n, α, β)
+///
+/// A compound distribution: X|p ~ Binomial(n, p) where p ~ Beta(α, β).
+/// Extends the Binomial by allowing the success probability to vary,
+/// producing overdispersion (greater variance than pure Binomial).
+///
+/// PMF: P(X=k) = C(n,k) × B(k+α, n-k+β) / B(α,β)  for k ∈ {0,...,n}
+///
+/// Parameters:
+///   - n: number of trials (u64, ≥ 1)
+///   - alpha: Beta first shape parameter (T, > 0)
+///   - beta: Beta second shape parameter (T, > 0)
+///
+/// Special cases:
+///   - α = β = 1: Discrete Uniform on {0,...,n}, pmf = 1/(n+1)
+///   - Large α, β with α/(α+β) → p: converges to Binomial(n, p)
+///
+/// Use cases:
+///   - Overdispersed count data (correlated Bernoulli trials)
+///   - Bayesian posterior predictive: Binomial likelihood with Beta prior
+///   - Survey sampling where response probability varies across groups
+///   - Clinical trials with heterogeneous populations
+///
+/// Time: O(1) for most operations; O(k) for cdf/sf/quantile; O(n) for sample
+pub fn BetaBinomial(comptime T: type) type {
+    return struct {
+        n: u64,
+        alpha: T,
+        beta: T,
+        log_beta_ab: T, // precomputed logBeta(alpha, beta)
+
+        const Self = @This();
+
+        /// Initialize BetaBinomial(n, alpha, beta)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(n: u64, alpha: T, beta: T) error{InvalidParameter}!Self {
+            if (n < 1) return error.InvalidParameter;
+            if (alpha <= 0.0 or !std.math.isFinite(alpha)) return error.InvalidParameter;
+            if (beta <= 0.0 or !std.math.isFinite(beta)) return error.InvalidParameter;
+
+            return Self{
+                .n = n,
+                .alpha = alpha,
+                .beta = beta,
+                .log_beta_ab = logBeta(alpha, beta),
+            };
+        }
+
+        /// Log probability mass function at k
+        ///
+        /// log P(X=k) = logC(n,k) + logB(k+α, n-k+β) - logB(α, β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k > self.n) return -std.math.inf(T);
+            const n_f = @as(T, @floatFromInt(self.n));
+            const k_f = @as(T, @floatFromInt(k));
+            const nk_f = @as(T, @floatFromInt(self.n - k));
+            const log_binom = logGamma(n_f + 1.0) - logGamma(k_f + 1.0) - logGamma(nk_f + 1.0);
+            const log_beta_k = logBeta(k_f + self.alpha, nk_f + self.beta);
+            return log_binom + log_beta_k - self.log_beta_ab;
+        }
+
+        /// Probability mass function at k
+        ///
+        /// P(X=k) = C(n,k) × B(k+α, n-k+β) / B(α, β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k > self.n) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// Cumulative distribution function P(X ≤ k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k >= self.n) return 1.0;
+            var sum: T = 0.0;
+            for (0..k + 1) |j| {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - P(X ≤ k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k such that P(X ≤ k) ≥ p
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn quantile(self: Self, p: T) u64 {
+            if (p <= 0.0) return 0;
+            if (p >= 1.0) return self.n;
+            var cumsum: T = 0.0;
+            for (0..self.n + 1) |k| {
+                cumsum += self.pmf(k);
+                if (cumsum >= p) return k;
+            }
+            return self.n;
+        }
+
+        /// Mean: E[X] = n × α / (α + β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) * self.alpha / (self.alpha + self.beta);
+        }
+
+        /// Variance: Var[X] = n × α × β × (α+β+n) / ((α+β)² × (α+β+1))
+        ///
+        /// Always ≥ Binomial(n, α/(α+β)) variance — overdispersion factor (α+β+n)/(α+β+1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            const ab = self.alpha + self.beta;
+            return n_f * self.alpha * self.beta * (ab + n_f) / (ab * ab * (ab + 1.0));
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Derived from ratio P(k+1)/P(k) = (n-k)(k+α) / ((k+1)(n-k+β-1)):
+        ///   α > 1, β > 1: mode = min(n, ⌈(n(α-1)-(β-1))/(α+β-2)⌉) clamped to [0,n]
+        ///   α > 1, β ≤ 1: mode = n (right-concentrated)
+        ///   α ≤ 1, β ≤ 1: mode = 0 (bimodal at endpoints, returns left by convention)
+        ///   α ≤ 1, β > 1: mode = 0 (left-concentrated)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            if (self.alpha > 1.0 and self.beta > 1.0) {
+                const n_f = @as(T, @floatFromInt(self.n));
+                const k_real = (n_f * (self.alpha - 1.0) - (self.beta - 1.0)) / (self.alpha + self.beta - 2.0);
+                if (k_real < 0.0) return 0;
+                if (k_real >= n_f) return self.n;
+                const k_mode = @as(u64, @intFromFloat(@ceil(k_real)));
+                return @min(k_mode, self.n);
+            } else if (self.alpha > 1.0) {
+                return self.n;
+            } else {
+                return 0;
+            }
+        }
+
+        /// Sample from BetaBinomial(n, α, β)
+        ///
+        /// Draws p ~ Beta(α, β) using Gamma variates, then counts n Bernoulli(p) successes.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const gamma_a = Gamma(T){ .shape = self.alpha, .rate = 1.0 };
+            const gamma_b = Gamma(T){ .shape = self.beta, .rate = 1.0 };
+            const xa = gamma_a.sample(rng);
+            const xb = gamma_b.sample(rng);
+            const p = xa / (xa + xb);
+            var count: u64 = 0;
+            for (0..self.n) |_| {
+                if (rng.float(T) < p) count += 1;
+            }
+            return count;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n < 1) return error.InvalidParameter;
+            if (self.alpha <= 0.0 or !std.math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.beta <= 0.0 or !std.math.isFinite(self.beta)) return error.InvalidParameter;
+            if (!std.math.isFinite(self.log_beta_ab)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// BetaBinomial Tests
+// ============================================================================
+
+test "BetaBinomial: init with valid parameters" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    try expectEqual(10, dist.n);
+    try expectApproxEqRel(2.0, dist.alpha, 1e-10);
+    try expectApproxEqRel(3.0, dist.beta, 1e-10);
+}
+
+test "BetaBinomial: init rejects n=0" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(0, 2.0, 3.0));
+}
+
+test "BetaBinomial: init rejects alpha=0" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(10, 0.0, 3.0));
+}
+
+test "BetaBinomial: init rejects negative alpha" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(10, -1.5, 3.0));
+}
+
+test "BetaBinomial: init rejects non-finite alpha (inf)" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(10, std.math.inf(f64), 3.0));
+}
+
+test "BetaBinomial: init rejects non-finite alpha (nan)" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(10, std.math.nan(f64), 3.0));
+}
+
+test "BetaBinomial: init rejects beta=0" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(10, 2.0, 0.0));
+}
+
+test "BetaBinomial: init rejects negative beta" {
+    try expectError(error.InvalidParameter, BetaBinomial(f64).init(10, 2.0, -1.5));
+}
+
+test "BetaBinomial: logpmf returns -inf for k>n" {
+    const dist = try BetaBinomial(f64).init(5, 2.0, 3.0);
+    const logpmf_invalid = dist.logpmf(6);
+    try testing.expect(std.math.isNegativeInf(logpmf_invalid));
+}
+
+test "BetaBinomial: pmf returns 0 for k>n" {
+    const dist = try BetaBinomial(f64).init(5, 2.0, 3.0);
+    try expectEqual(0.0, dist.pmf(6));
+    try expectEqual(0.0, dist.pmf(100));
+}
+
+test "BetaBinomial: pmf sums to 1 (n=5)" {
+    const dist = try BetaBinomial(f64).init(5, 2.0, 3.0);
+    var sum: f64 = 0.0;
+    for (0..6) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "BetaBinomial: logpmf consistent with pmf" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    for (0..9) |k| {
+        const pmf_k = dist.pmf(@intCast(k));
+        const logpmf_k = dist.logpmf(@intCast(k));
+        if (pmf_k > 0.0) {
+            const expected_logpmf = @log(pmf_k);
+            try expectApproxEqRel(expected_logpmf, logpmf_k, 1e-10);
+        }
+    }
+}
+
+test "BetaBinomial: alpha=beta=1 gives Discrete Uniform" {
+    const dist = try BetaBinomial(f64).init(6, 1.0, 1.0);
+    const expected_pmf = 1.0 / 7.0; // 7 values: {0,1,2,3,4,5,6}
+    for (0..7) |k| {
+        try expectApproxEqRel(expected_pmf, dist.pmf(@intCast(k)), 1e-10);
+    }
+}
+
+test "BetaBinomial: cdf is non-decreasing" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    var prev: f64 = 0.0;
+    for (0..9) |k| {
+        const cdf_k = dist.cdf(@intCast(k));
+        try testing.expect(cdf_k >= prev);
+        prev = cdf_k;
+    }
+}
+
+test "BetaBinomial: cdf(0) = pmf(0)" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    try expectApproxEqRel(dist.pmf(0), dist.cdf(0), 1e-10);
+}
+
+test "BetaBinomial: cdf(n) = 1.0" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    try expectApproxEqRel(1.0, dist.cdf(8), 1e-10);
+}
+
+test "BetaBinomial: cdf matches cumulative pmf" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    var cumsum: f64 = 0.0;
+    for (0..9) |k| {
+        cumsum += dist.pmf(@intCast(k));
+        try expectApproxEqRel(cumsum, dist.cdf(@intCast(k)), 1e-10);
+    }
+}
+
+test "BetaBinomial: mean = n * alpha / (alpha + beta)" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    const expected_mean = 10.0 * 2.0 / 5.0; // = 4.0
+    try expectApproxEqRel(expected_mean, dist.mean(), 1e-10);
+}
+
+test "BetaBinomial: variance formula" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    // Var = n * α * β * (α + β + n) / ((α + β)^2 * (α + β + 1))
+    // = 10 * 2 * 3 * 15 / (25 * 6) = 900 / 150 = 6.0
+    const expected_variance = 6.0;
+    try expectApproxEqRel(expected_variance, dist.variance(), 1e-9);
+}
+
+test "BetaBinomial: overdispersion vs Binomial" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    // p = 2/5 = 0.4, Binomial variance = n*p*(1-p) = 10*0.4*0.6 = 2.4
+    // BetaBinomial variance = 6.0 > 2.4 (overdispersed)
+    const beta_var = dist.variance();
+    const binom_var = 10.0 * 0.4 * 0.6;
+    try testing.expect(beta_var > binom_var);
+}
+
+test "BetaBinomial: mode maximizes pmf for alpha>1, beta>1" {
+    const dist = try BetaBinomial(f64).init(10, 3.0, 2.0);
+    const mode = dist.mode();
+    const pmf_mode = dist.pmf(mode);
+
+    // Check pmf(mode) >= pmf(mode-1) and pmf(mode) >= pmf(mode+1)
+    if (mode > 0) {
+        try testing.expect(pmf_mode >= dist.pmf(mode - 1));
+    }
+    if (mode < 10) {
+        try testing.expect(pmf_mode >= dist.pmf(mode + 1));
+    }
+}
+
+test "BetaBinomial: mode at 0 for alpha<=1, beta>1" {
+    const dist = try BetaBinomial(f64).init(10, 0.5, 3.0);
+    try expectEqual(0, dist.mode());
+}
+
+test "BetaBinomial: mode at n for alpha>1, beta<=1" {
+    const dist = try BetaBinomial(f64).init(10, 3.0, 0.5);
+    try expectEqual(10, dist.mode());
+}
+
+test "BetaBinomial: sf = 1 - cdf" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    for (0..9) |k| {
+        const sf_k = dist.sf(@intCast(k));
+        const expected = 1.0 - dist.cdf(@intCast(k));
+        try expectApproxEqRel(expected, sf_k, 1e-10);
+    }
+}
+
+test "BetaBinomial: quantile roundtrip with cdf" {
+    const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    const p_values = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_values) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try testing.expect(cdf_q >= p - 1e-10);
+    }
+}
+
+test "BetaBinomial: sample returns values in [0, n]" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    for (0..200) |_| {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 0);
+        try testing.expect(sample <= 10);
+    }
+}
+
+test "BetaBinomial: sample empirical mean matches theoretical (5000 samples)" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    var prng = std.Random.DefaultPrng.init(42424);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    const samples = 5000;
+    for (0..samples) |_| {
+        const x = dist.sample(rng);
+        sum += @as(f64, @floatFromInt(x));
+    }
+
+    const empirical_mean = sum / @as(f64, @floatFromInt(samples));
+    const theoretical_mean = dist.mean();
+
+    // Allow 3% tolerance
+    try expectApproxEqRel(theoretical_mean, empirical_mean, 0.03);
+}
+
+test "BetaBinomial: pmf symmetry" {
+    const dist_ab = try BetaBinomial(f64).init(8, 2.0, 3.0);
+    const dist_ba = try BetaBinomial(f64).init(8, 3.0, 2.0);
+
+    for (0..9) |k| {
+        const pmf_ab_k = dist_ab.pmf(@intCast(k));
+        const pmf_ba_nk = dist_ba.pmf(@intCast(8 - k));
+        try expectApproxEqRel(pmf_ab_k, pmf_ba_nk, 1e-10);
+    }
+}
+
+test "BetaBinomial: f32 support" {
+    const dist = try BetaBinomial(f32).init(8, 2.0, 3.0);
+
+    var sum: f32 = 0.0;
+    for (0..9) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqRel(1.0, sum, 1e-5);
+
+    const mean = dist.mean();
+    try testing.expect(std.math.isFinite(mean));
+
+    const variance = dist.variance();
+    try testing.expect(variance >= 0.0);
+}
+
+test "BetaBinomial: memory safety (1000 iterations)" {
+    for (0..1000) |_| {
+        const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+        _ = dist.mean();
+    }
+}
+
+test "BetaBinomial: validate passes on valid distribution" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+    try dist.validate();
+}
