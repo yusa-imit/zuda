@@ -1,3 +1,30 @@
+**Session 599 Update (2026-05-28) — FEATURE MODE:**
+
+✅ **Dirichlet Distribution** — 23rd distribution, 15th continuous
+- **Mode**: FEATURE MODE (counter: 599)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All 24 Dirichlet tests passing (exit code 0)
+- **Deliverable**: Dirichlet(T) distribution added to src/stats/distributions.zig (+539 lines total)
+  * Allocator-first design — variable-length concentration vector
+  * Parameters: `alphas: []const T` (concentration params, all > 0, k ≥ 2)
+  * Fields: alphas[]T, alpha0:T (sum of alphas), allocator
+  * Methods: init(allocator, alphas), deinit, numCategories, logpdf O(k), pdf O(k),
+    mean O(1), variance O(1), covariance O(1), mode(allocator) O(k),
+    entropy O(k) using digamma, sample(rng, allocator) O(k), validate O(k)
+  * Sampling: Gamma(αᵢ, 1) per coordinate, normalize (Marsaglia-Tsang)
+  * digamma helper: recurrence shift + asymptotic expansion (~15 sig. digits)
+  * Entropy: log B(α) + (α₀-k)ψ(α₀) - Σ(αᵢ-1)ψ(αᵢ)
+  * PDF: f(x|α) = Γ(α₀)/∏Γ(αᵢ) × ∏xᵢ^(αᵢ-1)
+  * Error handling: k<2, any αᵢ≤0 → error.InvalidParameter; mode() requires all αᵢ>1
+  * 24 tests: init validation, logpdf centroid Dir(2,2,2), math formulas, mode,
+    entropy Dir(1,1,1)=-log2, sampling sum=1, 5000-sample empirical mean, f32 support,
+    memory safety loops
+- **Distribution count**: 23 total (15 continuous + 8 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Dirichlet
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial
+- **Commit**: 3702c13
+- **Next Priority**: Zipf (power-law discrete) or Beta-Binomial (conjugate to Binomial)
+
 **Session 598 Update (2026-05-28) — FEATURE MODE:**
 
 ✅ **Multinomial Distribution** — 22nd distribution, 8th discrete
