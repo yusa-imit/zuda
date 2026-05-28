@@ -9299,3 +9299,587 @@ test "Dirichlet: numCategories" {
 
     try expectEqual(4, dist.numCategories());
 }
+
+// ============================================================================
+// Zipf Distribution
+// ============================================================================
+
+/// Zipf distribution — power-law distribution over integers 1..n
+///
+/// Parameters:
+///   - n: support size (n ≥ 1)
+///   - s: exponent (s > 0)
+///
+/// Support: k ∈ {1, 2, ..., n}
+///
+/// PMF: P(X=k) = k^{-s} / H(n,s), where H(n,s) = Σ_{j=1}^{n} j^{-s}
+/// CDF: Σ_{j=1}^{k} j^{-s} / H(n,s)
+/// Mean: H(n,s-1) / H(n,s)
+/// Variance: H(n,s-2) / H(n,s) - mean^2
+/// Mode: 1 (always)
+/// Entropy: log H(n,s) + s * Σ log(j) * j^{-s} / H(n,s)
+///
+/// Time: O(n) init; O(1) pmf/cdf/mode/mean/variance; O(log n) sample
+pub fn Zipf(comptime T: type) type {
+    return struct {
+        n: u64,
+        s: T,
+        h_norm: T,      // H(n, s) = normalization constant
+        h_s1: T,        // H(n, s-1) for mean
+        h_s2: T,        // H(n, s-2) for variance
+        h_log_s: T,     // Σ log(k) * k^{-s} for entropy
+        cum_probs: []T, // cumulative probabilities for sampling
+
+        const Self = @This();
+
+        /// Initialize Zipf(n, s)
+        ///
+        /// Precomputes harmonic sums and CDF table.
+        ///
+        /// Time: O(n) | Space: O(n)
+        pub fn init(allocator: std.mem.Allocator, n: u64, s: T) error{InvalidParameter, OutOfMemory}!Self {
+            if (n < 1) return error.InvalidParameter;
+            if (s <= 0.0 or !std.math.isFinite(s)) return error.InvalidParameter;
+
+            var h_norm: T = 0.0;
+            var h_s1: T = 0.0;
+            var h_s2: T = 0.0;
+            var h_log_s: T = 0.0;
+
+            // Precompute harmonic sums H(n,s), H(n,s-1), H(n,s-2)
+            // and the entropy helper sum
+            for (1..n + 1) |j| {
+                const j_float = @as(T, @floatFromInt(j));
+                const inv_j_s = std.math.pow(T, j_float, -s);
+                const inv_j_s1 = std.math.pow(T, j_float, -(s - 1.0));
+                const inv_j_s2 = std.math.pow(T, j_float, -(s - 2.0));
+
+                h_norm += inv_j_s;
+                h_s1 += inv_j_s1;
+                h_s2 += inv_j_s2;
+                h_log_s += @log(j_float) * inv_j_s;
+            }
+
+            // Allocate CDF table
+            var cum_probs = try allocator.alloc(T, n);
+            errdefer allocator.free(cum_probs);
+
+            // Fill CDF table: cum_probs[k-1] = P(X <= k)
+            var cumsum: T = 0.0;
+            for (1..n + 1) |k| {
+                const k_float = @as(T, @floatFromInt(k));
+                const pmf_k = std.math.pow(T, k_float, -s) / h_norm;
+                cumsum += pmf_k;
+                cum_probs[k - 1] = cumsum;
+            }
+
+            return Self{
+                .n = n,
+                .s = s,
+                .h_norm = h_norm,
+                .h_s1 = h_s1,
+                .h_s2 = h_s2,
+                .h_log_s = h_log_s,
+                .cum_probs = cum_probs,
+            };
+        }
+
+        /// Free allocated memory
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.cum_probs);
+        }
+
+        /// Probability mass function at k
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0 or k > self.n) return 0.0;
+            const k_float = @as(T, @floatFromInt(k));
+            return std.math.pow(T, k_float, -self.s) / self.h_norm;
+        }
+
+        /// Log probability mass function at k
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0 or k > self.n) return -std.math.inf(T);
+            const k_float = @as(T, @floatFromInt(k));
+            return -self.s * @log(k_float) - @log(self.h_norm);
+        }
+
+        /// Cumulative distribution function at k
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            if (k >= self.n) return 1.0;
+            return self.cum_probs[k - 1];
+        }
+
+        /// Mode of the distribution (always 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.h_s1 / self.h_norm;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            return (self.h_s2 / self.h_norm) - (m * m);
+        }
+
+        /// Entropy of the distribution in nats
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.h_norm) + self.s * (self.h_log_s / self.h_norm);
+        }
+
+        /// Sample from the distribution via inverse transform (binary search on CDF)
+        ///
+        /// Time: O(log n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            // Binary search for smallest index i where cum_probs[i] >= u
+            var left: usize = 0;
+            var right: usize = self.n - 1;
+            while (left < right) {
+                const mid = left + (right - left) / 2;
+                if (self.cum_probs[mid] < u) {
+                    left = mid + 1;
+                } else {
+                    right = mid;
+                }
+            }
+            // left is the 0-indexed position; k = left + 1 (1-indexed), clamped to [1, n]
+            return @min(left + 1, self.n);
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n < 1) return error.InvalidParameter;
+            if (self.s <= 0.0 or !std.math.isFinite(self.s)) return error.InvalidParameter;
+            if (self.h_norm <= 0.0 or !std.math.isFinite(self.h_norm)) return error.InvalidParameter;
+            if (self.cum_probs.len != self.n) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Zipf Tests
+// ============================================================================
+
+test "Zipf: init with valid parameters" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try expectEqual(10, dist.n);
+    try expectApproxEqRel(1.5, dist.s, 1e-10);
+}
+
+test "Zipf: init rejects n=0" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, Zipf(f64).init(allocator, 0, 1.5));
+}
+
+test "Zipf: init rejects s=0" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, Zipf(f64).init(allocator, 10, 0.0));
+}
+
+test "Zipf: init rejects negative s" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, Zipf(f64).init(allocator, 10, -1.5));
+}
+
+test "Zipf: init rejects non-finite s" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, Zipf(f64).init(allocator, 10, std.math.inf(f64)));
+    try expectError(error.InvalidParameter, Zipf(f64).init(allocator, 10, std.math.nan(f64)));
+}
+
+test "Zipf: pmf returns 0 for k=0" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try expectEqual(0.0, dist.pmf(0));
+}
+
+test "Zipf: pmf returns 0 for k>n" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try expectEqual(0.0, dist.pmf(11));
+    try expectEqual(0.0, dist.pmf(100));
+}
+
+test "Zipf: pmf(1) > pmf(2) > pmf(3) for monotone decrease" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const pmf1 = dist.pmf(1);
+    const pmf2 = dist.pmf(2);
+    const pmf3 = dist.pmf(3);
+
+    try testing.expect(pmf1 > pmf2);
+    try testing.expect(pmf2 > pmf3);
+    try testing.expect(pmf3 > 0.0);
+}
+
+test "Zipf: pmf at k=1 with s=1.5, n=5" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 5, 1.5);
+    defer dist.deinit(allocator);
+
+    // H(5, 1.5) = 1 + 2^{-1.5} + 3^{-1.5} + 4^{-1.5} + 5^{-1.5}
+    // pmf(1) = 1 / H(5, 1.5)
+    const pmf1 = dist.pmf(1);
+    try testing.expect(pmf1 > 0.0);
+    try testing.expect(pmf1 <= 1.0);
+}
+
+test "Zipf: pmf sums to 1.0 (small n)" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 5, 1.5);
+    defer dist.deinit(allocator);
+
+    var sum: f64 = 0.0;
+    for (1..6) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Zipf: logpmf returns -inf for k=0" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const logpmf0 = dist.logpmf(0);
+    try testing.expect(std.math.isNegativeInf(logpmf0));
+}
+
+test "Zipf: logpmf returns -inf for k>n" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const logpmf11 = dist.logpmf(11);
+    try testing.expect(std.math.isNegativeInf(logpmf11));
+}
+
+test "Zipf: logpmf consistency with pmf" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    for (1..11) |k| {
+        const pmf_k = dist.pmf(k);
+        const logpmf_k = dist.logpmf(k);
+
+        if (pmf_k > 0.0) {
+            const expected_logpmf = @log(pmf_k);
+            try expectApproxEqRel(expected_logpmf, logpmf_k, 1e-10);
+        }
+    }
+}
+
+test "Zipf: cdf is non-decreasing" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    var prev: f64 = 0.0;
+    for (0..11) |k| {
+        const cdf_k = dist.cdf(k);
+        try testing.expect(cdf_k >= prev);
+        prev = cdf_k;
+    }
+}
+
+test "Zipf: cdf(0) = 0.0" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try expectEqual(0.0, dist.cdf(0));
+}
+
+test "Zipf: cdf(n) = 1.0" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try expectApproxEqRel(1.0, dist.cdf(10), 1e-10);
+}
+
+test "Zipf: cdf(k>n) = 1.0" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try expectEqual(1.0, dist.cdf(11));
+    try expectEqual(1.0, dist.cdf(100));
+}
+
+test "Zipf: cdf matches cumulative PMF" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 5, 1.5);
+    defer dist.deinit(allocator);
+
+    var cumsum: f64 = 0.0;
+    for (1..6) |k| {
+        cumsum += dist.pmf(k);
+        try expectApproxEqRel(cumsum, dist.cdf(k), 1e-10);
+    }
+}
+
+test "Zipf: mode always returns 1" {
+    const allocator = testing.allocator;
+    const dist1 = try Zipf(f64).init(allocator, 5, 1.5);
+    defer dist1.deinit(allocator);
+
+    const dist2 = try Zipf(f64).init(allocator, 100, 0.5);
+    defer dist2.deinit(allocator);
+
+    const dist3 = try Zipf(f64).init(allocator, 1, 2.0);
+    defer dist3.deinit(allocator);
+
+    try expectEqual(1, dist1.mode());
+    try expectEqual(1, dist2.mode());
+    try expectEqual(1, dist3.mode());
+}
+
+test "Zipf: mean is positive" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const m = dist.mean();
+    try testing.expect(m > 0.0);
+    try testing.expect(std.math.isFinite(m));
+}
+
+test "Zipf: variance is non-negative" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const v = dist.variance();
+    try testing.expect(v >= 0.0);
+    try testing.expect(std.math.isFinite(v));
+}
+
+test "Zipf: entropy is finite and positive" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(std.math.isFinite(e));
+}
+
+test "Zipf: edge case n=1" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 1, 1.5);
+    defer dist.deinit(allocator);
+
+    // Only k=1 is valid, pmf(1) should be 1.0
+    try expectApproxEqRel(1.0, dist.pmf(1), 1e-10);
+    try expectEqual(0.0, dist.pmf(0));
+    try expectEqual(0.0, dist.pmf(2));
+    try expectApproxEqRel(1.0, dist.cdf(1), 1e-10);
+    try expectEqual(1, dist.mode());
+}
+
+test "Zipf: large s concentrates mass on k=1" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 5.0);
+    defer dist.deinit(allocator);
+
+    const pmf1 = dist.pmf(1);
+    const pmf2 = dist.pmf(2);
+    const pmf3 = dist.pmf(3);
+
+    // With large s, most mass should be on k=1
+    try testing.expect(pmf1 > 0.9);
+    try testing.expect(pmf2 < pmf1 / 10.0);
+    try testing.expect(pmf3 < pmf2);
+}
+
+test "Zipf: small s spreads mass more uniformly" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 0.5);
+    defer dist.deinit(allocator);
+
+    const pmf1 = dist.pmf(1);
+    const pmf10 = dist.pmf(10);
+
+    // With small s, mass is more spread
+    try testing.expect(pmf1 > pmf10);
+    try testing.expect(pmf10 > 0.01); // Not completely negligible
+}
+
+test "Zipf: sample returns values in [1, n]" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    for (0..100) |_| {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 1);
+        try testing.expect(sample <= 10);
+    }
+}
+
+test "Zipf: sample empirical mean matches theoretical (5000 samples)" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 20, 1.5);
+    defer dist.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(42424);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    const samples = 5000;
+    for (0..samples) |_| {
+        const x = dist.sample(rng);
+        sum += @as(f64, @floatFromInt(x));
+    }
+
+    const empirical_mean = sum / @as(f64, @floatFromInt(samples));
+    const theoretical_mean = dist.mean();
+
+    // Allow 3% tolerance
+    try expectApproxEqRel(theoretical_mean, empirical_mean, 0.03);
+}
+
+test "Zipf: sample frequency matches PMF (n=5, 50000 samples)" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 5, 1.5);
+    defer dist.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    var counts = [_]u64{ 0, 0, 0, 0, 0 };
+    const samples = 50000;
+    for (0..samples) |_| {
+        const x = dist.sample(rng);
+        if (x >= 1 and x <= 5) {
+            counts[x - 1] += 1;
+        }
+    }
+
+    // Check frequencies match PMF (allow 3% tolerance for sampling variance)
+    for (0..5) |k| {
+        const empirical_freq = @as(f64, @floatFromInt(counts[k])) / @as(f64, @floatFromInt(samples));
+        const theoretical_pmf = dist.pmf(k + 1);
+        try expectApproxEqRel(theoretical_pmf, empirical_freq, 0.03);
+    }
+}
+
+test "Zipf: f32 support" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f32).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    const pmf1 = dist.pmf(1);
+    try testing.expect(pmf1 > 0.0);
+    try testing.expect(!std.math.isNan(pmf1));
+
+    const cdf5 = dist.cdf(5);
+    try testing.expect(cdf5 >= 0.0 and cdf5 <= 1.0);
+
+    const mean = dist.mean();
+    try testing.expect(std.math.isFinite(mean));
+
+    const variance = dist.variance();
+    try testing.expect(variance >= 0.0);
+
+    const entropy = dist.entropy();
+    try testing.expect(std.math.isFinite(entropy));
+}
+
+test "Zipf: memory safety init/deinit (1000 iterations)" {
+    const allocator = testing.allocator;
+
+    for (0..1000) |_| {
+        const dist = try Zipf(f64).init(allocator, 10, 1.5);
+        dist.deinit(allocator);
+    }
+}
+
+test "Zipf: memory safety sampling" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+
+    for (0..100) |_| {
+        _ = dist.sample(rng);
+    }
+}
+
+test "Zipf: validate passes on valid distribution" {
+    const allocator = testing.allocator;
+    const dist = try Zipf(f64).init(allocator, 10, 1.5);
+    defer dist.deinit(allocator);
+
+    try dist.validate();
+}
+
+test "Zipf: mean increases as s decreases (more uniform)" {
+    const allocator = testing.allocator;
+    const dist_low_s = try Zipf(f64).init(allocator, 20, 0.5);
+    defer dist_low_s.deinit(allocator);
+
+    const dist_high_s = try Zipf(f64).init(allocator, 20, 2.0);
+    defer dist_high_s.deinit(allocator);
+
+    const mean_low = dist_low_s.mean();
+    const mean_high = dist_high_s.mean();
+
+    // Lower s → more uniform → higher mean
+    try testing.expect(mean_low > mean_high);
+}
+
+test "Zipf: entropy increases as s decreases (more uniform)" {
+    const allocator = testing.allocator;
+    const dist_low_s = try Zipf(f64).init(allocator, 20, 0.5);
+    defer dist_low_s.deinit(allocator);
+
+    const dist_high_s = try Zipf(f64).init(allocator, 20, 2.0);
+    defer dist_high_s.deinit(allocator);
+
+    const entropy_low = dist_low_s.entropy();
+    const entropy_high = dist_high_s.entropy();
+
+    // Lower s → more uniform → higher entropy
+    try testing.expect(entropy_low > entropy_high);
+}
