@@ -1,6 +1,5 @@
 const std = @import("std");
 const math = std.math;
-const Allocator = std.mem.Allocator;
 
 /// Errors for distribution operations
 pub const DistributionError = error{
@@ -114,6 +113,13 @@ pub fn Normal(comptime T: type) type {
             const z = (x - self.mean) / (self.std * @sqrt(2.0));
             return 0.5 * (1.0 - erf(z));
         }
+
+        /// Assert that parameters are valid: std > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.std <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.mean) or !math.isFinite(self.std)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -198,6 +204,13 @@ pub fn Uniform(comptime T: type) type {
             if (x < self.a) return 1.0;
             if (x >= self.b) return 0.0;
             return (self.b - x) / (self.b - self.a);
+        }
+
+        /// Assert that parameters are valid: a < b, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.a >= self.b) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.a) or !math.isFinite(self.b)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -297,6 +310,12 @@ pub fn Exponential(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn variance(self: Self) T {
             return 1.0 / (self.rate * self.rate);
+        }
+
+        /// Assert that parameters are valid: rate > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.rate <= 0.0 or !math.isFinite(self.rate)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -511,6 +530,13 @@ pub fn Gamma(comptime T: type) type {
         pub fn variance(self: Self) T {
             return self.shape / (self.rate * self.rate);
         }
+
+        /// Assert that parameters are valid: shape > 0, rate > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.shape <= 0.0 or !math.isFinite(self.shape)) return DistributionError.InvalidParameter;
+            if (self.rate <= 0.0 or !math.isFinite(self.rate)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -656,6 +682,13 @@ pub fn Beta(comptime T: type) type {
             const sum = self.alpha + self.beta;
             return (self.alpha * self.beta) / (sum * sum * (sum + 1.0));
         }
+
+        /// Assert that parameters are valid: alpha > 0, beta > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return DistributionError.InvalidParameter;
+            if (self.beta <= 0.0 or !math.isFinite(self.beta)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -777,6 +810,12 @@ pub fn ChiSquared(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn variance(self: Self) T {
             return 2.0 * self.k;
+        }
+
+        /// Assert that parameters are valid: k > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.k <= 0.0 or !math.isFinite(self.k)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -960,6 +999,12 @@ pub fn StudentT(comptime T: type) type {
             if (self.nu <= 1.0) return math.nan(T);
             if (self.nu <= 2.0) return math.inf(T);
             return self.nu / (self.nu - 2.0);
+        }
+
+        /// Assert that parameters are valid: nu > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.nu <= 0.0 or !math.isFinite(self.nu)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -1146,6 +1191,13 @@ pub fn FDistribution(comptime T: type) type {
             const numerator = 2.0 * self.d2 * self.d2 * (self.d1 + self.d2 - 2.0);
             const denominator = self.d1 * (self.d2 - 2.0) * (self.d2 - 2.0) * (self.d2 - 4.0);
             return numerator / denominator;
+        }
+
+        /// Assert that parameters are valid: d1 > 0, d2 > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.d1 <= 0.0 or !math.isFinite(self.d1)) return DistributionError.InvalidParameter;
+            if (self.d2 <= 0.0 or !math.isFinite(self.d2)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -1510,6 +1562,12 @@ pub fn Poisson(comptime T: type) type {
         pub fn variance(self: Self) T {
             return self.rate;
         }
+
+        /// Assert that parameters are valid: rate (λ) > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.rate <= 0.0 or !math.isFinite(self.rate)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -1640,6 +1698,13 @@ pub fn Binomial(comptime T: type) type {
         pub fn variance(self: Self) T {
             const n_f = @as(T, @floatFromInt(self.n));
             return n_f * self.p * (1.0 - self.p);
+        }
+
+        /// Assert that parameters are valid: n ≥ 1, 0 ≤ p ≤ 1.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n == 0) return DistributionError.InvalidParameter;
+            if (self.p < 0.0 or self.p > 1.0 or !math.isFinite(self.p)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -3586,6 +3651,13 @@ pub fn Laplace(comptime T: type) type {
         pub fn mad(self: Self) T {
             return self.scale;
         }
+
+        /// Assert that parameters are valid: scale > 0 and finite, location finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.scale <= 0.0 or !math.isFinite(self.scale)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.location)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -3777,6 +3849,13 @@ pub fn Weibull(comptime T: type) type {
             const x_scaled = x / self.scale;
             const x_pow_k_minus_1 = math.pow(T, x_scaled, self.shape - 1.0);
             return (self.shape / self.scale) * x_pow_k_minus_1;
+        }
+
+        /// Assert that parameters are valid: shape > 0, scale > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.shape <= 0.0 or !math.isFinite(self.shape)) return DistributionError.InvalidParameter;
+            if (self.scale <= 0.0 or !math.isFinite(self.scale)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -4583,6 +4662,13 @@ pub fn Pareto(comptime T: type) type {
         pub fn median(self: Self) T {
             return self.x_m * math.pow(T, 2.0, 1.0 / self.alpha);
         }
+
+        /// Assert that parameters are valid: x_m > 0, alpha > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.x_m <= 0.0 or !math.isFinite(self.x_m)) return DistributionError.InvalidParameter;
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -5055,6 +5141,13 @@ pub fn LogNormal(comptime T: type) type {
         pub fn median(self: Self) T {
             return @exp(self.mu);
         }
+
+        /// Assert that parameters are valid: sigma > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.mu)) return DistributionError.InvalidParameter;
+        }
     };
 }
 
@@ -5515,6 +5608,13 @@ pub fn Cauchy(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn median(self: Self) T {
             return self.x0;
+        }
+
+        /// Assert that parameters are valid: gamma > 0, both finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.gamma <= 0.0 or !math.isFinite(self.gamma)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.x0)) return DistributionError.InvalidParameter;
         }
     };
 }
@@ -8119,7 +8219,7 @@ pub fn Multinomial(comptime T: type) type {
         }
 
         /// Sample using conditional Binomial method.
-        /// Allocates []u64 counts (caller owns). Time: O(k*log(n)) | Space: O(k)
+        /// Allocates []u64 counts (caller owns). Time: O(k*n) | Space: O(k)
         pub fn sample(self: Self, rng: std.Random, allocator: std.mem.Allocator) ![]u64 {
             const counts = try allocator.alloc(u64, self.probs.len);
             errdefer allocator.free(counts);
@@ -8127,10 +8227,12 @@ pub fn Multinomial(comptime T: type) type {
             var remaining: u64 = self.n;
             var mass_left: T = 1.0;
 
-            // For each category 0..k-2, sample from Binomial(remaining, p_i / mass_left)
+            // For each category 0..k-2, sample from Binomial(remaining, p_i / mass_left).
+            // Clamp p_conditional to [0,1] to guard against floating-point drift in mass_left.
             for (0 .. self.probs.len - 1) |i| {
-                const p_conditional = self.probs[i] / mass_left;
-                const xi = binomialSample(rng, remaining, p_conditional);
+                const p_raw = self.probs[i] / mass_left;
+                const p_conditional = @min(@max(p_raw, 0.0), 1.0);
+                const xi = @min(binomialSample(rng, remaining, p_conditional), remaining);
                 counts[i] = xi;
                 remaining -= xi;
                 mass_left -= self.probs[i];
@@ -8312,7 +8414,7 @@ test "Multinomial: logpmf outside support returns large negative" {
 
     const counts = [_]u64{ 0, 0 }; // sum = 0, but n = 2
     const logpmf_val = dist.logpmf(&counts);
-    try testing.expect(logpmf_val < -1e6);
+    try testing.expect(math.isNegativeInf(logpmf_val));
 }
 
 test "Multinomial: pmf sums to 1 n=2 k=2" {
@@ -8446,9 +8548,11 @@ test "Multinomial: sample all counts nonnegative" {
         const counts = try dist.sample(rng, allocator);
         defer allocator.free(counts);
 
+        var total_counts: u64 = 0;
         for (counts) |c| {
-            try testing.expect(c >= 0);
+            total_counts += c;
         }
+        try testing.expectEqual(@as(u64, 10), total_counts);
     }
 }
 
@@ -8825,7 +8929,8 @@ pub fn Dirichlet(comptime T: type) type {
 
             var total: T = 0.0;
             for (self.alphas, 0..) |ai, i| {
-                const g = try Gamma(T).init(ai, 1.0);
+                // ai > 0 and rate = 1.0 are guaranteed by init — Gamma.init cannot fail here.
+                const g = Gamma(T).init(ai, 1.0) catch unreachable;
                 xs[i] = g.sample(rng);
                 total += xs[i];
             }
@@ -9008,12 +9113,10 @@ test "Dirichlet: pdf at valid point" {
     defer dist.deinit();
 
     const x = [_]f64{ 0.4, 0.6 };
-    const logpdf_val = dist.logpdf(&x);
     const pdf_val = dist.pdf(&x);
 
-    // pdf = exp(logpdf)
-    const expected_pdf = @exp(logpdf_val);
-    try expectApproxEqRel(expected_pdf, pdf_val, 1e-10);
+    // Dir(2,2) is Beta(2,2) on [0,1]: pdf(x) = 6*x*(1-x) = 6*0.4*0.6 = 1.44
+    try expectApproxEqRel(@as(f64, 1.44), pdf_val, 1e-10);
 }
 
 test "Dirichlet: mode for concentrated params" {
