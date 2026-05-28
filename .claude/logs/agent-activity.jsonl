@@ -432,3 +432,5 @@
 {"timestamp":"2026-05-28T00:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Hypergeometric distribution in src/stats/distributions.zig to pass 31 failing tests","project":"zuda"}
 {"timestamp":"2026-05-28T03:32:08Z","action":"subagent","agent_type":"test-writer","task":"Write TDD tests for Categorical(T) distribution in distributions.zig","project":"zuda"}
 {"timestamp":"2026-05-28T03:33:55Z","action":"subagent","agent_type":"zig-developer","task":"Implement Categorical(T) distribution struct to pass 32 TDD tests","project":"zuda"}
+{"timestamp":"2026-05-28T10:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Multinomial(T) distribution in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-05-28T10:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Multinomial(T) distribution in src/stats/distributions.zig","project":"zuda"}

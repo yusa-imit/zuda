@@ -7966,3 +7966,695 @@ test "Categorical: sample distribution empirical [0.7, 0.3]" {
     const freq0 = @as(f64, @floatFromInt(count0)) / @as(f64, @floatFromInt(samples));
     try expectApproxEqRel(0.7, freq0, 0.05); // Allow 5% tolerance for stochastic test
 }
+
+// ============================================================================
+// Multinomial Distribution
+// ============================================================================
+// Multinomial distribution — multivariate generalization of Binomial
+// Parameters: n (number of trials), probs []const T (k ≥ 2 categories)
+// Support: {(x0, x1, ..., x_{k-1}) | xi ≥ 0, sum(xi) = n}
+// Models outcome of n independent trials each with k possible outcomes.
+
+/// Multinomial distribution — generalization of Binomial to k ≥ 2 categories
+///
+/// Models n independent trials where each trial results in one of k categories
+/// with probabilities p1, p2, ..., pk (sum = 1).
+/// The outcome is a count vector (x1, ..., xk) where xi = count of category i, sum(xi) = n.
+///
+/// Parameters:
+///   - n: number of trials (n ≥ 1)
+///   - probs: normalized probability vector (k ≥ 2, all probs ≥ 0, sum = 1)
+///
+/// PMF: n! / (x1! * x2! * ... * xk!) * p1^x1 * p2^x2 * ... * pk^xk
+/// logPMF: lgamma(n+1) - sum(lgamma(xi+1)) + sum(xi * log(pi))
+///         Convention: 0 * log(0) = 0 (term skipped when xi == 0)
+///         Returns -inf when counts don't sum to n (outside support)
+///
+/// Marginal moments:
+///   - Mean_i: n * pi
+///   - Variance_i: n * pi * (1 - pi)
+///   - Covariance(i,j): -n * pi * pj  [= Variance_i when i == j]
+///
+/// Time: O(k) for pmf/logpmf/validate; O(1) for mean/variance/covariance; O(k) for sample
+pub fn Multinomial(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        n: u64,
+        probs: []T,        // normalized probability vector (sum = 1.0)
+        allocator: std.mem.Allocator,
+
+        /// Initialize Multinomial distribution from n trials and weights.
+        /// Weights are normalized to sum to 1. Must have k ≥ 2 non-negative weights
+        /// with positive total sum and n ≥ 1.
+        /// Time: O(k) | Space: O(k)
+        pub fn init(allocator: std.mem.Allocator, n: u64, weights: []const T) !Self {
+            if (n == 0) return DistributionError.InvalidParameter;
+            if (weights.len < 2) return DistributionError.InvalidParameter;
+
+            var sum: T = 0.0;
+            for (weights) |w| {
+                if (w < 0.0) return DistributionError.InvalidParameter;
+                sum += w;
+            }
+            if (sum <= 0.0) return DistributionError.InvalidParameter;
+
+            const probs = try allocator.alloc(T, weights.len);
+            errdefer allocator.free(probs);
+
+            for (weights, 0..) |w, i| {
+                probs[i] = w / sum;
+            }
+            probs[weights.len - 1] = 1.0; // fix floating point drift
+            // Recompute from scratch to ensure normalization
+            var recomputed_sum: T = 0.0;
+            for (probs[0 .. weights.len - 1]) |p| {
+                recomputed_sum += p;
+            }
+            probs[weights.len - 1] = 1.0 - recomputed_sum;
+
+            return Self{
+                .n = n,
+                .probs = probs,
+                .allocator = allocator,
+            };
+        }
+
+        /// Free allocated memory
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.probs);
+        }
+
+        /// Number of categories
+        /// Time: O(1) | Space: O(1)
+        pub fn numCategories(self: Self) usize {
+            return self.probs.len;
+        }
+
+        /// PMF: probability of outcome counts. Returns 0 if counts.len != k or sum(counts) != n.
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.probs.len) return 0.0;
+
+            var sum: u64 = 0;
+            for (counts) |c| {
+                sum += c;
+            }
+            if (sum != self.n) return 0.0;
+
+            const logpmf_val = self.logpmf(counts);
+            if (math.isNegativeInf(logpmf_val)) return 0.0;
+            return @exp(logpmf_val);
+        }
+
+        /// Log PMF: log probability of outcome counts.
+        /// Returns -inf if counts don't sum to n or length mismatch.
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.probs.len) return -math.inf(T);
+
+            var sum: u64 = 0;
+            for (counts) |c| {
+                sum += c;
+            }
+            if (sum != self.n) return -math.inf(T);
+
+            // lgamma(n+1) is log(n!)
+            var log_coeff = math.lgamma(T, @as(T, @floatFromInt(self.n)) + 1.0);
+
+            // Subtract sum(lgamma(x_i + 1)) for each count
+            for (counts) |xi| {
+                log_coeff -= math.lgamma(T, @as(T, @floatFromInt(xi)) + 1.0);
+            }
+
+            // Add sum(x_i * log(p_i)) for each count/prob pair (skip if x_i == 0)
+            var log_probs: T = 0.0;
+            for (counts, self.probs) |xi, pi| {
+                if (xi > 0) {
+                    log_probs += @as(T, @floatFromInt(xi)) * @log(pi);
+                }
+            }
+
+            return log_coeff + log_probs;
+        }
+
+        /// Marginal mean of category i: E[X_i] = n * p_i
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self, i: usize) T {
+            return @as(T, @floatFromInt(self.n)) * self.probs[i];
+        }
+
+        /// Marginal variance of category i: Var[X_i] = n * p_i * (1 - p_i)
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self, i: usize) T {
+            return @as(T, @floatFromInt(self.n)) * self.probs[i] * (1.0 - self.probs[i]);
+        }
+
+        /// Covariance(i, j) = -n*pi*pj. Equals variance when i == j.
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self, i: usize, j: usize) T {
+            if (i == j) return self.variance(i);
+            return -@as(T, @floatFromInt(self.n)) * self.probs[i] * self.probs[j];
+        }
+
+        /// Sample using conditional Binomial method.
+        /// Allocates []u64 counts (caller owns). Time: O(k*log(n)) | Space: O(k)
+        pub fn sample(self: Self, rng: std.Random, allocator: std.mem.Allocator) ![]u64 {
+            const counts = try allocator.alloc(u64, self.probs.len);
+            errdefer allocator.free(counts);
+
+            var remaining: u64 = self.n;
+            var mass_left: T = 1.0;
+
+            // For each category 0..k-2, sample from Binomial(remaining, p_i / mass_left)
+            for (0 .. self.probs.len - 1) |i| {
+                const p_conditional = self.probs[i] / mass_left;
+                const xi = binomialSample(rng, remaining, p_conditional);
+                counts[i] = xi;
+                remaining -= xi;
+                mass_left -= self.probs[i];
+            }
+            // Last category gets remainder
+            counts[self.probs.len - 1] = remaining;
+
+            return counts;
+        }
+
+        /// Check invariants: n ≥ 1, probs.len ≥ 2, all probs ≥ 0, sum(probs) ≈ 1.0
+        /// Time: O(k) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n == 0) return DistributionError.InvalidParameter;
+            if (self.probs.len < 2) return DistributionError.InvalidParameter;
+
+            var sum: T = 0.0;
+            for (self.probs) |p| {
+                if (p < 0.0) return DistributionError.InvalidParameter;
+                sum += p;
+            }
+
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-12,
+            };
+            if (@abs(sum - 1.0) > eps) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+/// Helper: sample from Binomial(n_trials, p) using Bernoulli sum for correctness
+/// Time: O(n_trials)
+fn binomialSample(rng: std.Random, n_trials: u64, p: anytype) u64 {
+    const T = @TypeOf(p);
+    var count: u64 = 0;
+    for (0..n_trials) |_| {
+        if (rng.float(T) < p) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+test "Multinomial: init with n=0 returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+    const result = Multinomial(f64).init(allocator, 0, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Multinomial: init with k=1 returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{0.5};
+    const result = Multinomial(f64).init(allocator, 5, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Multinomial: init with k=0 returns error" {
+    const allocator = testing.allocator;
+    const weights: [0]f64 = undefined;
+    const result = Multinomial(f64).init(allocator, 5, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Multinomial: init with negative weight returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, -0.3, 0.2 };
+    const result = Multinomial(f64).init(allocator, 5, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Multinomial: init with zero sum weights returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.0, 0.0, 0.0 };
+    const result = Multinomial(f64).init(allocator, 5, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Multinomial: init with valid parameters succeeds" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+}
+
+test "Multinomial: numCategories returns k" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try expectEqual(3, dist.numCategories());
+}
+
+test "Multinomial: numCategories k=2" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+    const dist = try Multinomial(f64).init(allocator, 5, &weights);
+    defer dist.deinit();
+
+    try expectEqual(2, dist.numCategories());
+}
+
+test "Multinomial: pmf uniform n=2 k=3 [1,1,0]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0, 1.0 };
+    const dist = try Multinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 1, 0 };
+    const pmf_val = dist.pmf(&counts);
+    // 2! / (1! * 1! * 0!) * (1/3)^1 * (1/3)^1 * (1/3)^0
+    // = 2 * (1/9) = 2/9 ≈ 0.2222
+    try expectApproxEqRel(2.0 / 9.0, pmf_val, 1e-10);
+}
+
+test "Multinomial: pmf n=1 k=3 reduces to categorical [1,0,0]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 1, &weights);
+    defer dist.deinit();
+
+    const counts1 = [_]u64{ 1, 0, 0 };
+    const pmf1 = dist.pmf(&counts1);
+    try expectApproxEqRel(0.5, pmf1, 1e-10);
+
+    const counts2 = [_]u64{ 0, 1, 0 };
+    const pmf2 = dist.pmf(&counts2);
+    try expectApproxEqRel(0.3, pmf2, 1e-10);
+
+    const counts3 = [_]u64{ 0, 0, 1 };
+    const pmf3 = dist.pmf(&counts3);
+    try expectApproxEqRel(0.2, pmf3, 1e-10);
+}
+
+test "Multinomial: pmf outside support wrong sum returns 0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 1, 1 }; // sum = 3, but n = 2
+    const pmf_val = dist.pmf(&counts);
+    try expectEqual(0.0, pmf_val);
+}
+
+test "Multinomial: pmf counts all zero when n nonzero returns 0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 3, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 0, 0, 0 }; // sum = 0, but n = 3
+    const pmf_val = dist.pmf(&counts);
+    try expectEqual(0.0, pmf_val);
+}
+
+test "Multinomial: logpmf matches log(pmf) for valid counts" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.4, 0.3, 0.3 };
+    const dist = try Multinomial(f64).init(allocator, 3, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 1, 1 };
+    const pmf_val = dist.pmf(&counts);
+    const logpmf_val = dist.logpmf(&counts);
+
+    if (pmf_val > 0.0) {
+        try expectApproxEqRel(@log(pmf_val), logpmf_val, 1e-10);
+    }
+}
+
+test "Multinomial: logpmf outside support returns large negative" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+    const dist = try Multinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 0, 0 }; // sum = 0, but n = 2
+    const logpmf_val = dist.logpmf(&counts);
+    try testing.expect(logpmf_val < -1e6);
+}
+
+test "Multinomial: pmf sums to 1 n=2 k=2" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+    const dist = try Multinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    var sum: f64 = 0.0;
+    // enumerate all (x0, x1) with x0 + x1 = 2
+    const outcomes = [_][2]u64{
+        [_]u64{ 2, 0 },
+        [_]u64{ 1, 1 },
+        [_]u64{ 0, 2 },
+    };
+
+    for (outcomes) |counts| {
+        sum += dist.pmf(&counts);
+    }
+
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Multinomial: pmf sums to 1 n=3 k=2" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.7 };
+    const dist = try Multinomial(f64).init(allocator, 3, &weights);
+    defer dist.deinit();
+
+    var sum: f64 = 0.0;
+    // enumerate all (x0, x1) with x0 + x1 = 3
+    for (0..4) |x0| {
+        const x1 = 3 - x0;
+        const counts = [_]u64{ x0, x1 };
+        sum += dist.pmf(&counts);
+    }
+
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Multinomial: mean marginal equals n*pi" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try expectApproxEqRel(3.0, dist.mean(0), 1e-10); // 10 * 0.3
+    try expectApproxEqRel(5.0, dist.mean(1), 1e-10); // 10 * 0.5
+    try expectApproxEqRel(2.0, dist.mean(2), 1e-10); // 10 * 0.2
+}
+
+test "Multinomial: variance marginal equals np(1-p)" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try expectApproxEqRel(10.0 * 0.3 * 0.7, dist.variance(0), 1e-10);
+    try expectApproxEqRel(10.0 * 0.5 * 0.5, dist.variance(1), 1e-10);
+    try expectApproxEqRel(10.0 * 0.2 * 0.8, dist.variance(2), 1e-10);
+}
+
+test "Multinomial: covariance equals -n*pi*pj" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try expectApproxEqRel(-10.0 * 0.3 * 0.5, dist.covariance(0, 1), 1e-10);
+    try expectApproxEqRel(-10.0 * 0.5 * 0.2, dist.covariance(1, 2), 1e-10);
+    try expectApproxEqRel(-10.0 * 0.3 * 0.2, dist.covariance(0, 2), 1e-10);
+}
+
+test "Multinomial: covariance diagonal equals variance" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try expectApproxEqRel(dist.variance(0), dist.covariance(0, 0), 1e-10);
+    try expectApproxEqRel(dist.variance(1), dist.covariance(1, 1), 1e-10);
+    try expectApproxEqRel(dist.variance(2), dist.covariance(2, 2), 1e-10);
+}
+
+test "Multinomial: sample returns k-length counts" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const counts = try dist.sample(rng, allocator);
+    defer allocator.free(counts);
+
+    try expectEqual(3, counts.len);
+}
+
+test "Multinomial: sample counts sum to n" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    for (0..10) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        var sum: u64 = 0;
+        for (counts) |c| {
+            sum += c;
+        }
+        try expectEqual(10, sum);
+    }
+}
+
+test "Multinomial: sample all counts nonnegative" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    for (0..10) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        for (counts) |c| {
+            try testing.expect(c >= 0);
+        }
+    }
+}
+
+test "Multinomial: sample deterministic p=[1,0] always returns [n,0]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 0.0 };
+    const dist = try Multinomial(f64).init(allocator, 5, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+
+    for (0..10) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        try expectEqual(5, counts[0]);
+        try expectEqual(0, counts[1]);
+    }
+}
+
+test "Multinomial: sample deterministic p=[0,1] always returns [0,n]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.0, 1.0 };
+    const dist = try Multinomial(f64).init(allocator, 5, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(22222);
+    const rng = prng.random();
+
+    for (0..10) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        try expectEqual(0, counts[0]);
+        try expectEqual(5, counts[1]);
+    }
+}
+
+test "Multinomial: empirical mean converges n=100 k=3 [0.2,0.3,0.5]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.2, 0.3, 0.5 };
+    const dist = try Multinomial(f64).init(allocator, 100, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(33333);
+    const rng = prng.random();
+
+    var sum0: f64 = 0.0;
+    var sum1: f64 = 0.0;
+    var sum2: f64 = 0.0;
+
+    const samples = 500;
+    for (0..samples) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        sum0 += @as(f64, @floatFromInt(counts[0]));
+        sum1 += @as(f64, @floatFromInt(counts[1]));
+        sum2 += @as(f64, @floatFromInt(counts[2]));
+    }
+
+    const empirical_mean0 = sum0 / @as(f64, @floatFromInt(samples));
+    const empirical_mean1 = sum1 / @as(f64, @floatFromInt(samples));
+    const empirical_mean2 = sum2 / @as(f64, @floatFromInt(samples));
+
+    // Expected: 20, 30, 50; allow 10% tolerance
+    try expectApproxEqRel(20.0, empirical_mean0, 0.1);
+    try expectApproxEqRel(30.0, empirical_mean1, 0.1);
+    try expectApproxEqRel(50.0, empirical_mean2, 0.1);
+}
+
+test "Multinomial: empirical variance converges n=100 k=2 [0.4,0.6]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.4, 0.6 };
+    const dist = try Multinomial(f64).init(allocator, 100, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(44444);
+    const rng = prng.random();
+
+    var sum0: f64 = 0.0;
+    var sumsq0: f64 = 0.0;
+
+    const samples = 500;
+    for (0..samples) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        const val: f64 = @floatFromInt(counts[0]);
+        sum0 += val;
+        sumsq0 += val * val;
+    }
+
+    const empirical_mean0 = sum0 / @as(f64, @floatFromInt(samples));
+    const empirical_var0 = (sumsq0 / @as(f64, @floatFromInt(samples))) - empirical_mean0 * empirical_mean0;
+
+    // Expected variance: 100 * 0.4 * 0.6 = 24
+    // Allow 15% tolerance
+    try expectApproxEqRel(24.0, empirical_var0, 0.15);
+}
+
+test "Multinomial: validate passes on valid distribution" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try dist.validate();
+}
+
+test "Multinomial: f32 type support" {
+    const allocator = testing.allocator;
+    const weights = [_]f32{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f32).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    try expectEqual(3, dist.numCategories());
+    try expectApproxEqRel(@as(f32, 3.0), dist.mean(0), 1e-5);
+    try expectApproxEqRel(@as(f32, 2.1), dist.variance(0), 1e-5);
+}
+
+test "Multinomial: memory safety cycle loop" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+
+    for (0..10) |_| {
+        const dist = try Multinomial(f64).init(allocator, 10, &weights);
+        defer dist.deinit();
+
+        const counts = [_]u64{ 5, 5 };
+        _ = dist.pmf(&counts);
+        _ = dist.logpmf(&counts);
+        _ = dist.mean(0);
+        _ = dist.variance(0);
+        _ = dist.covariance(0, 1);
+
+        var prng = std.Random.DefaultPrng.init(55555);
+        const rng = prng.random();
+        const sample_counts = try dist.sample(rng, allocator);
+        allocator.free(sample_counts);
+
+        try dist.validate();
+    }
+}
+
+test "Multinomial: sample ownership caller allocates and frees" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.5, 0.2 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(66666);
+    const rng = prng.random();
+
+    const counts = try dist.sample(rng, allocator);
+    try expectEqual(3, counts.len);
+    allocator.free(counts); // Caller must free
+}
+
+test "Multinomial: large n and k boundary" {
+    const allocator = testing.allocator;
+    const weights_array = try allocator.alloc(f64, 10);
+    defer allocator.free(weights_array);
+
+    for (weights_array) |*w| {
+        w.* = 1.0;
+    }
+
+    const dist = try Multinomial(f64).init(allocator, 1000, weights_array);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(77777);
+    const rng = prng.random();
+
+    const counts = try dist.sample(rng, allocator);
+    defer allocator.free(counts);
+
+    var sum: u64 = 0;
+    for (counts) |c| {
+        sum += c;
+    }
+    try expectEqual(1000, sum);
+}
+
+test "Multinomial: pmf with zero-prob zero-count handled" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.0, 0.5 };
+    const dist = try Multinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    // Counts [1, 0, 1]: category 1 has 0 prob but 0 count => 0*log(0) = 0
+    const counts = [_]u64{ 1, 0, 1 };
+    const pmf_val = dist.pmf(&counts);
+    try testing.expect(!math.isNan(pmf_val));
+}
+
+test "Multinomial: binomial equivalence k=2" {
+    const allocator = testing.allocator;
+    const p: f64 = 0.6;
+    const weights = [_]f64{ p, 1.0 - p };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    // Multinomial(n=10, [0.6, 0.4]) marginal mean for category 0 should be 10*0.6=6
+    // Compare with Binomial(n=10, p=0.6) mean = 10*0.6=6
+    try expectApproxEqRel(6.0, dist.mean(0), 1e-10);
+    try expectApproxEqRel(10.0 * 0.6 * 0.4, dist.variance(0), 1e-10);
+}
