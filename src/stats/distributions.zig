@@ -7414,3 +7414,555 @@ test "Hypergeometric: memory safety cycle loop" {
         try hg.validate();
     }
 }
+
+// ============================================================================
+// Categorical Distribution
+// ============================================================================
+// Categorical distribution — discrete distribution over k categories
+// Parameters: weights []const T, arbitrary non-negative values (normalized internally)
+// Support: {0, 1, 2, ..., k-1}
+// Generalization of Bernoulli to multiple categories.
+// Probabilities: p[i] = weights[i] / sum(weights)
+
+/// Categorical distribution — discrete distribution over k mutually exclusive outcomes
+///
+/// A generalization of the Bernoulli distribution to k > 2 categories.
+/// Each category i has probability probs[i] with sum(probs) = 1.
+/// Category labels are 0, 1, ..., k-1.
+///
+/// Parameters:
+///   - k: number of categories (≥ 2)
+///   - probs: probability vector (must sum to 1.0, all ≥ 0)
+///
+/// Applications:
+///   - Multi-class classification (softmax outputs)
+///   - Multinomial sampling in language models
+///   - Bayesian categorical data modeling
+pub fn Categorical(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        probs: []T,        // normalized probability vector (sum = 1.0)
+        cum_probs: []T,    // cumulative probabilities for O(log k) sampling
+        k: usize,          // number of categories
+        allocator: std.mem.Allocator,
+
+        /// Initialize Categorical distribution from weights.
+        /// Weights are normalized to sum to 1. Must have k ≥ 2 non-negative weights
+        /// with positive total sum.
+        /// Time: O(k) | Space: O(k)
+        pub fn init(allocator: std.mem.Allocator, weights: []const T) !Self {
+            if (weights.len < 2) return DistributionError.InvalidParameter;
+
+            var sum: T = 0.0;
+            for (weights) |w| {
+                if (w < 0.0) return DistributionError.InvalidParameter;
+                sum += w;
+            }
+            if (sum <= 0.0) return DistributionError.InvalidParameter;
+
+            const probs = try allocator.alloc(T, weights.len);
+            errdefer allocator.free(probs);
+            const cum_probs = try allocator.alloc(T, weights.len);
+            errdefer allocator.free(cum_probs);
+
+            var cumsum: T = 0.0;
+            for (weights, 0..) |w, i| {
+                probs[i] = w / sum;
+                cumsum += probs[i];
+                cum_probs[i] = cumsum;
+            }
+            cum_probs[weights.len - 1] = 1.0; // fix floating point drift
+
+            return Self{
+                .probs = probs,
+                .cum_probs = cum_probs,
+                .k = weights.len,
+                .allocator = allocator,
+            };
+        }
+
+        /// Free allocated memory
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.probs);
+            self.allocator.free(self.cum_probs);
+        }
+
+        /// Number of categories
+        pub fn numCategories(self: Self) usize {
+            return self.k;
+        }
+
+        /// PMF: probability of category i (0-indexed). Returns 0.0 for i ≥ k.
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, i: usize) T {
+            if (i >= self.k) return 0.0;
+            return self.probs[i];
+        }
+
+        /// Log PMF: log probability of category i. Returns -inf for i ≥ k or p[i] = 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, i: usize) T {
+            if (i >= self.k) return -math.inf(T);
+            const p = self.probs[i];
+            if (p == 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// CDF: P(X ≤ i). Returns 0.0 for empty range, 1.0 for i ≥ k-1.
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, i: usize) T {
+            if (i >= self.k) return 1.0;
+            return self.cum_probs[i];
+        }
+
+        /// Mean: E[X] = Σ(i × probs[i])
+        /// Time: O(k) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var m: T = 0.0;
+            for (self.probs, 0..) |p, i| {
+                m += @as(T, @floatFromInt(i)) * p;
+            }
+            return m;
+        }
+
+        /// Variance: Var[X] = E[X²] - E[X]²
+        /// Time: O(k) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            var ex2: T = 0.0;
+            for (self.probs, 0..) |p, i| {
+                const fi: T = @floatFromInt(i);
+                ex2 += fi * fi * p;
+            }
+            return ex2 - m * m;
+        }
+
+        /// Mode: index of highest probability (smallest index if tied)
+        /// Time: O(k) | Space: O(1)
+        pub fn mode(self: Self) usize {
+            var best_i: usize = 0;
+            var best_p: T = self.probs[0];
+            for (self.probs[1..], 1..) |p, i| {
+                if (p > best_p) {
+                    best_p = p;
+                    best_i = i;
+                }
+            }
+            return best_i;
+        }
+
+        /// Shannon entropy: H = -Σ(p[i] × log(p[i]))
+        /// Time: O(k) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var h: T = 0.0;
+            for (self.probs) |p| {
+                if (p > 0.0) {
+                    h -= p * @log(p);
+                }
+            }
+            return h;
+        }
+
+        /// Sample a category using inverse CDF with binary search.
+        /// Time: O(log k) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) usize {
+            const u = rng.float(T);
+            var lo: usize = 0;
+            var hi: usize = self.k;
+            while (lo < hi) {
+                const mid = lo + (hi - lo) / 2;
+                if (self.cum_probs[mid] < u) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return @min(lo, self.k - 1);
+        }
+
+        /// Validate invariants: k ≥ 2, probs sum to ≈1.0, all probs ≥ 0.
+        /// Time: O(k) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.k < 2) return DistributionError.InvalidParameter;
+            var sum: T = 0.0;
+            for (self.probs) |p| {
+                if (p < 0.0) return DistributionError.InvalidParameter;
+                sum += p;
+            }
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-12,
+            };
+            if (@abs(sum - 1.0) > eps) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+test "Categorical: init with [0.5, 0.3, 0.2]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(3, cat.numCategories());
+}
+
+test "Categorical: init unnormalized [2, 6, 2] normalizes correctly" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 2.0, 6.0, 2.0 }; // sum=10, normalize to [0.2, 0.6, 0.2]
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(3, cat.numCategories());
+    try expectApproxEqRel(0.2, cat.pmf(0), 1e-10);
+    try expectApproxEqRel(0.6, cat.pmf(1), 1e-10);
+    try expectApproxEqRel(0.2, cat.pmf(2), 1e-10);
+}
+
+test "Categorical: pmf [0.5, 0.3, 0.2]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectApproxEqRel(0.5, cat.pmf(0), 1e-10);
+    try expectApproxEqRel(0.3, cat.pmf(1), 1e-10);
+    try expectApproxEqRel(0.2, cat.pmf(2), 1e-10);
+}
+
+test "Categorical: pmf out-of-bounds returns 0.0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(0.0, cat.pmf(3));
+    try expectEqual(0.0, cat.pmf(100));
+}
+
+test "Categorical: cdf [0.5, 0.3, 0.2] monotonic" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    const cdf0 = cat.cdf(0);
+    const cdf1 = cat.cdf(1);
+    const cdf2 = cat.cdf(2);
+
+    try expectApproxEqRel(0.5, cdf0, 1e-10);
+    try expectApproxEqRel(0.8, cdf1, 1e-10);
+    try expectApproxEqRel(1.0, cdf2, 1e-10);
+
+    try testing.expect(cdf0 <= cdf1);
+    try testing.expect(cdf1 <= cdf2);
+}
+
+test "Categorical: cdf out-of-bounds returns 1.0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(1.0, cat.cdf(3));
+    try expectEqual(1.0, cat.cdf(999));
+}
+
+test "Categorical: logpmf values [0.5, 0.3, 0.2]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // log(0.5) ≈ -0.693147
+    // log(0.3) ≈ -1.203973
+    // log(0.2) ≈ -1.609438
+    try expectApproxEqRel(@log(0.5), cat.logpmf(0), 1e-10);
+    try expectApproxEqRel(@log(0.3), cat.logpmf(1), 1e-10);
+    try expectApproxEqRel(@log(0.2), cat.logpmf(2), 1e-10);
+}
+
+test "Categorical: logpmf out-of-bounds returns -inf" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    const logpmf3 = cat.logpmf(3);
+    try testing.expect(math.isNegativeInf(logpmf3));
+}
+
+test "Categorical: mean [0.5, 0.3, 0.2] = 0.7" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // E[X] = 0*0.5 + 1*0.3 + 2*0.2 = 0.7
+    try expectApproxEqRel(0.7, cat.mean(), 1e-10);
+}
+
+test "Categorical: variance [0.5, 0.3, 0.2] = 0.61" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // E[X²] = 0*0.5 + 1*0.3 + 4*0.2 = 1.1
+    // Var[X] = 1.1 - 0.7² = 1.1 - 0.49 = 0.61
+    try expectApproxEqRel(0.61, cat.variance(), 1e-10);
+}
+
+test "Categorical: mean binary uniform [1, 1] = 0.5" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectApproxEqRel(0.5, cat.mean(), 1e-10);
+}
+
+test "Categorical: variance binary uniform [1, 1] = 0.25" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // p = [0.5, 0.5], E[X] = 0.5, E[X²] = 0.5
+    // Var[X] = 0.5 - 0.25 = 0.25
+    try expectApproxEqRel(0.25, cat.variance(), 1e-10);
+}
+
+test "Categorical: mean 3-category uniform [1, 1, 1] = 1.0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // p = [1/3, 1/3, 1/3], E[X] = (0 + 1 + 2) / 3 = 1.0
+    try expectApproxEqRel(1.0, cat.mean(), 1e-10);
+}
+
+test "Categorical: variance 3-category uniform [1, 1, 1]" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // p = [1/3, 1/3, 1/3], E[X] = 1, E[X²] = (0 + 1 + 4)/3 = 5/3
+    // Var[X] = 5/3 - 1 = 2/3 ≈ 0.6667
+    try expectApproxEqRel(2.0 / 3.0, cat.variance(), 1e-10);
+}
+
+test "Categorical: entropy binary uniform [1, 1] = ln(2)" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // H = -sum(p * log(p)) = -(2 * 0.5 * log(0.5)) = ln(2) ≈ 0.693147
+    const expected_entropy = @log(2.0);
+    try expectApproxEqRel(expected_entropy, cat.entropy(), 1e-10);
+}
+
+test "Categorical: entropy 3-category uniform [1, 1, 1] = ln(3)" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 1.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    // H = -(3 * (1/3) * log(1/3)) = ln(3) ≈ 1.098612
+    const expected_entropy = @log(3.0);
+    try expectApproxEqRel(expected_entropy, cat.entropy(), 1e-10);
+}
+
+test "Categorical: mode [0.5, 0.3, 0.2] = 0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(0, cat.mode());
+}
+
+test "Categorical: mode [0.2, 0.3, 0.5] = 2" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.2, 0.3, 0.5 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(2, cat.mode());
+}
+
+test "Categorical: mode [0.1, 0.9] = 1" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.1, 0.9 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectEqual(1, cat.mode());
+}
+
+test "Categorical: deinit frees memory (no leak)" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    cat.deinit(); // Should not leak with testing.allocator
+}
+
+test "Categorical: sample returns value in [0, k)" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    for (0..100) |_| {
+        const sample_val = cat.sample(rng);
+        try testing.expect(sample_val >= 0 and sample_val < 3);
+    }
+}
+
+test "Categorical: sample deterministic [1.0, 0.0, 0.0] always returns 0" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 1.0, 0.0, 0.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    for (0..50) |_| {
+        try expectEqual(0, cat.sample(rng));
+    }
+}
+
+test "Categorical: sample deterministic [0.0, 0.0, 1.0] always returns 2" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.0, 0.0, 1.0 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    for (0..50) |_| {
+        try expectEqual(2, cat.sample(rng));
+    }
+}
+
+test "Categorical: validate passes on valid distribution" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    try cat.validate();
+}
+
+test "Categorical: invalid empty weights" {
+    const allocator = testing.allocator;
+    const weights: [0]f64 = undefined;
+    const result = Categorical(f64).init(allocator, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Categorical: invalid single weight" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{0.5};
+    const result = Categorical(f64).init(allocator, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Categorical: invalid negative weight" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, -0.3, 0.2 };
+    const result = Categorical(f64).init(allocator, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Categorical: invalid all-zero weights" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.0, 0.0, 0.0 };
+    const result = Categorical(f64).init(allocator, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Categorical: f32 type works" {
+    const allocator = testing.allocator;
+    const weights = [_]f32{ 0.5, 0.3, 0.2 };
+    const cat = try Categorical(f32).init(allocator, &weights);
+    defer cat.deinit();
+
+    try expectApproxEqRel(@as(f32, 0.5), cat.pmf(0), 1e-5);
+    try expectApproxEqRel(@as(f32, 0.3), cat.pmf(1), 1e-5);
+    _ = cat.mean();
+    _ = cat.variance();
+    _ = cat.mode();
+}
+
+test "Categorical: large k (100 categories) uniform" {
+    const allocator = testing.allocator;
+    const weights_array = try allocator.alloc(f64, 100);
+    defer allocator.free(weights_array);
+
+    for (weights_array) |*w| {
+        w.* = 1.0;
+    }
+
+    const cat = try Categorical(f64).init(allocator, weights_array);
+    defer cat.deinit();
+
+    try expectEqual(100, cat.numCategories());
+    // Mean of uniform [0..99] is 49.5
+    try expectApproxEqRel(49.5, cat.mean(), 1e-10);
+}
+
+test "Categorical: memory safety cycle loop" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.3, 0.2 };
+
+    for (0..10) |_| {
+        const cat = try Categorical(f64).init(allocator, &weights);
+        _ = cat.pmf(0);
+        _ = cat.pmf(1);
+        _ = cat.pmf(2);
+        _ = cat.cdf(0);
+        _ = cat.cdf(1);
+        _ = cat.cdf(2);
+        _ = cat.logpmf(0);
+        _ = cat.mean();
+        _ = cat.variance();
+        _ = cat.mode();
+        _ = cat.entropy();
+        try cat.validate();
+        cat.deinit();
+    }
+}
+
+test "Categorical: sample distribution empirical [0.7, 0.3]" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.7, 0.3 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    var count0: usize = 0;
+    var count1: usize = 0;
+    const samples = 1000;
+
+    for (0..samples) |_| {
+        const s = cat.sample(rng);
+        if (s == 0) count0 += 1 else count1 += 1;
+    }
+
+    // Empirical frequency for category 0 should be close to 0.7
+    const freq0 = @as(f64, @floatFromInt(count0)) / @as(f64, @floatFromInt(samples));
+    try expectApproxEqRel(0.7, freq0, 0.05); // Allow 5% tolerance for stochastic test
+}
