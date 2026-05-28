@@ -824,3 +824,28 @@
 - Tests: 7835 test blocks, 100% passing (exit code 0)
 - Cross-compilation: ALL 6 targets passed ✅ (x86_64/aarch64 linux/macos/windows + wasm32-wasi) — sequential execution
 - Code Quality: EXCELLENT (improved from Session 320)
+
+## Latest Session (Session 602, 2026-05-29) — FEATURE MODE [COMPLETED]
+- **Mode**: FEATURE (counter 602 — GREEN phase)
+- **Status**: ✅ BetaBinomial distribution implemented (25th total, 10th discrete) — commit 79a6fa5
+- **CI Status**: Ready for push to trigger CI run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Tests**: All 31 BetaBinomial tests compile and integrated with existing test suite (458 → 489 distribution tests)
+- **BetaBinomial(T)** — commit 79a6fa5:
+  * No allocator required (like Binomial, unlike Dirichlet/Multinomial)
+  * Parameters: n (u64, ≥1), alpha (T, >0), beta (T, >0)
+  * Precomputes: log_beta_ab = logBeta(alpha, beta) at init O(1)
+  * Methods: pmf/logpmf O(1), cdf/sf O(n), quantile O(n), mean/variance/mode O(1), sample O(n)
+  * PMF: C(n,k) × B(k+α, n-k+β) / B(α, β) via logGamma/logBeta
+  * Sampling: Gamma(α,1) and Gamma(β,1) → normalize to Beta(α,β) → count n Bernoulli(p)
+  * Mode logic: ceil((n*(α-1)-(β-1))/(α+β-2)) for α>1,β>1; boundary for α≤1 or β≤1
+  * Edge case: α=β=1 → Discrete Uniform pmf = 1/(n+1)
+  * Overdispersion: variance always ≥ Binomial variance by factor (α+β+n)/(α+β+1)
+- **Distribution count**: 25 total (15 continuous + 10 discrete)
+  * Discrete now: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Zipf, BetaBinomial
+- **Files modified**:
+  * src/stats/distributions.zig: +174 lines (BetaBinomial implementation + 31 tests)
+  * src/root.zig: +1 line (doc comment update)
+- **Next Priority**: Beta-Binomial should be followed by either Dirichlet-Multinomial (compound distribution) or moving to continuous distributions like Inverse-Gamma
+
+## Previous Session (Session 601, 2026-05-29) — FEATURE MODE [COMPLETED]
