@@ -8658,3 +8658,541 @@ test "Multinomial: binomial equivalence k=2" {
     try expectApproxEqRel(6.0, dist.mean(0), 1e-10);
     try expectApproxEqRel(10.0 * 0.6 * 0.4, dist.variance(0), 1e-10);
 }
+
+// ============================================================================
+// DIRICHLET DISTRIBUTION
+// ============================================================================
+
+/// Digamma function ψ(x) = d/dx ln Γ(x).
+/// Uses recurrence ψ(x+1) = ψ(x) + 1/x to shift x ≥ 6, then asymptotic expansion.
+/// Accurate to ~15 significant digits for x > 0.
+/// Time: O(1) | Space: O(1)
+fn digamma(comptime T: type, x: T) T {
+    var sum: T = 0.0;
+    var xi = x;
+    while (xi < 6.0) {
+        sum -= 1.0 / xi;
+        xi += 1.0;
+    }
+    // Asymptotic: ψ(x) ≈ ln(x) - 1/(2x) - 1/(12x²) + 1/(120x⁴) - 1/(252x⁶)
+    const xi2 = xi * xi;
+    const xi4 = xi2 * xi2;
+    const xi6 = xi4 * xi2;
+    return @log(xi) - 0.5 / xi - 1.0 / (12.0 * xi2) + 1.0 / (120.0 * xi4) - 1.0 / (252.0 * xi6) + sum;
+}
+
+/// Dirichlet distribution — multivariate continuous distribution over the probability simplex.
+/// Conjugate prior for Categorical and Multinomial distributions.
+///
+/// Parameters: α = (α₁,...,αₖ), αᵢ > 0, k ≥ 2
+/// Support: {x ∈ ℝᵏ : xᵢ ≥ 0, Σxᵢ = 1}
+/// PDF: f(x|α) = Γ(α₀)/∏Γ(αᵢ) × ∏xᵢ^(αᵢ-1), α₀ = Σαᵢ
+pub fn Dirichlet(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        alphas: []T,
+        alpha0: T,
+        allocator: std.mem.Allocator,
+
+        /// Initialize Dirichlet distribution. All alphas must be > 0, k ≥ 2.
+        /// Time: O(k) | Space: O(k)
+        pub fn init(allocator: std.mem.Allocator, alphas: []const T) !Self {
+            if (alphas.len < 2) return DistributionError.InvalidParameter;
+
+            var alpha0: T = 0.0;
+            for (alphas) |a| {
+                if (a <= 0.0) return DistributionError.InvalidParameter;
+                alpha0 += a;
+            }
+
+            const stored = try allocator.alloc(T, alphas.len);
+            errdefer allocator.free(stored);
+            @memcpy(stored, alphas);
+
+            return Self{ .alphas = stored, .alpha0 = alpha0, .allocator = allocator };
+        }
+
+        /// Free allocated memory.
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.alphas);
+        }
+
+        /// Number of categories k.
+        /// Time: O(1) | Space: O(1)
+        pub fn numCategories(self: Self) usize {
+            return self.alphas.len;
+        }
+
+        /// Log-PDF at x. Returns -inf if x.len ≠ k, any xᵢ < 0, or Σxᵢ ≠ 1.
+        /// Time: O(k) | Space: O(1)
+        pub fn logpdf(self: Self, x: []const T) T {
+            if (x.len != self.alphas.len) return -math.inf(T);
+
+            var sum: T = 0.0;
+            for (x) |xi| {
+                if (xi < 0.0) return -math.inf(T);
+                sum += xi;
+            }
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-10,
+            };
+            if (@abs(sum - 1.0) > eps) return -math.inf(T);
+
+            // log f = lgamma(α₀) - Σlgamma(αᵢ) + Σ(αᵢ-1)log(xᵢ)
+            var log_norm: T = logGamma(self.alpha0);
+            for (self.alphas) |ai| {
+                log_norm -= logGamma(ai);
+            }
+
+            var log_kernel: T = 0.0;
+            for (x, self.alphas) |xi, ai| {
+                const exp = ai - 1.0;
+                if (@abs(exp) < 1e-15) continue;
+                if (xi <= 0.0) return -math.inf(T);
+                log_kernel += exp * @log(xi);
+            }
+
+            return log_norm + log_kernel;
+        }
+
+        /// PDF at x. Returns 0 if x is outside the simplex.
+        /// Time: O(k) | Space: O(1)
+        pub fn pdf(self: Self, x: []const T) T {
+            const lp = self.logpdf(x);
+            if (math.isNegativeInf(lp)) return 0.0;
+            return @exp(lp);
+        }
+
+        /// Marginal mean of category i: E[Xᵢ] = αᵢ / α₀
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self, i: usize) T {
+            return self.alphas[i] / self.alpha0;
+        }
+
+        /// Marginal variance of category i: Var[Xᵢ] = αᵢ(α₀-αᵢ) / (α₀²(α₀+1))
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self, i: usize) T {
+            const ai = self.alphas[i];
+            return ai * (self.alpha0 - ai) / (self.alpha0 * self.alpha0 * (self.alpha0 + 1.0));
+        }
+
+        /// Covariance(i,j): -αᵢαⱼ/(α₀²(α₀+1)) for i≠j; variance(i) for i==j.
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self, i: usize, j: usize) T {
+            if (i == j) return self.variance(i);
+            return -(self.alphas[i] * self.alphas[j]) / (self.alpha0 * self.alpha0 * (self.alpha0 + 1.0));
+        }
+
+        /// Mode: (αᵢ-1)/(α₀-k) for all αᵢ > 1. Returns error.InvalidParameter if any αᵢ ≤ 1.
+        /// Allocates []T (caller owns). Time: O(k) | Space: O(k)
+        pub fn mode(self: Self, allocator: std.mem.Allocator) ![]T {
+            for (self.alphas) |ai| {
+                if (ai <= 1.0) return DistributionError.InvalidParameter;
+            }
+            const k: T = @floatFromInt(self.alphas.len);
+            const denom = self.alpha0 - k;
+            const m = try allocator.alloc(T, self.alphas.len);
+            for (self.alphas, 0..) |ai, i| {
+                m[i] = (ai - 1.0) / denom;
+            }
+            return m;
+        }
+
+        /// Shannon entropy: log B(α) + (α₀-k)ψ(α₀) - Σ(αᵢ-1)ψ(αᵢ)
+        /// where log B(α) = Σlgamma(αᵢ) - lgamma(α₀), ψ is the digamma function.
+        /// Time: O(k) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var log_beta: T = -logGamma(self.alpha0);
+            for (self.alphas) |ai| {
+                log_beta += logGamma(ai);
+            }
+            const k: T = @floatFromInt(self.alphas.len);
+            var weighted_digamma_sum: T = 0.0;
+            for (self.alphas) |ai| {
+                weighted_digamma_sum += (ai - 1.0) * digamma(T, ai);
+            }
+            return log_beta + (self.alpha0 - k) * digamma(T, self.alpha0) - weighted_digamma_sum;
+        }
+
+        /// Sample from Dirichlet: draw Gamma(αᵢ, 1) for each i, then normalize.
+        /// Allocates []T (caller owns). Time: O(k) | Space: O(k)
+        pub fn sample(self: Self, rng: std.Random, allocator: std.mem.Allocator) ![]T {
+            const xs = try allocator.alloc(T, self.alphas.len);
+            errdefer allocator.free(xs);
+
+            var total: T = 0.0;
+            for (self.alphas, 0..) |ai, i| {
+                const g = try Gamma(T).init(ai, 1.0);
+                xs[i] = g.sample(rng);
+                total += xs[i];
+            }
+
+            for (xs) |*xi| {
+                xi.* /= total;
+            }
+            // Fix last element to ensure Σxᵢ = 1 exactly
+            var partial: T = 0.0;
+            for (xs[0 .. xs.len - 1]) |xi| {
+                partial += xi;
+            }
+            xs[xs.len - 1] = 1.0 - partial;
+
+            return xs;
+        }
+
+        /// Validate invariants: k ≥ 2, all αᵢ > 0, α₀ ≈ Σαᵢ.
+        /// Time: O(k) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.alphas.len < 2) return DistributionError.InvalidParameter;
+            var sum: T = 0.0;
+            for (self.alphas) |ai| {
+                if (ai <= 0.0) return DistributionError.InvalidParameter;
+                sum += ai;
+            }
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-10,
+            };
+            if (@abs(sum - self.alpha0) > eps) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// DIRICHLET DISTRIBUTION TESTS
+// ============================================================================
+
+test "Dirichlet: init with k=1 returns error" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{1.0};
+    const result = Dirichlet(f64).init(allocator, &alphas);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Dirichlet: init with k=0 returns error" {
+    const allocator = testing.allocator;
+    const alphas: [0]f64 = undefined;
+    const result = Dirichlet(f64).init(allocator, &alphas);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Dirichlet: init with zero alpha returns error" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 0.0 };
+    const result = Dirichlet(f64).init(allocator, &alphas);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Dirichlet: init with negative alpha returns error" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, -0.5 };
+    const result = Dirichlet(f64).init(allocator, &alphas);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Dirichlet: symmetric uniform mean" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 1.0, 1.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // Dirichlet(1,1,1) is uniform over 2-simplex
+    // Mean should be [1/3, 1/3, 1/3]
+    try expectApproxEqAbs(1.0 / 3.0, dist.mean(0), 1e-10);
+    try expectApproxEqAbs(1.0 / 3.0, dist.mean(1), 1e-10);
+    try expectApproxEqAbs(1.0 / 3.0, dist.mean(2), 1e-10);
+}
+
+test "Dirichlet: mean formula" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // alpha0 = 10
+    // mean(i) = alpha(i) / alpha0
+    try expectApproxEqAbs(0.2, dist.mean(0), 1e-10);
+    try expectApproxEqAbs(0.3, dist.mean(1), 1e-10);
+    try expectApproxEqAbs(0.5, dist.mean(2), 1e-10);
+}
+
+test "Dirichlet: variance formula" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // alpha0 = 10
+    // variance(i) = alpha(i) * (alpha0 - alpha(i)) / (alpha0^2 * (alpha0 + 1))
+    // variance(0) = 2 * 8 / (100 * 11) = 16/1100 ≈ 0.01454545...
+    try expectApproxEqAbs(16.0 / 1100.0, dist.variance(0), 1e-10);
+    // variance(1) = 3 * 7 / (100 * 11) = 21/1100 ≈ 0.01909090...
+    try expectApproxEqAbs(21.0 / 1100.0, dist.variance(1), 1e-10);
+    // variance(2) = 5 * 5 / (100 * 11) = 25/1100 ≈ 0.02272727...
+    try expectApproxEqAbs(25.0 / 1100.0, dist.variance(2), 1e-10);
+}
+
+test "Dirichlet: covariance formula" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // alpha0 = 10
+    // covariance(i,j) = -alpha(i) * alpha(j) / (alpha0^2 * (alpha0 + 1))
+    // covariance(0,1) = -2 * 3 / (100 * 11) = -6/1100 ≈ -0.00545454...
+    try expectApproxEqAbs(-6.0 / 1100.0, dist.covariance(0, 1), 1e-10);
+    // covariance(0,2) = -2 * 5 / (100 * 11) = -10/1100 ≈ -0.00909090...
+    try expectApproxEqAbs(-10.0 / 1100.0, dist.covariance(0, 2), 1e-10);
+}
+
+test "Dirichlet: covariance diagonal equals variance" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // covariance(i,i) should equal variance(i)
+    try expectEqual(dist.variance(0), dist.covariance(0, 0));
+    try expectEqual(dist.variance(1), dist.covariance(1, 1));
+    try expectEqual(dist.variance(2), dist.covariance(2, 2));
+}
+
+test "Dirichlet: logpdf at centroid Dir(2,2,2)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 2.0, 2.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    const x = [_]f64{ 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0 };
+    const logpdf_val = dist.logpdf(&x);
+
+    // logpdf = lgamma(6) - 3*lgamma(2) + 3*(2-1)*log(1/3)
+    // = lgamma(6) - 3*0 + 3*log(1/3)
+    // = log(120) + 3*(-log(3))
+    const expected = @log(120.0) - 3.0 * @log(3.0);
+    try expectApproxEqAbs(expected, logpdf_val, 1e-6);
+}
+
+test "Dirichlet: logpdf outside simplex returns -inf" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // x sums to 1.1 > 1, outside simplex
+    const x = [_]f64{ 0.5, 0.6 };
+    const logpdf_val = dist.logpdf(&x);
+    try expect(math.isInf(logpdf_val) and logpdf_val < 0);
+}
+
+test "Dirichlet: logpdf wrong length returns -inf" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // x has length 3 but distribution has k=2
+    const x = [_]f64{ 0.3, 0.3, 0.4 };
+    const logpdf_val = dist.logpdf(&x);
+    try expect(math.isInf(logpdf_val) and logpdf_val < 0);
+}
+
+test "Dirichlet: pdf at valid point" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 2.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    const x = [_]f64{ 0.4, 0.6 };
+    const logpdf_val = dist.logpdf(&x);
+    const pdf_val = dist.pdf(&x);
+
+    // pdf = exp(logpdf)
+    const expected_pdf = @exp(logpdf_val);
+    try expectApproxEqRel(expected_pdf, pdf_val, 1e-10);
+}
+
+test "Dirichlet: mode for concentrated params" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 3.0, 4.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // alpha0 = 12, k = 3
+    // mode(i) = (alpha(i) - 1) / (alpha0 - k)
+    // = (alpha(i) - 1) / 9
+    const mode_slice = try dist.mode(allocator);
+    defer allocator.free(mode_slice);
+
+    // mode(0) = 2/9, mode(1) = 3/9, mode(2) = 4/9
+    try expectApproxEqAbs(2.0 / 9.0, mode_slice[0], 1e-10);
+    try expectApproxEqAbs(3.0 / 9.0, mode_slice[1], 1e-10);
+    try expectApproxEqAbs(4.0 / 9.0, mode_slice[2], 1e-10);
+}
+
+test "Dirichlet: mode with alpha <= 1 returns error" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // alpha(0) = 1.0, so mode() should fail
+    const result = dist.mode(allocator);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Dirichlet: entropy symmetric Dir(1,1,1)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 1.0, 1.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    const entropy_val = dist.entropy();
+
+    // For Dir(1,1,1): log B(1,1,1) + (alpha0 - k)*psi(alpha0) - sum((alpha(i)-1)*psi(alpha(i)))
+    // B(1,1,1) = Gamma(1)*Gamma(1)*Gamma(1) / Gamma(3) = 1*1*1 / 2 = 1/2
+    // log B = -log(2) ≈ -0.693147...
+    // alpha0 = 3, k = 3, so (alpha0 - k) = 0
+    // sum((alpha(i)-1)*psi(alpha(i))) = sum(0*psi(1)) = 0
+    // entropy = log(1/2) = -log(2) ≈ -0.693147...
+    try expectApproxEqAbs(-@log(2.0), entropy_val, 1e-6);
+}
+
+test "Dirichlet: sample sums to 1" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    // Draw 100 samples and verify each sums to ~1.0
+    for (0..100) |_| {
+        const sample_x = try dist.sample(rng, allocator);
+        defer allocator.free(sample_x);
+
+        var sum: f64 = 0.0;
+        for (sample_x) |val| {
+            sum += val;
+        }
+        try expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+test "Dirichlet: sample non-negative" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(88888);
+    const rng = prng.random();
+
+    for (0..50) |_| {
+        const sample_x = try dist.sample(rng, allocator);
+        defer allocator.free(sample_x);
+
+        for (sample_x) |val| {
+            try expect(val >= 0.0);
+        }
+    }
+}
+
+test "Dirichlet: sample empirical mean" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 5.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(77777);
+    const rng = prng.random();
+
+    var sum0: f64 = 0.0;
+    var sum1: f64 = 0.0;
+    var sum2: f64 = 0.0;
+
+    const samples = 5000;
+    for (0..samples) |_| {
+        const sample_x = try dist.sample(rng, allocator);
+        defer allocator.free(sample_x);
+
+        sum0 += sample_x[0];
+        sum1 += sample_x[1];
+        sum2 += sample_x[2];
+    }
+
+    const empirical_mean0 = sum0 / @as(f64, @floatFromInt(samples));
+    const empirical_mean1 = sum1 / @as(f64, @floatFromInt(samples));
+    const empirical_mean2 = sum2 / @as(f64, @floatFromInt(samples));
+
+    // Expected means: 2/10, 3/10, 5/10
+    // Allow 2% tolerance
+    try expectApproxEqRel(0.2, empirical_mean0, 0.02);
+    try expectApproxEqRel(0.3, empirical_mean1, 0.02);
+    try expectApproxEqRel(0.5, empirical_mean2, 0.02);
+}
+
+test "Dirichlet: f32 support" {
+    const allocator = testing.allocator;
+    const alphas = [_]f32{ 1.0, 2.0, 3.0 };
+    const dist = try Dirichlet(f32).init(allocator, &alphas);
+    defer dist.deinit();
+
+    try expectEqual(3, dist.numCategories());
+    try expectApproxEqRel(@as(f32, 1.0 / 6.0), dist.mean(0), 1e-5);
+    try expectApproxEqRel(@as(f32, 2.0 / 6.0), dist.mean(1), 1e-5);
+    try expectApproxEqRel(@as(f32, 3.0 / 6.0), dist.mean(2), 1e-5);
+
+    // Spot-check logpdf
+    const x = [_]f32{ 1.0 / 6.0, 2.0 / 6.0, 3.0 / 6.0 };
+    const logpdf_val = dist.logpdf(&x);
+    try expect(!math.isNan(logpdf_val));
+}
+
+test "Dirichlet: memory safety init deinit" {
+    const allocator = testing.allocator;
+
+    for (0..1000) |_| {
+        const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+        const dist = try Dirichlet(f64).init(allocator, &alphas);
+        dist.deinit();
+    }
+}
+
+test "Dirichlet: sample memory safety" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(55555);
+    const rng = prng.random();
+
+    for (0..100) |_| {
+        const sample_x = try dist.sample(rng, allocator);
+        allocator.free(sample_x);
+    }
+}
+
+test "Dirichlet: validate passes" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    try dist.validate();
+}
+
+test "Dirichlet: numCategories" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    try expectEqual(4, dist.numCategories());
+}
