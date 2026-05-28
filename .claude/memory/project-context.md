@@ -1,3 +1,27 @@
+**Session 598 Update (2026-05-28) — FEATURE MODE:**
+
+✅ **Multinomial Distribution** — 22nd distribution, 8th discrete
+- **Mode**: FEATURE MODE (counter: 598)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All tests passing (exit code 0); 34 new Multinomial tests
+- **Deliverable**: Multinomial(T) distribution added to src/stats/distributions.zig (+494 lines total)
+  * Allocator-first design — variable-length probability vector
+  * Parameters: `n: u64` (number of trials ≥ 1), `weights: []const T` (normalized internally)
+  * Fields: n, probs[]T, allocator
+  * Methods: init(allocator, n, weights), deinit, numCategories, pmf, logpmf, mean, variance, covariance, sample(rng, allocator), validate
+  * PMF: O(k) via multinomial coefficient × product formula using lgamma for log-factorial
+  * logPMF: O(k) lgamma(n+1) - Σlgamma(xi+1) + Σxi*log(pi), 0*log(0)=0 convention
+  * Sampling: O(k) conditional Binomial method (sequential stick-breaking)
+  * Marginals: mean(i)=n*pi, variance(i)=n*pi*(1-pi), covariance(i,j)=-n*pi*pj, O(1) each
+  * Error handling: n<1, k<2, negative/zero-sum weights → error.InvalidParameter
+  * Outside support (counts don't sum to n): pmf returns 0.0, logpmf returns -inf
+  * 34 tests: init validation, PMF summation to 1, logpmf accuracy, marginal moments, sampling bounds, deterministic cases, empirical convergence, f32 support, large k=10 n=1000, memory safety loops, zero-prob handling, binomial equivalence
+- **Distribution count**: 22 total (14 continuous + 8 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial
+- **Commit**: a589e13
+- **Next Priority**: Zipf (power-law, discrete) or Dirichlet (continuous multivariate, conjugate prior for Categorical/Multinomial)
+
 **Session 597 Update (2026-05-28) — FEATURE MODE:**
 
 ✅ **Categorical Distribution** — 21st distribution, 7th discrete
