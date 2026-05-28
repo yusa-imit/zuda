@@ -1,3 +1,30 @@
+**Session 602 Update (2026-05-29) — FEATURE MODE:**
+
+✅ **BetaBinomial Distribution** — 25th distribution, 10th discrete
+- **Mode**: FEATURE MODE (counter: 602)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All 31 BetaBinomial tests passing, 489 total distribution tests
+- **Deliverable**: BetaBinomial(T) added to src/stats/distributions.zig (+428 lines total)
+  * Allocator-free design — all analytical computation
+  * Parameters: n (u64, ≥1), alpha (T, >0), beta (T, >0)
+  * Fields: n, alpha, beta, log_beta_ab (precomputed logBeta(α,β) for O(1) PMF)
+  * Methods: init O(1), logpmf O(1), pmf O(1), cdf O(k), sf O(k), quantile O(n), mean O(1), variance O(1), mode O(1), sample O(n), validate O(1)
+  * Compound distribution: X|p ~ Binomial(n,p), p ~ Beta(α,β)
+  * PMF: logPMF = logC(n,k) + logBeta(k+α, n-k+β) - logBeta(α, β)
+  * Mean = n*α/(α+β), Variance = n*α*β*(α+β+n)/((α+β)²*(α+β+1))
+  * Mode: ceil((n*(α-1)-(β-1))/(α+β-2)) for α>1,β>1; 0 for α≤1; n for α>1,β≤1
+  * Sampling: Gamma variates for Beta, then Bernoulli counting for Binomial
+  * Special case: α=β=1 → Discrete Uniform on {0,...,n}, pmf=1/(n+1)
+  * Symmetry: BetaBin(n,α,β).pmf(k) == BetaBin(n,β,α).pmf(n-k) ✓
+  * Overdispersion verified: variance > Binomial(n,p) variance
+  * Error handling: n<1, α≤0, β≤0, non-finite → error.InvalidParameter
+  * 31 tests: init validation, PMF/logpmf, CDF/SF/quantile, mean/variance/overdispersion, mode, symmetry, sample bounds, empirical mean convergence, f32 support, memory safety loop
+- **Distribution count**: 25 total (15 continuous + 10 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Dirichlet
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Zipf, BetaBinomial
+- **Commit**: 79a6fa5
+- **Next Priority**: Dirichlet-Multinomial (compound: conjugate prior for Multinomial) or DiscreteUniform or Logarithmic
+
 **Session 599 Update (2026-05-28) — FEATURE MODE:**
 
 ✅ **Dirichlet Distribution** — 23rd distribution, 15th continuous
