@@ -11399,3 +11399,512 @@ test "DiscreteUniform: cdf intermediate values correct" {
     // cdf(9) = 10/10 = 1.0
     try expectApproxEqRel(1.0, dist.cdf(9), 1e-10);
 }
+
+// ============================================================================
+// Logarithmic Distribution
+// ============================================================================
+
+/// Logarithmic (log-series) distribution on positive integers {1, 2, 3, ...}
+///
+/// Probability mass function (PMF):
+///   P(X=k) = -(1/ln(1-p)) × pᵏ / k   for k ∈ {1, 2, 3, ...}
+///   P(X=k) = 0                          for k = 0
+///
+/// Parameter:
+///   - p: Shape parameter, p ∈ (0, 1)
+///
+/// Time: O(1) for pmf/logpmf/mean/variance/mode; O(k) for cdf/sf/quantile/sample
+pub fn Logarithmic(comptime T: type) type {
+    return struct {
+        p: T,
+        c: T,      // -1 / ln(1-p), normalizing constant
+        log_c: T,  // ln(c) = -ln(|ln(1-p)|)
+        log_p: T,  // ln(p)
+
+        const Self = @This();
+
+        /// Initialize Logarithmic distribution with parameter p ∈ (0, 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(p: T) DistributionError!Self {
+            if (p <= 0.0 or p >= 1.0 or !std.math.isFinite(p)) return error.InvalidParameter;
+            const log1mp = @log(1.0 - p);  // ln(1-p), negative value
+            const c = -1.0 / log1mp;       // c > 0
+            // log_c = ln(c) = ln(-1/ln(1-p)) = -ln(|ln(1-p)|) = -ln(-ln(1-p)) since ln(1-p) < 0
+            const log_c = -@log(-log1mp);
+            return Self{
+                .p = p,
+                .c = c,
+                .log_c = log_c,
+                .log_p = @log(p),
+            };
+        }
+
+        /// Probability mass function P(X=k)
+        ///
+        /// P(X=k) = c × pᵏ / k  for k ≥ 1
+        /// P(X=0) = 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return self.c * std.math.pow(T, self.p, @as(T, @floatFromInt(k))) / @as(T, @floatFromInt(k));
+        }
+
+        /// Log probability mass function log P(X=k)
+        ///
+        /// log P(X=k) = log_c + k*log_p - log(k)  for k ≥ 1
+        /// log P(X=0) = -inf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            return self.log_c + kf * self.log_p - @log(kf);
+        }
+
+        /// Cumulative distribution function P(X ≤ k)
+        ///
+        /// Computed by summing PMF from 1 to k (no closed form).
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            var sum: T = 0.0;
+            var i: u64 = 1;
+            while (i <= k) : (i += 1) {
+                sum += self.pmf(i);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - P(X ≤ k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k such that CDF(k) ≥ prob
+        ///
+        /// Time: O(k) where k is the returned value | Space: O(1)
+        pub fn quantile(self: Self, prob_in: T) u64 {
+            if (prob_in <= 0.0) return 1;
+            const prob = if (prob_in >= 1.0) 0.9999999999 else prob_in;  // Clamp to near-1 for numerical stability
+            var cumulative: T = 0.0;
+            var k: u64 = 1;
+            while (true) {
+                cumulative += self.pmf(k);
+                if (cumulative >= prob) return k;
+                k += 1;
+                // Safety: avoid infinite loop
+                if (k > 10_000_000) return k;
+            }
+        }
+
+        /// Mean of the distribution: -p / ((1-p) × ln(1-p))
+        ///
+        /// Equivalently: c × p / (1-p)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.c * self.p / (1.0 - self.p);
+        }
+
+        /// Variance of the distribution: -p × (p + ln(1-p)) / ((1-p)² × ln(1-p)²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const log1mp = @log(1.0 - self.p);  // ln(1-p)
+            const numer = -self.p * (self.p + log1mp);
+            const denom = (1.0 - self.p) * (1.0 - self.p) * log1mp * log1mp;
+            return numer / denom;
+        }
+
+        /// Mode of the distribution (always 1)
+        ///
+        /// The PMF is strictly decreasing so the mode is always 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Generate a random sample using inverse-CDF method
+        ///
+        /// Time: O(mean) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u);
+        }
+
+        /// Assert that parameters are valid: p ∈ (0, 1) and finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.p <= 0.0 or self.p >= 1.0 or !std.math.isFinite(self.p)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Logarithmic Distribution Tests (28th distribution, 13th discrete)
+// ============================================================================
+
+test "Logarithmic: init with valid p=0.5 succeeds" {
+    const dist = try Logarithmic(f64).init(0.5);
+    try testing.expect(std.math.isFinite(dist.p));
+    try testing.expect(std.math.isFinite(dist.c));
+    try testing.expect(std.math.isFinite(dist.log_c));
+    try testing.expect(std.math.isFinite(dist.log_p));
+}
+
+test "Logarithmic: init with p=0.0 returns error" {
+    const result = Logarithmic(f64).init(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logarithmic: init with p=1.0 returns error" {
+    const result = Logarithmic(f64).init(1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logarithmic: pmf at k=0 returns 0.0 (out of support)" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const pmf_val = dist.pmf(0);
+    try expectEqual(0.0, pmf_val);
+}
+
+test "Logarithmic: pmf(1) with p=0.5 matches concrete value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    // c = 1/ln(2) ≈ 1.442695040889
+    // pmf(1) = c * p = 1.442695 * 0.5 ≈ 0.721347520445
+    const expected: f64 = 0.721347520445;
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "Logarithmic: pmf(2) with p=0.5 matches concrete value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    // pmf(2) = c * p^2 / 2 = 1.442695 * 0.25 / 2 ≈ 0.180336880111
+    const expected: f64 = 0.180336880111;
+    const pmf_val = dist.pmf(2);
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "Logarithmic: pmf(3) with p=0.5 matches concrete value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    // pmf(3) = c * p^3 / 3 = 1.442695 * 0.125 / 3 ≈ 0.060112293370
+    const expected: f64 = 0.060112293370;
+    const pmf_val = dist.pmf(3);
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "Logarithmic: pmf is strictly decreasing" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const pmf1 = dist.pmf(1);
+    const pmf2 = dist.pmf(2);
+    const pmf3 = dist.pmf(3);
+    const pmf4 = dist.pmf(4);
+    const pmf5 = dist.pmf(5);
+
+    try testing.expect(pmf1 > pmf2);
+    try testing.expect(pmf2 > pmf3);
+    try testing.expect(pmf3 > pmf4);
+    try testing.expect(pmf4 > pmf5);
+}
+
+test "Logarithmic: pmf sums to 1.0 (p=0.5)" {
+    const dist = try Logarithmic(f64).init(0.5);
+    var sum: f64 = 0.0;
+    for (1..1001) |k| {
+        sum += dist.pmf(k);
+    }
+    // Sum of first 1000 terms should be very close to 1.0
+    try expectApproxEqRel(1.0, sum, 1e-5);
+}
+
+test "Logarithmic: pmf sums to 1.0 (p=0.3)" {
+    const dist = try Logarithmic(f64).init(0.3);
+    var sum: f64 = 0.0;
+    for (1..1001) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-5);
+}
+
+test "Logarithmic: logpmf at k=0 returns -inf" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const logpmf_val = dist.logpmf(0);
+    try testing.expect(std.math.isNegativeInf(logpmf_val));
+}
+
+test "Logarithmic: logpmf(1) with p=0.5 matches concrete value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    // logpmf(1) = log_c + 1*log_p - ln(1)
+    // = ln(1/ln(2)) + ln(0.5) - 0
+    // = 0.3665129205816643 + (-0.6931471805599453)
+    // = -0.326634259978281
+    const expected: f64 = -0.326634259978281;
+    const logpmf_val = dist.logpmf(1);
+    try expectApproxEqRel(expected, logpmf_val, 1e-8);
+}
+
+test "Logarithmic: logpmf equals ln(pmf)" {
+    const dist = try Logarithmic(f64).init(0.5);
+    for (1..6) |k| {
+        const pmf_val = dist.pmf(k);
+        const logpmf_val = dist.logpmf(k);
+        const expected = std.math.log(f64, std.math.e, pmf_val);
+        try expectApproxEqRel(expected, logpmf_val, 1e-10);
+    }
+}
+
+test "Logarithmic: cdf at k=0 returns 0.0" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const cdf_val = dist.cdf(0);
+    try expectEqual(0.0, cdf_val);
+}
+
+test "Logarithmic: cdf(1) with p=0.5 equals pmf(1)" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const cdf_val = dist.cdf(1);
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqRel(pmf_val, cdf_val, 1e-10);
+}
+
+test "Logarithmic: cdf is monotonically non-decreasing" {
+    const dist = try Logarithmic(f64).init(0.5);
+    var prev_cdf: f64 = 0.0;
+    for (1..21) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "Logarithmic: cdf approaches 1.0 for large k" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const cdf_large = dist.cdf(1000);
+    // For p=0.5, cdf(1000) should be > 0.9999
+    try testing.expect(cdf_large > 0.9999);
+}
+
+test "Logarithmic: cdf(2) > cdf(1)" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const cdf1 = dist.cdf(1);
+    const cdf2 = dist.cdf(2);
+    try testing.expect(cdf2 > cdf1);
+    // Additional check: cdf(2) should be cdf(1) + pmf(2)
+    const pmf2 = dist.pmf(2);
+    try expectApproxEqRel(cdf1 + pmf2, cdf2, 1e-10);
+}
+
+test "Logarithmic: sf at k=0 returns 1.0" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const sf_val = dist.sf(0);
+    try expectEqual(1.0, sf_val);
+}
+
+test "Logarithmic: sf(k) + cdf(k) equals 1.0" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const ks = [_]u64{ 1, 5, 10, 50, 100 };
+    for (ks) |k| {
+        const cdf_val = dist.cdf(k);
+        const sf_val = dist.sf(k);
+        try expectApproxEqRel(1.0, cdf_val + sf_val, 1e-10);
+    }
+}
+
+test "Logarithmic: quantile(0.0) returns 1" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const q = dist.quantile(0.0);
+    try expectEqual(1, q);
+}
+
+test "Logarithmic: quantile(1.0) returns finite value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const q = dist.quantile(1.0);
+    // For p=0.5, quantile(1.0) should be finite; expect at most a few hundred
+    try testing.expect(q < 10000);
+    try testing.expect(q >= 1);
+}
+
+test "Logarithmic: quantile is non-decreasing" {
+    const dist = try Logarithmic(f64).init(0.5);
+    var prev_q: u64 = 1;
+    const probs = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95 };
+    for (probs) |prob| {
+        const q = dist.quantile(prob);
+        try testing.expect(q >= prev_q);
+        prev_q = q;
+    }
+}
+
+test "Logarithmic: quantile roundtrip with cdf" {
+    const dist = try Logarithmic(f64).init(0.5);
+    const ks = [_]u64{ 1, 2, 3, 5, 10 };
+    for (ks) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = dist.quantile(cdf_k);
+        // quantile(cdf(k)) should return k or close to it
+        try testing.expect(q == k or q == k + 1);
+    }
+}
+
+test "Logarithmic: mean with p=0.5 matches concrete value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    // mean = -p / ((1-p) * ln(1-p))
+    // = -0.5 / (0.5 * ln(0.5))
+    // = -0.5 / (0.5 * (-0.693147))
+    // = -0.5 / (-0.346574)
+    // ≈ 1.442695040889
+    const expected: f64 = 1.442695040889;
+    const mean_val = dist.mean();
+    try expectApproxEqRel(expected, mean_val, 1e-8);
+}
+
+test "Logarithmic: mean is always > 1.0" {
+    const means = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (means) |p| {
+        const dist = try Logarithmic(f64).init(p);
+        const mean_val = dist.mean();
+        try testing.expect(mean_val > 1.0);
+    }
+}
+
+test "Logarithmic: sample empirical mean converges to analytical (p=0.3)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try Logarithmic(f64).init(0.3);
+    const analytical_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng);
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    // Within 5% relative error
+    try expectApproxEqRel(analytical_mean, empirical_mean, 0.05);
+}
+
+test "Logarithmic: variance with p=0.5 matches concrete value" {
+    const dist = try Logarithmic(f64).init(0.5);
+    // variance = -p*(p + ln(1-p)) / ((1-p)^2 * ln(1-p)^2)
+    // ln(0.5) ≈ -0.693147180560
+    // numerator = -0.5 * (0.5 + (-0.693147)) = -0.5 * (-0.193147) ≈ 0.0965736
+    // denominator = 0.25 * 0.480453 ≈ 0.120113
+    // variance ≈ 0.8040
+    const expected: f64 = 0.8040;
+    const var_val = dist.variance();
+    try expectApproxEqRel(expected, var_val, 0.01); // 1% tolerance for numerical integration
+}
+
+test "Logarithmic: variance is always positive" {
+    const ps = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (ps) |p| {
+        const dist = try Logarithmic(f64).init(p);
+        const var_val = dist.variance();
+        try testing.expect(var_val > 0.0);
+    }
+}
+
+test "Logarithmic: mode is always 1" {
+    const ps = [_]f64{ 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99 };
+    for (ps) |p| {
+        const dist = try Logarithmic(f64).init(p);
+        try expectEqual(1, dist.mode());
+    }
+}
+
+test "Logarithmic: sample returns values >= 1" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try Logarithmic(f64).init(0.5);
+
+    for (0..1000) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 1);
+    }
+}
+
+test "Logarithmic: sample minimum value is 1 for p=0.9" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    const dist = try Logarithmic(f64).init(0.9);
+
+    var min_sample: u64 = std.math.maxInt(u64);
+    for (0..500) |_| {
+        const sample_val = dist.sample(rng);
+        if (sample_val < min_sample) {
+            min_sample = sample_val;
+        }
+    }
+    try expectEqual(1, min_sample);
+}
+
+test "Logarithmic: sample with p=0.5 shows PMF(1) is dominant" {
+    var prng = std.Random.DefaultPrng.init(55555);
+    const rng = prng.random();
+
+    const dist = try Logarithmic(f64).init(0.5);
+
+    var count_one: u64 = 0;
+    const n = 5000;
+
+    for (0..n) |_| {
+        if (dist.sample(rng) == 1) {
+            count_one += 1;
+        }
+    }
+
+    const fraction_one = @as(f64, @floatFromInt(count_one)) / @as(f64, @floatFromInt(n));
+    // pmf(1) ≈ 0.721, so expect fraction ≈ 0.72
+    try expectApproxEqRel(0.721, fraction_one, 0.05);
+}
+
+test "Logarithmic: f32 support" {
+    const dist = try Logarithmic(f32).init(0.5);
+    try testing.expect(std.math.isFinite(dist.p));
+    try testing.expect(std.math.isFinite(dist.c));
+
+    const pmf_1: f32 = dist.pmf(1);
+    try testing.expect(pmf_1 > 0.5);
+    try testing.expect(pmf_1 < 0.8);
+}
+
+test "Logarithmic: validate passes on valid distribution" {
+    const dist = try Logarithmic(f64).init(0.5);
+    try dist.validate();
+}
+
+test "Logarithmic: p near lower boundary (p=0.01)" {
+    const dist = try Logarithmic(f64).init(0.01);
+    const pmf_1 = dist.pmf(1);
+    // For very small p, pmf(1) ≈ p * c where c ≈ 1/(-ln(p))
+    // Should be very close to 1.0
+    try testing.expect(pmf_1 > 0.99);
+    try testing.expect(pmf_1 <= 1.0);
+}
+
+test "Logarithmic: p near upper boundary (p=0.99)" {
+    const dist = try Logarithmic(f64).init(0.99);
+    const mean_val = dist.mean();
+    // For p near 1, distribution becomes heavy-tailed, mean is large
+    try testing.expect(mean_val > 10.0);
+
+    const pmf_1 = dist.pmf(1);
+    // pmf(1) should still be the mode
+    const pmf_2 = dist.pmf(2);
+    try testing.expect(pmf_1 > pmf_2);
+}

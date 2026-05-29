@@ -442,3 +442,6 @@
 {"timestamp":"2026-05-29T04:05:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for DiscreteUniform distribution","project":"zuda"}
 {"timestamp":"2026-05-29T04:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement DiscreteUniform distribution","project":"zuda"}
 {"timestamp":"2026-05-29T15:37:38Z","action":"subagent","agent_type":"code-reviewer","task":"Test quality audit for stats distributions","project":"zuda"}
+{"timestamp":"2026-05-29T19:31:26Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Logarithmic(T) distribution before implementation","project":"zuda"}
+{"timestamp":"2026-05-29T19:33:37Z","action":"subagent","agent_type":"zig-developer","task":"Implement Logarithmic(T) distribution in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-05-29T19:38:22Z","action":"subagent","agent_type":"test-writer","task":"Fix imprecise expected value in Logarithmic logpmf test","project":"zuda"}
