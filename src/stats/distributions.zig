@@ -10311,3 +10311,599 @@ test "BetaBinomial: validate passes on valid distribution" {
     const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
     try dist.validate();
 }
+
+// ============================================================================
+// Dirichlet-Multinomial Distribution
+// ============================================================================
+
+/// Dirichlet-Multinomial distribution — compound Multinomial with Dirichlet prior.
+/// X|p ~ Multinomial(n, p) where p ~ Dirichlet(α).
+///
+/// Also known as the multivariate Polya distribution. Extends the Multinomial by
+/// allowing category probabilities to vary according to a Dirichlet prior, producing
+/// overdispersion (greater variance than pure Multinomial).
+///
+/// Parameters:
+///   - n: u64 — number of trials (≥ 1)
+///   - alphas: []const T — Dirichlet concentration parameters (k ≥ 2, all > 0)
+///
+/// Support: vectors (x₁,...,xₖ) ∈ ℕ₀ᵏ with Σxᵢ = n
+///
+/// log PMF = lgamma(n+1) - Σlgamma(xᵢ+1) + lgamma(α₀) - lgamma(n+α₀)
+///         + Σ[lgamma(xᵢ+αᵢ) - lgamma(αᵢ)]   where α₀ = Σαᵢ
+///
+/// Marginal moments for category i:
+///   Mean:       E[Xᵢ] = n·αᵢ/α₀
+///   Variance:   Var[Xᵢ] = n·αᵢ·(α₀-αᵢ)·(n+α₀) / (α₀²·(α₀+1))
+///   Covariance: Cov[Xᵢ,Xⱼ] = -n·αᵢ·αⱼ·(n+α₀) / (α₀²·(α₀+1))  for i≠j
+///
+/// Special cases:
+///   - k=2: reduces to BetaBinomial(n, α₁, α₂)
+///   - α → ∞ with αᵢ/α₀ → pᵢ: converges to Multinomial(n, p)
+pub fn DirichletMultinomial(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        n: u64,
+        alphas: []T,
+        alpha0: T,
+        allocator: std.mem.Allocator,
+
+        /// Initialize DirichletMultinomial(n, alphas). Validates n ≥ 1, k ≥ 2, all αᵢ > 0.
+        /// Copies alphas; caller may free the input slice after init.
+        /// Time: O(k) | Space: O(k)
+        pub fn init(allocator: std.mem.Allocator, n: u64, alphas: []const T) !Self {
+            if (n < 1) return DistributionError.InvalidParameter;
+            if (alphas.len < 2) return DistributionError.InvalidParameter;
+
+            var alpha0: T = 0.0;
+            for (alphas) |a| {
+                if (a <= 0.0 or !math.isFinite(a)) return DistributionError.InvalidParameter;
+                alpha0 += a;
+            }
+
+            const stored = try allocator.alloc(T, alphas.len);
+            errdefer allocator.free(stored);
+            @memcpy(stored, alphas);
+
+            return Self{ .n = n, .alphas = stored, .alpha0 = alpha0, .allocator = allocator };
+        }
+
+        /// Free allocated alpha vector.
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.alphas);
+        }
+
+        /// Number of categories k.
+        /// Time: O(1) | Space: O(1)
+        pub fn numCategories(self: Self) usize {
+            return self.alphas.len;
+        }
+
+        /// Log PMF at counts vector. Returns -inf if counts.len ≠ k or Σxᵢ ≠ n.
+        ///
+        /// Formula: lgamma(n+1) - Σlgamma(xᵢ+1) + lgamma(α₀) - lgamma(n+α₀)
+        ///        + Σ[lgamma(xᵢ+αᵢ) - lgamma(αᵢ)]
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.alphas.len) return -math.inf(T);
+
+            var total: u64 = 0;
+            for (counts) |xi| total += xi;
+            if (total != self.n) return -math.inf(T);
+
+            const n_f: T = @floatFromInt(self.n);
+
+            // log multinomial coefficient: lgamma(n+1) - Σlgamma(xi+1)
+            var log_coeff = logGamma(n_f + 1.0);
+            for (counts) |xi| {
+                log_coeff -= logGamma(@as(T, @floatFromInt(xi)) + 1.0);
+            }
+
+            // log B(x+α)/B(α) = lgamma(α₀) - lgamma(n+α₀) + Σ[lgamma(xi+αi) - lgamma(αi)]
+            var log_beta_ratio = logGamma(self.alpha0) - logGamma(n_f + self.alpha0);
+            for (counts, self.alphas) |xi, ai| {
+                log_beta_ratio += logGamma(@as(T, @floatFromInt(xi)) + ai) - logGamma(ai);
+            }
+
+            return log_coeff + log_beta_ratio;
+        }
+
+        /// PMF at counts vector. Returns 0 if counts are outside the support.
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, counts: []const u64) T {
+            const lp = self.logpmf(counts);
+            if (math.isNegativeInf(lp)) return 0.0;
+            return @exp(lp);
+        }
+
+        /// Marginal mean of category i: E[Xᵢ] = n·αᵢ/α₀
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self, i: usize) T {
+            return @as(T, @floatFromInt(self.n)) * self.alphas[i] / self.alpha0;
+        }
+
+        /// Marginal variance: Var[Xᵢ] = n·αᵢ·(α₀-αᵢ)·(n+α₀) / (α₀²·(α₀+1))
+        /// Always ≥ Multinomial variance by overdispersion factor (n+α₀)/(α₀+1).
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self, i: usize) T {
+            const n_f: T = @floatFromInt(self.n);
+            const ai = self.alphas[i];
+            return n_f * ai * (self.alpha0 - ai) * (n_f + self.alpha0) /
+                (self.alpha0 * self.alpha0 * (self.alpha0 + 1.0));
+        }
+
+        /// Marginal covariance: Cov[Xᵢ,Xⱼ] = -n·αᵢ·αⱼ·(n+α₀) / (α₀²·(α₀+1)) for i≠j.
+        /// Returns variance(i) when i == j.
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self, i: usize, j: usize) T {
+            if (i == j) return self.variance(i);
+            const n_f: T = @floatFromInt(self.n);
+            return -n_f * self.alphas[i] * self.alphas[j] * (n_f + self.alpha0) /
+                (self.alpha0 * self.alpha0 * (self.alpha0 + 1.0));
+        }
+
+        /// Sample by drawing p ~ Dirichlet(alphas) then x ~ Multinomial(n, p).
+        /// Allocates []u64 counts (caller owns). Time: O(k·n) | Space: O(k)
+        pub fn sample(self: Self, rng: std.Random, allocator: std.mem.Allocator) ![]u64 {
+            const k = self.alphas.len;
+
+            // Step 1: draw Dirichlet(alphas) via normalized Gamma variates
+            const probs = try allocator.alloc(T, k);
+            defer allocator.free(probs);
+
+            var total: T = 0.0;
+            for (self.alphas, 0..) |ai, i| {
+                // ai > 0 guaranteed by init — Gamma.init cannot fail here
+                const g = Gamma(T).init(ai, 1.0) catch unreachable;
+                probs[i] = g.sample(rng);
+                total += probs[i];
+            }
+            for (probs) |*pi| pi.* /= total;
+            // Fix last element to sum exactly to 1
+            var partial: T = 0.0;
+            for (probs[0 .. k - 1]) |pi| partial += pi;
+            probs[k - 1] = 1.0 - partial;
+
+            // Step 2: sample Multinomial(n, probs) via conditional Binomial method
+            const counts = try allocator.alloc(u64, k);
+            errdefer allocator.free(counts);
+
+            var remaining: u64 = self.n;
+            var mass_left: T = 1.0;
+
+            for (0 .. k - 1) |i| {
+                const p_raw = probs[i] / mass_left;
+                const p_clamped = @min(@max(p_raw, 0.0), 1.0);
+                const xi = @min(binomialSample(rng, remaining, p_clamped), remaining);
+                counts[i] = xi;
+                remaining -= xi;
+                mass_left -= probs[i];
+            }
+            counts[k - 1] = remaining;
+
+            return counts;
+        }
+
+        /// Validate invariants: n ≥ 1, k ≥ 2, all αᵢ > 0 and finite, α₀ ≈ Σαᵢ.
+        /// Time: O(k) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n < 1) return DistributionError.InvalidParameter;
+            if (self.alphas.len < 2) return DistributionError.InvalidParameter;
+            var sum: T = 0.0;
+            for (self.alphas) |ai| {
+                if (ai <= 0.0 or !math.isFinite(ai)) return DistributionError.InvalidParameter;
+                sum += ai;
+            }
+            const eps: T = switch (T) {
+                f32 => 1e-4,
+                else => 1e-9,
+            };
+            if (@abs(sum - self.alpha0) > eps) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// DirichletMultinomial Tests
+// ============================================================================
+
+test "DirichletMultinomial: init with valid k=3 parameters" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    try expectEqual(10, dist.n);
+    try expectEqual(3, dist.numCategories());
+    try dist.validate();
+}
+
+test "DirichletMultinomial: init rejects n=0" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    try expectError(error.InvalidParameter, DirichletMultinomial(f64).init(allocator, 0, &alphas));
+}
+
+test "DirichletMultinomial: init rejects k=1" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{1.0};
+    try expectError(error.InvalidParameter, DirichletMultinomial(f64).init(allocator, 5, &alphas));
+}
+
+test "DirichletMultinomial: init rejects alpha_i = 0" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 0.0, 2.0 };
+    try expectError(error.InvalidParameter, DirichletMultinomial(f64).init(allocator, 5, &alphas));
+}
+
+test "DirichletMultinomial: init rejects negative alpha_i" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, -0.5, 2.0 };
+    try expectError(error.InvalidParameter, DirichletMultinomial(f64).init(allocator, 5, &alphas));
+}
+
+test "DirichletMultinomial: init rejects non-finite alpha_i (inf)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, math.inf(f64), 2.0 };
+    try expectError(error.InvalidParameter, DirichletMultinomial(f64).init(allocator, 5, &alphas));
+}
+
+test "DirichletMultinomial: init rejects non-finite alpha_i (nan)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, math.nan(f64), 2.0 };
+    try expectError(error.InvalidParameter, DirichletMultinomial(f64).init(allocator, 5, &alphas));
+}
+
+test "DirichletMultinomial: logpmf returns -inf for wrong length" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 3, &alphas);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 2 }; // len=2, but k=3
+    const logpmf_val = dist.logpmf(&counts);
+    try testing.expect(math.isNegativeInf(logpmf_val));
+}
+
+test "DirichletMultinomial: logpmf returns -inf when sum != n" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 5, &alphas);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 2, 1 }; // sum=4, but n=5
+    const logpmf_val = dist.logpmf(&counts);
+    try testing.expect(math.isNegativeInf(logpmf_val));
+}
+
+test "DirichletMultinomial: Discrete Uniform for alpha=[1,1] k=2 n=2" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 1.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 2, &alphas);
+    defer dist.deinit();
+
+    // k=2 alpha=[1,1] n=2 reduces to BetaBinomial(2,1,1) = Discrete Uniform
+    // pmf([0,2]) = pmf([1,1]) = pmf([2,0]) = 1/3
+    const pmf_0_2 = dist.pmf(&[_]u64{ 0, 2 });
+    const pmf_1_1 = dist.pmf(&[_]u64{ 1, 1 });
+    const pmf_2_0 = dist.pmf(&[_]u64{ 2, 0 });
+    const expected: f64 = 1.0 / 3.0;
+
+    try expectApproxEqRel(expected, pmf_0_2, 1e-10);
+    try expectApproxEqRel(expected, pmf_1_1, 1e-10);
+    try expectApproxEqRel(expected, pmf_2_0, 1e-10);
+}
+
+test "DirichletMultinomial: pmf sums to 1.0 (n=3, k=3)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 1.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 3, &alphas);
+    defer dist.deinit();
+
+    var sum: f64 = 0.0;
+    var x1: u64 = 0;
+    while (x1 <= 3) : (x1 += 1) {
+        var x2: u64 = 0;
+        while (x2 <= 3 - x1) : (x2 += 1) {
+            const x3 = 3 - x1 - x2;
+            const counts = [_]u64{ x1, x2, x3 };
+            sum += dist.pmf(&counts);
+        }
+    }
+    try expectApproxEqRel(1.0, sum, 1e-9);
+}
+
+test "DirichletMultinomial: pmf equals exp(logpmf)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0, 1.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 3, &alphas);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 2, 0 };
+    const pmf_val = dist.pmf(&counts);
+    const logpmf_val = dist.logpmf(&counts);
+
+    if (pmf_val > 0.0) {
+        const expected_logpmf = @log(pmf_val);
+        try expectApproxEqRel(expected_logpmf, logpmf_val, 1e-10);
+    }
+}
+
+test "DirichletMultinomial: pmf returns 0 for invalid support" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 5, &alphas);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 2, 1 }; // sum=4, not 5
+    try expectEqual(0.0, dist.pmf(&counts));
+}
+
+test "DirichletMultinomial: logpmf matches BetaBinomial for k=2" {
+    const allocator = testing.allocator;
+    const alpha: f64 = 2.0;
+    const beta: f64 = 3.0;
+    const n: u64 = 5;
+
+    const alphas = [_]f64{ alpha, beta };
+    const dm = try DirichletMultinomial(f64).init(allocator, n, &alphas);
+    defer dm.deinit();
+
+    const bb = try BetaBinomial(f64).init(n, alpha, beta);
+
+    // DirMult(n,[α,β]).logpmf([k,n-k]) == BetaBinomial(n,α,β).logpmf(k)
+    for (0..n + 1) |k| {
+        const counts = [_]u64{ k, n - k };
+        const dm_logpmf = dm.logpmf(&counts);
+        const bb_logpmf = bb.logpmf(@intCast(k));
+        try expectApproxEqRel(bb_logpmf, dm_logpmf, 1e-10);
+    }
+}
+
+test "DirichletMultinomial: mean formula E[Xi] = n * alpha_i / alpha0" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0, 4.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    const alpha0: f64 = 10.0; // 1+2+3+4
+    try expectApproxEqRel(10.0 * 1.0 / alpha0, dist.mean(0), 1e-10);
+    try expectApproxEqRel(10.0 * 2.0 / alpha0, dist.mean(1), 1e-10);
+    try expectApproxEqRel(10.0 * 3.0 / alpha0, dist.mean(2), 1e-10);
+    try expectApproxEqRel(10.0 * 4.0 / alpha0, dist.mean(3), 1e-10);
+}
+
+test "DirichletMultinomial: variance formula" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 1.0, 2.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    // Var[X0] = 10 * 1 * (4-1) * (10+4) / (16 * 5) = 420/80 = 5.25
+    const alpha0: f64 = 4.0;
+    const expected = (10.0 * 1.0 * (alpha0 - 1.0) * (10.0 + alpha0)) / (alpha0 * alpha0 * (alpha0 + 1.0));
+    try expectApproxEqRel(expected, dist.variance(0), 1e-9);
+}
+
+test "DirichletMultinomial: variance exceeds Multinomial variance (overdispersion)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 3.0, 2.0, 5.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 20, &alphas);
+    defer dist.deinit();
+
+    const alpha0: f64 = 10.0;
+    const pi_0: f64 = 3.0 / alpha0; // = 0.3
+    const multinomial_var = 20.0 * pi_0 * (1.0 - pi_0); // = 4.2
+    try testing.expect(dist.variance(0) > multinomial_var);
+}
+
+test "DirichletMultinomial: covariance(i,i) equals variance(i)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 2.0, 2.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    for (0..3) |i| {
+        try expectApproxEqRel(dist.variance(i), dist.covariance(i, i), 1e-10);
+    }
+}
+
+test "DirichletMultinomial: covariance off-diagonal is negative" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 2.0, 2.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    try testing.expect(dist.covariance(0, 1) < 0.0);
+    try testing.expect(dist.covariance(0, 2) < 0.0);
+}
+
+test "DirichletMultinomial: sample counts sum to n" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    for (0..10) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        var sum: u64 = 0;
+        for (counts) |c| sum += c;
+        try expectEqual(@as(u64, 10), sum);
+    }
+}
+
+test "DirichletMultinomial: sample entries within [0, n]" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    for (0..100) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        for (counts) |c| {
+            try testing.expect(c <= 10);
+        }
+    }
+}
+
+test "DirichletMultinomial: sample empirical mean converges (5000 samples)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 3.0, 2.0, 5.0 };
+    const n: u64 = 20;
+    const dist = try DirichletMultinomial(f64).init(allocator, n, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(42424);
+    const rng = prng.random();
+
+    var means = [_]f64{ 0.0, 0.0, 0.0 };
+    const num_samples: f64 = 5000.0;
+
+    for (0..5000) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+        for (counts, 0..) |c, i| means[i] += @as(f64, @floatFromInt(c));
+    }
+    for (&means) |*m| m.* /= num_samples;
+
+    const alpha0: f64 = 10.0;
+    try expectApproxEqRel(@as(f64, @floatFromInt(n)) * 3.0 / alpha0, means[0], 0.5);
+    try expectApproxEqRel(@as(f64, @floatFromInt(n)) * 2.0 / alpha0, means[1], 0.5);
+    try expectApproxEqRel(@as(f64, @floatFromInt(n)) * 5.0 / alpha0, means[2], 0.5);
+}
+
+test "DirichletMultinomial: uniform alpha => equal means" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 8, &alphas);
+    defer dist.deinit();
+
+    for (0..4) |i| {
+        try expectApproxEqRel(2.0, dist.mean(i), 1e-10); // n/k = 8/4 = 2
+    }
+}
+
+test "DirichletMultinomial: n=1 single trial pmf sums to 1" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 1, &alphas);
+    defer dist.deinit();
+
+    const pmf_1_0 = dist.pmf(&[_]u64{ 1, 0 });
+    const pmf_0_1 = dist.pmf(&[_]u64{ 0, 1 });
+    try expectApproxEqRel(1.0, pmf_1_0 + pmf_0_1, 1e-10);
+}
+
+test "DirichletMultinomial: large alpha converges variance toward Multinomial" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 100.0, 100.0, 100.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 30, &alphas);
+    defer dist.deinit();
+
+    try expectApproxEqRel(10.0, dist.mean(0), 1e-10); // 30*100/300 = 10
+    // Overdispersion factor (n+α₀)/(α₀+1) = 330/301 ≈ 1.096 — close to 1 for large α₀
+    const mult_var = 30.0 * (1.0 / 3.0) * (2.0 / 3.0); // Multinomial variance ≈ 6.67
+    try testing.expect(dist.variance(0) > mult_var); // still overdispersed
+    try testing.expect(dist.variance(0) < 1.5 * mult_var); // close to Multinomial
+}
+
+test "DirichletMultinomial: f32 support" {
+    const allocator = testing.allocator;
+    const alphas = [_]f32{ 2.0, 3.0, 1.0 };
+    const dist = try DirichletMultinomial(f32).init(allocator, 5, &alphas);
+    defer dist.deinit();
+
+    var sum: f32 = 0.0;
+    var x1: u64 = 0;
+    while (x1 <= 5) : (x1 += 1) {
+        var x2: u64 = 0;
+        while (x2 <= 5 - x1) : (x2 += 1) {
+            const x3 = 5 - x1 - x2;
+            sum += dist.pmf(&[_]u64{ x1, x2, x3 });
+        }
+    }
+    try expectApproxEqRel(1.0, sum, 1e-5);
+    try testing.expect(std.math.isFinite(dist.mean(0)));
+    try testing.expect(dist.variance(0) >= 0.0);
+}
+
+test "DirichletMultinomial: memory safety init-deinit loop" {
+    const allocator = testing.allocator;
+    for (0..100) |_| {
+        const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+        const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+        defer dist.deinit();
+        try dist.validate();
+    }
+}
+
+test "DirichletMultinomial: memory safety sample loop" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(77777);
+    const rng = prng.random();
+
+    for (0..50) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+        var sum: u64 = 0;
+        for (counts) |c| sum += c;
+        try testing.expect(sum == 10);
+    }
+}
+
+test "DirichletMultinomial: validate passes on valid distribution" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "DirichletMultinomial: numCategories returns k" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 20, &alphas);
+    defer dist.deinit();
+    try expectEqual(5, dist.numCategories());
+}
+
+test "DirichletMultinomial: symmetry for symmetric alphas" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 2.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 4, &alphas);
+    defer dist.deinit();
+
+    for (0..5) |k| {
+        const pmf_k = dist.pmf(&[_]u64{ k, 4 - k });
+        const pmf_nk = dist.pmf(&[_]u64{ 4 - k, k });
+        try expectApproxEqRel(pmf_k, pmf_nk, 1e-10);
+    }
+}
+
+test "DirichletMultinomial: large n and k means are correct" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 5.0, 3.0, 2.0, 4.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 100, &alphas);
+    defer dist.deinit();
+
+    const alpha0: f64 = 14.0; // 5+3+2+4
+    try expectApproxEqRel(100.0 * 5.0 / alpha0, dist.mean(0), 1e-10);
+    try testing.expect(dist.variance(0) > 0.0);
+}
