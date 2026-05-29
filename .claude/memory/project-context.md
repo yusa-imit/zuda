@@ -1,3 +1,29 @@
+**Session 604 Update (2026-05-29) — FEATURE MODE:**
+
+✅ **DiscreteUniform Distribution** — 27th distribution, 12th discrete
+- **Mode**: FEATURE MODE (counter: 604)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All 37 DiscreteUniform tests passing (exit code 0)
+- **Deliverable**: DiscreteUniform(T) added to src/stats/distributions.zig (+143 lines impl + 325 lines tests)
+  * Allocator-free design — fixed-size parameters (a, b as i64)
+  * Parameters: a (i64, lower bound), b (i64, upper bound, b ≥ a)
+  * Fields: a, b, n (b - a + 1)
+  * Methods: init O(1), pmf O(1), logpmf O(1), cdf O(1), sf O(1), quantile O(1),
+             mean O(1), variance O(1), entropy O(1), mode O(1), sample O(1), validate O(1)
+  * PMF: 1/n if a≤k≤b, else 0
+  * CDF: (k-a+1)/n for a≤k≤b, 0 for k<a, 1 for k>b
+  * Mean: (a+b)/2, Variance: (n²-1)/12, Entropy: log(n)
+  * Mode: returns a by convention (all values equally likely)
+  * Sampling: rng.intRangeAtMost(i64, a, b)
+  * Degenerate case: n=1 → pmf(a)=1.0, variance=0.0, entropy=0.0
+  * 37 tests: init/validation, PMF die case, logpmf, CDF/SF, quantile, moments,
+              entropy, sampling (1000/5000 trials), f32, negative range, large range
+- **Distribution count**: 27 total (15 continuous + 12 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Dirichlet
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Zipf, BetaBinomial, DirichletMultinomial, DiscreteUniform
+- **Commit**: c159d7a
+- **Next Priority**: Logarithmic distribution or PolyaUrn or Skellam (difference of Poissons)
+
 **Session 603 Update (2026-05-29) — FEATURE MODE:**
 
 ✅ **DirichletMultinomial Distribution** — 26th distribution, 11th discrete
