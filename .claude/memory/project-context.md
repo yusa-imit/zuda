@@ -1,3 +1,29 @@
+**Session 606 Update (2026-05-30) — FEATURE MODE:**
+
+✅ **Logarithmic Distribution** — 28th distribution, 13th discrete — commit ae5ef72
+- **Mode**: FEATURE MODE (counter: 606)
+- **CI Status**: ✅ GREEN — 3 recent runs SUCCESS, 0 open issues
+- **Tests**: ✅ All 37 Logarithmic tests passing (3651 total, exit code 0)
+- **Deliverable**: Logarithmic(T) added to src/stats/distributions.zig (+509 lines total)
+  * Allocator-free design — single scalar param p
+  * Parameters: p (T, ∈ (0,1))
+  * Precomputed fields: c=-1/ln(1-p), log_c=ln(c), log_p=ln(p)
+  * Support: {1, 2, 3, ...} (positive integers)
+  * Methods: init O(1), pmf O(1), logpmf O(1), cdf O(k), sf O(k), quantile O(k),
+             mean O(1), variance O(1), mode O(1), sample O(mean), validate O(1)
+  * PMF: c×pᵏ/k; LogPMF: log_c + k*log_p - log(k)
+  * CDF: iterative sum (no closed form)
+  * Mean: c×p/(1-p); Variance: -p(p+ln(1-p)) / ((1-p)²ln(1-p)²)
+  * Mode: always 1 (PMF strictly decreasing)
+  * Sample: inverse-CDF method
+  * Error handling: p≤0, p≥1, non-finite → error.InvalidParameter
+  * 37 tests: init/validation, PMF/logPMF with concrete values, CDF/SF/quantile,
+              mean/variance/mode, sampling distribution shape, f32 support, boundary p values
+- **Distribution count**: 28 total (15 continuous + 13 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Dirichlet
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Zipf, BetaBinomial, DirichletMultinomial, DiscreteUniform, Logarithmic
+- **Next Priority**: PolyaUrn or Skellam (difference of Poissons) or Rademacher
+
 **Session 605 Update (2026-05-30) — STABILIZATION MODE:**
 
 ✅ **ALL SYSTEMS GREEN** — commit 2293205
