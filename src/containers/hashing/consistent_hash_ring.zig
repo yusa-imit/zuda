@@ -570,6 +570,8 @@ pub fn AutoConsistentHashRing(comptime K: type, comptime N: type) type {
             };
         }
 
+        /// Free all allocated memory.
+        /// Time: O(n) | Space: O(1)
         pub fn deinit(self: *Self) void {
             self.ring.deinit();
         }
@@ -592,6 +594,8 @@ pub fn AutoConsistentHashRing(comptime K: type, comptime N: type) type {
             return self.ring.getNode(key);
         }
 
+        /// Return the number of unique nodes in the ring.
+        /// Time: O(n) | Space: O(1)
         pub fn count(self: *const Self) usize {
             return self.ring.count();
         }

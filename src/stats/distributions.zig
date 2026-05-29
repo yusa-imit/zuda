@@ -10127,6 +10127,13 @@ test "BetaBinomial: pmf sums to 1 (n=5)" {
     try expectApproxEqRel(1.0, sum, 1e-10);
 }
 
+test "BetaBinomial: pmf(0) reference value" {
+    // PMF(k=0) = C(5,0) * B(2,8) / B(2,3) = B(2,8)/B(2,3)
+    // B(2,8) = 1!*7!/9! = 1/72; B(2,3) = 1!*2!/4! = 1/12; ratio = 1/6
+    const dist = try BetaBinomial(f64).init(5, 2.0, 3.0);
+    try expectApproxEqRel(1.0 / 6.0, dist.pmf(0), 1e-10);
+}
+
 test "BetaBinomial: logpmf consistent with pmf" {
     const dist = try BetaBinomial(f64).init(8, 2.0, 3.0);
     for (0..9) |k| {
@@ -10300,10 +10307,18 @@ test "BetaBinomial: f32 support" {
     try testing.expect(variance >= 0.0);
 }
 
-test "BetaBinomial: memory safety (1000 iterations)" {
-    for (0..1000) |_| {
-        const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
-        _ = dist.mean();
+test "BetaBinomial: pmf consistent across parameter variations" {
+    // Verify pmf sums to 1 for multiple (n, alpha, beta) combos
+    const cases = [_][3]f64{
+        .{ 3.0, 1.0, 1.0 }, // uniform: each pmf = 1/4
+        .{ 8.0, 5.0, 2.0 },
+        .{ 10.0, 0.5, 0.5 }, // Jeffrey's prior
+    };
+    for (cases) |c| {
+        const dist = try BetaBinomial(f64).init(@intFromFloat(c[0]), c[1], c[2]);
+        var sum: f64 = 0.0;
+        for (0..dist.n + 1) |k| sum += dist.pmf(k);
+        try expectApproxEqRel(1.0, sum, 1e-9);
     }
 }
 
@@ -10682,10 +10697,9 @@ test "DirichletMultinomial: variance formula" {
     const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
     defer dist.deinit();
 
-    // Var[X0] = 10 * 1 * (4-1) * (10+4) / (16 * 5) = 420/80 = 5.25
-    const alpha0: f64 = 4.0;
-    const expected = (10.0 * 1.0 * (alpha0 - 1.0) * (10.0 + alpha0)) / (alpha0 * alpha0 * (alpha0 + 1.0));
-    try expectApproxEqRel(expected, dist.variance(0), 1e-9);
+    // Var[X0] = n * α0 * (α0 - α_i) * (n + α0) / (α0^2 * (α0 + 1))
+    //         = 10 * 1 * (4-1) * (10+4) / (16 * 5) = 10*1*3*14 / 80 = 420/80 = 5.25
+    try expectApproxEqRel(5.25, dist.variance(0), 1e-9);
 }
 
 test "DirichletMultinomial: variance exceeds Multinomial variance (overdispersion)" {
@@ -11120,8 +11134,8 @@ test "DiscreteUniform: pmf sums to 1.0" {
 
 test "DiscreteUniform: logpmf in range equals -log(n)" {
     const dist = try DiscreteUniform(f64).init(1, 6);
-    const n: f64 = 6.0; // b - a + 1
-    const expected: f64 = -@log(n);
+    // -ln(6) ≈ -1.791759469228327 (reference: ln(6) = ln(2) + ln(3))
+    const expected: f64 = -1.791759469228327;
 
     for (1..7) |k_u| {
         const k: i64 = @intCast(k_u);
@@ -11202,6 +11216,15 @@ test "DiscreteUniform: quantile at extremes" {
     try expectEqual(10, dist.quantile(1.0));
 }
 
+test "DiscreteUniform: quantile clamps out-of-range p" {
+    // p < 0 → clamp to a; p > 1 → clamp to b
+    const dist = try DiscreteUniform(f64).init(3, 10);
+    try expectEqual(3, dist.quantile(-0.5));
+    try expectEqual(3, dist.quantile(-100.0));
+    try expectEqual(10, dist.quantile(1.5));
+    try expectEqual(10, dist.quantile(100.0));
+}
+
 test "DiscreteUniform: quantile in middle" {
     const dist = try DiscreteUniform(f64).init(0, 9);
 
@@ -11263,9 +11286,9 @@ test "DiscreteUniform: entropy(1, 6)" {
 }
 
 test "DiscreteUniform: entropy(5, 5)" {
+    // Degenerate case: n=1 → H=0 (no uncertainty)
     const dist = try DiscreteUniform(f64).init(5, 5);
-    const expected: f64 = @log(1.0); // log(1) = 0
-    try expectApproxEqRel(expected, dist.entropy(), 1e-10);
+    try expectApproxEqRel(0.0, dist.entropy(), 1e-10);
 }
 
 test "DiscreteUniform: entropy increases with range" {
@@ -11291,20 +11314,21 @@ test "DiscreteUniform: sample returns value in range" {
     }
 }
 
-test "DiscreteUniform: sample all integer values in range" {
+test "DiscreteUniform: sample covers all values in range" {
     var prng = std.Random.DefaultPrng.init(99999);
     const rng = prng.random();
 
     const dist = try DiscreteUniform(f64).init(0, 5);
 
-    // Generate many samples; all should be integers in [0, 5]
+    // Generate enough samples to cover all 6 values with high probability
+    var seen = [_]bool{false} ** 6;
     for (0..1000) |_| {
-        const sample = dist.sample(rng);
-        try testing.expect(sample >= 0 and sample <= 5);
-        // Check it's an integer (already guaranteed by i64 but verify logic)
-        const sample_f = @as(f64, @floatFromInt(sample));
-        try testing.expect(sample == @as(i64, @intFromFloat(@trunc(sample_f))));
+        const s = dist.sample(rng);
+        try testing.expect(s >= 0 and s <= 5);
+        seen[@intCast(s)] = true;
     }
+    // All 6 values should appear in 1000 draws
+    for (seen) |v| try testing.expect(v);
 }
 
 test "DiscreteUniform: sample empirical mean converges" {
