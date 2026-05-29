@@ -1,3 +1,30 @@
+**Session 603 Update (2026-05-29) — FEATURE MODE:**
+
+✅ **DirichletMultinomial Distribution** — 26th distribution, 11th discrete
+- **Mode**: FEATURE MODE (counter: 603)
+- **CI Status**: ✅ GREEN — all recent runs successful, 0 open issues
+- **Tests**: ✅ All 30 DirichletMultinomial tests passing, 519+ total distribution tests
+- **Deliverable**: DirichletMultinomial(T) added to src/stats/distributions.zig (+596 lines total)
+  * Compound: X|p ~ Multinomial(n, p), p ~ Dirichlet(α)
+  * Allocator-first design — variable-length alpha vector
+  * Parameters: n (u64, ≥1), alphas ([]T, k≥2, all >0)
+  * Fields: n, alphas[]T, alpha0:T, allocator
+  * Methods: init O(k), deinit O(1), numCategories O(1), logpmf O(k), pmf O(k),
+             mean O(1), variance O(1), covariance O(1), sample O(k·n), validate O(k)
+  * logPMF: lgamma(n+1) - Σlgamma(xi+1) + lgamma(α₀) - lgamma(n+α₀) + Σ[lgamma(xi+αi) - lgamma(αi)]
+  * Sampling: Gamma variates → normalize → Dirichlet draw → conditional Binomial sampling
+  * Special: k=2 → BetaBinomial(n, α₁, α₂) PMF equivalence verified
+  * Overdispersion: Var[Xi] > Multinomial var by factor (n+α₀)/(α₀+1)
+  * Error handling: n<1, k<2, αi≤0, non-finite → error.InvalidParameter
+  * 30 tests: init validation, logpmf normalization, BetaBinomial k=2 equivalence,
+              moment formulas, overdispersion, covariance structure (diagonal=variance, off-diagonal<0),
+              empirical mean convergence (5000 samples), f32 support, memory safety loops
+- **Distribution count**: 26 total (15 continuous + 11 discrete)
+  * Continuous: Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Dirichlet
+  * Discrete: Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Zipf, BetaBinomial, DirichletMultinomial
+- **Commit**: 74afa15
+- **Next Priority**: DiscreteUniform or Logarithmic distribution (simpler discrete), or PolyaUrn
+
 **Session 602 Update (2026-05-29) — FEATURE MODE:**
 
 ✅ **BetaBinomial Distribution** — 25th distribution, 10th discrete
