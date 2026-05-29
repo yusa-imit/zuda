@@ -10907,3 +10907,471 @@ test "DirichletMultinomial: large n and k means are correct" {
     try expectApproxEqRel(100.0 * 5.0 / alpha0, dist.mean(0), 1e-10);
     try testing.expect(dist.variance(0) > 0.0);
 }
+
+// ============================================================================
+// DiscreteUniform Distribution
+// ============================================================================
+
+/// Discrete Uniform distribution over integers {a, a+1, ..., b}
+///
+/// Probability mass function (PMF):
+///   P(X=k) = 1/n  for k ∈ {a, a+1, ..., b}
+///   P(X=k) = 0    otherwise
+///   where n = b - a + 1
+///
+/// Parameters:
+///   - a: Lower bound (integer)
+///   - b: Upper bound (integer, b ≥ a)
+///
+/// Commonly used for: modeling fair dice, random selection from finite range,
+/// null model for discrete data
+pub fn DiscreteUniform(comptime T: type) type {
+    return struct {
+        a: i64,
+        b: i64,
+        n: i64,
+
+        const Self = @This();
+
+        /// Create a discrete uniform distribution over {a, ..., b}
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: i64, b: i64) DistributionError!Self {
+            if (b < a) return error.InvalidParameter;
+            return Self{ .a = a, .b = b, .n = b - a + 1 };
+        }
+
+        /// Probability mass function (PMF) at k
+        ///
+        /// P(X=k) = 1/n if a ≤ k ≤ b, 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: i64) T {
+            if (k < self.a or k > self.b) return 0.0;
+            return 1.0 / @as(T, @floatFromInt(self.n));
+        }
+
+        /// Log probability mass function (logPMF) at k
+        ///
+        /// log P(X=k) = -log(n) if a ≤ k ≤ b, -∞ otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: i64) T {
+            if (k < self.a or k > self.b) return -math.inf(T);
+            return -@log(@as(T, @floatFromInt(self.n)));
+        }
+
+        /// Cumulative distribution function (CDF) at k
+        ///
+        /// P(X ≤ k) = 0 if k < a
+        ///          = (k - a + 1) / n if a ≤ k ≤ b
+        ///          = 1 if k > b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            if (k < self.a) return 0.0;
+            if (k > self.b) return 1.0;
+            return @as(T, @floatFromInt(k - self.a + 1)) / @as(T, @floatFromInt(self.n));
+        }
+
+        /// Survival function: P(X > k) = 1 - CDF(k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function (inverse CDF) at probability p
+        ///
+        /// Returns k such that P(X ≤ k) ≥ p
+        /// Formula: k = a + floor(p * n), clamped to [a, b]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) i64 {
+            if (p <= 0.0) return self.a;
+            if (p >= 1.0) return self.b;
+            const q = self.a + @as(i64, @intFromFloat(@floor(p * @as(T, @floatFromInt(self.n)))));
+            // Clamp to [a, b] to handle floating-point edge cases
+            if (q < self.a) return self.a;
+            if (q > self.b) return self.b;
+            return q;
+        }
+
+        /// Mean of the distribution: (a + b) / 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (@as(T, @floatFromInt(self.a)) + @as(T, @floatFromInt(self.b))) / 2.0;
+        }
+
+        /// Variance of the distribution: (n² - 1) / 12
+        ///
+        /// For discrete uniform over n outcomes: var = (n² - 1) / 12
+        /// When n = 1 (degenerate): var = 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            return (n_f * n_f - 1.0) / 12.0;
+        }
+
+        /// Shannon entropy in nats: log(n)
+        ///
+        /// Maximum entropy for discrete distribution with n outcomes
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(@as(T, @floatFromInt(self.n)));
+        }
+
+        /// Mode of the distribution (convention: return lower bound)
+        ///
+        /// All values in [a, b] are equally likely modes.
+        /// By convention, return a.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) i64 {
+            return self.a;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses the RNG's intRangeAtMost to draw uniform from [a, b]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) i64 {
+            return rng.intRangeAtMost(i64, self.a, self.b);
+        }
+
+        /// Validate internal invariants: b ≥ a
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.b < self.a) return error.InvalidParameter;
+        }
+    };
+}
+
+// DiscreteUniform Distribution Tests
+test "DiscreteUniform: init succeeds with valid range" {
+    const dist = try DiscreteUniform(f64).init(0, 5);
+    try expectEqual(0, dist.a);
+    try expectEqual(5, dist.b);
+}
+
+test "DiscreteUniform: init degenerate case (single outcome)" {
+    const dist = try DiscreteUniform(f64).init(5, 5);
+    try expectEqual(5, dist.a);
+    try expectEqual(5, dist.b);
+}
+
+test "DiscreteUniform: init fails when b < a" {
+    try expectError(error.InvalidParameter, DiscreteUniform(f64).init(5, 3));
+    try expectError(error.InvalidParameter, DiscreteUniform(f64).init(10, 9));
+}
+
+test "DiscreteUniform: pmf uniform die case (1-6)" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    const expected: f64 = 1.0 / 6.0;
+
+    // All values in [1, 6] have pmf = 1/6
+    for (1..7) |k_u| {
+        const k: i64 = @intCast(k_u);
+        try expectApproxEqRel(expected, dist.pmf(k), 1e-10);
+    }
+
+    // Outside range: pmf = 0
+    try expectEqual(0.0, dist.pmf(0));
+    try expectEqual(0.0, dist.pmf(7));
+}
+
+test "DiscreteUniform: pmf negative range" {
+    const dist = try DiscreteUniform(f64).init(-2, 2);
+    const expected: f64 = 0.2; // 1/5
+
+    const values = [_]i64{ -2, -1, 0, 1, 2 };
+    for (values) |k| {
+        try expectApproxEqRel(expected, dist.pmf(k), 1e-10);
+    }
+
+    try expectEqual(0.0, dist.pmf(-3));
+    try expectEqual(0.0, dist.pmf(3));
+}
+
+test "DiscreteUniform: pmf degenerate case (single value)" {
+    const dist = try DiscreteUniform(f64).init(5, 5);
+
+    try expectEqual(1.0, dist.pmf(5));
+    try expectEqual(0.0, dist.pmf(4));
+    try expectEqual(0.0, dist.pmf(6));
+}
+
+test "DiscreteUniform: pmf sums to 1.0" {
+    const dist = try DiscreteUniform(f64).init(0, 9);
+    var sum: f64 = 0.0;
+
+    for (0..10) |k_u| {
+        const k: i64 = @intCast(k_u);
+        sum += dist.pmf(k);
+    }
+
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "DiscreteUniform: logpmf in range equals -log(n)" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    const n: f64 = 6.0; // b - a + 1
+    const expected: f64 = -@log(n);
+
+    for (1..7) |k_u| {
+        const k: i64 = @intCast(k_u);
+        try expectApproxEqRel(expected, dist.logpmf(k), 1e-10);
+    }
+}
+
+test "DiscreteUniform: logpmf outside range is -infinity" {
+    const dist = try DiscreteUniform(f64).init(2, 5);
+
+    try testing.expect(math.isNegativeInf(dist.logpmf(1)));
+    try testing.expect(math.isNegativeInf(dist.logpmf(6)));
+    try testing.expect(math.isNegativeInf(dist.logpmf(0)));
+}
+
+test "DiscreteUniform: cdf at lower bound" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    // cdf(1) = (1 - 1 + 1) / 6 = 1/6
+    try expectApproxEqRel(1.0 / 6.0, dist.cdf(1), 1e-10);
+}
+
+test "DiscreteUniform: cdf at upper bound" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    // cdf(6) = (6 - 1 + 1) / 6 = 1.0
+    try expectApproxEqRel(1.0, dist.cdf(6), 1e-10);
+}
+
+test "DiscreteUniform: cdf below range is 0" {
+    const dist = try DiscreteUniform(f64).init(2, 5);
+    try expectEqual(0.0, dist.cdf(1));
+    try expectEqual(0.0, dist.cdf(0));
+    try expectEqual(0.0, dist.cdf(-10));
+}
+
+test "DiscreteUniform: cdf above range is 1" {
+    const dist = try DiscreteUniform(f64).init(2, 5);
+    try expectEqual(1.0, dist.cdf(5));
+    try expectEqual(1.0, dist.cdf(6));
+    try expectEqual(1.0, dist.cdf(100));
+}
+
+test "DiscreteUniform: cdf monotonically increasing" {
+    const dist = try DiscreteUniform(f64).init(0, 10);
+
+    var prev = dist.cdf(0);
+    for (1..11) |k_u| {
+        const k: i64 = @intCast(k_u);
+        const curr = dist.cdf(k);
+        try testing.expect(curr >= prev);
+        prev = curr;
+    }
+}
+
+test "DiscreteUniform: sf(k) = 1 - cdf(k)" {
+    const dist = try DiscreteUniform(f64).init(-5, 5);
+
+    var k: i64 = -5;
+    while (k <= 5) : (k += 1) {
+        const cdf_k = dist.cdf(k);
+        const sf_k = dist.sf(k);
+        try expectApproxEqRel(1.0, cdf_k + sf_k, 1e-10);
+    }
+}
+
+test "DiscreteUniform: sf at lower bound" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    // sf(1) = 1 - 1/6 = 5/6
+    try expectApproxEqRel(5.0 / 6.0, dist.sf(1), 1e-10);
+}
+
+test "DiscreteUniform: quantile at extremes" {
+    const dist = try DiscreteUniform(f64).init(3, 10);
+
+    // quantile(0.0) = a
+    try expectEqual(3, dist.quantile(0.0));
+
+    // quantile(1.0) = b
+    try expectEqual(10, dist.quantile(1.0));
+}
+
+test "DiscreteUniform: quantile in middle" {
+    const dist = try DiscreteUniform(f64).init(0, 9);
+
+    const q = dist.quantile(0.5);
+    try testing.expect(q >= 0 and q <= 9);
+}
+
+test "DiscreteUniform: quantile monotonically increasing" {
+    const dist = try DiscreteUniform(f64).init(-5, 5);
+    var prev = dist.quantile(0.0);
+
+    var p: i32 = 1;
+    while (p <= 10) : (p += 1) {
+        const p_flt: f64 = @as(f64, @floatFromInt(p)) / 10.0;
+        const q = dist.quantile(p_flt);
+        try testing.expect(q >= prev);
+        prev = q;
+    }
+}
+
+test "DiscreteUniform: mean(0, 10)" {
+    const dist = try DiscreteUniform(f64).init(0, 10);
+    const expected: f64 = 5.0; // (0 + 10) / 2
+    try expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "DiscreteUniform: mean(-5, 5)" {
+    const dist = try DiscreteUniform(f64).init(-5, 5);
+    const expected: f64 = 0.0; // (-5 + 5) / 2
+    try expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "DiscreteUniform: mean degenerate case" {
+    const dist = try DiscreteUniform(f64).init(7, 7);
+    try expectEqual(7.0, dist.mean());
+}
+
+test "DiscreteUniform: variance(0, 5)" {
+    const dist = try DiscreteUniform(f64).init(0, 5);
+    // n = 6, variance = (36 - 1) / 12 = 35/12 ≈ 2.9166667
+    const expected: f64 = 35.0 / 12.0;
+    try expectApproxEqRel(expected, dist.variance(), 1e-10);
+}
+
+test "DiscreteUniform: variance degenerate case" {
+    const dist = try DiscreteUniform(f64).init(5, 5);
+    try expectEqual(0.0, dist.variance());
+}
+
+test "DiscreteUniform: variance positive for n > 1" {
+    const dist = try DiscreteUniform(f64).init(1, 10);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "DiscreteUniform: entropy(1, 6)" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    const expected: f64 = @log(6.0); // log(n)
+    try expectApproxEqRel(expected, dist.entropy(), 1e-10);
+}
+
+test "DiscreteUniform: entropy(5, 5)" {
+    const dist = try DiscreteUniform(f64).init(5, 5);
+    const expected: f64 = @log(1.0); // log(1) = 0
+    try expectApproxEqRel(expected, dist.entropy(), 1e-10);
+}
+
+test "DiscreteUniform: entropy increases with range" {
+    const dist1 = try DiscreteUniform(f64).init(0, 5); // n = 6
+    const dist2 = try DiscreteUniform(f64).init(0, 10); // n = 11
+    try testing.expect(dist1.entropy() < dist2.entropy());
+}
+
+test "DiscreteUniform: mode returns a" {
+    const dist = try DiscreteUniform(f64).init(3, 10);
+    try expectEqual(3, dist.mode());
+}
+
+test "DiscreteUniform: sample returns value in range" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try DiscreteUniform(f64).init(5, 15);
+
+    for (0..100) |_| {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 5 and sample <= 15);
+    }
+}
+
+test "DiscreteUniform: sample all integer values in range" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    const dist = try DiscreteUniform(f64).init(0, 5);
+
+    // Generate many samples; all should be integers in [0, 5]
+    for (0..1000) |_| {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 0 and sample <= 5);
+        // Check it's an integer (already guaranteed by i64 but verify logic)
+        const sample_f = @as(f64, @floatFromInt(sample));
+        try testing.expect(sample == @as(i64, @intFromFloat(@trunc(sample_f))));
+    }
+}
+
+test "DiscreteUniform: sample empirical mean converges" {
+    var prng = std.Random.DefaultPrng.init(55555);
+    const rng = prng.random();
+
+    const dist = try DiscreteUniform(f64).init(0, 10);
+    const expected_mean: f64 = 5.0; // (0 + 10) / 2
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng);
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(expected_mean, sample_mean, 0.3);
+}
+
+test "DiscreteUniform: f32 support" {
+    const dist = try DiscreteUniform(f32).init(0, 3);
+    try expectEqual(0, dist.a);
+    try expectEqual(3, dist.b);
+
+    const pmf_expected: f32 = 0.25; // 1/4
+    try expectApproxEqRel(pmf_expected, dist.pmf(0), 1e-5);
+    try expectApproxEqRel(pmf_expected, dist.pmf(2), 1e-5);
+
+    try testing.expect(std.math.isFinite(dist.mean()));
+    try testing.expect(dist.variance() >= 0.0);
+}
+
+test "DiscreteUniform: validate passes on valid distribution" {
+    const dist = try DiscreteUniform(f64).init(0, 10);
+    try dist.validate();
+}
+
+test "DiscreteUniform: negative bounds" {
+    const dist = try DiscreteUniform(f64).init(-100, -50);
+    try expectEqual(-100, dist.a);
+    try expectEqual(-50, dist.b);
+
+    const expected: f64 = 1.0 / 51.0; // 51 outcomes
+    try expectApproxEqRel(expected, dist.pmf(-100), 1e-10);
+    try expectApproxEqRel(expected, dist.pmf(-75), 1e-10);
+    try expectApproxEqRel(expected, dist.pmf(-50), 1e-10);
+    try expectEqual(0.0, dist.pmf(-101));
+}
+
+test "DiscreteUniform: large range" {
+    const dist = try DiscreteUniform(f64).init(0, 1_000_000);
+    const expected: f64 = 1.0 / 1_000_001.0;
+
+    try expectApproxEqRel(expected, dist.pmf(0), 1e-12);
+    try expectApproxEqRel(expected, dist.pmf(500_000), 1e-12);
+    try expectApproxEqRel(expected, dist.pmf(1_000_000), 1e-12);
+}
+
+test "DiscreteUniform: cdf intermediate values correct" {
+    const dist = try DiscreteUniform(f64).init(0, 9);
+    // n = 10
+    // cdf(0) = 1/10 = 0.1
+    try expectApproxEqRel(0.1, dist.cdf(0), 1e-10);
+    // cdf(4) = 5/10 = 0.5
+    try expectApproxEqRel(0.5, dist.cdf(4), 1e-10);
+    // cdf(9) = 10/10 = 1.0
+    try expectApproxEqRel(1.0, dist.cdf(9), 1e-10);
+}
