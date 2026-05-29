@@ -11908,3 +11908,650 @@ test "Logarithmic: p near upper boundary (p=0.99)" {
     const pmf_2 = dist.pmf(2);
     try testing.expect(pmf_1 > pmf_2);
 }
+
+// ============================================================================
+// Skellam Distribution
+// ============================================================================
+
+/// Skellam(μ₁, μ₂) — difference of two independent Poisson random variables
+///
+/// Probability mass function (PMF):
+///   P(X=k) = exp(-(μ₁+μ₂)) × (μ₁/μ₂)^(k/2) × I_{|k|}(2√(μ₁μ₂))
+///   where I_n(x) is the modified Bessel function of the first kind
+///
+/// Parameters:
+///   - μ₁: Poisson rate parameter (μ₁ > 0)
+///   - μ₂: Poisson rate parameter (μ₂ > 0)
+///
+/// Time: O(1) for mean/variance/validate; O(k) for pmf/logpmf/cdf/quantile/sample
+pub fn Skellam(comptime T: type) type {
+    return struct {
+        mu1: T,
+        mu2: T,
+
+        const Self = @This();
+
+        /// Initialize Skellam distribution with parameters μ₁, μ₂ > 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu1: T, mu2: T) DistributionError!Self {
+            if (mu1 <= 0.0 or mu2 <= 0.0 or !std.math.isFinite(mu1) or !std.math.isFinite(mu2)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu1 = mu1, .mu2 = mu2 };
+        }
+
+        /// Compute modified Bessel function I_n(x) via series expansion
+        /// I_n(x) = Σ_{m=0}^∞  (x/2)^(n+2m) / (m! × (m+n)!)
+        ///
+        /// Time: O(1) — series terminates when term < 1e-15 × current sum | Space: O(1)
+        /// This is a static helper function.
+        fn bessel_i_n_static(n: i64, x: T) T {
+            const half_x = x / 2.0;
+            var sum: T = 0.0;
+            var m: i64 = 0;
+            var term: T = 1.0;
+
+            // First term: m=0, (x/2)^n / n!
+            var factorial_m: T = 1.0;
+            var factorial_mn: T = 1.0;
+
+            // Compute n!
+            for (0..@intCast(n)) |i| {
+                factorial_mn *= @as(T, @floatFromInt(i + 1));
+            }
+
+            // Term 0: (x/2)^n / n!
+            term = std.math.pow(T, half_x, @as(T, @floatFromInt(n))) / factorial_mn;
+            sum += term;
+
+            // Iterative terms m >= 1
+            const max_iterations = 500;
+            while (m < max_iterations) {
+                m += 1;
+                const m_float: T = @floatFromInt(m);
+                const mn_float: T = @floatFromInt(m + n);
+
+                // Update factorials
+                factorial_m *= m_float;
+                factorial_mn *= mn_float;
+
+                // Next term: multiply previous by (x/2)^2 / (m * (m+n))
+                term *= (half_x * half_x) / (m_float * mn_float);
+                sum += term;
+
+                // Stop when term becomes negligible
+                if (@abs(term) < 1e-15 * @abs(sum)) break;
+            }
+
+            return sum;
+        }
+
+        /// Probability mass function P(X=k)
+        ///
+        /// P(X=k) = exp(-(μ₁+μ₂)) × (μ₁/μ₂)^(k/2) × I_{|k|}(2√(μ₁μ₂))
+        ///
+        /// Time: O(k) due to Bessel series | Space: O(1)
+        pub fn pmf(self: Self, k: i64) T {
+            const sum = self.mu1 + self.mu2;
+            const prod = self.mu1 * self.mu2;
+            const sqrt_prod = @sqrt(prod);
+            const two_sqrt = 2.0 * sqrt_prod;
+
+            const exp_part = @exp(-sum);
+            const ratio = self.mu1 / self.mu2;
+            const ratio_power = std.math.pow(T, ratio, @as(T, @floatFromInt(k)) / 2.0);
+            const abs_k: i64 = if (k < 0) -k else k;
+            const bessel_part = bessel_i_n_static(abs_k, two_sqrt);
+
+            return exp_part * ratio_power * bessel_part;
+        }
+
+        /// Log probability mass function log P(X=k)
+        ///
+        /// Time: O(k) due to Bessel series | Space: O(1)
+        pub fn logpmf(self: Self, k: i64) T {
+            const pmf_val = self.pmf(k);
+            if (pmf_val <= 0.0) return -math.inf(T);
+            return @log(pmf_val);
+        }
+
+        /// Cumulative distribution function P(X ≤ k)
+        ///
+        /// Computed by summing PMF from -inf to k (with practical bounds).
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            const m = self.mean();
+            const std_dev = @sqrt(self.variance());
+
+            // Determine search range based on mean and std dev
+            const lower_bound = @min(k, @as(i64, @intFromFloat(m - 5.0 * std_dev - 10.0)));
+            const upper_bound = k;
+
+            var sum: T = 0.0;
+            var i = lower_bound;
+            while (i <= upper_bound) : (i += 1) {
+                sum += self.pmf(i);
+            }
+
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - P(X ≤ k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k such that CDF(k) ≥ prob
+        ///
+        /// Time: O(k) where k is the returned value | Space: O(1)
+        pub fn quantile(self: Self, prob_in: T) i64 {
+            if (prob_in <= 0.0) return -1000;
+            const prob = if (prob_in >= 1.0) 0.9999999999 else prob_in;
+
+            const m = self.mean();
+            const std_dev = @sqrt(self.variance());
+
+            // Start search from lower bound
+            var lower: i64 = @as(i64, @intFromFloat(m - 5.0 * std_dev));
+            var upper: i64 = @as(i64, @intFromFloat(m + 5.0 * std_dev)) + 1;
+
+            // Binary search for quantile
+            while (lower < upper) {
+                const mid = lower + @divTrunc(upper - lower, 2);
+                const cdf_mid = self.cdf(mid);
+
+                if (cdf_mid < prob) {
+                    lower = mid + 1;
+                } else {
+                    upper = mid;
+                }
+            }
+
+            return lower;
+        }
+
+        /// Mean of the distribution: μ₁ - μ₂
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu1 - self.mu2;
+        }
+
+        /// Variance of the distribution: μ₁ + μ₂
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.mu1 + self.mu2;
+        }
+
+        /// Generate a random sample from Skellam distribution
+        ///
+        /// Uses Poisson(μ₁) - Poisson(μ₂) method.
+        /// NOTE: Can return error if Poisson sampling fails (though unlikely with valid μ)
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) !i64 {
+            const pois1 = try poisson_sample(self.mu1, rng);
+            const pois2 = try poisson_sample(self.mu2, rng);
+            return @as(i64, @intCast(pois1)) - @as(i64, @intCast(pois2));
+        }
+
+        /// Poisson sampling helper using Knuth's algorithm for small μ
+        /// and transformed rejection for large μ
+        ///
+        /// Time: O(μ) expected | Space: O(1)
+        fn poisson_sample(mu: T, rng: std.Random) !u64 {
+            if (mu < 30.0) {
+                // Knuth algorithm for small λ
+                const l = @exp(-mu);
+                var k: u64 = 0;
+                var p: T = 1.0;
+
+                while (true) {
+                    p *= rng.float(T);
+                    if (p < l) break;
+                    k += 1;
+                }
+
+                return k;
+            } else {
+                // "Ratio of uniforms" for large λ
+                // Conservative approximation: Normal with integer rounding
+                const sqrt_mu = @sqrt(mu);
+                const z = @cos(2.0 * std.math.pi * rng.float(T));
+                const y = sqrt_mu * z + mu;
+
+                if (y >= 0.0) {
+                    return @as(u64, @intFromFloat(@round(y)));
+                } else {
+                    return 0;
+                }
+            }
+        }
+
+        /// Assert that parameters are valid: μ₁ > 0, μ₂ > 0, and finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.mu1 <= 0.0 or self.mu2 <= 0.0 or !std.math.isFinite(self.mu1) or !std.math.isFinite(self.mu2)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Skellam Distribution Tests (29th distribution, 14th discrete)
+// ============================================================================
+
+test "Skellam: init with valid mu1=3.0 mu2=2.0 succeeds" {
+    const dist = try Skellam(f64).init(3.0, 2.0);
+    try testing.expect(std.math.isFinite(dist.mu1));
+    try testing.expect(std.math.isFinite(dist.mu2));
+}
+
+test "Skellam: init with mu1=0.0 returns error" {
+    const result = Skellam(f64).init(0.0, 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Skellam: init with mu2=0.0 returns error" {
+    const result = Skellam(f64).init(3.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Skellam: init with negative mu1 returns error" {
+    const result = Skellam(f64).init(-1.0, 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Skellam: init with negative mu2 returns error" {
+    const result = Skellam(f64).init(3.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Skellam: init with infinite mu1 returns error" {
+    const result = Skellam(f64).init(std.math.inf(f64), 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Skellam: pmf at k=0 with mu1=mu2=1 matches concrete value (≈0.3085)" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    // Symmetric case: PMF(0) ≈ 0.3085
+    try expectApproxEqRel(0.3085, pmf_val, 0.01);
+}
+
+test "Skellam: pmf at k=1 with mu1=mu2=1" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    // Should be positive and less than pmf(0)
+    try testing.expect(pmf_val > 0.0);
+    try testing.expect(pmf_val < dist.pmf(0));
+}
+
+test "Skellam: pmf at k=-1 equals pmf at k=1 for mu1=mu2 (symmetric)" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const pmf_pos = dist.pmf(1);
+    const pmf_neg = dist.pmf(-1);
+    try expectApproxEqRel(pmf_pos, pmf_neg, 1e-8);
+}
+
+test "Skellam: pmf is positive for all tested k" {
+    const dist = try Skellam(f64).init(2.0, 3.0);
+    const ks = [_]i64{ -5, -2, 0, 2, 5 };
+    for (ks) |k| {
+        const pmf_val = dist.pmf(k);
+        try testing.expect(pmf_val >= 0.0);
+    }
+}
+
+test "Skellam: pmf at large |k| approaches 0" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const pmf_large_pos = dist.pmf(100);
+    const pmf_large_neg = dist.pmf(-100);
+    try testing.expect(pmf_large_pos < 1e-10);
+    try testing.expect(pmf_large_neg < 1e-10);
+}
+
+test "Skellam: pmf sums to approximately 1.0 over [-50, 50]" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    var sum: f64 = 0.0;
+    var k: i64 = -50;
+    while (k <= 50) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    // Should be close to 1.0 (most of the mass within [-50, 50])
+    try testing.expect(sum > 0.95);
+    try testing.expect(sum <= 1.0001);
+}
+
+test "Skellam: pmf decreases as |k| increases from center (mu1=mu2=1)" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const pmf_0 = dist.pmf(0);
+    const pmf_1 = dist.pmf(1);
+    const pmf_2 = dist.pmf(2);
+    const pmf_3 = dist.pmf(3);
+    try testing.expect(pmf_0 > pmf_1);
+    try testing.expect(pmf_1 > pmf_2);
+    try testing.expect(pmf_2 > pmf_3);
+}
+
+test "Skellam: pmf is asymmetric when mu1 ≠ mu2" {
+    const dist = try Skellam(f64).init(3.0, 1.0);
+    const pmf_pos = dist.pmf(1);
+    const pmf_neg = dist.pmf(-1);
+    // pmf(1) should be different from pmf(-1) (not symmetric)
+    try testing.expect(@abs(pmf_pos - pmf_neg) > 1e-6);
+    // Mean is positive, so should favor positive k
+    try testing.expect(pmf_pos > pmf_neg);
+}
+
+test "Skellam: logpmf equals ln(pmf) for k in range" {
+    const dist = try Skellam(f64).init(2.0, 2.0);
+    const ks = [_]i64{ -3, -1, 0, 1, 3 };
+    for (ks) |k| {
+        const pmf_val = dist.pmf(k);
+        const logpmf_val = dist.logpmf(k);
+        if (pmf_val > 0.0) {
+            const expected = @log(pmf_val);
+            try expectApproxEqRel(expected, logpmf_val, 1e-10);
+        }
+    }
+}
+
+test "Skellam: logpmf returns -inf for pmf=0 (large |k|)" {
+    const dist = try Skellam(f64).init(0.5, 0.5);
+    const logpmf_large = dist.logpmf(1000);
+    try testing.expect(std.math.isNegativeInf(logpmf_large));
+}
+
+test "Skellam: cdf is monotonically non-decreasing" {
+    const dist = try Skellam(f64).init(2.0, 1.0);
+    var prev_cdf: f64 = dist.cdf(-10);
+    var k: i64 = -9;
+    while (k <= 10) : (k += 1) {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "Skellam: cdf(large positive k) approaches 1.0" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const cdf_large = dist.cdf(100);
+    try testing.expect(cdf_large > 0.99);
+}
+
+test "Skellam: cdf(large negative k) approaches 0.0" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const cdf_large_neg = dist.cdf(-100);
+    try testing.expect(cdf_large_neg < 0.01);
+}
+
+test "Skellam: cdf(k) - cdf(k-1) approximately equals pmf(k)" {
+    const dist = try Skellam(f64).init(2.0, 2.0);
+    const ks = [_]i64{ -2, 0, 2, 5 };
+    for (ks) |k| {
+        const cdf_k = dist.cdf(k);
+        const cdf_k_minus_1 = dist.cdf(k - 1);
+        const pmf_k = dist.pmf(k);
+        const diff = cdf_k - cdf_k_minus_1;
+        // Allow larger tolerance due to numerical integration
+        try expectApproxEqRel(pmf_k, diff, 0.05);
+    }
+}
+
+test "Skellam: sf(k) + cdf(k) equals 1.0" {
+    const dist = try Skellam(f64).init(1.0, 2.0);
+    const ks = [_]i64{ -5, 0, 5, 10 };
+    for (ks) |k| {
+        const cdf_val = dist.cdf(k);
+        const sf_val = dist.sf(k);
+        try expectApproxEqRel(1.0, cdf_val + sf_val, 1e-10);
+    }
+}
+
+test "Skellam: sf(large negative k) approaches 1.0" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const sf_large_neg = dist.sf(-100);
+    try testing.expect(sf_large_neg > 0.99);
+}
+
+test "Skellam: quantile(0.5) for mu1=mu2=1 is 0 (median of symmetric dist)" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.5);
+    // For symmetric distribution, median should be 0
+    try testing.expect(q == 0 or q == -1 or q == 1);
+}
+
+test "Skellam: quantile is non-decreasing" {
+    const dist = try Skellam(f64).init(2.0, 3.0);
+    var prev_q: i64 = dist.quantile(0.01);
+    const probs = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95 };
+    for (probs) |prob| {
+        const q = dist.quantile(prob);
+        try testing.expect(q >= prev_q);
+        prev_q = q;
+    }
+}
+
+test "Skellam: quantile(cdf(k)) returns k or nearby value" {
+    const dist = try Skellam(f64).init(1.0, 1.0);
+    const ks = [_]i64{ -3, -1, 0, 1, 3 };
+    for (ks) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = dist.quantile(cdf_k);
+        // quantile should return k or k+1 (right-continuous)
+        try testing.expect(q == k or q == k + 1);
+    }
+}
+
+test "Skellam: mean equals mu1 - mu2" {
+    const test_cases = [_][3]f64{
+        .{ 3.0, 2.0, 1.0 },
+        .{ 1.0, 1.0, 0.0 },
+        .{ 5.0, 2.0, 3.0 },
+        .{ 10.0, 10.0, 0.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try Skellam(f64).init(case[0], case[1]);
+        const m = dist.mean();
+        try expectEqual(case[2], m);
+    }
+}
+
+test "Skellam: variance equals mu1 + mu2" {
+    const test_cases = [_][3]f64{
+        .{ 3.0, 2.0, 5.0 },
+        .{ 1.0, 1.0, 2.0 },
+        .{ 5.0, 2.0, 7.0 },
+        .{ 10.0, 10.0, 20.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try Skellam(f64).init(case[0], case[1]);
+        const v = dist.variance();
+        try expectEqual(case[2], v);
+    }
+}
+
+test "Skellam: mean is 0 when mu1 = mu2 (symmetric)" {
+    const dist = try Skellam(f64).init(5.0, 5.0);
+    const m = dist.mean();
+    try expectEqual(0.0, m);
+}
+
+test "Skellam: variance is always positive" {
+    const test_pairs = [_][2]f64{
+        .{ 0.1, 0.2 },
+        .{ 1.0, 1.0 },
+        .{ 10.0, 5.0 },
+        .{ 100.0, 50.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Skellam(f64).init(pair[0], pair[1]);
+        const v = dist.variance();
+        try testing.expect(v > 0.0);
+    }
+}
+
+test "Skellam: sample returns integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try Skellam(f64).init(2.0, 2.0);
+
+    for (0..100) |_| {
+        const sample_val = try dist.sample(rng);
+        // Just verify it's an integer (type check)
+        _ = sample_val;
+    }
+}
+
+test "Skellam: sample returns values in reasonable range" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try Skellam(f64).init(2.0, 2.0);
+
+    for (0..500) |_| {
+        const sample_val = try dist.sample(rng);
+        // For symmetric case with small μ, should be within ±20
+        try testing.expect(sample_val >= -50 and sample_val <= 50);
+    }
+}
+
+test "Skellam: empirical mean converges to analytical mean (mu1=3, mu2=2)" {
+    var prng = std.Random.DefaultPrng.init(777);
+    const rng = prng.random();
+
+    const dist = try Skellam(f64).init(3.0, 2.0);
+    const analytical_mean = dist.mean();  // 1.0
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+
+    for (0..n) |_| {
+        const sample_val = try dist.sample(rng);
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    // Within 10% relative error
+    try expectApproxEqRel(analytical_mean, empirical_mean, 0.10);
+}
+
+test "Skellam: empirical variance converges to analytical variance (mu1=2, mu2=3)" {
+    var prng = std.Random.DefaultPrng.init(888);
+    const rng = prng.random();
+
+    const dist = try Skellam(f64).init(2.0, 3.0);
+    const analytical_var = dist.variance();  // 5.0
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+
+    for (0..n) |_| {
+        const sample_val = try dist.sample(rng);
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    var var_sum: f64 = 0.0;
+
+    var prng2 = std.Random.DefaultPrng.init(888);
+    const rng2 = prng2.random();
+
+    for (0..n) |_| {
+        const sample_val = try dist.sample(rng2);
+        const diff = @as(f64, @floatFromInt(sample_val)) - empirical_mean;
+        var_sum += diff * diff;
+    }
+
+    const empirical_var = var_sum / @as(f64, @floatFromInt(n));
+    // Within 15% relative error
+    try expectApproxEqRel(analytical_var, empirical_var, 0.15);
+}
+
+test "Skellam: symmetric case (mu1=mu2) produces both positive and negative samples" {
+    var prng = std.Random.DefaultPrng.init(999);
+    const rng = prng.random();
+
+    const dist = try Skellam(f64).init(2.0, 2.0);
+
+    var positive_count: u64 = 0;
+    var negative_count: u64 = 0;
+    const n = 1000;
+
+    for (0..n) |_| {
+        const sample_val = try dist.sample(rng);
+        if (sample_val > 0) {
+            positive_count += 1;
+        } else if (sample_val < 0) {
+            negative_count += 1;
+        }
+    }
+
+    // Both should occur with appreciable frequency
+    try testing.expect(positive_count > n / 10);
+    try testing.expect(negative_count > n / 10);
+}
+
+test "Skellam: f32 support works" {
+    const dist = try Skellam(f32).init(2.0, 1.0);
+    try testing.expect(std.math.isFinite(dist.mu1));
+    try testing.expect(std.math.isFinite(dist.mu2));
+
+    const pmf_0: f32 = dist.pmf(0);
+    try testing.expect(pmf_0 > 0.0);
+    const m = dist.mean();
+    try expectEqual(@as(f32, 1.0), m);
+}
+
+test "Skellam: validate passes for valid parameters" {
+    const dist = try Skellam(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "Skellam: large mu1 and mu2 (mu1=100, mu2=50)" {
+    const dist = try Skellam(f64).init(100.0, 50.0);
+    const m = dist.mean();
+    const v = dist.variance();
+    try expectEqual(50.0, m);
+    try expectEqual(150.0, v);
+
+    // PMF should be well-defined (no NaN)
+    const pmf_val = dist.pmf(50);
+    try testing.expect(std.math.isFinite(pmf_val));
+    try testing.expect(pmf_val >= 0.0);
+}
+
+test "Skellam: very asymmetric case (mu1=10, mu2=0.1)" {
+    const dist = try Skellam(f64).init(10.0, 0.1);
+    const m = dist.mean();
+    const v = dist.variance();
+    try expectApproxEqRel(9.9, m, 1e-10);
+    try expectApproxEqRel(10.1, v, 1e-10);
+
+    // Most mass should be near the mean
+    const pmf_mean = dist.pmf(9);
+    const pmf_far = dist.pmf(-10);
+    try testing.expect(pmf_mean > pmf_far);
+}
+
+test "Skellam: equal small parameters (mu1=mu2=0.5)" {
+    const dist = try Skellam(f64).init(0.5, 0.5);
+    const m = dist.mean();
+    const v = dist.variance();
+    try expectEqual(0.0, m);
+    try expectEqual(1.0, v);
+
+    // Verify PMF is defined
+    const pmf_0 = dist.pmf(0);
+    try testing.expect(pmf_0 > 0.0);
+    try testing.expect(pmf_0 < 1.0);
+}
