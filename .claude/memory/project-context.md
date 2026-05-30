@@ -1,3 +1,19 @@
+**Session 611 Update (2026-05-31) — FEATURE MODE:**
+
+✅ **Von Mises Distribution** — 32nd distribution, 17th continuous — commit ef92e63
+- **Mode**: FEATURE MODE (counter: 611)
+- **CI Status**: commit pushed, build pending
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: VonMises(T) — circular distribution for directional statistics
+  * Parameters: mu (mean direction), kappa (concentration > 0)
+  * Bessel function helpers: besselI0, besselI1 (Abramowitz & Stegun polynomial approx)
+  * Methods: init, pdf, logpdf, circularMean, circularVariance, entropy, mode, sample, validate
+  * Sampling: Best 1979 rejection algorithm (O(1) amortized)
+  * No CDF/quantile (no closed form)
+- **Tests**: 45 new Von Mises tests (all passing, exit code 0)
+- **Distribution count**: 32 total (17 continuous + 15 discrete)
+- **Next Priority**: Rayleigh, Kumaraswamy, or HalfNormal
+
 **Session 610 Update (2026-05-30) — STABILIZATION MODE:**
 
 ✅ **ALL SYSTEMS GREEN** — commit 280ddb2
