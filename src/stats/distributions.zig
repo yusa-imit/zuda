@@ -14558,3 +14558,564 @@ test "Rayleigh: f32 quantile works" {
     const q = try dist.quantile(0.5);
     try testing.expect(q > 0.0);
 }
+
+/// Kumaraswamy distribution — bounded continuous distribution on (0, 1).
+/// Closed-form CDF and quantile; flexible alternative to Beta distribution.
+///
+/// Parameters: a > 0, b > 0 (shape parameters)
+/// Support: x ∈ (0, 1)
+/// PDF: f(x; a, b) = a·b·x^(a-1)·(1-x^a)^(b-1)
+/// CDF: F(x; a, b) = 1 - (1-x^a)^b
+pub fn Kumaraswamy(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+
+        const Self = @This();
+        const euler_gamma: T = 0.5772156649015329;
+
+        /// Create a Kumaraswamy distribution with given shape parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (a <= 0.0) return error.InvalidParameter;
+            if (b <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(a)) return error.InvalidParameter;
+            if (!math.isFinite(b)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; a, b) = a·b·x^(a-1)·(1-x^a)^(b-1) for 0 < x < 1, 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0 or x >= 1.0) return 0.0;
+            const x_pow_a_minus_1 = math.pow(T, x, self.a - 1.0);
+            const one_minus_x_a = 1.0 - math.pow(T, x, self.a);
+            const one_minus_x_a_pow_b_minus_1 = math.pow(T, one_minus_x_a, self.b - 1.0);
+            return self.a * self.b * x_pow_a_minus_1 * one_minus_x_a_pow_b_minus_1;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; a, b) = ln(a) + ln(b) + (a-1)·ln(x) + (b-1)·ln(1-x^a)
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0 or x >= 1.0) return -math.inf(T);
+            const x_pow_a = math.pow(T, x, self.a);
+            const ln_term = @log(self.a) + @log(self.b);
+            const x_term = (self.a - 1.0) * @log(x);
+            const one_minus_term = (self.b - 1.0) * @log(1.0 - x_pow_a);
+            return ln_term + x_term + one_minus_term;
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; a, b) = 1 - (1-x^a)^b for 0 < x < 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= 1.0) return 1.0;
+            const x_pow_a = math.pow(T, x, self.a);
+            const one_minus_term = math.pow(T, 1.0 - x_pow_a, self.b);
+            return 1.0 - one_minus_term;
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = (1-x^a)^b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            if (x >= 1.0) return 0.0;
+            const x_pow_a = math.pow(T, x, self.a);
+            return math.pow(T, 1.0 - x_pow_a, self.b);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; a, b) = (1-(1-p)^(1/b))^(1/a)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+
+            const one_minus_p = 1.0 - p;
+            const one_minus_p_inv_b = math.pow(T, one_minus_p, 1.0 / self.b);
+            return math.pow(T, 1.0 - one_minus_p_inv_b, 1.0 / self.a);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = b·B(1+1/a, b) = b·exp(lgamma(1+1/a) + lgamma(b) - lgamma(1+1/a+b))
+        /// where B is the Beta function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const first_arg = 1.0 + 1.0 / self.a;
+            const lg_first = math.lgamma(T, first_arg);
+            const lg_b = math.lgamma(T, self.b);
+            const lg_sum = math.lgamma(T, first_arg + self.b);
+            return self.b * @exp(lg_first + lg_b - lg_sum);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = b·B(1+2/a, b) - (mean)²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mean_val = self.mean();
+            const first_arg = 1.0 + 2.0 / self.a;
+            const lg_first = math.lgamma(T, first_arg);
+            const lg_b = math.lgamma(T, self.b);
+            const lg_sum = math.lgamma(T, first_arg + self.b);
+            const second_moment = self.b * @exp(lg_first + lg_b - lg_sum);
+            return second_moment - mean_val * mean_val;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = ((a-1)/(a·b-1))^(1/a) for a > 1 and b > 1, NaN otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.a <= 1.0 or self.b <= 1.0) return math.nan(T);
+            const numerator = self.a - 1.0;
+            const denominator = self.a * self.b - 1.0;
+            return math.pow(T, numerator / denominator, 1.0 / self.a);
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// H[X] = (1 - 1/b) - ln(a·b) + (1 - 1/a)·(γ + ψ(b+1))
+        /// where γ is Euler-Mascheroni constant and ψ is digamma function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const digamma_val = digamma(T, self.b + 1.0);
+            const term1 = 1.0 - 1.0 / self.b;
+            const term2 = @log(self.a * self.b);
+            const term3 = (1.0 - 1.0 / self.a) * (euler_gamma + digamma_val);
+            return term1 - term2 + term3;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method: (1-(1-U)^(1/b))^(1/a), U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            // Guard against u==0 and u==1 edge cases
+            if (u == 0.0) u = std.math.floatMin(T);
+            if (u == 1.0) u = 1.0 - std.math.floatEps(T);
+            const one_minus_u = 1.0 - u;
+            const one_minus_u_inv_b = math.pow(T, one_minus_u, 1.0 / self.b);
+            return math.pow(T, 1.0 - one_minus_u_inv_b, 1.0 / self.a);
+        }
+
+        /// Assert that parameters are valid: a > 0, b > 0, both finite
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.a <= 0.0 or !math.isFinite(self.a)) return DistributionError.InvalidParameter;
+            if (self.b <= 0.0 or !math.isFinite(self.b)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Kumaraswamy Tests
+// ============================================================================
+
+test "Kumaraswamy: init with valid params a=2, b=3" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 2.0), dist.a);
+    try expectEqual(@as(f64, 3.0), dist.b);
+}
+
+test "Kumaraswamy: init with various valid param combinations" {
+    const dist1 = try Kumaraswamy(f64).init(0.5, 0.5);
+    try expectEqual(@as(f64, 0.5), dist1.a);
+
+    const dist2 = try Kumaraswamy(f64).init(1.0, 1.0);
+    try expectEqual(@as(f64, 1.0), dist2.b);
+
+    const dist3 = try Kumaraswamy(f64).init(5.0, 2.0);
+    try expectEqual(@as(f64, 5.0), dist3.a);
+}
+
+test "Kumaraswamy: init fails when a is zero" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(0.0, 1.0));
+}
+
+test "Kumaraswamy: init fails when a is negative" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(-1.0, 1.0));
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(-0.5, 2.0));
+}
+
+test "Kumaraswamy: init fails when b is zero" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(1.0, 0.0));
+}
+
+test "Kumaraswamy: init fails when b is negative" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(1.0, -1.0));
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(2.0, -0.5));
+}
+
+test "Kumaraswamy: init fails when a is NaN" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(math.nan(f64), 1.0));
+}
+
+test "Kumaraswamy: init fails when b is NaN" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(1.0, math.nan(f64)));
+}
+
+test "Kumaraswamy: init fails when a is positive infinity" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(math.inf(f64), 1.0));
+}
+
+test "Kumaraswamy: init fails when b is positive infinity" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(1.0, math.inf(f64)));
+}
+
+test "Kumaraswamy: init fails when a is negative infinity" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(-math.inf(f64), 1.0));
+}
+
+test "Kumaraswamy: init fails when b is negative infinity" {
+    try expectError(error.InvalidParameter, Kumaraswamy(f64).init(1.0, -math.inf(f64)));
+}
+
+test "Kumaraswamy: pdf at x=0.5 for a=2, b=3 equals 1.6875" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    // f(0.5) = 2*3*0.5^1*(1-0.25)^2 = 6*0.5*0.5625 = 1.6875
+    try expectApproxEqRel(@as(f64, 1.6875), dist.pdf(0.5), 1e-13);
+}
+
+test "Kumaraswamy: pdf at x=0 boundary" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "Kumaraswamy: pdf at x=1 boundary for b>1" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    // b>1, so pdf(1) should be 0
+    try expectEqual(@as(f64, 0.0), dist.pdf(1.0));
+}
+
+test "Kumaraswamy: pdf for x<0 returns 0" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+}
+
+test "Kumaraswamy: pdf for x>1 returns 0" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(1.5));
+    try expectEqual(@as(f64, 0.0), dist.pdf(2.0));
+}
+
+test "Kumaraswamy: pdf is non-negative for x in (0,1)" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const test_points = [_]f64{ 0.1, 0.2, 0.3, 0.5, 0.7, 0.9 };
+    for (test_points) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "Kumaraswamy: pdf for a=1, b=1 (uniform) constant value" {
+    const dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    // Special case: Uniform(0,1), f(x) = 1 for x in (0,1)
+    const pdf_vals = [_]f64{ 0.1, 0.5, 0.9 };
+    for (pdf_vals) |x| {
+        try expectApproxEqRel(@as(f64, 1.0), dist.pdf(x), 1e-14);
+    }
+}
+
+test "Kumaraswamy: logpdf at x=0.5 for a=2, b=3 equals log(1.6875)" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const expected = @log(1.6875);
+    try expectApproxEqRel(@as(f64, expected), dist.logpdf(0.5), 1e-13);
+}
+
+test "Kumaraswamy: logpdf is log of pdf for interior point" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const x = 0.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try expectApproxEqRel(@as(f64, expected_logpdf), logpdf_val, 1e-13);
+}
+
+test "Kumaraswamy: logpdf for x<=0 returns -infinity" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-0.5)));
+}
+
+test "Kumaraswamy: logpdf for x>=1 returns -infinity" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(1.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(1.5)));
+}
+
+test "Kumaraswamy: cdf at x=0.5 for a=2, b=3 equals 0.578125" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    // F(0.5) = 1 - (1-0.25)^3 = 1 - 0.421875 = 0.578125
+    try expectApproxEqRel(@as(f64, 0.578125), dist.cdf(0.5), 1e-13);
+}
+
+test "Kumaraswamy: cdf at x=0 boundary" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Kumaraswamy: cdf at x=1 boundary" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 1.0), dist.cdf(1.0));
+}
+
+test "Kumaraswamy: cdf for x<0 returns 0" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(-0.5));
+}
+
+test "Kumaraswamy: cdf for x>1 returns 1" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 1.0), dist.cdf(1.5));
+    try expectEqual(@as(f64, 1.0), dist.cdf(2.0));
+}
+
+test "Kumaraswamy: cdf is monotone increasing on (0,1)" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const test_points = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (0..test_points.len - 1) |i| {
+        try testing.expect(dist.cdf(test_points[i]) < dist.cdf(test_points[i + 1]));
+    }
+}
+
+test "Kumaraswamy: sf at x=0.5 for a=2, b=3 equals 0.421875" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    // S(0.5) = 1 - F(0.5) = 1 - 0.578125 = 0.421875
+    try expectApproxEqRel(@as(f64, 0.421875), dist.sf(0.5), 1e-13);
+}
+
+test "Kumaraswamy: cdf + sf equals 1 for interior points" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const test_points = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_points) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqRel(@as(f64, 1.0), sum, 1e-13);
+    }
+}
+
+test "Kumaraswamy: quantile at p=0 equals 0" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "Kumaraswamy: quantile at p=1 equals 1" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectEqual(@as(f64, 1.0), try dist.quantile(1.0));
+}
+
+test "Kumaraswamy: quantile at p=0.5 approximately 0.5 for a=2, b=3" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const q = try dist.quantile(0.578125);
+    try expectApproxEqRel(@as(f64, 0.5), q, 1e-9);
+}
+
+test "Kumaraswamy: quantile inverse of cdf round-trip" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const test_probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(@as(f64, p), cdf_q, 1e-12);
+    }
+}
+
+test "Kumaraswamy: quantile fails for p<0" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Kumaraswamy: quantile fails for p>1" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Kumaraswamy: mean for a=2, b=3 approximately 0.45711" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    // b·B(1+1/a, b) = 3·B(1.5, 3)
+    try expectApproxEqRel(@as(f64, 0.45711), dist.mean(), 1e-4);
+}
+
+test "Kumaraswamy: mean(5,5) is greater than 0.5" {
+    // mean(5,5) = 5·B(1.2,5) ≈ 0.6503 > 0.5 — Kumaraswamy(a,a) is NOT symmetric around 0.5
+    const dist = try Kumaraswamy(f64).init(5.0, 5.0);
+    try testing.expect(dist.mean() > 0.5);
+}
+
+test "Kumaraswamy: mean decreases as b increases (fixed a)" {
+    // mean(2,1) = 2/3 ≈ 0.6667, mean(2,3) = 16/35 ≈ 0.4571 — higher b → lower mean
+    const dist1 = try Kumaraswamy(f64).init(2.0, 1.0);
+    const dist2 = try Kumaraswamy(f64).init(2.0, 3.0);
+    try testing.expect(dist1.mean() > dist2.mean());
+}
+
+test "Kumaraswamy: variance for a=2, b=3 is exactly 201/4900" {
+    // E[X^2] = 3·B(2,3) = 1/4; mean = 16/35; Var = 1/4 - (16/35)^2 = 201/4900
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 201.0 / 4900.0), dist.variance(), 1e-10);
+}
+
+test "Kumaraswamy: variance is non-negative" {
+    const dist1 = try Kumaraswamy(f64).init(1.0, 1.0);
+    const dist2 = try Kumaraswamy(f64).init(5.0, 5.0);
+    try testing.expect(dist1.variance() >= 0.0);
+    try testing.expect(dist2.variance() >= 0.0);
+}
+
+test "Kumaraswamy: variance decreases with larger shape params" {
+    const dist1 = try Kumaraswamy(f64).init(1.0, 1.0);
+    const dist2 = try Kumaraswamy(f64).init(5.0, 5.0);
+    try testing.expect(dist1.variance() > dist2.variance());
+}
+
+test "Kumaraswamy: mode for a=2, b=3 approximately sqrt(0.2) ≈ 0.4472136" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    // mode = ((a-1)/(ab-1))^(1/a) = (1/5)^0.5 = sqrt(0.2)
+    const expected = @sqrt(0.2);
+    try expectApproxEqRel(@as(f64, expected), dist.mode(), 1e-7);
+}
+
+test "Kumaraswamy: mode for a=1, b=1 returns NaN (degenerate)" {
+    const dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(math.isNan(m));
+}
+
+test "Kumaraswamy: mode for a<1 returns NaN" {
+    const dist = try Kumaraswamy(f64).init(0.5, 1.0);
+    const m = dist.mode();
+    try testing.expect(math.isNan(m));
+}
+
+test "Kumaraswamy: mode for b<=1 returns NaN" {
+    const dist = try Kumaraswamy(f64).init(2.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(math.isNan(m));
+}
+
+test "Kumaraswamy: entropy for a=2, b=3 approximately -0.20842" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, -0.20842), dist.entropy(), 1e-4);
+}
+
+test "Kumaraswamy: entropy formula with Euler-Mascheroni and digamma" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const H = dist.entropy();
+    // entropy = (1-1/b) - ln(a*b) + (1-1/a)*(gamma + digamma(b+1))
+    // Must be real value
+    try testing.expect(!math.isNan(H));
+    try testing.expect(math.isFinite(H));
+}
+
+test "Kumaraswamy: sample returns values in (0,1)" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+        try testing.expect(sample < 1.0);
+    }
+}
+
+test "Kumaraswamy: sample empirical mean converges to theoretical mean" {
+    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    const theoretical_mean = dist.mean();
+
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+
+    const tolerance = 0.15;
+    try expectApproxEqRel(@as(f64, theoretical_mean), empirical_mean, tolerance);
+}
+
+test "Kumaraswamy: validate passes for valid a, b" {
+    var dist = try Kumaraswamy(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "Kumaraswamy: validate fails when a is zero" {
+    var dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    dist.a = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kumaraswamy: validate fails when a is negative" {
+    var dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    dist.a = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kumaraswamy: validate fails when b is zero" {
+    var dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    dist.b = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kumaraswamy: validate fails when b is negative" {
+    var dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    dist.b = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kumaraswamy: validate fails when a is NaN" {
+    var dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    dist.a = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kumaraswamy: validate fails when b is NaN" {
+    var dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    dist.b = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kumaraswamy: f32 type support works" {
+    const dist = try Kumaraswamy(f32).init(2.0, 3.0);
+    try expectEqual(@as(f32, 2.0), dist.a);
+    try expectEqual(@as(f32, 3.0), dist.b);
+
+    const pdf_val: f32 = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+
+    const mean_val: f32 = dist.mean();
+    try testing.expect(mean_val > 0.0 and mean_val < 1.0);
+}
+
+test "Kumaraswamy: f32 cdf and quantile work" {
+    const dist = try Kumaraswamy(f32).init(2.0, 3.0);
+    const cdf_val: f32 = dist.cdf(0.5);
+    try testing.expect(cdf_val > 0.0 and cdf_val < 1.0);
+
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0 and q < 1.0);
+}

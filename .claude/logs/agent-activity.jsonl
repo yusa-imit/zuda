@@ -456,3 +456,5 @@
 {"timestamp":"2026-05-31T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Rayleigh(T) distribution before implementation","project":"zuda"}
 {"timestamp":"2026-05-31T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Rayleigh(T) distribution to pass 56 failing tests","project":"zuda"}
 {"timestamp":"2026-05-31T00:02:00Z","action":"subagent","agent_type":"test-writer","task":"Fix 6 test compilation errors in Rayleigh test section","project":"zuda"}
+{"timestamp":"2026-05-31T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for Kumaraswamy(a,b) distribution","project":"zuda"}
+{"timestamp":"2026-05-31T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Kumaraswamy(a,b) distribution","project":"zuda"}
