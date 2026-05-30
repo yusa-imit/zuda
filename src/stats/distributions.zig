@@ -14018,3 +14018,543 @@ test "VonMises: f32 type support works" {
     const mean_val: f32 = dist.circularMean();
     try expectEqual(@as(f32, 0.0), mean_val);
 }
+
+// ============================================================================
+// Rayleigh Distribution
+// ============================================================================
+
+/// Rayleigh distribution Rayleigh(σ)
+///
+/// A continuous probability distribution used in signal processing, physics, and
+/// communications — e.g., the amplitude of a 2D vector with i.i.d. N(0,σ²) components.
+///
+/// Probability density function (PDF):
+///   f(x; σ) = (x/σ²) · exp(-x²/(2σ²)) for x ≥ 0, 0 otherwise
+///
+/// Cumulative distribution function (CDF):
+///   F(x; σ) = 1 - exp(-x²/(2σ²)) for x ≥ 0
+///
+/// Parameters:
+///   - sigma (σ): Scale parameter (σ > 0)
+///
+/// Special case: Weibull(k=2, λ=σ·√2)
+///
+/// Time: O(1) for all operations
+pub fn Rayleigh(comptime T: type) type {
+    return struct {
+        sigma: T,
+
+        const Self = @This();
+        const euler_gamma: T = 0.5772156649015329;
+
+        /// Create a Rayleigh distribution with given scale parameter
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(sigma: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; σ) = (x/σ²) · exp(-x²/(2σ²)) for x ≥ 0, 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const sigma_sq = self.sigma * self.sigma;
+            const coeff = x / sigma_sq;
+            const exponent = -x * x / (2.0 * sigma_sq);
+            return coeff * @exp(exponent);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; σ) = log(x) - 2·log(σ) - x²/(2σ²)
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const sigma_sq = self.sigma * self.sigma;
+            return @log(x) - 2.0 * @log(self.sigma) - x * x / (2.0 * sigma_sq);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; σ) = 1 - exp(-x²/(2σ²)) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const sigma_sq = self.sigma * self.sigma;
+            return 1.0 - @exp(-x * x / (2.0 * sigma_sq));
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = exp(-x²/(2σ²))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            const sigma_sq = self.sigma * self.sigma;
+            return @exp(-x * x / (2.0 * sigma_sq));
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; σ) = σ · √(-2 · ln(1-p))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            const ln_1_minus_p = @log(1.0 - p);
+            return self.sigma * @sqrt(-2.0 * ln_1_minus_p);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = σ · √(π/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.sigma * @sqrt(math.pi / 2.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = (4-π)/2 · σ²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const sigma_sq = self.sigma * self.sigma;
+            return (4.0 - math.pi) / 2.0 * sigma_sq;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.sigma;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = σ · √(ln 4) = σ · √(2·ln 2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            // ln(4) = 2·ln(2) ≈ 1.3862943611...
+            const ln_4 = 2.0 * @log(2.0);
+            return self.sigma * @sqrt(ln_4);
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// H[X] = 1 + γ/2 + ln(σ/√2)
+        /// where γ ≈ 0.5772156649 is Euler-Mascheroni constant
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ln_sigma_over_sqrt2 = @log(self.sigma) - 0.5 * @log(2.0);
+            return 1.0 + euler_gamma / 2.0 + ln_sigma_over_sqrt2;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method: σ · √(-2 · ln(U)), U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            // Avoid ln(0) by replacing u=0 with floatMin(T)
+            if (u == 0.0) u = std.math.floatMin(T);
+            const ln_u = @log(u);
+            return self.sigma * @sqrt(-2.0 * ln_u);
+        }
+
+        /// Assert that parameters are valid: sigma > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Rayleigh Tests
+// ============================================================================
+
+test "Rayleigh: init with valid sigma" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "Rayleigh: init with sigma > 0 accepts various scales" {
+    const dist1 = try Rayleigh(f64).init(0.5);
+    try expectEqual(@as(f64, 0.5), dist1.sigma);
+
+    const dist2 = try Rayleigh(f64).init(2.0);
+    try expectEqual(@as(f64, 2.0), dist2.sigma);
+
+    const dist3 = try Rayleigh(f64).init(10.0);
+    try expectEqual(@as(f64, 10.0), dist3.sigma);
+}
+
+test "Rayleigh: init fails when sigma is zero" {
+    try expectError(error.InvalidParameter, Rayleigh(f64).init(0.0));
+}
+
+test "Rayleigh: init fails when sigma is negative" {
+    try expectError(error.InvalidParameter, Rayleigh(f64).init(-1.0));
+    try expectError(error.InvalidParameter, Rayleigh(f64).init(-0.5));
+}
+
+test "Rayleigh: init fails when sigma is NaN" {
+    try expectError(error.InvalidParameter, Rayleigh(f64).init(math.nan(f64)));
+}
+
+test "Rayleigh: init fails when sigma is positive infinity" {
+    try expectError(error.InvalidParameter, Rayleigh(f64).init(math.inf(f64)));
+}
+
+test "Rayleigh: init fails when sigma is negative infinity" {
+    try expectError(error.InvalidParameter, Rayleigh(f64).init(-math.inf(f64)));
+}
+
+test "Rayleigh: pdf at x=0 returns 0" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "Rayleigh: pdf for negative x returns 0" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+}
+
+test "Rayleigh: pdf at x=sigma equals exp(-0.5) for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = math.exp(-0.5);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(1.0), 1e-14);
+}
+
+test "Rayleigh: pdf at x=2*sigma for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = 2.0 * math.exp(-2.0);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(2.0), 1e-14);
+}
+
+test "Rayleigh: pdf at x=0.5 for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = 0.5 * math.exp(-0.125); // (0.5/1)*exp(-(0.5)^2/2)
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(0.5), 1e-14);
+}
+
+test "Rayleigh: pdf for different sigma: pdf(2, sigma=2)" {
+    const dist = try Rayleigh(f64).init(2.0);
+    const expected = 0.5 * math.exp(-0.5); // (2/4)*exp(-4/8) = 0.5*exp(-0.5)
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(2.0), 1e-14);
+}
+
+test "Rayleigh: pdf is non-negative everywhere" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.1, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "Rayleigh: pdf increases then decreases with mode at sigma" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const mode = dist.sigma;
+    const pdf_left = dist.pdf(mode - 0.1);
+    const pdf_mode = dist.pdf(mode);
+    const pdf_right = dist.pdf(mode + 0.1);
+
+    try testing.expect(pdf_left < pdf_mode);
+    try testing.expect(pdf_right < pdf_mode);
+}
+
+test "Rayleigh: logpdf is log of pdf" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try expectApproxEqRel(@as(f64, expected_logpdf), logpdf_val, 1e-14);
+}
+
+test "Rayleigh: logpdf for x=0 returns -infinity" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+}
+
+test "Rayleigh: logpdf for negative x returns -infinity" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "Rayleigh: cdf at x=0 equals 0" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Rayleigh: cdf at x=sigma for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = 1.0 - math.exp(-0.5);
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(1.0), 1e-14);
+}
+
+test "Rayleigh: cdf at x=2 for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = 1.0 - math.exp(-2.0);
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(2.0), 1e-14);
+}
+
+test "Rayleigh: cdf approaches 1 as x increases" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const cdf_10 = dist.cdf(10.0);
+    const cdf_100 = dist.cdf(100.0);
+    try testing.expect(cdf_10 > 0.99);
+    try testing.expect(cdf_100 > 0.9999);
+}
+
+test "Rayleigh: cdf is monotone increasing" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0 };
+    for (0..test_points.len - 1) |i| {
+        try testing.expect(dist.cdf(test_points[i]) <= dist.cdf(test_points[i + 1]));
+    }
+}
+
+test "Rayleigh: sf at x=0 equals 1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "Rayleigh: sf at x=sigma for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = math.exp(-0.5);
+    try expectApproxEqRel(@as(f64, expected), dist.sf(1.0), 1e-14);
+}
+
+test "Rayleigh: cdf + sf equals 1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.5, 1.0, 2.0, 3.0, 5.0 };
+    for (test_points) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqRel(@as(f64, 1.0), sum, 1e-13);
+    }
+}
+
+test "Rayleigh: quantile at p=0 equals 0" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.quantile(0.0));
+}
+
+test "Rayleigh: quantile at p=0.5 equals median" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = 1.0 * math.sqrt(@log(4.0));
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.5), 1e-14);
+}
+
+test "Rayleigh: quantile at p=0.5 for sigma=1 approximately 1.177" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(@as(f64, 1.1774100225154747), q, 1e-13);
+}
+
+test "Rayleigh: quantile approaches infinity as p approaches 1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const q_high = try dist.quantile(0.9999);
+    try testing.expect(q_high > 4.0);
+}
+
+test "Rayleigh: quantile fails for p<0" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Rayleigh: quantile fails for p>1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Rayleigh: quantile inverse of cdf" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const test_probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(@as(f64, p), cdf_q, 1e-12);
+    }
+}
+
+test "Rayleigh: mean for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = math.sqrt(math.pi / 2.0);
+    try expectApproxEqRel(@as(f64, expected), dist.mean(), 1e-14);
+}
+
+test "Rayleigh: mean approximately 1.2533 for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 1.2533141373155001), dist.mean(), 1e-14);
+}
+
+test "Rayleigh: mean scales with sigma" {
+    const dist1 = try Rayleigh(f64).init(1.0);
+    const dist2 = try Rayleigh(f64).init(2.0);
+    const ratio = dist2.mean() / dist1.mean();
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-14);
+}
+
+test "Rayleigh: variance for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = (4.0 - math.pi) / 2.0;
+    try expectApproxEqRel(@as(f64, expected), dist.variance(), 1e-14);
+}
+
+test "Rayleigh: variance approximately 0.4292 for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.4292036732051035), dist.variance(), 1e-14);
+}
+
+test "Rayleigh: variance scales with sigma squared" {
+    const dist1 = try Rayleigh(f64).init(1.0);
+    const dist2 = try Rayleigh(f64).init(2.0);
+    const ratio = dist2.variance() / dist1.variance();
+    try expectApproxEqRel(@as(f64, 4.0), ratio, 1e-13);
+}
+
+test "Rayleigh: mode equals sigma" {
+    const dist1 = try Rayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist1.mode());
+
+    const dist2 = try Rayleigh(f64).init(2.5);
+    try expectEqual(@as(f64, 2.5), dist2.mode());
+}
+
+test "Rayleigh: median for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const expected = math.sqrt(@log(4.0));
+    try expectApproxEqRel(@as(f64, expected), dist.median(), 1e-14);
+}
+
+test "Rayleigh: median approximately 1.1774 for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 1.1774100225154747), dist.median(), 1e-14);
+}
+
+test "Rayleigh: median scales with sigma" {
+    const dist1 = try Rayleigh(f64).init(1.0);
+    const dist2 = try Rayleigh(f64).init(3.0);
+    const ratio = dist2.median() / dist1.median();
+    try expectApproxEqRel(@as(f64, 3.0), ratio, 1e-14);
+}
+
+test "Rayleigh: entropy for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const gamma = 0.5772156649015329;
+    const expected = 1.0 + gamma / 2.0 + @log(1.0 / math.sqrt(2.0));
+    try expectApproxEqRel(@as(f64, expected), dist.entropy(), 1e-14);
+}
+
+test "Rayleigh: entropy approximately 0.9420 for sigma=1" {
+    const dist = try Rayleigh(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.9420342421707937), dist.entropy(), 1e-14);
+}
+
+test "Rayleigh: entropy increases with sigma" {
+    const dist1 = try Rayleigh(f64).init(1.0);
+    const dist2 = try Rayleigh(f64).init(2.0);
+    try testing.expect(dist2.entropy() > dist1.entropy());
+}
+
+test "Rayleigh: sample returns non-negative values" {
+    const dist = try Rayleigh(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "Rayleigh: sample empirical mean converges to theoretical mean" {
+    const dist = try Rayleigh(f64).init(1.0);
+    const theoretical_mean = dist.mean();
+
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+
+    const tolerance = 0.15;
+    try expectApproxEqRel(@as(f64, theoretical_mean), empirical_mean, tolerance);
+}
+
+test "Rayleigh: sample with different sigma" {
+    const dist = try Rayleigh(f64).init(2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "Rayleigh: validate passes for valid parameters" {
+    var dist = try Rayleigh(f64).init(1.5);
+    try dist.validate();
+}
+
+test "Rayleigh: validate fails when sigma is zero" {
+    var dist = try Rayleigh(f64).init(1.0);
+    dist.sigma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rayleigh: validate fails when sigma is negative" {
+    var dist = try Rayleigh(f64).init(1.0);
+    dist.sigma = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rayleigh: validate fails when sigma is NaN" {
+    var dist = try Rayleigh(f64).init(1.0);
+    dist.sigma = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rayleigh: validate fails when sigma is infinity" {
+    var dist = try Rayleigh(f64).init(1.0);
+    dist.sigma = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rayleigh: f32 type support works" {
+    const dist = try Rayleigh(f32).init(1.0);
+    try expectEqual(@as(f32, 1.0), dist.sigma);
+
+    const pdf_val: f32 = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+
+    const mean_val: f32 = dist.mean();
+    try testing.expect(mean_val > 1.0);
+}
+
+test "Rayleigh: f32 quantile works" {
+    const dist = try Rayleigh(f32).init(1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}

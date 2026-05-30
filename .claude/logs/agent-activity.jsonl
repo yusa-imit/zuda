@@ -453,3 +453,6 @@
 {"timestamp":"2026-05-30T08:30:00Z","action":"subagent","agent_type":"test-writer","task":"Audit test quality for Logarithmic/Skellam/Rademacher/Triangular distributions (stabilization session 610)","project":"zuda"}
 {"timestamp":"2026-05-31T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for VonMises distribution in distributions.zig","project":"zuda"}
 {"timestamp":"2026-05-31T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement VonMises distribution in distributions.zig to pass failing tests","project":"zuda"}
+{"timestamp":"2026-05-31T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Rayleigh(T) distribution before implementation","project":"zuda"}
+{"timestamp":"2026-05-31T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Rayleigh(T) distribution to pass 56 failing tests","project":"zuda"}
+{"timestamp":"2026-05-31T00:02:00Z","action":"subagent","agent_type":"test-writer","task":"Fix 6 test compilation errors in Rayleigh test section","project":"zuda"}
