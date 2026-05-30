@@ -12689,10 +12689,11 @@ pub fn Rademacher(comptime T: type) type {
     };
 }
 
-test "Rademacher: init creates instance successfully" {
+test "Rademacher: init creates usable instance with correct pmf" {
     const dist = Rademacher(f64).init();
-    _ = dist;
-    // If we get here without error, init works
+    try expectEqual(@as(f64, 0.5), dist.pmf(-1));
+    try expectEqual(@as(f64, 0.5), dist.pmf(1));
+    try expectEqual(@as(f64, 0.0), dist.pmf(0));
 }
 
 test "Rademacher: pmf(-1) equals 0.5" {
