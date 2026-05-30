@@ -12555,3 +12555,438 @@ test "Skellam: equal small parameters (mu1=mu2=0.5)" {
     try testing.expect(pmf_0 > 0.0);
     try testing.expect(pmf_0 < 1.0);
 }
+
+// ============================================================================
+// Rademacher Distribution
+// ============================================================================
+
+/// Rademacher distribution — symmetric binary distribution over {-1, +1}.
+///
+/// The simplest nontrivial discrete distribution: each outcome ±1 occurs with
+/// probability 1/2. Fundamental in random matrix theory, Rademacher complexity,
+/// and randomized algorithms.
+///
+/// Support: {-1, +1}
+/// PMF: P(X = k) = 1/2 for k ∈ {-1, +1}, 0 otherwise
+/// Mean: 0 | Variance: 1 | Entropy: ln(2)
+pub fn Rademacher(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        /// Create a Rademacher distribution instance.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init() Self {
+            return .{};
+        }
+
+        /// Probability mass function (PMF) at k.
+        ///
+        /// Returns 0.5 for k ∈ {-1, +1}, 0.0 otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: i64) T {
+            _ = self;
+            if (k == -1 or k == 1) return 0.5;
+            return 0.0;
+        }
+
+        /// Log probability mass function (logPMF) at k.
+        ///
+        /// Returns -ln(2) for k ∈ {-1, +1}, -infinity otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: i64) T {
+            _ = self;
+            if (k == -1 or k == 1) return -@log(@as(T, 2.0));
+            return -math.inf(T);
+        }
+
+        /// Cumulative distribution function (CDF) at k.
+        ///
+        /// P(X ≤ k) = 0.0 if k < -1
+        ///          = 0.5 if -1 ≤ k < 1
+        ///          = 1.0 if k ≥ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            _ = self;
+            if (k < -1) return 0.0;
+            if (k < 1) return 0.5;
+            return 1.0;
+        }
+
+        /// Survival function: P(X > k) = 1 - CDF(k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function (inverse CDF) at probability p.
+        ///
+        /// Returns -1 for 0 < p ≤ 0.5, +1 for 0.5 < p ≤ 1.0.
+        /// Returns error.InvalidParameter for p ≤ 0 or p > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!i64 {
+            _ = self;
+            if (p <= 0.0 or p > 1.0 or !math.isFinite(p)) return error.InvalidParameter;
+            if (p <= 0.5) return -1;
+            return 1;
+        }
+
+        /// Mean of the distribution: 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Variance of the distribution: 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return 1.0;
+        }
+
+        /// Shannon entropy in nats: ln(2).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            _ = self;
+            return @log(@as(T, 2.0));
+        }
+
+        /// Mode of the distribution: -1 by convention.
+        ///
+        /// Both -1 and +1 are modes (equally likely); return -1 by convention.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) i64 {
+            _ = self;
+            return -1;
+        }
+
+        /// Generate a random sample from this distribution.
+        ///
+        /// Returns -1 or +1 with equal probability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) i64 {
+            _ = self;
+            return if (rng.boolean()) @as(i64, 1) else @as(i64, -1);
+        }
+
+        /// Validate distribution invariants (always passes — no parameters).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            _ = self;
+        }
+    };
+}
+
+test "Rademacher: init creates instance successfully" {
+    const dist = Rademacher(f64).init();
+    _ = dist;
+    // If we get here without error, init works
+}
+
+test "Rademacher: pmf(-1) equals 0.5" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(-1);
+    try expectEqual(0.5, p);
+}
+
+test "Rademacher: pmf(1) equals 0.5" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(1);
+    try expectEqual(0.5, p);
+}
+
+test "Rademacher: pmf(0) equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(0);
+    try expectEqual(0.0, p);
+}
+
+test "Rademacher: pmf(-2) equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(-2);
+    try expectEqual(0.0, p);
+}
+
+test "Rademacher: pmf(2) equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(2);
+    try expectEqual(0.0, p);
+}
+
+test "Rademacher: pmf(100) equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(100);
+    try expectEqual(0.0, p);
+}
+
+test "Rademacher: pmf(-1) + pmf(1) equals 1.0" {
+    const dist = Rademacher(f64).init();
+    const p = dist.pmf(-1) + dist.pmf(1);
+    try expectEqual(1.0, p);
+}
+
+test "Rademacher: logpmf(-1) equals -ln(2)" {
+    const dist = Rademacher(f64).init();
+    const log2 = @log(@as(f64, 2.0));
+    const lp = dist.logpmf(-1);
+    try expectApproxEqAbs(-log2, lp, 1e-15);
+}
+
+test "Rademacher: logpmf(1) equals -ln(2)" {
+    const dist = Rademacher(f64).init();
+    const log2 = @log(@as(f64, 2.0));
+    const lp = dist.logpmf(1);
+    try expectApproxEqAbs(-log2, lp, 1e-15);
+}
+
+test "Rademacher: logpmf(0) equals -infinity" {
+    const dist = Rademacher(f64).init();
+    const lp = dist.logpmf(0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "Rademacher: logpmf(100) equals -infinity" {
+    const dist = Rademacher(f64).init();
+    const lp = dist.logpmf(100);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "Rademacher: exp(logpmf(-1)) equals pmf(-1)" {
+    const dist = Rademacher(f64).init();
+    const pmf_val = dist.pmf(-1);
+    const logpmf_val = dist.logpmf(-1);
+    const exp_logpmf = @exp(logpmf_val);
+    try expectApproxEqAbs(pmf_val, exp_logpmf, 1e-15);
+}
+
+test "Rademacher: exp(logpmf(1)) equals pmf(1)" {
+    const dist = Rademacher(f64).init();
+    const pmf_val = dist.pmf(1);
+    const logpmf_val = dist.logpmf(1);
+    const exp_logpmf = @exp(logpmf_val);
+    try expectApproxEqAbs(pmf_val, exp_logpmf, 1e-15);
+}
+
+test "Rademacher: cdf(-2) equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const c = dist.cdf(-2);
+    try expectEqual(0.0, c);
+}
+
+test "Rademacher: cdf(-1) equals 0.5" {
+    const dist = Rademacher(f64).init();
+    const c = dist.cdf(-1);
+    try expectEqual(0.5, c);
+}
+
+test "Rademacher: cdf(0) equals 0.5" {
+    const dist = Rademacher(f64).init();
+    const c = dist.cdf(0);
+    try expectEqual(0.5, c);
+}
+
+test "Rademacher: cdf(1) equals 1.0" {
+    const dist = Rademacher(f64).init();
+    const c = dist.cdf(1);
+    try expectEqual(1.0, c);
+}
+
+test "Rademacher: cdf(100) equals 1.0" {
+    const dist = Rademacher(f64).init();
+    const c = dist.cdf(100);
+    try expectEqual(1.0, c);
+}
+
+test "Rademacher: CDF is monotonically non-decreasing" {
+    const dist = Rademacher(f64).init();
+    const c_min5 = dist.cdf(-5);
+    const c_min2 = dist.cdf(-2);
+    const c_min1 = dist.cdf(-1);
+    const c_0 = dist.cdf(0);
+    const c_1 = dist.cdf(1);
+    const c_5 = dist.cdf(5);
+
+    try testing.expect(c_min5 <= c_min2);
+    try testing.expect(c_min2 <= c_min1);
+    try testing.expect(c_min1 <= c_0);
+    try testing.expect(c_0 <= c_1);
+    try testing.expect(c_1 <= c_5);
+}
+
+test "Rademacher: sf(-2) equals 1.0" {
+    const dist = Rademacher(f64).init();
+    const s = dist.sf(-2);
+    try expectEqual(1.0, s);
+}
+
+test "Rademacher: sf(-1) equals 0.5" {
+    const dist = Rademacher(f64).init();
+    const s = dist.sf(-1);
+    try expectEqual(0.5, s);
+}
+
+test "Rademacher: sf(1) equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const s = dist.sf(1);
+    try expectEqual(0.0, s);
+}
+
+test "Rademacher: SF + CDF equals 1.0 at various points" {
+    const dist = Rademacher(f64).init();
+
+    const k_vals = [_]i64{ -100, -2, -1, 0, 1, 2, 100 };
+    for (k_vals) |k| {
+        const c = dist.cdf(k);
+        const s = dist.sf(k);
+        try expectApproxEqAbs(1.0, c + s, 1e-15);
+    }
+}
+
+test "Rademacher: quantile(0.25) equals -1" {
+    const dist = Rademacher(f64).init();
+    const q = try dist.quantile(0.25);
+    try expectEqual(-1, q);
+}
+
+test "Rademacher: quantile(0.5) equals -1" {
+    const dist = Rademacher(f64).init();
+    const q = try dist.quantile(0.5);
+    try expectEqual(-1, q);
+}
+
+test "Rademacher: quantile(0.75) equals 1" {
+    const dist = Rademacher(f64).init();
+    const q = try dist.quantile(0.75);
+    try expectEqual(1, q);
+}
+
+test "Rademacher: quantile(1.0) equals 1" {
+    const dist = Rademacher(f64).init();
+    const q = try dist.quantile(1.0);
+    try expectEqual(1, q);
+}
+
+test "Rademacher: quantile(0.0) returns error" {
+    const dist = Rademacher(f64).init();
+    const result = dist.quantile(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Rademacher: quantile(-0.1) returns error" {
+    const dist = Rademacher(f64).init();
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Rademacher: quantile(1.1) returns error" {
+    const dist = Rademacher(f64).init();
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Rademacher: mean equals 0.0" {
+    const dist = Rademacher(f64).init();
+    const m = dist.mean();
+    try expectEqual(0.0, m);
+}
+
+test "Rademacher: variance equals 1.0" {
+    const dist = Rademacher(f64).init();
+    const v = dist.variance();
+    try expectEqual(1.0, v);
+}
+
+test "Rademacher: entropy equals ln(2)" {
+    const dist = Rademacher(f64).init();
+    const log2 = @log(@as(f64, 2.0));
+    const e = dist.entropy();
+    try expectApproxEqAbs(log2, e, 1e-15);
+}
+
+test "Rademacher: mode equals -1" {
+    const dist = Rademacher(f64).init();
+    const m = dist.mode();
+    try expectEqual(-1, m);
+}
+
+test "Rademacher: sample returns -1 or 1 only" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = Rademacher(f64).init();
+
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val == -1 or sample_val == 1);
+    }
+}
+
+test "Rademacher: sample never returns 0" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+
+    const dist = Rademacher(f64).init();
+
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val != 0);
+    }
+}
+
+test "Rademacher: empirical sample frequency converges to 50/50" {
+    var prng = std.Random.DefaultPrng.init(999);
+    const rng = prng.random();
+
+    const dist = Rademacher(f64).init();
+
+    var count_minus_one: u64 = 0;
+    var count_plus_one: u64 = 0;
+    const n = 10000;
+
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng);
+        if (sample_val == -1) {
+            count_minus_one += 1;
+        } else if (sample_val == 1) {
+            count_plus_one += 1;
+        }
+    }
+
+    // Should be very close to 50/50
+    const freq_minus_one = @as(f64, @floatFromInt(count_minus_one)) / @as(f64, @floatFromInt(n));
+    const freq_plus_one = @as(f64, @floatFromInt(count_plus_one)) / @as(f64, @floatFromInt(n));
+
+    // Within 5% of 0.5
+    try expectApproxEqRel(0.5, freq_minus_one, 0.05);
+    try expectApproxEqRel(0.5, freq_plus_one, 0.05);
+}
+
+test "Rademacher: f32 support works" {
+    const dist = Rademacher(f32).init();
+    const pmf_minus_one: f32 = dist.pmf(-1);
+    const pmf_plus_one: f32 = dist.pmf(1);
+    const m: f32 = dist.mean();
+    const v: f32 = dist.variance();
+
+    try expectEqual(@as(f32, 0.5), pmf_minus_one);
+    try expectEqual(@as(f32, 0.5), pmf_plus_one);
+    try expectEqual(@as(f32, 0.0), m);
+    try expectEqual(@as(f32, 1.0), v);
+}
+
+test "Rademacher: validate always passes" {
+    const dist = Rademacher(f64).init();
+    try dist.validate();
+}

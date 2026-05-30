@@ -725,7 +725,7 @@ pub const stats = struct {
     /// Bayesian inference — conjugate priors, credible intervals, Bayes factors
     pub const bayesian = @import("stats/bayesian.zig");
 
-    /// Probability distributions — Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Dirichlet, Zipf, BetaBinomial, DirichletMultinomial, DiscreteUniform, Logarithmic, Skellam
+    /// Probability distributions — Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Dirichlet, Zipf, BetaBinomial, DirichletMultinomial, DiscreteUniform, Logarithmic, Skellam, Rademacher
     pub const distributions = @import("stats/distributions.zig");
 
     /// Random number generation — PCG64, Xoshiro256**, shuffle, choice, multinomial
