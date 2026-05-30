@@ -13571,3 +13571,450 @@ test "Triangular: f32 type support works" {
     const mean_val: f32 = dist.mean();
     try expectApproxEqAbs(@as(f32, 0.5), mean_val, 1e-6);
 }
+
+// ============================================================================
+// Von Mises Distribution
+// ============================================================================
+
+/// Von Mises distribution on the circle
+///
+/// Probability density function (PDF):
+///   f(x; μ, κ) = exp(κ·cos(x-μ)) / (2π·I₀(κ))
+///   where I₀(κ) is the modified Bessel function of the first kind, order 0
+///
+/// Parameters:
+///   - mu (μ): Mean direction [-π, π]
+///   - kappa (κ): Concentration parameter (κ > 0)
+///
+/// Support: [-π, π] (wraps around the circle)
+/// Mode: μ
+/// Mean (circular): μ
+/// Circular variance: 1 - I₁(κ)/I₀(κ)
+/// Entropy: log(2π·I₀(κ)) - κ·I₁(κ)/I₀(κ)
+///
+/// Time: O(1) for pdf/logpdf/sample/entropy/mode
+pub fn VonMises(comptime T: type) type {
+    return struct {
+        mu: T,
+        kappa: T,
+
+        const Self = @This();
+
+        /// Modified Bessel function of the first kind, order 0: I₀(x)
+        /// Using polynomial approximations from Abramowitz & Stegun 9.8.1/9.8.2
+        fn besselI0(x: T) T {
+            const abs_x = @abs(x);
+            if (abs_x <= 3.75) {
+                const t = (abs_x / 3.75) * (abs_x / 3.75);
+                return 1.0 + 3.5156329 * t + 3.0899424 * t * t + 1.2067492 * t * t * t + 0.2659732 * t * t * t * t + 0.0360768 * t * t * t * t * t + 0.0045813 * t * t * t * t * t * t;
+            } else {
+                const t = 3.75 / abs_x;
+                const exp_part = @exp(abs_x) / @sqrt(abs_x);
+                return exp_part * (0.39894228 + 0.01328592 * t + 0.00225319 * t * t - 0.00157565 * t * t * t + 0.00916281 * t * t * t * t - 0.02057706 * t * t * t * t * t + 0.02635537 * t * t * t * t * t * t - 0.01647633 * t * t * t * t * t * t * t + 0.00392377 * t * t * t * t * t * t * t * t);
+            }
+        }
+
+        /// Modified Bessel function of the first kind, order 1: I₁(x)
+        /// Using polynomial approximations from Abramowitz & Stegun 9.8.3/9.8.4
+        fn besselI1(x: T) T {
+            const abs_x = @abs(x);
+            if (abs_x <= 3.75) {
+                const t = (abs_x / 3.75) * (abs_x / 3.75);
+                const result = abs_x * (0.5 + 0.87890594 * t + 0.51498869 * t * t + 0.15084934 * t * t * t + 0.02658733 * t * t * t * t + 0.00301532 * t * t * t * t * t + 0.00032411 * t * t * t * t * t * t);
+                return if (x < 0) -result else result;
+            } else {
+                const t = 3.75 / abs_x;
+                const exp_part = @exp(abs_x) / @sqrt(abs_x);
+                const result = exp_part * (0.39894228 - 0.03988024 * t - 0.00362018 * t * t + 0.00163801 * t * t * t - 0.01031555 * t * t * t * t + 0.02282967 * t * t * t * t * t - 0.02895312 * t * t * t * t * t * t + 0.01787654 * t * t * t * t * t * t * t - 0.00420059 * t * t * t * t * t * t * t * t);
+                return if (x < 0) -result else result;
+            }
+        }
+
+        /// Create a Von Mises distribution with mean direction mu and concentration kappa
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, kappa: T) DistributionError!Self {
+            if (kappa <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(kappa)) return error.InvalidParameter;
+            return Self{ .mu = mu, .kappa = kappa };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; μ, κ) = exp(κ·cos(x-μ)) / (2π·I₀(κ))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const cos_diff = @cos(x - self.mu);
+            const numerator = @exp(self.kappa * cos_diff);
+            const denominator = 2.0 * math.pi * besselI0(self.kappa);
+            return numerator / denominator;
+        }
+
+        /// Log probability density function
+        ///
+        /// log(f(x)) = κ·cos(x-μ) - log(2π·I₀(κ))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const cos_diff = @cos(x - self.mu);
+            const bessel0 = besselI0(self.kappa);
+            return self.kappa * cos_diff - @log(2.0 * math.pi * bessel0);
+        }
+
+        /// Circular mean direction
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn circularMean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Circular variance
+        ///
+        /// Var_circular = 1 - I₁(κ)/I₀(κ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn circularVariance(self: Self) T {
+            const bessel0 = besselI0(self.kappa);
+            const bessel1 = besselI1(self.kappa);
+            return 1.0 - bessel1 / bessel0;
+        }
+
+        /// Shannon entropy
+        ///
+        /// H = log(2π·I₀(κ)) - κ·I₁(κ)/I₀(κ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const bessel0 = besselI0(self.kappa);
+            const bessel1 = besselI1(self.kappa);
+            return @log(2.0 * math.pi * bessel0) - self.kappa * bessel1 / bessel0;
+        }
+
+        /// Mode (most likely direction)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Returns a value in [-π, π]
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const tau = 1.0 + @sqrt(1.0 + 4.0 * self.kappa * self.kappa);
+            const rho = (tau - @sqrt(2.0 * tau)) / (2.0 * self.kappa);
+            const r = (1.0 + rho * rho) / (2.0 * rho);
+
+            while (true) {
+                const u1_val = rng.float(T);
+                const z = @cos(math.pi * u1_val);
+                const f = (1.0 + r * z) / (r + z);
+                const c = self.kappa * (r - f);
+                const u2_val = rng.float(T);
+
+                if (c * (2.0 - c) - u2_val > 0.0 or @log(c / u2_val) + 1.0 - c >= 0.0) {
+                    const u3_val = rng.float(T);
+                    const theta = if (u3_val < 0.5) -math.acos(f) else math.acos(f);
+                    var sample_val = theta + self.mu;
+
+                    // Wrap to [-π, π]
+                    while (sample_val > math.pi) {
+                        sample_val -= 2.0 * math.pi;
+                    }
+                    while (sample_val < -math.pi) {
+                        sample_val += 2.0 * math.pi;
+                    }
+
+                    return sample_val;
+                }
+            }
+        }
+
+        /// Assert that parameters are valid: κ > 0, both finite, μ finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.kappa <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.mu) or !math.isFinite(self.kappa)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Von Mises Tests
+// ============================================================================
+
+test "VonMises: init with valid parameters (mu=0, kappa=1)" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    try expectEqual(0.0, dist.mu);
+    try expectEqual(1.0, dist.kappa);
+}
+
+test "VonMises: init with valid parameters (mu=pi, kappa=2)" {
+    const dist = try VonMises(f64).init(math.pi, 2.0);
+    try expectEqual(math.pi, dist.mu);
+    try expectEqual(2.0, dist.kappa);
+}
+
+test "VonMises: init with valid parameters (mu=-pi, kappa=0.5)" {
+    const dist = try VonMises(f64).init(-math.pi, 0.5);
+    try expectEqual(-math.pi, dist.mu);
+    try expectEqual(0.5, dist.kappa);
+}
+
+test "VonMises: init with valid parameters (mu=0, kappa=100)" {
+    const dist = try VonMises(f64).init(0.0, 100.0);
+    try expectEqual(0.0, dist.mu);
+    try expectEqual(100.0, dist.kappa);
+}
+
+test "VonMises: init fails when kappa <= 0" {
+    try expectError(error.InvalidParameter, VonMises(f64).init(0.0, 0.0));
+    try expectError(error.InvalidParameter, VonMises(f64).init(0.0, -1.0));
+}
+
+test "VonMises: init fails when kappa is NaN" {
+    try expectError(error.InvalidParameter, VonMises(f64).init(0.0, math.nan(f64)));
+}
+
+test "VonMises: init fails when mu is NaN" {
+    try expectError(error.InvalidParameter, VonMises(f64).init(math.nan(f64), 1.0));
+}
+
+test "VonMises: init fails when kappa is Inf" {
+    try expectError(error.InvalidParameter, VonMises(f64).init(0.0, math.inf(f64)));
+}
+
+test "VonMises: init fails when mu is Inf" {
+    try expectError(error.InvalidParameter, VonMises(f64).init(math.inf(f64), 1.0));
+}
+
+test "VonMises: pdf at mean direction" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const pdf_at_mean = dist.pdf(0.0);
+    // At x=μ: pdf = exp(κ) / (2π·I₀(κ))
+    // For κ=1, I₀(1) ≈ 1.2660658777520082
+    // pdf(0) = exp(1) / (2π·1.2660658777520082) ≈ 2.71828 / 7.9549... ≈ 0.34195
+    try expectApproxEqRel(0.34195, pdf_at_mean, 0.01);
+}
+
+test "VonMises: pdf away from mean is less than pdf at mean" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const pdf_at_mean = dist.pdf(0.0);
+    const pdf_away = dist.pdf(0.5);
+    try testing.expect(pdf_away < pdf_at_mean);
+}
+
+test "VonMises: pdf is symmetric around mean" {
+    const dist = try VonMises(f64).init(0.0, 2.0);
+    const delta = 0.3;
+    const pdf_right = dist.pdf(0.0 + delta);
+    const pdf_left = dist.pdf(0.0 - delta);
+    try expectApproxEqAbs(pdf_right, pdf_left, 1e-10);
+}
+
+test "VonMises: pdf wraps around at boundaries" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const pdf_at_epsilon = dist.pdf(1e-6);
+    const pdf_at_2pi_minus_epsilon = dist.pdf(2.0 * math.pi - 1e-6);
+    // These should be very close due to circular wrapping
+    try expectApproxEqRel(pdf_at_epsilon, pdf_at_2pi_minus_epsilon, 0.02);
+}
+
+test "VonMises: pdf integrates approximately to 1" {
+    const dist = try VonMises(f64).init(0.0, 1.5);
+    var sum: f64 = 0.0;
+    const n_points = 1000;
+    const delta = 2.0 * math.pi / @as(f64, @floatFromInt(n_points));
+
+    for (0..n_points) |i| {
+        const x = -math.pi + @as(f64, @floatFromInt(i)) * delta;
+        sum += dist.pdf(x) * delta;
+    }
+
+    // Integral should be close to 1
+    try expectApproxEqRel(1.0, sum, 0.05);
+}
+
+test "VonMises: logpdf is consistent with log(pdf)" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const x = 0.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try expectApproxEqRel(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "VonMises: logpdf at mean" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const logpdf_at_mean = dist.logpdf(0.0);
+    // logpdf = κ·cos(0) - log(2π·I₀(κ))
+    // = κ - log(2π·I₀(κ))
+    // For κ=1, I₀(1) ≈ 1.2660658777520082
+    // = 1.0 - log(2π·1.2660658777520082)
+    // = 1.0 - log(7.9549...) ≈ 1.0 - 2.0717... ≈ -1.0717
+    try expectApproxEqRel(-1.0717, logpdf_at_mean, 0.01);
+}
+
+test "VonMises: circularMean returns mu" {
+    const dist = try VonMises(f64).init(0.5, 1.0);
+    const mean = dist.circularMean();
+    try expectEqual(0.5, mean);
+}
+
+test "VonMises: circularMean returns mu for pi" {
+    const dist = try VonMises(f64).init(math.pi, 2.0);
+    const mean = dist.circularMean();
+    try expectEqual(math.pi, mean);
+}
+
+test "VonMises: circularVariance for kappa=1" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const var_circ = dist.circularVariance();
+    // For κ=1: I₀(1) ≈ 1.2660658777520082, I₁(1) ≈ 0.5651591039924851
+    // Var = 1 - I₁(κ)/I₀(κ) = 1 - 0.5651.../1.2660... ≈ 1 - 0.4463 ≈ 0.5537
+    try expectApproxEqRel(0.5537, var_circ, 0.01);
+}
+
+test "VonMises: circularVariance decreases with increasing kappa" {
+    const dist1 = try VonMises(f64).init(0.0, 1.0);
+    const dist2 = try VonMises(f64).init(0.0, 5.0);
+    const var1 = dist1.circularVariance();
+    const var2 = dist2.circularVariance();
+    try testing.expect(var2 < var1);
+}
+
+test "VonMises: circularVariance approaches 0 for large kappa" {
+    const dist = try VonMises(f64).init(0.0, 100.0);
+    const var_circ = dist.circularVariance();
+    try expectApproxEqAbs(0.0, var_circ, 0.01);
+}
+
+test "VonMises: entropy for mu=0, kappa=1" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    const ent = dist.entropy();
+    // H = log(2π·I₀(1)) - 1·I₁(1)/I₀(1)
+    // = log(7.9549...) - 0.4463...
+    // ≈ 2.0717... - 0.4463... ≈ 1.6254
+    try expectApproxEqRel(1.6254, ent, 0.02);
+}
+
+test "VonMises: entropy decreases with increasing kappa" {
+    const dist1 = try VonMises(f64).init(0.0, 1.0);
+    const dist2 = try VonMises(f64).init(0.0, 5.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try testing.expect(ent2 < ent1);
+}
+
+test "VonMises: mode returns mu" {
+    const dist = try VonMises(f64).init(0.7, 1.0);
+    const m = dist.mode();
+    try expectEqual(0.7, m);
+}
+
+test "VonMises: mode returns mu for negative angle" {
+    const dist = try VonMises(f64).init(-0.5, 1.5);
+    const m = dist.mode();
+    try expectEqual(-0.5, m);
+}
+
+test "VonMises: sample returns values in [-pi, pi]" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try VonMises(f64).init(0.0, 1.0);
+
+    for (0..1000) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= -math.pi);
+        try testing.expect(sample_val <= math.pi);
+    }
+}
+
+test "VonMises: sample with mu=pi returns values in [-pi, pi]" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+
+    const dist = try VonMises(f64).init(math.pi, 2.0);
+
+    for (0..1000) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= -math.pi);
+        try testing.expect(sample_val <= math.pi);
+    }
+}
+
+test "VonMises: empirical sample circular mean converges to theoretical mu" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try VonMises(f64).init(0.0, 2.0);
+
+    var sin_sum: f64 = 0.0;
+    var cos_sum: f64 = 0.0;
+    const n: u64 = 5000;
+
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng);
+        sin_sum += @sin(sample_val);
+        cos_sum += @cos(sample_val);
+    }
+
+    const circular_mean = math.atan2(sin_sum, cos_sum);
+    const expected_mu = dist.circularMean();
+
+    // Circular difference should be small
+    var diff = circular_mean - expected_mu;
+    // Wrap difference to [-π, π]
+    while (diff > math.pi) diff -= 2.0 * math.pi;
+    while (diff < -math.pi) diff += 2.0 * math.pi;
+
+    try expectApproxEqAbs(0.0, diff, 0.15);
+}
+
+test "VonMises: validate passes for valid distribution" {
+    const dist = try VonMises(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "VonMises: validate passes for valid distribution (mu=pi, kappa=50)" {
+    const dist = try VonMises(f64).init(math.pi, 50.0);
+    try dist.validate();
+}
+
+test "VonMises: validate fails when kappa <= 0" {
+    var dist = try VonMises(f64).init(0.0, 1.0);
+    dist.kappa = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+
+    dist.kappa = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "VonMises: validate fails when kappa is NaN" {
+    var dist = try VonMises(f64).init(0.0, 1.0);
+    dist.kappa = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "VonMises: validate fails when mu is NaN" {
+    var dist = try VonMises(f64).init(0.0, 1.0);
+    dist.mu = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "VonMises: f32 type support works" {
+    const dist = try VonMises(f32).init(0.0, 1.0);
+    try expectEqual(@as(f32, 0.0), dist.mu);
+    try expectEqual(@as(f32, 1.0), dist.kappa);
+
+    const pdf_val: f32 = dist.pdf(0.0);
+    try testing.expect(pdf_val > 0.0);
+
+    const mean_val: f32 = dist.circularMean();
+    try expectEqual(@as(f32, 0.0), mean_val);
+}
