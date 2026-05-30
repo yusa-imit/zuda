@@ -12990,3 +12990,583 @@ test "Rademacher: validate always passes" {
     const dist = Rademacher(f64).init();
     try dist.validate();
 }
+
+// ============================================================================
+// Triangular Distribution T(a, b, c)
+// ============================================================================
+
+/// Triangular distribution T(a, b, c)
+///
+/// Probability density function (PDF):
+///   For a ≤ x ≤ c: f(x) = 2(x-a)/((b-a)(c-a))
+///   For c < x ≤ b: f(x) = 2(b-x)/((b-a)(b-c))
+///   Otherwise: f(x) = 0
+///
+/// Cumulative distribution function (CDF):
+///   For x ≤ a: F(x) = 0
+///   For a < x ≤ c: F(x) = (x-a)²/((b-a)(c-a))
+///   For c < x ≤ b: F(x) = 1 - (b-x)²/((b-a)(b-c))
+///   For x > b: F(x) = 1
+///
+/// Parameters:
+///   - a: Lower bound
+///   - b: Upper bound (b > a)
+///   - c: Mode (a ≤ c ≤ b)
+///
+/// Time: O(1) for all operations
+pub fn Triangular(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+        c: T,
+
+        const Self = @This();
+
+        /// Create a triangular distribution with bounds [a, b] and mode c
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T, c: T) DistributionError!Self {
+            if (a >= b) return error.InvalidParameter;
+            if (c < a or c > b) return error.InvalidParameter;
+            if (!math.isFinite(a) or !math.isFinite(b) or !math.isFinite(c)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b, .c = c };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return 0.0;
+
+            const range = self.b - self.a;
+            const peak = 2.0 / range;
+
+            // Special case: mode at lower bound
+            if (self.c == self.a) {
+                if (x == self.a) return peak;
+                if (x <= self.b) return peak * (self.b - x) / (self.b - self.a);
+                return 0.0;
+            }
+
+            // Special case: mode at upper bound
+            if (self.c == self.b) {
+                if (x == self.b) return peak;
+                if (x >= self.a) return peak * (x - self.a) / (self.b - self.a);
+                return 0.0;
+            }
+
+            // General case: mode in interior
+            if (x <= self.c) {
+                return peak * (x - self.a) / (self.c - self.a);
+            } else {
+                return peak * (self.b - x) / (self.b - self.c);
+            }
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p == 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.a) return 0.0;
+            if (x >= self.b) return 1.0;
+
+            const range = self.b - self.a;
+
+            // Special case: mode at lower bound
+            if (self.c == self.a) {
+                return 1.0 - (self.b - x) * (self.b - x) / (range * range);
+            }
+
+            // Special case: mode at upper bound
+            if (self.c == self.b) {
+                return (x - self.a) * (x - self.a) / (range * range);
+            }
+
+            // General case: mode in interior
+            if (x <= self.c) {
+                return (x - self.a) * (x - self.a) / (range * (self.c - self.a));
+            } else {
+                return 1.0 - (self.b - x) * (self.b - x) / (range * (self.b - self.c));
+            }
+        }
+
+        /// Survival function (complementary CDF) - P(X > x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) at probability p
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0 or !math.isFinite(p)) return error.InvalidProbability;
+
+            const range = self.b - self.a;
+
+            // Special case: mode at lower bound
+            if (self.c == self.a) {
+                return self.b - @sqrt((1.0 - p) * range * range);
+            }
+
+            // Special case: mode at upper bound
+            if (self.c == self.b) {
+                return self.a + @sqrt(p * range * range);
+            }
+
+            // General case: mode in interior
+            const F_c = (self.c - self.a) / range;
+            if (p <= F_c) {
+                return self.a + @sqrt(p * range * (self.c - self.a));
+            } else {
+                return self.b - @sqrt((1.0 - p) * range * (self.b - self.c));
+            }
+        }
+
+        /// Mean of the distribution: (a + b + c) / 3
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (self.a + self.b + self.c) / 3.0;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var = (a² + b² + c² - ab - ac - bc) / 18
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const a2 = self.a * self.a;
+            const b2 = self.b * self.b;
+            const c2 = self.c * self.c;
+            const ab = self.a * self.b;
+            const ac = self.a * self.c;
+            const bc = self.b * self.c;
+            return (a2 + b2 + c2 - ab - ac - bc) / 18.0;
+        }
+
+        /// Entropy: 0.5 + ln((b-a)/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const range = self.b - self.a;
+            return 0.5 + @log(range / 2.0);
+        }
+
+        /// Mode of the distribution: c
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.c;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform sampling with quantile function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable;
+        }
+
+        /// Validate distribution invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.b <= self.a) return error.InvalidParameter;
+            if (self.c < self.a or self.c > self.b) return error.InvalidParameter;
+            if (!math.isFinite(self.a) or !math.isFinite(self.b) or !math.isFinite(self.c)) return error.InvalidParameter;
+        }
+    };
+}
+
+test "Triangular: init with valid symmetric parameters (a=0, b=1, c=0.5)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    try expectEqual(0.0, dist.a);
+    try expectEqual(1.0, dist.b);
+    try expectEqual(0.5, dist.c);
+}
+
+test "Triangular: init with valid left-skewed parameters (a=0, b=1, c=0)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.0);
+    try expectEqual(0.0, dist.a);
+    try expectEqual(1.0, dist.b);
+    try expectEqual(0.0, dist.c);
+}
+
+test "Triangular: init with valid right-skewed parameters (a=0, b=1, c=1)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 1.0);
+    try expectEqual(0.0, dist.a);
+    try expectEqual(1.0, dist.b);
+    try expectEqual(1.0, dist.c);
+}
+
+test "Triangular: init with negative range (a=-2, b=2, c=0)" {
+    const dist = try Triangular(f64).init(-2.0, 2.0, 0.0);
+    try expectEqual(-2.0, dist.a);
+    try expectEqual(2.0, dist.b);
+    try expectEqual(0.0, dist.c);
+}
+
+test "Triangular: init with small range (a=0, b=0.1, c=0.05)" {
+    const dist = try Triangular(f64).init(0.0, 0.1, 0.05);
+    try expectEqual(0.0, dist.a);
+    try expectEqual(0.1, dist.b);
+    try expectEqual(0.05, dist.c);
+}
+
+test "Triangular: init with a=b returns error (same bounds)" {
+    const result = Triangular(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triangular: init with a>b returns error" {
+    const result = Triangular(f64).init(2.0, 1.0, 1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triangular: init with c<a returns error" {
+    const result = Triangular(f64).init(0.0, 1.0, -0.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triangular: init with c>b returns error" {
+    const result = Triangular(f64).init(0.0, 1.0, 1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triangular: pdf at mode c equals 2/(b-a)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_at_mode = dist.pdf(0.5);
+    try expectApproxEqAbs(2.0, pdf_at_mode, 1e-14);
+}
+
+test "Triangular: pdf at mode for T(0,4,2) equals 1/2" {
+    const dist = try Triangular(f64).init(0.0, 4.0, 2.0);
+    const pdf_at_mode = dist.pdf(2.0);
+    try expectApproxEqAbs(0.5, pdf_at_mode, 1e-14);
+}
+
+test "Triangular: pdf below lower bound a equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_below = dist.pdf(-0.5);
+    try expectEqual(0.0, pdf_below);
+}
+
+test "Triangular: pdf above upper bound b equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_above = dist.pdf(1.5);
+    try expectEqual(0.0, pdf_above);
+}
+
+test "Triangular: pdf at left bound a equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_at_a = dist.pdf(0.0);
+    try expectEqual(0.0, pdf_at_a);
+}
+
+test "Triangular: pdf at right bound b equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_at_b = dist.pdf(1.0);
+    try expectEqual(0.0, pdf_at_b);
+}
+
+test "Triangular: pdf in left slope for T(0,1,0.5) at x=0.25" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_val = dist.pdf(0.25);
+    // PDF = 2*(0.25-0)/(1-0)/(0.5-0) = 2*0.25/0.5 = 1.0
+    try expectApproxEqAbs(1.0, pdf_val, 1e-14);
+}
+
+test "Triangular: pdf in right slope for T(0,1,0.5) at x=0.75" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const pdf_val = dist.pdf(0.75);
+    // PDF = 2*(1-0.75)/(1-0)/(1-0.5) = 2*0.25/0.5 = 1.0
+    try expectApproxEqAbs(1.0, pdf_val, 1e-14);
+}
+
+test "Triangular: logpdf at mode equals log(2/(b-a))" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const logpdf_at_mode = dist.logpdf(0.5);
+    const expected = @log(2.0);
+    try expectApproxEqAbs(expected, logpdf_at_mode, 1e-14);
+}
+
+test "Triangular: logpdf below lower bound a equals -infinity" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const logpdf_below = dist.logpdf(-0.5);
+    try testing.expect(math.isNegativeInf(logpdf_below));
+}
+
+test "Triangular: logpdf above upper bound b equals -infinity" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const logpdf_above = dist.logpdf(1.5);
+    try testing.expect(math.isNegativeInf(logpdf_above));
+}
+
+test "Triangular: logpdf at bounds equals -infinity" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const logpdf_at_a = dist.logpdf(0.0);
+    const logpdf_at_b = dist.logpdf(1.0);
+    try testing.expect(math.isNegativeInf(logpdf_at_a));
+    try testing.expect(math.isNegativeInf(logpdf_at_b));
+}
+
+test "Triangular: exp(logpdf) equals pdf for interior points" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        const exp_logpdf = @exp(logpdf_val);
+        try expectApproxEqAbs(pdf_val, exp_logpdf, 1e-14);
+    }
+}
+
+test "Triangular: cdf at lower bound a equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const cdf_at_a = dist.cdf(0.0);
+    try expectEqual(0.0, cdf_at_a);
+}
+
+test "Triangular: cdf at upper bound b equals 1" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const cdf_at_b = dist.cdf(1.0);
+    try expectEqual(1.0, cdf_at_b);
+}
+
+test "Triangular: cdf at mode for T(0,1,0.5) equals 0.5" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const cdf_at_mode = dist.cdf(0.5);
+    try expectApproxEqAbs(0.5, cdf_at_mode, 1e-14);
+}
+
+test "Triangular: cdf below lower bound a equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const cdf_below = dist.cdf(-0.5);
+    try expectEqual(0.0, cdf_below);
+}
+
+test "Triangular: cdf above upper bound b equals 1" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const cdf_above = dist.cdf(1.5);
+    try expectEqual(1.0, cdf_above);
+}
+
+test "Triangular: cdf is monotonically non-decreasing" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const test_points = [_]f64{ -0.5, 0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5 };
+    for (0..test_points.len - 1) |i| {
+        const cdf_i = dist.cdf(test_points[i]);
+        const cdf_next = dist.cdf(test_points[i + 1]);
+        try testing.expect(cdf_i <= cdf_next);
+    }
+}
+
+test "Triangular: CDF at x=0.25 for T(0,1,0.5) equals 0.25" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const cdf_val = dist.cdf(0.25);
+    // CDF(0.25) = (0.25-0)^2 / ((1-0)*(0.5-0)) = 0.0625 / 0.5 = 0.125
+    try expectApproxEqAbs(0.125, cdf_val, 1e-14);
+}
+
+test "Triangular: sf at lower bound a equals 1" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const sf_at_a = dist.sf(0.0);
+    try expectEqual(1.0, sf_at_a);
+}
+
+test "Triangular: sf at upper bound b equals 0" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const sf_at_b = dist.sf(1.0);
+    try expectEqual(0.0, sf_at_b);
+}
+
+test "Triangular: sf + cdf equals 1 at various points" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const test_points = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (test_points) |x| {
+        const cdf_val = dist.cdf(x);
+        const sf_val = dist.sf(x);
+        try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-14);
+    }
+}
+
+test "Triangular: quantile(0.0) equals a" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(0.0, q, 1e-14);
+}
+
+test "Triangular: quantile(1.0) equals b" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const q = try dist.quantile(1.0);
+    try expectApproxEqAbs(1.0, q, 1e-14);
+}
+
+test "Triangular: quantile at F_c equals mode c" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    // F_c = (0.5 - 0) / (1 - 0) = 0.5
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(0.5, q, 1e-14);
+}
+
+test "Triangular: quantile is monotonically increasing" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const probs = [_]f64{ 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0 };
+    for (0..probs.len - 1) |i| {
+        const q_i = try dist.quantile(probs[i]);
+        const q_next = try dist.quantile(probs[i + 1]);
+        try testing.expect(q_i <= q_next);
+    }
+}
+
+test "Triangular: quantile(-0.1) returns error" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Triangular: quantile(1.1) returns error" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Triangular: mean equals (a+b+c)/3 for T(0,1,0.5)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const mean_val = dist.mean();
+    const expected = (0.0 + 1.0 + 0.5) / 3.0;
+    try expectApproxEqAbs(expected, mean_val, 1e-14);
+}
+
+test "Triangular: mean for symmetric T(0,2,1) equals 1" {
+    const dist = try Triangular(f64).init(0.0, 2.0, 1.0);
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(1.0, mean_val, 1e-14);
+}
+
+test "Triangular: mean for right-skewed T(0,1,0)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.0);
+    const mean_val = dist.mean();
+    const expected = (0.0 + 1.0 + 0.0) / 3.0;
+    try expectApproxEqAbs(expected, mean_val, 1e-14);
+}
+
+test "Triangular: variance equals (a²+b²+c²-ab-ac-bc)/18 for T(0,1,0.5)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const var_val = dist.variance();
+    // variance = (0 + 1 + 0.25 - 0 - 0 - 0.5) / 18 = 0.75 / 18 = 1/24
+    const expected = 1.0 / 24.0;
+    try expectApproxEqAbs(expected, var_val, 1e-14);
+}
+
+test "Triangular: variance for symmetric T(0,2,1) equals 1/6" {
+    const dist = try Triangular(f64).init(0.0, 2.0, 1.0);
+    const var_val = dist.variance();
+    // variance = (0 + 4 + 1 - 0 - 0 - 2) / 18 = 3/18 = 1/6
+    const expected = 1.0 / 6.0;
+    try expectApproxEqAbs(expected, var_val, 1e-14);
+}
+
+test "Triangular: entropy equals 0.5 + ln((b-a)/2) for T(0,1,0.5)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const entropy_val = dist.entropy();
+    // entropy = 0.5 + ln((1-0)/2) = 0.5 + ln(0.5) ≈ 0.5 - 0.6931 ≈ -0.1931
+    const expected = 0.5 + @log(0.5);
+    try expectApproxEqAbs(expected, entropy_val, 1e-14);
+}
+
+test "Triangular: entropy for T(0,4,2)" {
+    const dist = try Triangular(f64).init(0.0, 4.0, 2.0);
+    const entropy_val = dist.entropy();
+    // entropy = 0.5 + ln((4-0)/2) = 0.5 + ln(2) ≈ 0.5 + 0.6931 ≈ 1.1931
+    const expected = 0.5 + @log(2.0);
+    try expectApproxEqAbs(expected, entropy_val, 1e-14);
+}
+
+test "Triangular: mode equals c" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const mode_val = dist.mode();
+    try expectApproxEqAbs(0.5, mode_val, 1e-14);
+}
+
+test "Triangular: mode for right-skewed T(0,1,1)" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 1.0);
+    const mode_val = dist.mode();
+    try expectApproxEqAbs(1.0, mode_val, 1e-14);
+}
+
+test "Triangular: sample returns value within [a,b]" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+
+    for (0..1000) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0.0);
+        try testing.expect(sample_val <= 1.0);
+    }
+}
+
+test "Triangular: sample for negative range [-2,2] returns value in range" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+
+    const dist = try Triangular(f64).init(-2.0, 2.0, 0.0);
+
+    for (0..1000) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= -2.0);
+        try testing.expect(sample_val <= 2.0);
+    }
+}
+
+test "Triangular: empirical sample mean converges to theoretical mean" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    const theoretical_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n: u64 = 50000;
+
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng);
+        sum += sample_val;
+    }
+
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqRel(theoretical_mean, empirical_mean, 0.02);
+}
+
+test "Triangular: validate passes for valid distribution" {
+    const dist = try Triangular(f64).init(0.0, 1.0, 0.5);
+    try dist.validate();
+}
+
+test "Triangular: f32 type support works" {
+    const dist = try Triangular(f32).init(0.0, 1.0, 0.5);
+    try expectEqual(@as(f32, 0.0), dist.a);
+    try expectEqual(@as(f32, 1.0), dist.b);
+    try expectEqual(@as(f32, 0.5), dist.c);
+
+    const pdf_val: f32 = dist.pdf(0.5);
+    try expectApproxEqAbs(@as(f32, 2.0), pdf_val, 1e-6);
+
+    const mean_val: f32 = dist.mean();
+    try expectApproxEqAbs(@as(f32, 0.5), mean_val, 1e-6);
+}
