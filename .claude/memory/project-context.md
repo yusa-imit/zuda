@@ -1,3 +1,23 @@
+**Session 613 Update (2026-05-31) — FEATURE MODE:**
+
+✅ **Kumaraswamy Distribution** — 34th distribution, 19th continuous — commit 791e901
+- **Mode**: FEATURE MODE (counter: 613)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: Kumaraswamy(T) — bounded continuous on (0,1) with closed-form CDF/quantile
+  * Parameters: a > 0, b > 0 (shape); flexible alternative to Beta distribution
+  * PDF: a·b·x^(a-1)·(1-x^a)^(b-1)
+  * CDF: 1-(1-x^a)^b (closed form, unlike Beta)
+  * Quantile: (1-(1-p)^(1/b))^(1/a) (closed form, unlike Beta)
+  * Mean: b·B(1+1/a, b) via lgamma
+  * Variance: b·B(1+2/a, b) - mean²; exact for a=2,b=3: 201/4900
+  * Mode: ((a-1)/(ab-1))^(1/a) for a>1 AND b>1; NaN otherwise
+  * Entropy: (1-1/b) - ln(ab) + (1-1/a)·(γ + ψ(b+1)) using existing digamma
+  * Sample: inverse transform X = (1-(1-U)^(1/b))^(1/a)
+- **Tests**: 60 tests (all passing, exit code 0)
+- **Distribution count**: 34 total (19 continuous + 15 discrete)
+- **Next Priority**: HalfNormal, Maxwell-Boltzmann, or Lévy distribution
+
 **Session 612 Update (2026-05-31) — FEATURE MODE:**
 
 ✅ **Rayleigh Distribution** — 33rd distribution, 18th continuous — commit 96f8bd0
