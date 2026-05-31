@@ -1,3 +1,23 @@
+**Session 619 Update (2026-06-01) — FEATURE MODE:**
+
+✅ **Lomax Distribution** — 39th distribution, 24th continuous — commit 9069095
+- **Mode**: FEATURE MODE (counter: 619)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: Lomax(T) — Pareto Type II, heavy-tailed on [0, ∞)
+  * Parameters: lambda (λ > 0, scale), kappa (κ > 0, shape)
+  * Support: x ∈ [0, ∞); used in survival analysis, queueing theory, Internet traffic
+  * PDF: (κ/λ)·(1 + x/λ)^(-(κ+1)); CDF: 1 - (1 + x/λ)^(-κ)
+  * SF: (1 + x/λ)^(-κ); LogPDF: ln(κ/λ) - (κ+1)·ln(1 + x/λ)
+  * Quantile: λ·((1-p)^(-1/κ) - 1); fully closed-form, no special functions
+  * Mean: λ/(κ-1) for κ > 1, else +∞; Variance: κλ²/((κ-1)²(κ-2)) for κ > 2
+  * Mode: always 0 (PDF monotonically decreasing); Median: λ·(2^(1/κ) - 1)
+  * Entropy: ln(λ/κ) + 1 + 1/κ
+  * Sample: λ·(U^(-1/κ) - 1) via inverse transform (U ~ Uniform(0,1))
+- **Tests**: 65 new tests all passing (exit code 0)
+- **Distribution count**: 39 total (24 continuous + 15 discrete)
+- **Next Priority**: Gompertz or Rice distribution
+
 **Session 618 Update (2026-06-01) — FEATURE MODE:**
 
 ✅ **Lévy Distribution** — 38th distribution, 23rd continuous — commit a6fe36d
