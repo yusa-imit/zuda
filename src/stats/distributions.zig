@@ -15119,3 +15119,614 @@ test "Kumaraswamy: f32 cdf and quantile work" {
     const q = try dist.quantile(0.5);
     try testing.expect(q > 0.0 and q < 1.0);
 }
+
+// ============================================================================
+// HalfNormal Distribution
+// ============================================================================
+
+/// HalfNormal distribution HalfNormal(σ)
+///
+/// The distribution of |X| where X ~ N(0, σ²). Supported on [0, ∞).
+///
+/// Probability density function (PDF):
+///   f(x; σ) = √(2/π)/σ · exp(-x²/(2σ²)) for x ≥ 0, 0 otherwise
+///
+/// Cumulative distribution function (CDF):
+///   F(x; σ) = erf(x/(σ·√2)) for x ≥ 0
+///
+/// Parameters:
+///   - sigma (σ): Scale parameter (σ > 0)
+///
+/// Special relation: If X ~ N(0,σ²) then |X| ~ HalfNormal(σ)
+///
+/// Time: O(1) for all operations
+pub fn HalfNormal(comptime T: type) type {
+    return struct {
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a HalfNormal distribution with given scale parameter
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(sigma: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; σ) = √(2/π)/σ · exp(-x²/(2σ²)) for x ≥ 0, 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const coeff = @sqrt(2.0 / math.pi) / self.sigma;
+            return coeff * @exp(-x * x / (2.0 * self.sigma * self.sigma));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; σ) = 0.5·log(2/π) - log(σ) - x²/(2σ²) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            return 0.5 * @log(2.0 / math.pi) - @log(self.sigma) - x * x / (2.0 * self.sigma * self.sigma);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; σ) = erf(x/(σ·√2)) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return erf(x / (self.sigma * @sqrt(2.0)));
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = 1 - erf(x/(σ·√2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - erf(x / (self.sigma * @sqrt(2.0)));
+        }
+
+        /// Quantile function (inverse CDF) — returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; σ) = σ·√2·erfInv(p)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            return self.sigma * @sqrt(2.0) * erfInv(p);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = σ·√(2/π)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.sigma * @sqrt(2.0 / math.pi);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = σ²·(1 - 2/π)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.sigma * self.sigma * (1.0 - 2.0 / math.pi);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = 0 (always, regardless of σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = σ·√2·erfInv(0.5) ≈ σ·0.6745
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.sigma * @sqrt(2.0) * erfInv(0.5);
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = 0.5·ln(π/2) + ln(σ) + 0.5
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 0.5 * @log(math.pi / 2.0) + @log(self.sigma) + 0.5;
+        }
+
+        /// Sample from the distribution using Box-Muller transform
+        ///
+        /// Strategy: |N(0,σ)| — generate standard normal and take absolute value scaled by σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u_one = rng.float(T);
+            const u_two = rng.float(T);
+            const z = @sqrt(-2.0 * @log(u_one)) * @cos(2.0 * math.pi * u_two);
+            return self.sigma * @abs(z);
+        }
+
+        /// Assert that parameters are valid: sigma > 0, finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.sigma <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.sigma)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// HalfNormal Tests
+// ============================================================================
+
+test "HalfNormal: init with valid sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "HalfNormal: init with various valid sigma values" {
+    const dist1 = try HalfNormal(f64).init(0.5);
+    try expectEqual(@as(f64, 0.5), dist1.sigma);
+
+    const dist2 = try HalfNormal(f64).init(2.0);
+    try expectEqual(@as(f64, 2.0), dist2.sigma);
+
+    const dist3 = try HalfNormal(f64).init(10.0);
+    try expectEqual(@as(f64, 10.0), dist3.sigma);
+}
+
+test "HalfNormal: init fails when sigma is zero" {
+    try expectError(error.InvalidParameter, HalfNormal(f64).init(0.0));
+}
+
+test "HalfNormal: init fails when sigma is negative" {
+    try expectError(error.InvalidParameter, HalfNormal(f64).init(-1.0));
+    try expectError(error.InvalidParameter, HalfNormal(f64).init(-0.5));
+}
+
+test "HalfNormal: init fails when sigma is NaN" {
+    try expectError(error.InvalidParameter, HalfNormal(f64).init(math.nan(f64)));
+}
+
+test "HalfNormal: init fails when sigma is positive infinity" {
+    try expectError(error.InvalidParameter, HalfNormal(f64).init(math.inf(f64)));
+}
+
+test "HalfNormal: pdf at x=0 (mode) equals sqrt(2/pi) for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = @sqrt(2.0 / math.pi);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(0.0), 1e-14);
+}
+
+test "HalfNormal: pdf at x=0 approximately 0.79788456 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.7978845608028654), dist.pdf(0.0), 1e-14);
+}
+
+test "HalfNormal: pdf at x=1 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = @sqrt(2.0 / math.pi) * math.exp(-0.5);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(1.0), 1e-14);
+}
+
+test "HalfNormal: pdf at x=1 approximately 0.48394145 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.4839414507808516), dist.pdf(1.0), 1e-14);
+}
+
+test "HalfNormal: pdf for negative x returns 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+}
+
+test "HalfNormal: pdf at x=0.5 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const x = 0.5;
+    const expected = @sqrt(2.0 / math.pi) * math.exp(-x * x / 2.0);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(x), 1e-14);
+}
+
+test "HalfNormal: pdf at x=2 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const x = 2.0;
+    const expected = @sqrt(2.0 / math.pi) * math.exp(-x * x / 2.0);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(x), 1e-14);
+}
+
+test "HalfNormal: pdf is non-negative everywhere" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.1, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "HalfNormal: pdf decreases monotonically for x >= 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0, 3.0 };
+    for (0..test_points.len - 1) |i| {
+        try testing.expect(dist.pdf(test_points[i]) >= dist.pdf(test_points[i + 1]));
+    }
+}
+
+test "HalfNormal: pdf at x=0.5 for sigma=2" {
+    const dist = try HalfNormal(f64).init(2.0);
+    const x = 0.5;
+    const expected = @sqrt(2.0 / math.pi) / 2.0 * math.exp(-x * x / 8.0);
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(x), 1e-14);
+}
+
+test "HalfNormal: pdf for different sigma: pdf(1, sigma=2) approximately 0.35196" {
+    const dist = try HalfNormal(f64).init(2.0);
+    try expectApproxEqRel(@as(f64, 0.35196896851913066), dist.pdf(1.0), 1e-14);
+}
+
+test "HalfNormal: logpdf at x=0 equals 0.5*log(2/pi)" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = 0.5 * @log(2.0 / math.pi);
+    try expectApproxEqRel(@as(f64, expected), dist.logpdf(0.0), 1e-14);
+}
+
+test "HalfNormal: logpdf at x=1 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = @log(dist.pdf(1.0));
+    try expectApproxEqRel(@as(f64, expected), dist.logpdf(1.0), 1e-14);
+}
+
+test "HalfNormal: logpdf for negative x returns -infinity" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "HalfNormal: logpdf equals log of pdf for various x" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (test_points) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        const expected_logpdf = @log(pdf_val);
+        try expectApproxEqRel(@as(f64, expected_logpdf), logpdf_val, 1e-13);
+    }
+}
+
+test "HalfNormal: cdf at x=0 equals 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "HalfNormal: cdf at x=1 for sigma=1 equals erf(1/sqrt(2))" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = erf(1.0 / math.sqrt(2.0));
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(1.0), 1e-14);
+}
+
+test "HalfNormal: cdf at x=1 for sigma=1 approximately 0.68269" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.6826894921370859), dist.cdf(1.0), 1e-14);
+}
+
+test "HalfNormal: cdf for negative x returns 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+    try expectEqual(@as(f64, 0.0), dist.cdf(-0.5));
+}
+
+test "HalfNormal: cdf is monotone increasing" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0, 3.0 };
+    for (0..test_points.len - 1) |i| {
+        try testing.expect(dist.cdf(test_points[i]) <= dist.cdf(test_points[i + 1]));
+    }
+}
+
+test "HalfNormal: cdf approaches 1 for large x" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try testing.expect(dist.cdf(10.0) > 0.99);
+}
+
+test "HalfNormal: cdf at x=1 for sigma=2 equals erf(1/(2*sqrt(2)))" {
+    const dist = try HalfNormal(f64).init(2.0);
+    const expected = erf(1.0 / (2.0 * math.sqrt(2.0)));
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(1.0), 1e-14);
+}
+
+test "HalfNormal: cdf at x=1 for sigma=2 approximately 0.38292" {
+    const dist = try HalfNormal(f64).init(2.0);
+    try expectApproxEqRel(@as(f64, 0.38292492254802625), dist.cdf(1.0), 1e-14);
+}
+
+test "HalfNormal: cdf is in [0,1] for all x >= 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_points = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "HalfNormal: sf at x=1 for sigma=1 equals 1 - cdf(1)" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = 1.0 - dist.cdf(1.0);
+    try expectApproxEqRel(@as(f64, expected), dist.sf(1.0), 1e-14);
+}
+
+test "HalfNormal: sf at x=1 for sigma=1 approximately 0.31731" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.3173105078629141), dist.sf(1.0), 1e-14);
+}
+
+test "HalfNormal: cdf + sf equals 1 for various x" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (test_points) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqRel(@as(f64, 1.0), sum, 1e-13);
+    }
+}
+
+test "HalfNormal: sf for negative x equals 1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.sf(-1.0));
+}
+
+test "HalfNormal: quantile at p=0 equals 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "HalfNormal: quantile at p=0.5 (median) for sigma=1 approximately 0.67449" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(@as(f64, 0.6744897501960817), q, 1e-14);
+}
+
+test "HalfNormal: quantile at p=0.25 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const q = try dist.quantile(0.25);
+    try testing.expect(q > 0.0 and q < 0.674);
+}
+
+test "HalfNormal: quantile at p=0.75 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const q = try dist.quantile(0.75);
+    try testing.expect(q > 0.674 and q < 2.0);
+}
+
+test "HalfNormal: quantile round-trip cdf(quantile(p)) == p" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const test_probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const recovered_p = dist.cdf(q);
+        try expectApproxEqRel(@as(f64, p), recovered_p, 1e-13);
+    }
+}
+
+test "HalfNormal: quantile fails when p < 0" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "HalfNormal: quantile fails when p > 1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "HalfNormal: quantile at p=0.5 for sigma=2 approximately 1.34898" {
+    const dist = try HalfNormal(f64).init(2.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(@as(f64, 1.3489795003921634), q, 1e-14);
+}
+
+test "HalfNormal: quantile median scales with sigma" {
+    const dist1 = try HalfNormal(f64).init(1.0);
+    const dist2 = try HalfNormal(f64).init(2.0);
+    const q1 = try dist1.quantile(0.5);
+    const q2 = try dist2.quantile(0.5);
+    const ratio = q2 / q1;
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-13);
+}
+
+test "HalfNormal: mean for sigma=1 equals sqrt(2/pi)" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = @sqrt(2.0 / math.pi);
+    try expectApproxEqRel(@as(f64, expected), dist.mean(), 1e-14);
+}
+
+test "HalfNormal: mean for sigma=1 approximately 0.79788" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.7978845608028654), dist.mean(), 1e-14);
+}
+
+test "HalfNormal: mean for sigma=2 approximately 1.59577" {
+    const dist = try HalfNormal(f64).init(2.0);
+    try expectApproxEqRel(@as(f64, 1.5957691216057308), dist.mean(), 1e-14);
+}
+
+test "HalfNormal: mean scales with sigma" {
+    const dist1 = try HalfNormal(f64).init(1.0);
+    const dist2 = try HalfNormal(f64).init(2.0);
+    const ratio = dist2.mean() / dist1.mean();
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-13);
+}
+
+test "HalfNormal: variance for sigma=1 equals 1 - 2/pi" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = 1.0 - 2.0 / math.pi;
+    try expectApproxEqRel(@as(f64, expected), dist.variance(), 1e-14);
+}
+
+test "HalfNormal: variance for sigma=1 approximately 0.36338" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.36338022763241866), dist.variance(), 1e-14);
+}
+
+test "HalfNormal: variance for sigma=2 approximately 1.45353" {
+    const dist = try HalfNormal(f64).init(2.0);
+    try expectApproxEqRel(@as(f64, 1.4535209105296747), dist.variance(), 1e-14);
+}
+
+test "HalfNormal: variance scales with sigma squared" {
+    const dist1 = try HalfNormal(f64).init(1.0);
+    const dist2 = try HalfNormal(f64).init(2.0);
+    const ratio = dist2.variance() / dist1.variance();
+    try expectApproxEqRel(@as(f64, 4.0), ratio, 1e-13);
+}
+
+test "HalfNormal: variance is non-negative" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try testing.expect(dist.variance() >= 0.0);
+}
+
+test "HalfNormal: mode is always 0" {
+    const dist1 = try HalfNormal(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist1.mode());
+
+    const dist2 = try HalfNormal(f64).init(5.0);
+    try expectEqual(@as(f64, 0.0), dist2.mode());
+}
+
+test "HalfNormal: median for sigma=1 approximately 0.67449" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.6744897501960817), dist.median(), 1e-14);
+}
+
+test "HalfNormal: median scales with sigma" {
+    const dist1 = try HalfNormal(f64).init(1.0);
+    const dist2 = try HalfNormal(f64).init(2.0);
+    const ratio = dist2.median() / dist1.median();
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-13);
+}
+
+test "HalfNormal: entropy for sigma=1 approximately 0.72579" {
+    const dist = try HalfNormal(f64).init(1.0);
+    try expectApproxEqRel(@as(f64, 0.7257913526447274), dist.entropy(), 1e-14);
+}
+
+test "HalfNormal: entropy formula: 0.5*ln(pi/2) + ln(sigma) + 0.5 for sigma=1" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const expected = 0.5 * @log(math.pi / 2.0) + @log(1.0) + 0.5;
+    try expectApproxEqRel(@as(f64, expected), dist.entropy(), 1e-14);
+}
+
+test "HalfNormal: entropy increases with sigma logarithmically" {
+    const dist1 = try HalfNormal(f64).init(1.0);
+    const dist2 = try HalfNormal(f64).init(2.0);
+    const diff = dist2.entropy() - dist1.entropy();
+    const expected_diff = @log(2.0);
+    try expectApproxEqRel(@as(f64, expected_diff), diff, 1e-14);
+}
+
+test "HalfNormal: sample returns non-negative values" {
+    const dist = try HalfNormal(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "HalfNormal: sample empirical mean converges to theoretical mean" {
+    const dist = try HalfNormal(f64).init(1.0);
+    const theoretical_mean = dist.mean();
+
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+
+    const tolerance = 0.15;
+    try expectApproxEqRel(@as(f64, theoretical_mean), empirical_mean, tolerance);
+}
+
+test "HalfNormal: sample with different sigma generates larger values for larger sigma" {
+    var rng = std.Random.DefaultPrng.init(42);
+
+    const dist1 = try HalfNormal(f64).init(1.0);
+    var sum1: f64 = 0.0;
+    for (0..1000) |_| {
+        sum1 += dist1.sample(rng.random());
+    }
+
+    const dist2 = try HalfNormal(f64).init(2.0);
+    var sum2: f64 = 0.0;
+    for (0..1000) |_| {
+        sum2 += dist2.sample(rng.random());
+    }
+
+    try testing.expect(sum2 > sum1);
+}
+
+test "HalfNormal: validate passes for valid parameters" {
+    var dist = try HalfNormal(f64).init(1.5);
+    try dist.validate();
+}
+
+test "HalfNormal: validate fails when sigma is zero" {
+    var dist = try HalfNormal(f64).init(1.0);
+    dist.sigma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfNormal: validate fails when sigma is negative" {
+    var dist = try HalfNormal(f64).init(1.0);
+    dist.sigma = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfNormal: validate fails when sigma is NaN" {
+    var dist = try HalfNormal(f64).init(1.0);
+    dist.sigma = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfNormal: validate fails when sigma is infinity" {
+    var dist = try HalfNormal(f64).init(1.0);
+    dist.sigma = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfNormal: f32 type support: init and basic operations" {
+    const dist = try HalfNormal(f32).init(1.0);
+    try expectEqual(@as(f32, 1.0), dist.sigma);
+
+    const pdf_val: f32 = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+
+    const mean_val: f32 = dist.mean();
+    try testing.expect(mean_val > 0.7 and mean_val < 0.9);
+}
+
+test "HalfNormal: f32 cdf and quantile work" {
+    const dist = try HalfNormal(f32).init(1.0);
+    const cdf_val: f32 = dist.cdf(0.5);
+    try testing.expect(cdf_val > 0.0 and cdf_val < 1.0);
+
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.6 and q < 0.7);
+}
