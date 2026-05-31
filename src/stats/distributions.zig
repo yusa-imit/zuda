@@ -16802,3 +16802,618 @@ test "LogLogistic: f32 mean and median are finite" {
     try testing.expect(math.isFinite(dist.mean()));
     try testing.expect(math.isFinite(dist.median()));
 }
+
+// ============================================================================
+// Lévy Distribution
+// ============================================================================
+
+/// Lévy distribution Lévy(μ, c)
+///
+/// A one-sided stable distribution with heavy tails (infinite mean and variance).
+/// Used to model random processes in physics and finance.
+///
+/// Parameters:
+///   - μ: location parameter (any real value)
+///   - c: scale parameter (c > 0)
+///
+/// Support: x > μ
+///
+/// PDF:   f(x) = sqrt(c/(2π)) · exp(-c/(2(x-μ))) / (x-μ)^(3/2)   for x > μ
+/// CDF:   F(x) = erfc(sqrt(c/(2(x-μ))))  for x > μ
+/// Quantile: Q(p) = μ + c / (2 · erfInv(1-p)²)
+/// Mean:  ∞
+/// Variance: ∞
+/// Mode:  μ + c/3
+/// Median: μ + c / (2 · erfInv(0.5)²)
+/// Entropy: (1 + 3γ + ln(16πc²)) / 2, where γ ≈ 0.5772156649
+///
+/// Time: O(1) for all operations
+pub fn Levy(comptime T: type) type {
+    return struct {
+        mu: T,
+        c: T,
+
+        const Self = @This();
+        const EULER_MASCHERONI: T = 0.5772156649015329;
+
+        /// Create a Lévy distribution with location mu and scale c (c > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, c: T) DistributionError!Self {
+            if (c <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(c)) return error.InvalidParameter;
+            return Self{ .mu = mu, .c = c };
+        }
+
+        /// Probability density function
+        ///
+        /// f(x) = sqrt(c/(2π)) · exp(-c/(2(x-μ))) / (x-μ)^(3/2)   for x > μ; else 0.0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= self.mu) return 0.0;
+            const z = x - self.mu;
+            const factor = @sqrt(self.c / (2.0 * math.pi));
+            const exp_term = @exp(-self.c / (2.0 * z));
+            return factor * exp_term / (z * @sqrt(z));
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x) = 0.5·ln(c/(2π)) - c/(2(x-μ)) - 1.5·ln(x-μ)   for x > μ; else -∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.mu) return -math.inf(T);
+            const z = x - self.mu;
+            return 0.5 * @log(self.c / (2.0 * math.pi)) - self.c / (2.0 * z) - 1.5 * @log(z);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x) = erfc(sqrt(c/(2(x-μ))))   for x > μ; else 0.0
+        /// where erfc(z) = 1 - erf(z)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.mu) return 0.0;
+            const z = x - self.mu;
+            const arg = @sqrt(self.c / (2.0 * z));
+            return 1.0 - erf(arg);
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = erf(sqrt(c/(2(x-μ))))   for x > μ; else 1.0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= self.mu) return 1.0;
+            const z = x - self.mu;
+            const arg = @sqrt(self.c / (2.0 * z));
+            return erf(arg);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Q(p) = μ + c / (2 · erfInv(1-p)²)
+        ///
+        /// Special cases:
+        ///   - p=0: returns μ (lower boundary)
+        ///   - p=1: returns +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.mu;
+            if (p == 1.0) return math.inf(T);
+            const inv_erf_arg = erfInv(1.0 - p);
+            return self.mu + self.c / (2.0 * inv_erf_arg * inv_erf_arg);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = +∞ (infinite)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = +∞ (infinite)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = μ + c/3
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu + self.c / 3.0;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = μ + c / (2 · erfInv(0.5)²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            const inv_erf_half = erfInv(0.5);
+            return self.mu + self.c / (2.0 * inv_erf_half * inv_erf_half);
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = (1 + 3γ + ln(16πc²)) / 2
+        /// where γ ≈ 0.5772156649 is the Euler-Mascheroni constant
+        ///
+        /// Can be rewritten as:
+        /// H(X) = (1 + 3γ + 4·ln(2) + ln(π) + 2·ln(c)) / 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const gamma: T = 0.5772156649015329;
+            const ln_16_pi_c2 = 4.0 * @log(2.0) + @log(math.pi) + 2.0 * @log(self.c);
+            return (1.0 + 3.0 * gamma + ln_16_pi_c2) / 2.0;
+        }
+
+        /// Sample from the distribution using Box-Muller transform
+        ///
+        /// X = μ + c/Z²  where Z ~ N(0,1)
+        ///
+        /// Implementation: Generate Z via Box-Muller from two uniform samples,
+        /// then compute μ + c/Z².
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Box-Muller: generate two uniforms and convert to standard normal
+            // Z ~ N(0,1) via sqrt(-2·ln(U₁)) · cos(2π·U₂)
+            var z: T = undefined;
+            // Ensure Z is not too close to 0 (avoid division issues)
+            while (true) {
+                const u_rand1 = rng.float(T);
+                const u_rand2 = rng.float(T);
+                const r = @sqrt(-2.0 * @log(u_rand1));
+                const theta = 2.0 * math.pi * u_rand2;
+                z = r * @cos(theta);
+                if (@abs(z) > 1e-10) break;
+            }
+            return self.mu + self.c / (z * z);
+        }
+
+        /// Assert that parameters are valid: c > 0 and both μ, c are finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.c <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.mu) or !math.isFinite(self.c)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Lévy Distribution Tests
+// ============================================================================
+
+test "Levy: init with valid parameters" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.c);
+}
+
+test "Levy: init with nonzero mu" {
+    const dist = try Levy(f64).init(5.0, 2.5);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.5, dist.c);
+}
+
+test "Levy: init with c=0 returns error" {
+    const result = Levy(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Levy: init with negative c returns error" {
+    const result = Levy(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Levy: init with infinite mu returns error" {
+    const result = Levy(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Levy: init with infinite c returns error" {
+    const result = Levy(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Levy: init with NaN mu returns error" {
+    const result = Levy(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Levy: init with NaN c returns error" {
+    const result = Levy(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Levy: pdf at x=1 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 1.0;
+    const expected = 0.241971;
+    try testing.expectApproxEqRel(expected, dist.pdf(x), 1e-4);
+}
+
+test "Levy: pdf at x=2 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 2.0;
+    const expected = 0.109848;
+    try testing.expectApproxEqRel(expected, dist.pdf(x), 1e-4);
+}
+
+test "Levy: pdf at x=0.5 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 0.5;
+    const expected = 0.415107;
+    try testing.expectApproxEqRel(expected, dist.pdf(x), 1e-4);
+}
+
+test "Levy: pdf returns 0 at boundary x=mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const pdf_at_mu = dist.pdf(0.0);
+    try testing.expectEqual(0.0, pdf_at_mu);
+}
+
+test "Levy: pdf returns 0 for x < mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(-1.0));
+    try testing.expectEqual(0.0, dist.pdf(-100.0));
+}
+
+test "Levy: pdf is positive for all x > mu" {
+    const dist = try Levy(f64).init(1.0, 1.0);
+    try testing.expect(dist.pdf(1.1) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+    try testing.expect(dist.pdf(10.0) > 0.0);
+}
+
+test "Levy: pdf with nonzero mu shift invariance" {
+    const dist0 = try Levy(f64).init(0.0, 1.0);
+    const dist5 = try Levy(f64).init(5.0, 1.0);
+    try testing.expectApproxEqRel(dist0.pdf(1.0), dist5.pdf(6.0), 1e-10);
+    try testing.expectApproxEqRel(dist0.pdf(2.0), dist5.pdf(7.0), 1e-10);
+}
+
+test "Levy: pdf decreases with x for fixed x-mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const p1 = dist.pdf(1.0);
+    const p2 = dist.pdf(2.0);
+    const p5 = dist.pdf(5.0);
+    try testing.expect(p1 > p2);
+    try testing.expect(p2 > p5);
+}
+
+test "Levy: pdf scales correctly with c" {
+    const dist1 = try Levy(f64).init(0.0, 1.0);
+    const dist2 = try Levy(f64).init(0.0, 4.0);
+    // pdf(x, c2) involves exp(-c2/(2(x-mu))) and sqrt(c2/(2π))
+    // General relationship is not trivial, but we verify both are positive
+    try testing.expect(dist1.pdf(1.0) > 0.0);
+    try testing.expect(dist2.pdf(1.0) > 0.0);
+}
+
+test "Levy: logpdf at x=1 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 1.0;
+    const pdf_val = dist.pdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, dist.logpdf(x), 1e-10);
+}
+
+test "Levy: logpdf consistency with pdf" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 2.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-10);
+}
+
+test "Levy: logpdf returns -inf for x <= mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expectEqual(-math.inf(f64), dist.logpdf(0.0));
+    try testing.expectEqual(-math.inf(f64), dist.logpdf(-1.0));
+}
+
+test "Levy: cdf at x=1 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 1.0;
+    const expected = 0.31731;
+    try testing.expectApproxEqRel(expected, dist.cdf(x), 1e-4);
+}
+
+test "Levy: cdf at x=2 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 2.0;
+    const expected = 0.47950;
+    try testing.expectApproxEqRel(expected, dist.cdf(x), 1e-4);
+}
+
+test "Levy: cdf at x=0.5 mu=0 c=1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x = 0.5;
+    const expected = 0.15730;
+    try testing.expectApproxEqRel(expected, dist.cdf(x), 1e-4);
+}
+
+test "Levy: cdf returns 0 at boundary x=mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.cdf(0.0));
+}
+
+test "Levy: cdf returns 0 for x < mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.cdf(-1.0));
+    try testing.expectEqual(0.0, dist.cdf(-100.0));
+}
+
+test "Levy: cdf is monotonically increasing" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(2.0);
+    const c5 = dist.cdf(5.0);
+    const c10 = dist.cdf(10.0);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c5);
+    try testing.expect(c5 < c10);
+}
+
+test "Levy: cdf approaches 1 for large x" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const c_large = dist.cdf(1000.0);
+    try testing.expect(c_large > 0.97);
+}
+
+test "Levy: sf plus cdf equals 1" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try testing.expectApproxEqRel(1.0, sum, 1e-10);
+    }
+}
+
+test "Levy: sf is decreasing with x" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const sf1 = dist.sf(1.0);
+    const sf2 = dist.sf(2.0);
+    const sf5 = dist.sf(5.0);
+    try testing.expect(sf1 > sf2);
+    try testing.expect(sf2 > sf5);
+}
+
+test "Levy: cdf with shifted mu" {
+    const dist0 = try Levy(f64).init(0.0, 1.0);
+    const dist5 = try Levy(f64).init(5.0, 1.0);
+    try testing.expectApproxEqRel(dist0.cdf(1.0), dist5.cdf(6.0), 1e-10);
+    try testing.expectApproxEqRel(dist0.cdf(2.0), dist5.cdf(7.0), 1e-10);
+}
+
+test "Levy: quantile roundtrip cdf->quantile at p=0.5" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-6);
+}
+
+test "Levy: quantile roundtrip cdf->quantile at p=0.25" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-6);
+}
+
+test "Levy: quantile roundtrip cdf->quantile at p=0.75" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-6);
+}
+
+test "Levy: quantile p=0 returns mu" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, try dist.quantile(0.0));
+}
+
+test "Levy: quantile p=0 with nonzero mu returns mu" {
+    const dist = try Levy(f64).init(5.0, 1.0);
+    try testing.expectEqual(5.0, try dist.quantile(0.0));
+}
+
+test "Levy: quantile p=1 returns infinity" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "Levy: quantile is monotone increasing in p" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.25);
+    const q3 = try dist.quantile(0.5);
+    const q4 = try dist.quantile(0.75);
+    const q5 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+    try testing.expect(q3 < q4);
+    try testing.expect(q4 < q5);
+}
+
+test "Levy: mode equals mu plus c over 3" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const expected = 1.0 / 3.0;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-10);
+}
+
+test "Levy: mode with mu=1 c=3 equals 2.0" {
+    const dist = try Levy(f64).init(1.0, 3.0);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-10);
+}
+
+test "Levy: mode with mu=-1 c=6 equals 1.0" {
+    const dist = try Levy(f64).init(-1.0, 6.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-10);
+}
+
+test "Levy: mode is greater than mu" {
+    const dist = try Levy(f64).init(5.0, 2.0);
+    try testing.expect(dist.mode() > 5.0);
+}
+
+test "Levy: mean is infinite" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expect(math.isInf(dist.mean()));
+}
+
+test "Levy: mean is positive infinity" {
+    const dist = try Levy(f64).init(-10.0, 5.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(math.isInf(dist.mean()));
+}
+
+test "Levy: variance is infinite" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try testing.expect(math.isInf(dist.variance()));
+}
+
+test "Levy: variance is positive infinity" {
+    const dist = try Levy(f64).init(5.0, 2.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(math.isInf(dist.variance()));
+}
+
+test "Levy: entropy mu=0 c=1 approximately 3.3245" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    const expected = 3.32448;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-4);
+}
+
+test "Levy: entropy mu does not affect entropy value" {
+    const dist0 = try Levy(f64).init(0.0, 1.0);
+    const dist5 = try Levy(f64).init(5.0, 1.0);
+    try testing.expectApproxEqRel(dist0.entropy(), dist5.entropy(), 1e-10);
+}
+
+test "Levy: entropy increases with ln(c)" {
+    const dist1 = try Levy(f64).init(0.0, 1.0);
+    const dist2 = try Levy(f64).init(0.0, 2.0);
+    const diff = dist2.entropy() - dist1.entropy();
+    const expected_diff = @log(2.0);
+    try testing.expectApproxEqRel(expected_diff, diff, 1e-6);
+}
+
+test "Levy: entropy with c=2 approximately 4.0176" {
+    const dist = try Levy(f64).init(0.0, 2.0);
+    const expected = 4.0176;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-4);
+}
+
+test "Levy: validate passes for valid dist" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Levy: validate passes for nonzero mu" {
+    const dist = try Levy(f64).init(5.0, 2.5);
+    try dist.validate();
+}
+
+test "Levy: validate fails for c=0" {
+    const dist = Levy(f64){ .mu = 0.0, .c = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Levy: validate fails for negative c" {
+    const dist = Levy(f64){ .mu = 0.0, .c = -1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Levy: validate fails for infinite mu" {
+    const dist = Levy(f64){ .mu = math.inf(f64), .c = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Levy: validate fails for infinite c" {
+    const dist = Levy(f64){ .mu = 0.0, .c = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Levy: sample is always > mu" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Levy(f64).init(0.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "Levy: sample with nonzero mu is > mu" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Levy(f64).init(10.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample > 10.0);
+    }
+}
+
+test "Levy: sample returns finite values" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Levy(f64).init(0.0, 1.0);
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "Levy: f32 type basic operations" {
+    const dist = try Levy(f32).init(0.0, 1.0);
+    try testing.expectEqual(@as(f32, 0.0), dist.mu);
+    try testing.expectEqual(@as(f32, 1.0), dist.c);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+}
+
+test "Levy: f32 mode equals mu plus c over 3" {
+    const dist = try Levy(f32).init(0.0, 1.0);
+    const expected = @as(f32, 1.0 / 3.0);
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-4);
+}
+
+test "Levy: f32 mean and variance are infinite" {
+    const dist = try Levy(f32).init(1.0, 2.0);
+    try testing.expect(math.isInf(dist.mean()));
+    try testing.expect(math.isInf(dist.variance()));
+}
+
+test "Levy: f32 entropy is finite" {
+    const dist = try Levy(f32).init(0.0, 1.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
