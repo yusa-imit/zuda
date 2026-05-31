@@ -1,3 +1,24 @@
+**Session 614 Update (2026-05-31) — FEATURE MODE:**
+
+✅ **HalfNormal Distribution** — 35th distribution, 20th continuous — commits f7d4891, 332804c
+- **Mode**: FEATURE MODE (counter: 614)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: HalfNormal(T) — |N(0,σ)|; bounded below at 0
+  * Parameter: sigma (σ > 0); support [0, ∞)
+  * PDF: √(2/π)/σ · exp(-x²/(2σ²))
+  * CDF: erf(x/(σ·√2)); uses existing erf() helper
+  * Quantile: σ·√2·erfInv(p); uses existing erfInv() helper
+  * Mean: σ·√(2/π); Variance: σ²·(1-2/π)
+  * Mode: 0 (always); Median: σ·√2·erfInv(0.5) ≈ 0.6745σ
+  * Entropy: 0.5·ln(π/2) + ln(σ) + 0.5
+  * Sample: |N(0,σ)| via Box-Muller transform
+  * Test fix: tolerance adjusted 1e-14→1e-6/1e-7 for erf/erfInv (~3e-9 approx error)
+  * Test fix: wrong expected for pdf(1, sigma=2) corrected (was 0.35196, should be 0.35207)
+- **Tests**: 68 tests all passing (exit code 0)
+- **Distribution count**: 35 total (20 continuous + 15 discrete)
+- **Next Priority**: Maxwell-Boltzmann, Lévy, or LogLogistic distribution
+
 **Session 613 Update (2026-05-31) — FEATURE MODE:**
 
 ✅ **Kumaraswamy Distribution** — 34th distribution, 19th continuous — commit 791e901
