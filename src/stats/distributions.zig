@@ -16253,3 +16253,552 @@ test "MaxwellBoltzmann: f32 mean and variance are finite" {
     try testing.expect(math.isFinite(dist.variance()));
     try testing.expect(dist.variance() > 0.0);
 }
+
+// ============================================================================
+// LogLogistic Distribution (Fisk Distribution)
+// ============================================================================
+
+/// LogLogistic distribution — a continuous distribution on [0, ∞)
+/// with closed-form CDF and quantile. Also known as the Fisk distribution.
+///
+/// Parameters:
+///   alpha: scale parameter (α > 0)
+///   beta:  shape parameter (β > 0)
+pub fn LogLogistic(comptime T: type) type {
+    return struct {
+        alpha: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a LogLogistic distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (beta <= 0.0 or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta = beta };
+        }
+
+        /// Probability density function
+        ///
+        /// f(x; α, β) = (β/α)·(x/α)^(β-1) / (1 + (x/α)^β)²  for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const r = x / self.alpha;
+            const rb = math.pow(T, r, self.beta);
+            return (self.beta / self.alpha) * math.pow(T, r, self.beta - 1.0) / ((1.0 + rb) * (1.0 + rb));
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x) = log(β) - log(α) + (β-1)·log(x/α) - 2·log(1 + (x/α)^β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const r = x / self.alpha;
+            const rb = math.pow(T, r, self.beta);
+            return @log(self.beta) - @log(self.alpha) + (self.beta - 1.0) * @log(r) - 2.0 * @log(1.0 + rb);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x; α, β) = x^β / (x^β + α^β)  for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const r = x / self.alpha;
+            const rb = math.pow(T, r, self.beta);
+            return rb / (1.0 + rb);
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = 1 / (1 + (x/α)^β) = α^β / (x^β + α^β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            const r = x / self.alpha;
+            const rb = math.pow(T, r, self.beta);
+            return 1.0 / (1.0 + rb);
+        }
+
+        /// Quantile function (inverse CDF) — closed form
+        ///
+        /// Q(p) = α · (p / (1 - p))^(1/β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            return self.alpha * math.pow(T, p / (1.0 - p), 1.0 / self.beta);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = α · π/(β · sin(π/β))  for β > 1; NaN otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.beta <= 1.0) return math.nan(T);
+            const pib = math.pi / self.beta;
+            return self.alpha * pib / @sin(pib);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = α² · [2π/(β·sin(2π/β)) - (π/(β·sin(π/β)))²]  for β > 2; NaN otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.beta <= 2.0) return math.nan(T);
+            const pib = math.pi / self.beta;
+            const m = pib / @sin(pib); // mean / alpha
+            const e2 = 2.0 * pib / @sin(2.0 * pib); // E[X²] / alpha²
+            return self.alpha * self.alpha * (e2 - m * m);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = α · ((β-1)/(β+1))^(1/β)  for β > 1; else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.beta <= 1.0) return 0.0;
+            return self.alpha * math.pow(T, (self.beta - 1.0) / (self.beta + 1.0), 1.0 / self.beta);
+        }
+
+        /// Median of the distribution — always equal to α
+        ///
+        /// Median = α  (since CDF(α) = 0.5 for all β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.alpha;
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = ln(α/β) + 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.alpha / self.beta) + 2.0;
+        }
+
+        /// Sample from the distribution using inverse transform
+        ///
+        /// X = α · (U/(1-U))^(1/β)  where U ~ Uniform(0, 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.alpha * math.pow(T, u / (1.0 - u), 1.0 / self.beta);
+        }
+
+        /// Assert that parameters are valid: α > 0, β > 0, both finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.beta <= 0.0 or !math.isFinite(self.beta)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// LogLogistic Tests
+// ============================================================================
+
+test "LogLogistic: init with valid alpha=1 beta=1" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 1.0), dist.beta);
+}
+
+test "LogLogistic: init with various valid alpha beta values" {
+    const d1 = try LogLogistic(f64).init(0.5, 2.0);
+    try testing.expectEqual(@as(f64, 0.5), d1.alpha);
+    try testing.expectEqual(@as(f64, 2.0), d1.beta);
+    const d2 = try LogLogistic(f64).init(3.0, 0.5);
+    try testing.expectEqual(@as(f64, 3.0), d2.alpha);
+    try testing.expectEqual(@as(f64, 0.5), d2.beta);
+    const d3 = try LogLogistic(f64).init(10.0, 10.0);
+    try testing.expectEqual(@as(f64, 10.0), d3.alpha);
+    try testing.expectEqual(@as(f64, 10.0), d3.beta);
+}
+
+test "LogLogistic: init fails for alpha=0" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(0.0, 1.0));
+}
+
+test "LogLogistic: init fails for beta=0" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(1.0, 0.0));
+}
+
+test "LogLogistic: init fails for negative alpha" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(-1.0, 1.0));
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(-0.01, 2.0));
+}
+
+test "LogLogistic: init fails for negative beta" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(1.0, -1.0));
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(2.0, -0.5));
+}
+
+test "LogLogistic: init fails for NaN alpha" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(math.nan(f64), 1.0));
+}
+
+test "LogLogistic: init fails for NaN beta" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(1.0, math.nan(f64)));
+}
+
+test "LogLogistic: init fails for Inf alpha" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(math.inf(f64), 1.0));
+}
+
+test "LogLogistic: init fails for Inf beta" {
+    try testing.expectError(error.InvalidParameter, LogLogistic(f64).init(1.0, math.inf(f64)));
+}
+
+test "LogLogistic: pdf is 0 for x < 0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.001));
+}
+
+test "LogLogistic: pdf is 0 at x=0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "LogLogistic: pdf(1, alpha=1, beta=2) = 0.5" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // pdf = beta*alpha^beta*x^(beta-1) / (x^beta + alpha^beta)^2
+    // pdf(1, 1, 2) = 2*1*1/(1+1)^2 = 2/4 = 0.5
+    try testing.expectApproxEqRel(@as(f64, 0.5), dist.pdf(1.0), 1e-12);
+}
+
+test "LogLogistic: pdf(2, alpha=1, beta=2) = 0.16" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // pdf(2, 1, 2) = 2*1*2^1 / (4+1)^2 = 4/25 = 0.16
+    try testing.expectApproxEqRel(@as(f64, 0.16), dist.pdf(2.0), 1e-12);
+}
+
+test "LogLogistic: pdf is non-negative for large x" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expect(dist.pdf(10.0) >= 0.0);
+    try testing.expect(dist.pdf(100.0) >= 0.0);
+    try testing.expect(dist.pdf(1000.0) >= 0.0);
+}
+
+test "LogLogistic: logpdf is -inf for x<=0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "LogLogistic: logpdf consistent with pdf at x=1 alpha=1 beta=2" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    const log_pdf = dist.logpdf(1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(@log(pdf_val), log_pdf, 1e-12);
+}
+
+test "LogLogistic: logpdf consistent with pdf at x=2 alpha=1 beta=2" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expectApproxEqRel(@log(dist.pdf(2.0)), dist.logpdf(2.0), 1e-12);
+}
+
+test "LogLogistic: cdf at x=0 is 0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "LogLogistic: cdf at x<0 is 0" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-5.0));
+}
+
+test "LogLogistic: cdf(alpha, any beta) = 0.5 (median is alpha)" {
+    const d1 = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectApproxEqRel(@as(f64, 0.5), d1.cdf(1.0), 1e-12);
+    const d2 = try LogLogistic(f64).init(2.0, 3.0);
+    try testing.expectApproxEqRel(@as(f64, 0.5), d2.cdf(2.0), 1e-12);
+    const d3 = try LogLogistic(f64).init(0.5, 0.5);
+    try testing.expectApproxEqRel(@as(f64, 0.5), d3.cdf(0.5), 1e-12);
+}
+
+test "LogLogistic: cdf(2, alpha=1, beta=2) = 0.8" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // cdf = x^beta / (x^beta + alpha^beta) = 4/(4+1) = 0.8
+    try testing.expectApproxEqRel(@as(f64, 0.8), dist.cdf(2.0), 1e-12);
+}
+
+test "LogLogistic: cdf(0.5, alpha=1, beta=2) = 0.2" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // cdf = 0.25/(0.25+1) = 0.25/1.25 = 0.2
+    try testing.expectApproxEqRel(@as(f64, 0.2), dist.cdf(0.5), 1e-12);
+}
+
+test "LogLogistic: cdf approaches 1 for large x" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // Note: LogLogistic has polynomial decay, not exponential (unlike MaxwellBoltzmann)
+    // cdf(20) = 400/401 ≈ 0.9975; cdf(100) ≈ 0.99990
+    try testing.expect(dist.cdf(20.0) > 0.99);
+    try testing.expect(dist.cdf(100.0) > 0.9999);
+}
+
+test "LogLogistic: cdf is strictly monotonically increasing" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expect(dist.cdf(0.5) < dist.cdf(1.0));
+    try testing.expect(dist.cdf(1.0) < dist.cdf(2.0));
+    try testing.expect(dist.cdf(2.0) < dist.cdf(5.0));
+}
+
+test "LogLogistic: sf at x=0 is 1" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "LogLogistic: cdf + sf = 1" {
+    const dist = try LogLogistic(f64).init(1.5, 2.5);
+    const x: f64 = 2.0;
+    try testing.expectApproxEqRel(@as(f64, 1.0), dist.cdf(x) + dist.sf(x), 1e-14);
+}
+
+test "LogLogistic: quantile at p=0 returns 0" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "LogLogistic: quantile at p=1 returns infinity" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "LogLogistic: quantile error for p < 0" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "LogLogistic: quantile error for p > 1" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "LogLogistic: quantile(0.5) = alpha (median roundtrip)" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    const med = try dist.quantile(0.5);
+    try testing.expectApproxEqRel(@as(f64, 1.0), med, 1e-12);
+    const dist2 = try LogLogistic(f64).init(3.5, 1.5);
+    const med2 = try dist2.quantile(0.5);
+    try testing.expectApproxEqRel(@as(f64, 3.5), med2, 1e-12);
+}
+
+test "LogLogistic: cdf(quantile(p)) roundtrip" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    const p_values = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_values) |p| {
+        const x = try dist.quantile(p);
+        try testing.expectApproxEqRel(p, dist.cdf(x), 1e-8);
+    }
+}
+
+test "LogLogistic: quantile is strictly increasing" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    const q25 = try dist.quantile(0.25);
+    const q50 = try dist.quantile(0.50);
+    const q75 = try dist.quantile(0.75);
+    try testing.expect(q25 < q50);
+    try testing.expect(q50 < q75);
+}
+
+test "LogLogistic: mean(alpha=1, beta=2) ≈ π/2" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // mean = alpha * pi / (beta * sin(pi/beta)) = 1 * pi / (2 * sin(pi/2)) = pi/2
+    const expected: f64 = math.pi / 2.0;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-12);
+}
+
+test "LogLogistic: mean(alpha=2, beta=2) = 2 * mean(alpha=1, beta=2)" {
+    const d1 = try LogLogistic(f64).init(1.0, 2.0);
+    const d2 = try LogLogistic(f64).init(2.0, 2.0);
+    try testing.expectApproxEqRel(2.0 * d1.mean(), d2.mean(), 1e-12);
+}
+
+test "LogLogistic: mean is NaN for beta = 1.0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expect(math.isNan(dist.mean()));
+}
+
+test "LogLogistic: mean is NaN for beta < 1" {
+    const dist = try LogLogistic(f64).init(1.0, 0.5);
+    try testing.expect(math.isNan(dist.mean()));
+}
+
+test "LogLogistic: mean is positive for beta > 1" {
+    const dist = try LogLogistic(f64).init(1.0, 2.5);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(math.isFinite(dist.mean()));
+}
+
+test "LogLogistic: variance(alpha=1, beta=3) ≈ 2.4183991" {
+    const dist = try LogLogistic(f64).init(1.0, 3.0);
+    // variance = alpha^2 * [2*pi/(beta*sin(2*pi/beta)) - pi^2/(beta^2*sin^2(pi/beta))]
+    // For alpha=1, beta=3:
+    // sin(2pi/3) = sqrt(3)/2, sin(pi/3) = sqrt(3)/2
+    // = 2*pi/(3*sqrt(3)/2) - pi^2/(9*3/4)
+    // = 4*pi/(3*sqrt(3)) - 4*pi^2/27
+    const sin_2pi_3: f64 = @sin(2.0 * math.pi / 3.0);
+    const sin_pi_3: f64 = @sin(math.pi / 3.0);
+    const expected: f64 = 2.0 * math.pi / (3.0 * sin_2pi_3) - math.pi * math.pi / (9.0 * sin_pi_3 * sin_pi_3);
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-8);
+}
+
+test "LogLogistic: variance is NaN for beta = 2.0" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    try testing.expect(math.isNan(dist.variance()));
+}
+
+test "LogLogistic: variance is NaN for beta < 2" {
+    const dist = try LogLogistic(f64).init(1.0, 1.5);
+    try testing.expect(math.isNan(dist.variance()));
+}
+
+test "LogLogistic: variance is positive for beta > 2" {
+    const dist = try LogLogistic(f64).init(1.0, 3.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(math.isFinite(dist.variance()));
+}
+
+test "LogLogistic: mode(alpha=1, beta=2) ≈ sqrt(1/3)" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // mode = alpha * ((beta-1)/(beta+1))^(1/beta) = 1 * (1/3)^0.5
+    const expected: f64 = @sqrt(1.0 / 3.0);
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-12);
+}
+
+test "LogLogistic: mode(alpha=1, beta=1) = 0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "LogLogistic: mode(alpha=1, beta=0.5) = 0" {
+    const dist = try LogLogistic(f64).init(1.0, 0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "LogLogistic: mode(alpha=2, beta=3) scales with alpha" {
+    const d1 = try LogLogistic(f64).init(1.0, 3.0);
+    const d2 = try LogLogistic(f64).init(2.0, 3.0);
+    try testing.expectApproxEqRel(2.0 * d1.mode(), d2.mode(), 1e-12);
+}
+
+test "LogLogistic: median(alpha=3, beta=5) = 3.0" {
+    const dist = try LogLogistic(f64).init(3.0, 5.0);
+    try testing.expectApproxEqRel(@as(f64, 3.0), dist.median(), 1e-14);
+}
+
+test "LogLogistic: median equals alpha for any beta" {
+    const d1 = try LogLogistic(f64).init(1.5, 2.0);
+    try testing.expectApproxEqRel(@as(f64, 1.5), d1.median(), 1e-14);
+    const d2 = try LogLogistic(f64).init(5.0, 0.5);
+    try testing.expectApproxEqRel(@as(f64, 5.0), d2.median(), 1e-14);
+}
+
+test "LogLogistic: entropy(alpha=1, beta=1) = 2.0" {
+    const dist = try LogLogistic(f64).init(1.0, 1.0);
+    // entropy = ln(alpha/beta) + 2 = ln(1/1) + 2 = 2.0
+    try testing.expectApproxEqRel(@as(f64, 2.0), dist.entropy(), 1e-12);
+}
+
+test "LogLogistic: entropy(alpha=1, beta=2) ≈ 1.3068528194400546" {
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    // entropy = ln(1/2) + 2 = 2 - ln(2)
+    const expected: f64 = 2.0 - @log(2.0);
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-12);
+    try testing.expectApproxEqRel(@as(f64, 1.3068528194400546), dist.entropy(), 1e-10);
+}
+
+test "LogLogistic: entropy(alpha=e, beta=1) = 3.0" {
+    const dist = try LogLogistic(f64).init(math.e, 1.0);
+    // entropy = ln(e/1) + 2 = 1 + 2 = 3.0
+    try testing.expectApproxEqRel(@as(f64, 3.0), dist.entropy(), 1e-12);
+}
+
+test "LogLogistic: entropy increases with alpha (log scale)" {
+    const d1 = try LogLogistic(f64).init(1.0, 2.0);
+    const d2 = try LogLogistic(f64).init(2.0, 2.0);
+    try testing.expect(d2.entropy() > d1.entropy());
+}
+
+test "LogLogistic: sample returns non-negative values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try LogLogistic(f64).init(1.0, 2.0);
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        try testing.expect(dist.sample(rng) >= 0.0);
+    }
+}
+
+test "LogLogistic: sample empirical mean ≈ theoretical mean" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try LogLogistic(f64).init(1.0, 3.0);
+    const n: usize = 50000;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqRel(dist.mean(), empirical_mean, 0.02);
+}
+
+test "LogLogistic: validate passes for valid params" {
+    const dist = try LogLogistic(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "LogLogistic: validate fails for alpha=0" {
+    const dist = LogLogistic(f64){ .alpha = 0.0, .beta = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "LogLogistic: validate fails for beta=0" {
+    const dist = LogLogistic(f64){ .alpha = 1.0, .beta = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "LogLogistic: validate fails for negative alpha" {
+    const dist = LogLogistic(f64){ .alpha = -1.0, .beta = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "LogLogistic: validate fails for negative beta" {
+    const dist = LogLogistic(f64){ .alpha = 1.0, .beta = -1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "LogLogistic: f32 type works" {
+    const dist = try LogLogistic(f32).init(1.0, 2.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f32, 2.0), dist.beta);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+}
+
+test "LogLogistic: f32 mean and median are finite" {
+    const dist = try LogLogistic(f32).init(1.0, 3.0);
+    try testing.expect(math.isFinite(dist.mean()));
+    try testing.expect(math.isFinite(dist.median()));
+}
