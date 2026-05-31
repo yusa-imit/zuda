@@ -17417,3 +17417,564 @@ test "Levy: f32 entropy is finite" {
     const dist = try Levy(f32).init(0.0, 1.0);
     try testing.expect(math.isFinite(dist.entropy()));
 }
+
+// ============================================================================
+// Lomax (Pareto Type II) Distribution
+// ============================================================================
+
+/// Lomax (Pareto Type II) distribution — Lomax(λ, κ)
+///
+/// Also known as Pareto Type II or Lomax distribution. A heavy-tailed
+/// distribution on [0, ∞) used in survival analysis, queueing theory,
+/// and Internet traffic modeling.
+///
+/// Probability density function (PDF):
+///   f(x; λ, κ) = (κ/λ) · (1 + x/λ)^(-(κ+1))   for x ≥ 0
+///
+/// Cumulative distribution function (CDF):
+///   F(x; λ, κ) = 1 - (1 + x/λ)^(-κ)
+///
+/// Parameters:
+///   - lambda (λ): Scale parameter (λ > 0)
+///   - kappa (κ): Shape parameter (κ > 0)
+///
+/// Time: O(1) for all methods
+pub fn Lomax(comptime T: type) type {
+    return struct {
+        lambda: T,
+        kappa: T,
+
+        const Self = @This();
+
+        /// Create a Lomax distribution with given scale and shape parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(lambda: T, kappa: T) DistributionError!Self {
+            if (lambda <= 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            if (kappa <= 0.0 or !math.isFinite(kappa)) return error.InvalidParameter;
+            return Self{ .lambda = lambda, .kappa = kappa };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (κ/λ) · (1 + x/λ)^(-(κ+1))   for x ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const ratio = x / self.lambda;
+            return (self.kappa / self.lambda) * math.pow(T, 1.0 + ratio, -(self.kappa + 1.0));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(κ/λ) - (κ+1)·log(1 + x/λ)   for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const ratio = x / self.lambda;
+            return @log(self.kappa / self.lambda) - (self.kappa + 1.0) * @log(1.0 + ratio);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 - (1 + x/λ)^(-κ)   for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return 1.0 - math.pow(T, 1.0 + x / self.lambda, -self.kappa);
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = (1 + x/λ)^(-κ)   for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return math.pow(T, 1.0 + x / self.lambda, -self.kappa);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = λ · ((1-p)^(-1/κ) - 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            return self.lambda * (math.pow(T, 1.0 - p, -1.0 / self.kappa) - 1.0);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = λ/(κ-1)   for κ > 1, else +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.kappa <= 1.0) return math.inf(T);
+            return self.lambda / (self.kappa - 1.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = κλ²/((κ-1)²(κ-2))   for κ > 2, else +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.kappa <= 2.0) return math.inf(T);
+            const km1 = self.kappa - 1.0;
+            return self.kappa * self.lambda * self.lambda / (km1 * km1 * (self.kappa - 2.0));
+        }
+
+        /// Mode of the distribution (always 0)
+        ///
+        /// The PDF is monotonically decreasing, so the mode is always at x=0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = λ · (2^(1/κ) - 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.lambda * (math.pow(T, 2.0, 1.0 / self.kappa) - 1.0);
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = ln(λ/κ) + 1 + 1/κ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.lambda / self.kappa) + 1.0 + 1.0 / self.kappa;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = λ · (U^(-1/κ) - 1) where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.lambda * (math.pow(T, u, -1.0 / self.kappa) - 1.0);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (self.kappa <= 0.0 or !math.isFinite(self.kappa)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Lomax Distribution Tests
+// ============================================================================
+
+test "Lomax: init succeeds with valid params" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.lambda);
+    try testing.expectEqual(@as(f64, 1.0), dist.kappa);
+}
+
+test "Lomax: init succeeds with lambda=2 kappa=3" {
+    const dist = try Lomax(f64).init(2.0, 3.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.lambda);
+    try testing.expectEqual(@as(f64, 3.0), dist.kappa);
+}
+
+test "Lomax: init fails for lambda=0" {
+    try testing.expectError(error.InvalidParameter, Lomax(f64).init(0.0, 1.0));
+}
+
+test "Lomax: init fails for negative lambda" {
+    try testing.expectError(error.InvalidParameter, Lomax(f64).init(-1.0, 1.0));
+}
+
+test "Lomax: init fails for kappa=0" {
+    try testing.expectError(error.InvalidParameter, Lomax(f64).init(1.0, 0.0));
+}
+
+test "Lomax: init fails for negative kappa" {
+    try testing.expectError(error.InvalidParameter, Lomax(f64).init(1.0, -1.0));
+}
+
+test "Lomax: init fails for infinite lambda" {
+    try testing.expectError(error.InvalidParameter, Lomax(f64).init(math.inf(f64), 1.0));
+}
+
+test "Lomax: init fails for infinite kappa" {
+    try testing.expectError(error.InvalidParameter, Lomax(f64).init(1.0, math.inf(f64)));
+}
+
+test "Lomax: pdf at x=0 equals kappa/lambda" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "Lomax: pdf at x=0 equals kappa/lambda (k=2)" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "Lomax: pdf at x=1 with lambda=1 kappa=1" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 0.25;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-10);
+}
+
+test "Lomax: pdf at x=1 with lambda=1 kappa=2" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = 0.25;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-10);
+}
+
+test "Lomax: pdf at x=2 with lambda=2 kappa=3" {
+    const dist = try Lomax(f64).init(2.0, 3.0);
+    const expected = 0.09375;
+    try testing.expectApproxEqRel(expected, dist.pdf(2.0), 1e-10);
+}
+
+test "Lomax: pdf at negative x returns 0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const result = dist.pdf(-0.001);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "Lomax: pdf is positive for x>0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const result = dist.pdf(0.5);
+    try testing.expect(result > 0.0);
+}
+
+test "Lomax: pdf decreases monotonically with x" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const pdf0 = dist.pdf(0.0);
+    const pdf1 = dist.pdf(1.0);
+    const pdf2 = dist.pdf(2.0);
+    try testing.expect(pdf0 > pdf1);
+    try testing.expect(pdf1 > pdf2);
+}
+
+test "Lomax: logpdf at x=1 with lambda=1 kappa=1" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = -@log(@as(f64, 4.0));
+    try testing.expectApproxEqRel(expected, dist.logpdf(1.0), 1e-10);
+}
+
+test "Lomax: logpdf equals log of pdf" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const x = 1.0;
+    const logpdf_val = dist.logpdf(x);
+    const pdf_val = dist.pdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-10);
+}
+
+test "Lomax: cdf at x=0 is 0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Lomax: cdf at x=negative is 0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "Lomax: cdf at x=1 with lambda=1 kappa=1 is 0.5" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 0.5;
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-10);
+}
+
+test "Lomax: cdf at x=1 with lambda=1 kappa=2" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = 0.75;
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-10);
+}
+
+test "Lomax: cdf increases with x" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const cdf1 = dist.cdf(1.0);
+    const cdf2 = dist.cdf(2.0);
+    const cdf10 = dist.cdf(10.0);
+    try testing.expect(cdf1 < cdf2);
+    try testing.expect(cdf2 < cdf10);
+}
+
+test "Lomax: cdf approaches 1 for large x" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const result = dist.cdf(1e6);
+    try testing.expect(result > 0.999);
+}
+
+test "Lomax: cdf plus sf equals 1 at x=1" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const x = 1.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Lomax: cdf plus sf equals 1 at x=2" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Lomax: cdf plus sf equals 1 at x=5" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const x = 5.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Lomax: sf at x=0 is 1" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "Lomax: sf at x=1 with lambda=1 kappa=1 is 0.5" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 0.5;
+    try testing.expectApproxEqRel(expected, dist.sf(1.0), 1e-10);
+}
+
+test "Lomax: sf decreases with x" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const sf1 = dist.sf(1.0);
+    const sf2 = dist.sf(2.0);
+    const sf10 = dist.sf(10.0);
+    try testing.expect(sf1 > sf2);
+    try testing.expect(sf2 > sf10);
+}
+
+test "Lomax: quantile at p=0 is 0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "Lomax: quantile at p=1 is infinite" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "Lomax: quantile at p=0.5 with lambda=1 kappa=1 is 1.0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, try dist.quantile(0.5), 1e-10);
+}
+
+test "Lomax: quantile inverts cdf for p=0.3" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-10);
+}
+
+test "Lomax: quantile fails for p<0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Lomax: quantile fails for p>1" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Lomax: quantile at p=0.75 with lambda=1 kappa=2" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, try dist.quantile(0.75), 1e-10);
+}
+
+test "Lomax: mean with kappa=2 lambda=1 is 1.0" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "Lomax: mean with kappa=3 lambda=2 is 1.0" {
+    const dist = try Lomax(f64).init(2.0, 3.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "Lomax: mean with kappa=1 is infinite" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expect(math.isInf(dist.mean()));
+}
+
+test "Lomax: mean with kappa<1 is infinite" {
+    const dist = try Lomax(f64).init(1.0, 0.5);
+    try testing.expect(math.isInf(dist.mean()));
+}
+
+test "Lomax: mean with kappa=4 lambda=3" {
+    const dist = try Lomax(f64).init(3.0, 4.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "Lomax: variance with kappa=3 lambda=1 is 0.75" {
+    const dist = try Lomax(f64).init(1.0, 3.0);
+    const expected = 0.75;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-10);
+}
+
+test "Lomax: variance with kappa=2 is infinite" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    try testing.expect(math.isInf(dist.variance()));
+}
+
+test "Lomax: variance with kappa<2 is infinite" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expect(math.isInf(dist.variance()));
+}
+
+test "Lomax: variance with kappa=4 lambda=2" {
+    const dist = try Lomax(f64).init(2.0, 4.0);
+    const expected = 16.0 / 18.0;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-6);
+}
+
+test "Lomax: mode is always 0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "Lomax: mode is 0 for any params" {
+    const dist = try Lomax(f64).init(5.0, 10.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "Lomax: median with lambda=1 kappa=1 is 1.0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.median(), 1e-10);
+}
+
+test "Lomax: median with lambda=1 kappa=2" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = @sqrt(2.0) - 1.0;
+    try testing.expectApproxEqRel(expected, dist.median(), 1e-6);
+}
+
+test "Lomax: median matches cdf=0.5" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const med = dist.median();
+    const cdf_val = dist.cdf(med);
+    try testing.expectApproxEqRel(0.5, cdf_val, 1e-10);
+}
+
+test "Lomax: entropy with lambda=1 kappa=1 is 2.0" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-10);
+}
+
+test "Lomax: entropy with lambda=2 kappa=2 is 1.5" {
+    const dist = try Lomax(f64).init(2.0, 2.0);
+    const expected = 1.5;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-10);
+}
+
+test "Lomax: entropy with lambda=1 kappa=2" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    const expected = -@log(2.0) + 1.5;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-6);
+}
+
+test "Lomax: entropy is finite" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "Lomax: sample is non-negative" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "Lomax: sample is finite" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "Lomax: samples have reasonable mean for kappa>1" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Lomax(f64).init(1.0, 5.0);
+    const expected_mean = 0.25;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 10000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 10000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.05);
+}
+
+test "Lomax: validate passes for valid params" {
+    const dist = try Lomax(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "Lomax: validate fails for lambda=0" {
+    const dist = Lomax(f64){ .lambda = 0.0, .kappa = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Lomax: validate fails for kappa=0" {
+    const dist = Lomax(f64){ .lambda = 1.0, .kappa = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Lomax: validate fails for infinite lambda" {
+    const dist = Lomax(f64){ .lambda = math.inf(f64), .kappa = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Lomax: validate fails for infinite kappa" {
+    const dist = Lomax(f64){ .lambda = 1.0, .kappa = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Lomax: f32 basic operations" {
+    const dist = try Lomax(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.lambda);
+    try testing.expectEqual(@as(f32, 1.0), dist.kappa);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val > 0.0 and cdf_val < 1.0);
+}
+
+test "Lomax: f32 mode is 0" {
+    const dist = try Lomax(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 0.0), dist.mode());
+}
