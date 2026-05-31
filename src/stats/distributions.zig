@@ -15733,3 +15733,523 @@ test "HalfNormal: f32 cdf and quantile work" {
     const q = try dist.quantile(0.5);
     try testing.expect(q > 0.6 and q < 0.7);
 }
+
+// ============================================================================
+// Maxwell-Boltzmann Distribution
+// ============================================================================
+
+/// Maxwell-Boltzmann distribution with scale parameter a
+///
+/// Models the speed distribution of particles in an ideal gas at thermal
+/// equilibrium. If X₁, X₂, X₃ ~ iid N(0, a²), then √(X₁²+X₂²+X₃²) follows
+/// Maxwell-Boltzmann(a).  Equivalent to Chi(3) scaled by a.
+///
+/// Support: [0, ∞)
+/// Parameter: a > 0
+pub fn MaxwellBoltzmann(comptime T: type) type {
+    return struct {
+        a: T,
+
+        const Self = @This();
+
+        /// Create a Maxwell-Boltzmann distribution with given scale parameter
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T) DistributionError!Self {
+            if (a <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(a)) return error.InvalidParameter;
+            return Self{ .a = a };
+        }
+
+        /// Probability density function
+        ///
+        /// f(x; a) = √(2/π) · x²/a³ · exp(-x²/(2a²))  for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            if (x == 0.0) return 0.0;
+            const a2 = self.a * self.a;
+            const a3 = a2 * self.a;
+            return @sqrt(2.0 / math.pi) * (x * x / a3) * @exp(-(x * x) / (2.0 * a2));
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x; a) = 0.5·log(2/π) + 2·log(x) - 3·log(a) - x²/(2a²)  for x > 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return 0.5 * @log(2.0 / math.pi) + 2.0 * @log(x) - 3.0 * @log(self.a) - (x * x) / (2.0 * self.a * self.a);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x; a) = erf(x/(a·√2)) - √(2/π)·(x/a)·exp(-x²/(2a²))  for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const u = x / (self.a * @sqrt(2.0));
+            return erf(u) - @sqrt(2.0 / math.pi) * (x / self.a) * @exp(-(x * x) / (2.0 * self.a * self.a));
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x; a) = 1 - F(x; a)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function — returns x such that F(x) = p via Newton-Raphson
+        ///
+        /// No closed form; solved numerically with starting guess at mean.
+        ///
+        /// Time: O(iterations) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Newton-Raphson: x_{n+1} = x_n - (F(x_n) - p) / f(x_n)
+            var x = self.mean(); // start from mean
+            const tol: T = 1e-10;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const fx = self.cdf(x) - p;
+                const dfx = self.pdf(x);
+                if (@abs(dfx) < 1e-30) break;
+                const dx = fx / dfx;
+                x -= dx;
+                if (x < 0.0) x = tol;
+                if (@abs(dx) < tol) break;
+            }
+            return x;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = 2a·√(2/π)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return 2.0 * self.a * @sqrt(2.0 / math.pi);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = a²·(3π - 8)/π
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.a * self.a * (3.0 * math.pi - 8.0) / math.pi;
+        }
+
+        /// Mode of the distribution (location of peak)
+        ///
+        /// Mode = a·√2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.a * @sqrt(2.0);
+        }
+
+        /// Median of the distribution — quantile(0.5)
+        ///
+        /// No closed form; computed numerically.
+        ///
+        /// Time: O(iterations) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.quantile(0.5) catch self.mean();
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = ln(a·√(2π)) + γ - 0.5
+        /// where γ = 0.5772156649015329 (Euler-Mascheroni constant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const euler_gamma: T = 0.5772156649015329;
+            return @log(self.a * @sqrt(2.0 * math.pi)) + euler_gamma - 0.5;
+        }
+
+        /// Sample from the distribution as speed of 3D isotropic Gaussian
+        ///
+        /// Strategy: generate 3 independent N(0, a²) samples via Box-Muller,
+        /// then return their Euclidean norm.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const ua = rng.float(T);
+            const ub = rng.float(T);
+            const uc = rng.float(T);
+            const ud = rng.float(T);
+            // Two Box-Muller pairs → 4 normal samples, use 3
+            const za = self.a * @sqrt(-2.0 * @log(ua)) * @cos(2.0 * math.pi * ub);
+            const zb = self.a * @sqrt(-2.0 * @log(ua)) * @sin(2.0 * math.pi * ub);
+            const zc = self.a * @sqrt(-2.0 * @log(uc)) * @cos(2.0 * math.pi * ud);
+            return @sqrt(za * za + zb * zb + zc * zc);
+        }
+
+        /// Assert that parameters are valid: a > 0, finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.a)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// MaxwellBoltzmann Tests
+// ============================================================================
+
+test "MaxwellBoltzmann: init with valid a=1" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.a);
+}
+
+test "MaxwellBoltzmann: init with various valid a values" {
+    const d1 = try MaxwellBoltzmann(f64).init(0.5);
+    try testing.expectEqual(@as(f64, 0.5), d1.a);
+    const d2 = try MaxwellBoltzmann(f64).init(2.0);
+    try testing.expectEqual(@as(f64, 2.0), d2.a);
+    const d3 = try MaxwellBoltzmann(f64).init(10.0);
+    try testing.expectEqual(@as(f64, 10.0), d3.a);
+}
+
+test "MaxwellBoltzmann: init fails for a=0" {
+    try testing.expectError(error.InvalidParameter, MaxwellBoltzmann(f64).init(0.0));
+}
+
+test "MaxwellBoltzmann: init fails for negative a" {
+    try testing.expectError(error.InvalidParameter, MaxwellBoltzmann(f64).init(-1.0));
+    try testing.expectError(error.InvalidParameter, MaxwellBoltzmann(f64).init(-0.01));
+}
+
+test "MaxwellBoltzmann: init fails for NaN" {
+    try testing.expectError(error.InvalidParameter, MaxwellBoltzmann(f64).init(math.nan(f64)));
+}
+
+test "MaxwellBoltzmann: init fails for Inf" {
+    try testing.expectError(error.InvalidParameter, MaxwellBoltzmann(f64).init(math.inf(f64)));
+}
+
+test "MaxwellBoltzmann: pdf is 0 for x < 0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.001));
+}
+
+test "MaxwellBoltzmann: pdf is 0 at x=0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "MaxwellBoltzmann: pdf at x=1 a=1 ≈ 0.4839414508" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    // sqrt(2/pi)*1*exp(-0.5)
+    const expected: f64 = @sqrt(2.0 / math.pi) * @exp(-0.5);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-12);
+    try testing.expectApproxEqRel(@as(f64, 0.4839414507808516), dist.pdf(1.0), 1e-7);
+}
+
+test "MaxwellBoltzmann: pdf at mode x=sqrt(2) a=1 is maximum" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    const mode_val = @sqrt(2.0);
+    // pdf(sqrt(2)) = sqrt(2/pi)*2*exp(-1)
+    const expected: f64 = @sqrt(2.0 / math.pi) * 2.0 * @exp(-1.0);
+    try testing.expectApproxEqRel(expected, dist.pdf(mode_val), 1e-12);
+    // It should be larger than pdf at x=1 and x=2
+    try testing.expect(dist.pdf(mode_val) > dist.pdf(1.0));
+    try testing.expect(dist.pdf(mode_val) > dist.pdf(2.0));
+}
+
+test "MaxwellBoltzmann: pdf scales correctly with a" {
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    const d2 = try MaxwellBoltzmann(f64).init(2.0);
+    // pdf(2, a=2) = pdf(1, a=1) / 2 (by change of variables with scale factor 2)
+    // Actually: f(x; a) = f(x/a; 1) / a
+    // So pdf(2, a=2) = pdf(2/2; 1) / 2 = pdf(1; 1) / 2
+    try testing.expectApproxEqRel(d1.pdf(1.0) / 2.0, d2.pdf(2.0), 1e-10);
+}
+
+test "MaxwellBoltzmann: pdf is non-negative for large x" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expect(dist.pdf(10.0) >= 0.0);
+    try testing.expect(dist.pdf(100.0) >= 0.0);
+}
+
+test "MaxwellBoltzmann: logpdf is -inf for x <= 0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "MaxwellBoltzmann: logpdf consistent with pdf at x=1 a=1" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    const log_pdf = dist.logpdf(1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(@log(pdf_val), log_pdf, 1e-12);
+}
+
+test "MaxwellBoltzmann: logpdf consistent with pdf at x=2 a=1" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectApproxEqRel(@log(dist.pdf(2.0)), dist.logpdf(2.0), 1e-12);
+}
+
+test "MaxwellBoltzmann: cdf at x=0 is 0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "MaxwellBoltzmann: cdf at x<0 is 0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-5.0));
+}
+
+test "MaxwellBoltzmann: cdf approaches 1 for large x" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expect(dist.cdf(20.0) > 0.9999999);
+}
+
+test "MaxwellBoltzmann: cdf is strictly monotonically increasing" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expect(dist.cdf(0.5) < dist.cdf(1.0));
+    try testing.expect(dist.cdf(1.0) < dist.cdf(2.0));
+    try testing.expect(dist.cdf(2.0) < dist.cdf(5.0));
+}
+
+test "MaxwellBoltzmann: cdf at mode (a=1) ≈ 0.42759329" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    // CDF at mode = sqrt(2): erf(1) - sqrt(2/pi)*sqrt(2)*exp(-1)
+    // = erf(1) - sqrt(4/pi)*exp(-1)
+    // erf(1) ≈ 0.84270079; sqrt(4/pi)*exp(-1) ≈ 1.12838*0.36788 ≈ 0.41510750
+    // F(sqrt(2)) ≈ 0.84270 - 0.41511 ≈ 0.42759
+    const mode_val = @sqrt(2.0);
+    const cdf_at_mode = dist.cdf(mode_val);
+    try testing.expect(cdf_at_mode > 0.42 and cdf_at_mode < 0.44);
+}
+
+test "MaxwellBoltzmann: cdf + sf = 1" {
+    const dist = try MaxwellBoltzmann(f64).init(1.5);
+    const x: f64 = 2.0;
+    try testing.expectApproxEqRel(@as(f64, 1.0), dist.cdf(x) + dist.sf(x), 1e-14);
+}
+
+test "MaxwellBoltzmann: sf at x=0 is 1" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "MaxwellBoltzmann: sf decreases with x" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expect(dist.sf(1.0) > dist.sf(2.0));
+    try testing.expect(dist.sf(2.0) > dist.sf(5.0));
+}
+
+test "MaxwellBoltzmann: quantile at p=0 returns 0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "MaxwellBoltzmann: quantile at p=1 returns infinity" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "MaxwellBoltzmann: quantile error for p < 0" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "MaxwellBoltzmann: quantile error for p > 1" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "MaxwellBoltzmann: quantile(0.5) is positive (median > 0)" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    const med = try dist.quantile(0.5);
+    try testing.expect(med > 0.0);
+    try testing.expect(math.isFinite(med));
+}
+
+test "MaxwellBoltzmann: cdf(quantile(p)) roundtrip" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    const p_values = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_values) |p| {
+        const x = try dist.quantile(p);
+        try testing.expectApproxEqRel(p, dist.cdf(x), 1e-8);
+    }
+}
+
+test "MaxwellBoltzmann: quantile is strictly increasing" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    const q25 = try dist.quantile(0.25);
+    const q50 = try dist.quantile(0.50);
+    const q75 = try dist.quantile(0.75);
+    try testing.expect(q25 < q50);
+    try testing.expect(q50 < q75);
+}
+
+test "MaxwellBoltzmann: mean(a=1) ≈ 1.5957691216" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectApproxEqRel(@as(f64, 1.5957691216057308), dist.mean(), 1e-12);
+}
+
+test "MaxwellBoltzmann: mean(a=2) = 2 * mean(a=1)" {
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    const d2 = try MaxwellBoltzmann(f64).init(2.0);
+    try testing.expectApproxEqRel(2.0 * d1.mean(), d2.mean(), 1e-14);
+}
+
+test "MaxwellBoltzmann: mean scales linearly with a" {
+    const d3 = try MaxwellBoltzmann(f64).init(3.0);
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectApproxEqRel(3.0 * d1.mean(), d3.mean(), 1e-14);
+}
+
+test "MaxwellBoltzmann: variance(a=1) ≈ 0.4535209105" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    // 3 - 8/pi (= (3pi-8)/pi)
+    const expected: f64 = 3.0 - 8.0 / math.pi;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-12);
+    try testing.expectApproxEqRel(@as(f64, 0.4535209105296747), dist.variance(), 1e-10);
+}
+
+test "MaxwellBoltzmann: variance scales as a^2" {
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    const d2 = try MaxwellBoltzmann(f64).init(2.0);
+    try testing.expectApproxEqRel(4.0 * d1.variance(), d2.variance(), 1e-14);
+}
+
+test "MaxwellBoltzmann: variance is positive" {
+    const dist = try MaxwellBoltzmann(f64).init(0.5);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "MaxwellBoltzmann: mode(a=1) = sqrt(2) ≈ 1.41421356" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    try testing.expectApproxEqRel(@as(f64, @sqrt(2.0)), dist.mode(), 1e-14);
+}
+
+test "MaxwellBoltzmann: mode(a=2) ≈ 2.82842712" {
+    const dist = try MaxwellBoltzmann(f64).init(2.0);
+    try testing.expectApproxEqRel(@as(f64, 2.0 * @sqrt(2.0)), dist.mode(), 1e-14);
+}
+
+test "MaxwellBoltzmann: mode scales linearly with a" {
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    const d5 = try MaxwellBoltzmann(f64).init(5.0);
+    try testing.expectApproxEqRel(5.0 * d1.mode(), d5.mode(), 1e-14);
+}
+
+test "MaxwellBoltzmann: entropy(a=1) ≈ 0.9961541981" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    // ln(sqrt(2pi)) + gamma - 0.5
+    const euler_gamma: f64 = 0.5772156649015329;
+    const expected: f64 = 0.5 * @log(2.0 * math.pi) + euler_gamma - 0.5;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-12);
+    try testing.expectApproxEqRel(@as(f64, 0.9961541981), dist.entropy(), 1e-7);
+}
+
+test "MaxwellBoltzmann: entropy increases with a" {
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    const d2 = try MaxwellBoltzmann(f64).init(2.0);
+    try testing.expect(d2.entropy() > d1.entropy());
+}
+
+test "MaxwellBoltzmann: entropy(a=2) = entropy(a=1) + ln(2)" {
+    const d1 = try MaxwellBoltzmann(f64).init(1.0);
+    const d2 = try MaxwellBoltzmann(f64).init(2.0);
+    try testing.expectApproxEqRel(d1.entropy() + @log(2.0), d2.entropy(), 1e-12);
+}
+
+test "MaxwellBoltzmann: sample returns non-negative values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        try testing.expect(dist.sample(rng) >= 0.0);
+    }
+}
+
+test "MaxwellBoltzmann: sample empirical mean ≈ theoretical mean" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    const n: usize = 50000;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqRel(dist.mean(), empirical_mean, 0.02);
+}
+
+test "MaxwellBoltzmann: sample empirical variance ≈ theoretical variance" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try MaxwellBoltzmann(f64).init(2.0);
+    const n: usize = 50000;
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const nf = @as(f64, @floatFromInt(n));
+    const emp_mean = sum / nf;
+    const emp_var = sum_sq / nf - emp_mean * emp_mean;
+    try testing.expectApproxEqRel(dist.variance(), emp_var, 0.03);
+}
+
+test "MaxwellBoltzmann: validate passes for valid params" {
+    const dist = try MaxwellBoltzmann(f64).init(2.0);
+    try dist.validate();
+}
+
+test "MaxwellBoltzmann: validate fails for a=0" {
+    const dist = MaxwellBoltzmann(f64){ .a = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "MaxwellBoltzmann: validate fails for negative a" {
+    const dist = MaxwellBoltzmann(f64){ .a = -1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "MaxwellBoltzmann: validate fails for NaN a" {
+    const dist = MaxwellBoltzmann(f64){ .a = math.nan(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "MaxwellBoltzmann: validate fails for Inf a" {
+    const dist = MaxwellBoltzmann(f64){ .a = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "MaxwellBoltzmann: f32 type works" {
+    const dist = try MaxwellBoltzmann(f32).init(1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.a);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+}
+
+test "MaxwellBoltzmann: f32 mean and variance are finite" {
+    const dist = try MaxwellBoltzmann(f32).init(2.0);
+    try testing.expect(math.isFinite(dist.mean()));
+    try testing.expect(math.isFinite(dist.variance()));
+    try testing.expect(dist.variance() > 0.0);
+}
