@@ -1,3 +1,23 @@
+**Session 616 Update (2026-05-31) — FEATURE MODE:**
+
+✅ **Maxwell-Boltzmann Distribution** — 36th distribution, 21st continuous — commit 7746d6b
+- **Mode**: FEATURE MODE (counter: 616)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: MaxwellBoltzmann(T) — particle speed in ideal gas; Chi(3) scaled by a
+  * Parameter: a > 0 (scale; a = sqrt(kT/m) in kinetic theory)
+  * Support: [0, ∞); characterization: sqrt(X²+Y²+Z²), X,Y,Z ~ iid N(0,a²)
+  * PDF: sqrt(2/π) · x²/a³ · exp(-x²/(2a²)); CDF: closed form via erf
+  * Quantile: Newton-Raphson (no closed form)
+  * Mean: 2a·sqrt(2/π) ≈ 1.5958a; Mode: a·sqrt(2); Variance: a²(3-8/π)
+  * Entropy: ln(a·sqrt(2π)) + γ - 0.5 (γ = Euler-Mascheroni)
+  * Sample: norm of 3 × N(0,a²) via Box-Muller pairs
+  * Bug note: variance formula: correct value is 3-8/π ≈ 0.45352091 NOT 0.45351549
+  * Disk: found .zig-cache was 8.9GB (full disk); cleaned to free space
+- **Tests**: 52 new tests all passing (4091/4098 total, 7 skipped)
+- **Distribution count**: 36 total (21 continuous + 15 discrete)
+- **Next Priority**: Lévy, LogLogistic, or Rice distribution
+
 **Session 614 Update (2026-05-31) — FEATURE MODE:**
 
 ✅ **HalfNormal Distribution** — 35th distribution, 20th continuous — commits f7d4891, 332804c
