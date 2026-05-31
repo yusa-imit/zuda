@@ -14955,16 +14955,22 @@ test "Kumaraswamy: quantile fails for p>1" {
     try expectError(error.InvalidProbability, dist.quantile(1.1));
 }
 
-test "Kumaraswamy: mean for a=2, b=3 approximately 0.45711" {
+test "Kumaraswamy: mean for a=2, b=3 is exactly 16/35" {
     const dist = try Kumaraswamy(f64).init(2.0, 3.0);
-    // b·B(1+1/a, b) = 3·B(1.5, 3)
-    try expectApproxEqRel(@as(f64, 0.45711), dist.mean(), 1e-4);
+    // b·B(1+1/a, b) = 3·B(3/2, 3) = 3·Γ(3/2)Γ(3)/Γ(9/2) = 3·16/105 = 16/35
+    try expectApproxEqRel(@as(f64, 16.0 / 35.0), dist.mean(), 1e-10);
 }
 
 test "Kumaraswamy: mean(5,5) is greater than 0.5" {
     // mean(5,5) = 5·B(1.2,5) ≈ 0.6503 > 0.5 — Kumaraswamy(a,a) is NOT symmetric around 0.5
     const dist = try Kumaraswamy(f64).init(5.0, 5.0);
     try testing.expect(dist.mean() > 0.5);
+}
+
+test "Kumaraswamy: mean for a=2, b=1 is exactly 2/3" {
+    const dist = try Kumaraswamy(f64).init(2.0, 1.0);
+    // b·B(1+1/a, b) = 1·B(3/2, 1) = Γ(3/2)Γ(1)/Γ(5/2) = (√π/2)·1/(3√π/4) = 2/3
+    try expectApproxEqRel(@as(f64, 2.0 / 3.0), dist.mean(), 1e-10);
 }
 
 test "Kumaraswamy: mean decreases as b increases (fixed a)" {
@@ -15023,13 +15029,10 @@ test "Kumaraswamy: entropy for a=2, b=3 approximately -0.20842" {
     try expectApproxEqRel(@as(f64, -0.20842), dist.entropy(), 1e-4);
 }
 
-test "Kumaraswamy: entropy formula with Euler-Mascheroni and digamma" {
-    const dist = try Kumaraswamy(f64).init(2.0, 3.0);
-    const H = dist.entropy();
-    // entropy = (1-1/b) - ln(a*b) + (1-1/a)*(gamma + digamma(b+1))
-    // Must be real value
-    try testing.expect(!math.isNan(H));
-    try testing.expect(math.isFinite(H));
+test "Kumaraswamy: entropy for a=1, b=1 (reduces to Uniform(0,1)) equals 0" {
+    const dist = try Kumaraswamy(f64).init(1.0, 1.0);
+    // For a=b=1: (1-1/1) - ln(1) + (1-1/1)*(anything) = 0 - 0 + 0 = 0
+    try expectApproxEqAbs(@as(f64, 0.0), dist.entropy(), 1e-12);
 }
 
 test "Kumaraswamy: sample returns values in (0,1)" {
