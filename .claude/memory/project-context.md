@@ -1,3 +1,23 @@
+**Session 618 Update (2026-06-01) — FEATURE MODE:**
+
+✅ **Lévy Distribution** — 38th distribution, 23rd continuous — commit a6fe36d
+- **Mode**: FEATURE MODE (counter: 618)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: Levy(T) — one-sided heavy-tailed stable distribution (α=1/2)
+  * Parameters: mu (location, any real), c (scale c > 0); support (μ, ∞)
+  * PDF: sqrt(c/(2π)) · exp(-c/(2(x-μ))) / (x-μ)^1.5
+  * CDF: erfc(sqrt(c/(2(x-μ)))) = 1 - erf(sqrt(c/(2(x-μ))))
+  * Quantile: μ + c/(2·erfInv(1-p)²); p=0 → μ, p=1 → ∞
+  * Mean: +∞; Variance: +∞ (heavy-tailed stable)
+  * Mode: μ + c/3; Median: μ + c/(2·erfInv(0.5)²)
+  * Entropy: (1 + 3γ + ln(16πc²)) / 2 (γ = Euler-Mascheroni ≈ 0.5772)
+  * Sample: μ + c/Z² where Z ~ N(0,1) via Box-Muller
+  * Uses existing erf/erfInv private helpers
+- **Tests**: 73 new tests all passing (exit code 0)
+- **Distribution count**: 38 total (23 continuous + 15 discrete)
+- **Next Priority**: Gompertz, Rice, or Lomax distribution
+
 **Session 616 Update (2026-05-31) — FEATURE MODE:**
 
 ✅ **Maxwell-Boltzmann Distribution** — 36th distribution, 21st continuous — commit 7746d6b
