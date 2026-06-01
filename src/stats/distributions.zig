@@ -19939,3 +19939,720 @@ test "Nakagami: pdf symmetry property for different params" {
     const dist2 = try Nakagami(f64).init(1.0, 1.0);
     try testing.expectApproxEqRel(dist1.pdf(1.5), dist2.pdf(1.5), 1e-14);
 }
+
+// ============================================================================
+// Inverse Gaussian (Wald) Distribution
+// ============================================================================
+
+/// Inverse Gaussian (Wald) distribution: first-passage-time of Brownian motion
+/// with positive drift.
+///
+/// Parameters: μ > 0 (mean), λ > 0 (shape/precision)
+/// Support: (0, ∞)
+pub fn InverseGaussian(comptime T: type) type {
+    return struct {
+        mu: T,     // mean (μ > 0)
+        lambda: T, // shape / precision (λ > 0)
+
+        const Self = @This();
+
+        // ---- Private helpers ----
+
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        fn expInt1(x: T) T {
+            if (x <= 0.0) return math.inf(T);
+            if (x <= 1.0) {
+                const poly = ((((0.00107857 * x - 0.00976004) * x + 0.05519968) * x - 0.24991055) * x + 0.99999193) * x - 0.57721566;
+                return -@log(x) + poly;
+            } else {
+                const p = (((x + 8.5733287401) * x + 18.059016973) * x + 8.6347608925) * x + 0.2677737343;
+                const q = (((x + 9.5733223454) * x + 25.6329561486) * x + 21.0996530827) * x + 3.9584969228;
+                return math.exp(-x) / x * (p / q);
+            }
+        }
+
+        // ---- Lifecycle ----
+
+        /// Create an Inverse Gaussian distribution with mean μ (μ > 0) and shape λ (λ > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, lambda: T) DistributionError!Self {
+            if (mu <= 0.0) return error.InvalidParameter;
+            if (lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .mu = mu, .lambda = lambda };
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.mu <= 0.0) return error.InvalidParameter;
+            if (self.lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.mu) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        // ---- PDF / LogPDF ----
+
+        /// Log probability density function at x
+        ///
+        /// log f(x) = (1/2)(ln λ - ln(2π)) - (3/2)ln(x) - λ(x-μ)²/(2μ²x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const diff = x - self.mu;
+            return 0.5 * (@log(self.lambda) - @log(2.0 * math.pi)) -
+                1.5 * @log(x) -
+                self.lambda * diff * diff / (2.0 * self.mu * self.mu * x);
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = √(λ/(2πx³)) · exp(-λ(x-μ)²/(2μ²x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        // ---- CDF / SF ----
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// CDF(x) = Φ(z₁) + exp(2λ/μ)·Φ(-z₂)
+        /// where z₁ = √(λ/x)·(x/μ - 1), z₂ = √(λ/x)·(x/μ + 1)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const sq = @sqrt(self.lambda / x);
+            const z1 = sq * (x / self.mu - 1.0);
+            const z2 = sq * (x / self.mu + 1.0);
+            const term1 = normalCdf(z1);
+            const log_exp = 2.0 * self.lambda / self.mu;
+            if (log_exp < 500.0) {
+                return @min(1.0, term1 + @exp(log_exp) * normalCdf(-z2));
+            }
+            const log_phi = @log(normalCdf(-z2));
+            if (!math.isFinite(log_phi)) return term1;
+            return @min(1.0, term1 + @exp(log_exp + log_phi));
+        }
+
+        /// Survival function: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // ---- Quantile ----
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search. Returns NaN for p < 0 or p > 1.
+        ///
+        /// Time: O(100 × O(cdf)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            const std_dev = @sqrt(self.mu * self.mu * self.mu / self.lambda);
+            var lo: T = 0.0;
+            var hi: T = self.mu + 5.0 * std_dev;
+            while (self.cdf(hi) < p) hi *= 2.0;
+
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-12 * (1.0 + mid)) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // ---- Moments ----
+
+        /// Mean: E[X] = μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance: Var[X] = μ³/λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.mu * self.mu * self.mu / self.lambda;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// mode = μ(√(1 + 9μ²/(4λ²)) - 3μ/(2λ))
+        ///     = μ(√(1 + 9r²) - 3r) where r = μ/(2λ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const r = self.mu / (2.0 * self.lambda);
+            return self.mu * (@sqrt(1.0 + 9.0 * r * r) - 3.0 * r);
+        }
+
+        /// Entropy: (1/2)(1 + ln(2πμ³/λ)) - (3/4)·exp(2λ/μ)·E₁(2λ/μ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const log_exp = 2.0 * self.lambda / self.mu;
+            const e1 = expInt1(log_exp);
+            return 0.5 * (1.0 + @log(2.0 * math.pi * self.mu * self.mu * self.mu / self.lambda)) -
+                0.75 * @exp(log_exp) * e1;
+        }
+
+        // ---- Sampling ----
+
+        /// Generate a random sample using Michael-Schucany-Haas method
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Step 1: z ~ N(0,1) via Box-Muller
+            const ur1 = rng.float(T);
+            const ur2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
+
+            // Step 2: y = z²
+            const y = z * z;
+
+            // Step 3: compute intermediate values
+            const a = self.mu / (2.0 * self.lambda);
+            const x_term = self.mu + a * self.mu * y;
+            const sqrt_term = @sqrt(self.mu * y * (4.0 * self.lambda + self.mu * y));
+            const x = x_term - a * sqrt_term;
+
+            // Step 4: acceptance-rejection
+            const u = rng.float(T);
+            if (u <= self.mu / (self.mu + x)) {
+                return x;
+            } else {
+                return self.mu * self.mu / x;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Inverse Gaussian (Wald) Distribution Tests
+// ============================================================================
+//
+// InverseGaussian(μ, λ): μ > 0 (mean), λ > 0 (shape)
+// Support: (0, ∞)
+//
+// PDF: f(x) = √(λ/(2πx³)) · exp(-λ(x-μ)²/(2μ²x))
+// CDF: Φ(√(λ/x)(x/μ-1)) + exp(2λ/μ)·Φ(-√(λ/x)(x/μ+1))
+// Mean: μ
+// Variance: μ³/λ
+// Mode: μ(√(1 + 9μ²/(4λ²)) - 3μ/(2λ))
+//
+
+test "InverseGaussian: init with valid mu=1, lambda=1" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(1.0, dist.mu);
+    try testing.expectEqual(1.0, dist.lambda);
+}
+
+test "InverseGaussian: init with large mu=5, lambda=2" {
+    const dist = try InverseGaussian(f64).init(5.0, 2.0);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.lambda);
+}
+
+test "InverseGaussian: init with small mu=0.1, lambda=0.1" {
+    const dist = try InverseGaussian(f64).init(0.1, 0.1);
+    try testing.expectEqual(0.1, dist.mu);
+    try testing.expectEqual(0.1, dist.lambda);
+}
+
+test "InverseGaussian: init fails when mu = 0" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(0.0, 1.0));
+}
+
+test "InverseGaussian: init fails when mu < 0" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(-1.0, 1.0));
+}
+
+test "InverseGaussian: init fails when lambda = 0" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(1.0, 0.0));
+}
+
+test "InverseGaussian: init fails when lambda < 0" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(1.0, -1.0));
+}
+
+test "InverseGaussian: init fails when mu is infinite" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(math.inf(f64), 1.0));
+}
+
+test "InverseGaussian: init fails when lambda is infinite" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(1.0, math.inf(f64)));
+}
+
+test "InverseGaussian: init fails when mu is NaN" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(math.nan(f64), 1.0));
+}
+
+test "InverseGaussian: init fails when lambda is NaN" {
+    try testing.expectError(error.InvalidParameter, InverseGaussian(f64).init(1.0, math.nan(f64)));
+}
+
+test "InverseGaussian: pdf at x=0 returns 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(0.0));
+}
+
+test "InverseGaussian: pdf for negative x returns 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(-1.0));
+}
+
+test "InverseGaussian: pdf is positive for x > 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+}
+
+test "InverseGaussian: pdf(1; mu=1, lambda=1) ≈ 0.39894228" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-5);
+}
+
+test "InverseGaussian: pdf(0.5; mu=1, lambda=1) > 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+}
+
+test "InverseGaussian: pdf decreases as x moves away from mean" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const mode = dist.mode();
+    const pdf_at_mode = dist.pdf(mode);
+    const pdf_below_mode = dist.pdf(mode - 0.05);
+    const pdf_above_mode = dist.pdf(mode + 0.05);
+    try testing.expect(pdf_at_mode >= pdf_below_mode);
+    try testing.expect(pdf_at_mode >= pdf_above_mode);
+}
+
+test "InverseGaussian: logpdf(x) = log(pdf(x)) for x > 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    try testing.expectApproxEqRel(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "InverseGaussian: logpdf(1; mu=1, lambda=1) ≈ -0.91893853" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const expected = -0.5 * @log(2.0 * math.pi);
+    try testing.expectApproxEqRel(expected, dist.logpdf(1.0), 1e-5);
+}
+
+test "InverseGaussian: logpdf at x=0 is negative infinity" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expect(!math.isFinite(logpdf_val));
+}
+
+test "InverseGaussian: logpdf for negative x is negative infinity" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(-1.0);
+    try testing.expect(!math.isFinite(logpdf_val));
+}
+
+test "InverseGaussian: logpdf is finite for x > 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(1.5);
+    try testing.expect(math.isFinite(logpdf_val));
+}
+
+test "InverseGaussian: pdf is zero for x < 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(-0.5));
+}
+
+test "InverseGaussian: cdf at x=0 returns 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.cdf(0.0));
+}
+
+test "InverseGaussian: cdf for negative x returns 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.cdf(-1.0));
+}
+
+test "InverseGaussian: cdf is positive for x > 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.cdf(0.5) > 0.0);
+    try testing.expect(dist.cdf(1.0) > 0.0);
+}
+
+test "InverseGaussian: cdf approaches 1 for large x" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const cdf_large = dist.cdf(1000.0);
+    try testing.expect(cdf_large > 0.999);
+}
+
+test "InverseGaussian: cdf is monotone increasing" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const cdf1 = dist.cdf(0.5);
+    const cdf2 = dist.cdf(1.0);
+    const cdf3 = dist.cdf(2.0);
+    try testing.expect(cdf1 <= cdf2);
+    try testing.expect(cdf2 <= cdf3);
+}
+
+test "InverseGaussian: cdf in [0,1] for all x" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const values = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 100.0 };
+    for (values) |x| {
+        const cdf_val = dist.cdf(x);
+        try testing.expect(cdf_val >= 0.0);
+        try testing.expect(cdf_val <= 1.0);
+    }
+}
+
+test "InverseGaussian: cdf(1; mu=1, lambda=1) ≈ 0.66811" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const expected = 0.66811;
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-4);
+}
+
+test "InverseGaussian: sf(x) = 1 - cdf(x)" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const x = 1.5;
+    const sf_val = dist.sf(x);
+    const cdf_val = dist.cdf(x);
+    try testing.expectApproxEqAbs(1.0 - cdf_val, sf_val, 1e-10);
+}
+
+test "InverseGaussian: sf at x=0 returns 1" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(1.0, dist.sf(0.0));
+}
+
+test "InverseGaussian: sf is monotone decreasing" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const sf1 = dist.sf(0.5);
+    const sf2 = dist.sf(1.0);
+    const sf3 = dist.sf(2.0);
+    try testing.expect(sf1 >= sf2);
+    try testing.expect(sf2 >= sf3);
+}
+
+test "InverseGaussian: quantile at p=0 returns 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.quantile(0.0));
+}
+
+test "InverseGaussian: quantile at p=1 returns +inf" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0.0);
+}
+
+test "InverseGaussian: quantile at p=0.5 returns positive median" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+test "InverseGaussian: quantile fails for p < 0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "InverseGaussian: quantile fails for p > 1" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "InverseGaussian: quantile is monotone increasing" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const q1 = dist.quantile(0.25);
+    const q2 = dist.quantile(0.5);
+    const q3 = dist.quantile(0.75);
+    try testing.expect(q1 <= q2);
+    try testing.expect(q2 <= q3);
+}
+
+test "InverseGaussian: mean is mu" {
+    const dist = try InverseGaussian(f64).init(2.5, 1.0);
+    try testing.expectEqual(2.5, dist.mean());
+}
+
+test "InverseGaussian: mean(mu=1, lambda=1) = 1.0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(1.0, dist.mean());
+}
+
+test "InverseGaussian: mean(mu=2.5, lambda=3) = 2.5" {
+    const dist = try InverseGaussian(f64).init(2.5, 3.0);
+    try testing.expectEqual(2.5, dist.mean());
+}
+
+test "InverseGaussian: mean is positive" {
+    const dist = try InverseGaussian(f64).init(0.5, 2.0);
+    try testing.expect(dist.mean() > 0.0);
+}
+
+test "InverseGaussian: mean is finite" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.mean()));
+}
+
+test "InverseGaussian: variance = mu^3 / lambda" {
+    const dist = try InverseGaussian(f64).init(2.0, 1.0);
+    const expected = 8.0;
+    try testing.expectEqual(expected, dist.variance());
+}
+
+test "InverseGaussian: variance(mu=1, lambda=1) = 1.0" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(1.0, dist.variance());
+}
+
+test "InverseGaussian: variance(mu=2, lambda=1) = 8.0" {
+    const dist = try InverseGaussian(f64).init(2.0, 1.0);
+    try testing.expectEqual(8.0, dist.variance());
+}
+
+test "InverseGaussian: variance(mu=1, lambda=2) = 0.5" {
+    const dist = try InverseGaussian(f64).init(1.0, 2.0);
+    try testing.expectEqual(0.5, dist.variance());
+}
+
+test "InverseGaussian: variance is positive" {
+    const dist = try InverseGaussian(f64).init(1.5, 0.5);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "InverseGaussian: variance is finite" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.variance()));
+}
+
+test "InverseGaussian: mode is less than mean" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.mode() < dist.mean());
+}
+
+test "InverseGaussian: mode is non-negative" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.mode() >= 0.0);
+}
+
+test "InverseGaussian: mode is finite" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.mode()));
+}
+
+test "InverseGaussian: mode(mu=1, lambda=1) ≈ 0.30278" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const expected = 0.30278;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-4);
+}
+
+test "InverseGaussian: mode(mu=1, lambda=4) ≈ 0.69296" {
+    const dist = try InverseGaussian(f64).init(1.0, 4.0);
+    const expected = 0.69296;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-4);
+}
+
+test "InverseGaussian: mode is always > 0" {
+    const dist = try InverseGaussian(f64).init(2.0, 1.5);
+    try testing.expect(dist.mode() > 0.0);
+}
+
+test "InverseGaussian: entropy is finite" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "InverseGaussian: entropy is positive" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.entropy() > 0.0);
+}
+
+test "InverseGaussian: entropy increases with variance" {
+    const dist1 = try InverseGaussian(f64).init(1.0, 1.0);
+    const dist2 = try InverseGaussian(f64).init(1.0, 0.5);
+    try testing.expect(dist2.entropy() > dist1.entropy());
+}
+
+test "InverseGaussian: sample is non-negative" {
+    var prng = std.Random.DefaultPrng.init(111111);
+    const rng = prng.random();
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const sample_val = dist.sample(rng);
+    try testing.expect(sample_val >= 0.0);
+}
+
+test "InverseGaussian: sample is finite" {
+    var prng = std.Random.DefaultPrng.init(222222);
+    const rng = prng.random();
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const sample_val = dist.sample(rng);
+    try testing.expect(math.isFinite(sample_val));
+}
+
+test "InverseGaussian: multiple samples are non-negative" {
+    var prng = std.Random.DefaultPrng.init(333333);
+    const rng = prng.random();
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0.0);
+    }
+}
+
+test "InverseGaussian: sample mean approximately matches expected (mu=1, lambda=1)" {
+    var prng = std.Random.DefaultPrng.init(444444);
+    const rng = prng.random();
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const expected_mean = 1.0;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 10000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 10000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.1);
+}
+
+test "InverseGaussian: samples are non-negative for mu=2.5, lambda=1" {
+    var prng = std.Random.DefaultPrng.init(555555);
+    const rng = prng.random();
+    const dist = try InverseGaussian(f64).init(2.5, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0.0);
+    }
+}
+
+test "InverseGaussian: validate passes for valid params" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "InverseGaussian: validate passes for mu=0.1, lambda=0.1" {
+    const dist = try InverseGaussian(f64).init(0.1, 0.1);
+    try dist.validate();
+}
+
+test "InverseGaussian: validate fails for mu = 0" {
+    const dist = InverseGaussian(f64){ .mu = 0.0, .lambda = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for mu < 0" {
+    const dist = InverseGaussian(f64){ .mu = -1.0, .lambda = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for lambda = 0" {
+    const dist = InverseGaussian(f64){ .mu = 1.0, .lambda = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for lambda < 0" {
+    const dist = InverseGaussian(f64){ .mu = 1.0, .lambda = -1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for infinite mu" {
+    const dist = InverseGaussian(f64){ .mu = math.inf(f64), .lambda = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for infinite lambda" {
+    const dist = InverseGaussian(f64){ .mu = 1.0, .lambda = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for NaN mu" {
+    const dist = InverseGaussian(f64){ .mu = math.nan(f64), .lambda = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: validate fails for NaN lambda" {
+    const dist = InverseGaussian(f64){ .mu = 1.0, .lambda = math.nan(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGaussian: f32 init succeeds" {
+    const dist = try InverseGaussian(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.mu);
+}
+
+test "InverseGaussian: f32 pdf is positive" {
+    const dist = try InverseGaussian(f32).init(1.0, 1.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+}
+
+test "InverseGaussian: f32 cdf in [0,1]" {
+    const dist = try InverseGaussian(f32).init(1.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val >= 0.0);
+    try testing.expect(cdf_val <= 1.0);
+}
+
+test "InverseGaussian: f32 mean is positive" {
+    const dist = try InverseGaussian(f32).init(1.5, 1.0);
+    try testing.expect(dist.mean() > 0.0);
+}
+
+test "InverseGaussian: quantile-cdf parity for mu=1, lambda=1" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const p = 0.5;
+    const q = dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "InverseGaussian: quantile-cdf parity for mu=2, lambda=0.5" {
+    const dist = try InverseGaussian(f64).init(2.0, 0.5);
+    const p = 0.75;
+    const q = dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "InverseGaussian: median is between mode and mean" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const median = dist.quantile(0.5);
+    const mode = dist.mode();
+    const mean = dist.mean();
+    try testing.expect(mode < median);
+    try testing.expect(median < mean);
+}
+
+test "InverseGaussian: pdf has interior maximum near mu" {
+    const dist = try InverseGaussian(f64).init(1.0, 1.0);
+    const mode_x = dist.mode();
+    const pdf_at_mode = dist.pdf(mode_x);
+    const pdf_slightly_before = dist.pdf(mode_x - 0.01);
+    const pdf_slightly_after = dist.pdf(mode_x + 0.01);
+    try testing.expect(pdf_at_mode >= pdf_slightly_before);
+    try testing.expect(pdf_at_mode >= pdf_slightly_after);
+}
