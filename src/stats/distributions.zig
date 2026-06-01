@@ -17968,3 +17968,558 @@ test "Lomax: f32 mode is 0" {
     const dist = try Lomax(f32).init(1.0, 1.0);
     try testing.expectEqual(@as(f32, 0.0), dist.mode());
 }
+
+// ============================================================================
+// Gompertz Distribution
+// ============================================================================
+
+/// Gompertz distribution — Gompertz(η, b)
+///
+/// A continuous distribution on [0, ∞) commonly used in demography,
+/// actuarial science, and reliability engineering to model mortality rates
+/// and aging phenomena.
+///
+/// Probability density function (PDF):
+///   f(x; η, b) = b·η·exp(bx)·exp(−η·(exp(bx)−1))   for x ≥ 0
+///
+/// Cumulative distribution function (CDF):
+///   F(x; η, b) = 1 − exp(−η·(exp(bx)−1))   for x ≥ 0
+///
+/// Quantile function:
+///   Q(p) = (1/b)·ln(1 + (−ln(1−p))/η)   for p ∈ [0,1]
+///
+/// Parameters:
+///   - eta (η): Rate parameter (η > 0)
+///   - b: Shape parameter (b > 0)
+///
+/// Time: O(1) for all methods (mean and entropy use exponential integral E₁)
+pub fn Gompertz(comptime T: type) type {
+    return struct {
+        eta: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Exponential integral E₁(x) — private helper
+        /// E₁(x) = ∫_x^∞ exp(−t)/t dt
+        /// Accurate to ~5×10⁻⁸ for positive x
+        fn expInt1(x: T) T {
+            if (x <= 0.0) return math.inf(T);
+            if (x <= 1.0) {
+                const poly = ((((0.00107857 * x - 0.00976004) * x + 0.05519968) * x - 0.24991055) * x + 0.99999193) * x - 0.57721566;
+                return -@log(x) + poly;
+            } else {
+                const p = (((x + 8.5733287401) * x + 18.059016973) * x + 8.6347608925) * x + 0.2677737343;
+                const q = (((x + 9.5733223454) * x + 25.6329561486) * x + 21.0996530827) * x + 3.9584969228;
+                return math.exp(-x) / x * (p / q);
+            }
+        }
+
+        /// Create a Gompertz distribution with given rate and shape parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(eta: T, b: T) DistributionError!Self {
+            if (eta <= 0.0 or !math.isFinite(eta)) return error.InvalidParameter;
+            if (b <= 0.0 or !math.isFinite(b)) return error.InvalidParameter;
+            return Self{ .eta = eta, .b = b };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = b·η·exp(bx)·exp(−η·(exp(bx)−1))   for x ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const exp_bx = math.exp(self.b * x);
+            return self.b * self.eta * exp_bx * math.exp(-self.eta * (exp_bx - 1.0));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = ln(b) + ln(η) + bx − η·(exp(bx)−1)   for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const exp_bx = math.exp(self.b * x);
+            return @log(self.b) + @log(self.eta) + self.b * x - self.eta * (exp_bx - 1.0);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 − exp(−η·(exp(bx)−1))   for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const exp_bx = math.exp(self.b * x);
+            return 1.0 - math.exp(-self.eta * (exp_bx - 1.0));
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = exp(−η·(exp(bx)−1))   for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            const exp_bx = math.exp(self.b * x);
+            return math.exp(-self.eta * (exp_bx - 1.0));
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = (1/b)·ln(1 + (−ln(1−p))/η)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            const minus_ln_1_minus_p = -@log(1.0 - p);
+            return (1.0 / self.b) * @log(1.0 + minus_ln_1_minus_p / self.eta);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = (exp(η) / b) · E₁(η)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const e1 = expInt1(self.eta);
+            return (math.exp(self.eta) / self.b) * e1;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = 0 if η ≥ 1, else −ln(η)/b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.eta >= 1.0) return 0.0;
+            return -@log(self.eta) / self.b;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = (1/b)·ln(1 + ln(2)/η)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            const ln2: T = 0.6931471805599453;
+            return (1.0 / self.b) * @log(1.0 + ln2 / self.eta);
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = 1 − ln(b) − ln(η) − exp(η)·E₁(η)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const e1 = expInt1(self.eta);
+            return 1.0 - @log(self.b) - @log(self.eta) - math.exp(self.eta) * e1;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = (1/b)·ln(1 + (−ln(1−U))/η) where U ~ Uniform(0,1)
+        /// If U = 0, returns 0; if U = 1, returns +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            if (u == 0.0) return 0.0;
+            if (u == 1.0) return math.inf(T);
+            const minus_ln_1_minus_u = -@log(1.0 - u);
+            return (1.0 / self.b) * @log(1.0 + minus_ln_1_minus_u / self.eta);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.eta <= 0.0 or !math.isFinite(self.eta)) return error.InvalidParameter;
+            if (self.b <= 0.0 or !math.isFinite(self.b)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Gompertz Distribution Tests
+// ============================================================================
+
+test "Gompertz: init succeeds with valid params eta=1 b=1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.eta);
+    try testing.expectEqual(@as(f64, 1.0), dist.b);
+}
+
+test "Gompertz: init succeeds with eta=0.5 b=2" {
+    const dist = try Gompertz(f64).init(0.5, 2.0);
+    try testing.expectEqual(@as(f64, 0.5), dist.eta);
+    try testing.expectEqual(@as(f64, 2.0), dist.b);
+}
+
+test "Gompertz: init fails for eta=0" {
+    try testing.expectError(error.InvalidParameter, Gompertz(f64).init(0.0, 1.0));
+}
+
+test "Gompertz: init fails for negative eta" {
+    try testing.expectError(error.InvalidParameter, Gompertz(f64).init(-0.5, 1.0));
+}
+
+test "Gompertz: init fails for b=0" {
+    try testing.expectError(error.InvalidParameter, Gompertz(f64).init(1.0, 0.0));
+}
+
+test "Gompertz: init fails for negative b" {
+    try testing.expectError(error.InvalidParameter, Gompertz(f64).init(1.0, -1.0));
+}
+
+test "Gompertz: init fails for infinite eta" {
+    try testing.expectError(error.InvalidParameter, Gompertz(f64).init(math.inf(f64), 1.0));
+}
+
+test "Gompertz: init fails for infinite b" {
+    try testing.expectError(error.InvalidParameter, Gompertz(f64).init(1.0, math.inf(f64)));
+}
+
+test "Gompertz: pdf at x=0 equals b*eta" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "Gompertz: pdf at x=0 equals b*eta with eta=0.5 b=1" {
+    const dist = try Gompertz(f64).init(0.5, 1.0);
+    const expected = 0.5;
+    try testing.expectApproxEqRel(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "Gompertz: pdf at x=0 equals b*eta with eta=1 b=2" {
+    const dist = try Gompertz(f64).init(1.0, 2.0);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "Gompertz: pdf at x=1 with eta=1 b=1 is exp(2-e)" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = math.exp(2.0 - math.e);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-10);
+}
+
+test "Gompertz: pdf at negative x returns 0" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const result = dist.pdf(-0.001);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "Gompertz: pdf is positive for x>=0" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const pdf0 = dist.pdf(0.0);
+    const pdf_half = dist.pdf(0.5);
+    try testing.expect(pdf0 > 0.0);
+    try testing.expect(pdf_half > 0.0);
+}
+
+test "Gompertz: pdf is decreasing for eta>=1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const pdf0 = dist.pdf(0.0);
+    const pdf1 = dist.pdf(1.0);
+    const pdf2 = dist.pdf(2.0);
+    try testing.expect(pdf0 > pdf1);
+    try testing.expect(pdf1 > pdf2);
+}
+
+test "Gompertz: logpdf at x=1 with eta=1 b=1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = 2.0 - math.e;
+    try testing.expectApproxEqRel(expected, dist.logpdf(1.0), 1e-10);
+}
+
+test "Gompertz: logpdf equals log of pdf at x=0.5" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const x = 0.5;
+    const logpdf_val = dist.logpdf(x);
+    const pdf_val = dist.pdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-9);
+}
+
+test "Gompertz: logpdf at negative x returns -inf" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expect(math.isInf(dist.logpdf(-1.0)));
+}
+
+test "Gompertz: cdf at x=0 is 0" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Gompertz: cdf at x=0 is 0 with any eta, b" {
+    const dist = try Gompertz(f64).init(0.5, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Gompertz: cdf at negative x is 0" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "Gompertz: cdf at x=1 with eta=1 b=1 is 1-exp(-(e-1))" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = 1.0 - math.exp(-(math.e - 1.0));
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-10);
+}
+
+test "Gompertz: cdf increases monotonically" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const cdf0 = dist.cdf(0.0);
+    const cdf1 = dist.cdf(1.0);
+    const cdf2 = dist.cdf(2.0);
+    try testing.expect(cdf0 < cdf1);
+    try testing.expect(cdf1 < cdf2);
+}
+
+test "Gompertz: cdf approaches 1 for large x" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const result = dist.cdf(10.0);
+    try testing.expect(result > 0.999);
+}
+
+test "Gompertz: sf at x=0 is 1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "Gompertz: sf at x=1 with eta=1 b=1 is exp(-(e-1))" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = math.exp(-(math.e - 1.0));
+    try testing.expectApproxEqRel(expected, dist.sf(1.0), 1e-10);
+}
+
+test "Gompertz: sf decreases monotonically" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const sf0 = dist.sf(0.0);
+    const sf1 = dist.sf(1.0);
+    const sf2 = dist.sf(2.0);
+    try testing.expect(sf0 > sf1);
+    try testing.expect(sf1 > sf2);
+}
+
+test "Gompertz: cdf plus sf equals 1 at x=0.5" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const x = 0.5;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Gompertz: cdf plus sf equals 1 at x=2" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Gompertz: quantile at p=0 is 0" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "Gompertz: quantile at p=0.5 with eta=1 b=1 is ln(1+ln(2))" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = @log(1.0 + @log(2.0));
+    try testing.expectApproxEqRel(expected, try dist.quantile(0.5), 1e-10);
+}
+
+test "Gompertz: quantile inverts cdf at p=0.3" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-10);
+}
+
+test "Gompertz: quantile inverts cdf at p=0.7" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-10);
+}
+
+test "Gompertz: quantile fails for p<0" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Gompertz: quantile at p=1 returns inf" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const x = try dist.quantile(1.0);
+    try testing.expect(math.isInf(x));
+}
+
+test "Gompertz: quantile fails for p>1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Gompertz: quantile increases with p" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "Gompertz: mode is 0 when eta>=1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "Gompertz: mode is 0 when eta=1.5 b=1" {
+    const dist = try Gompertz(f64).init(1.5, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "Gompertz: mode is -ln(eta)/b when eta<1 (eta=0.5 b=1)" {
+    const dist = try Gompertz(f64).init(0.5, 1.0);
+    const expected = @log(2.0);
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-10);
+}
+
+test "Gompertz: mode is -ln(eta)/b when eta=0.5 b=2" {
+    const dist = try Gompertz(f64).init(0.5, 2.0);
+    const expected = @log(2.0) / 2.0;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-10);
+}
+
+test "Gompertz: mode maximizes pdf when eta<1" {
+    const dist = try Gompertz(f64).init(0.5, 1.0);
+    const mode = dist.mode();
+    const pdf_at_mode = dist.pdf(mode);
+    const pdf_left = dist.pdf(mode - 0.1);
+    const pdf_right = dist.pdf(mode + 0.1);
+    try testing.expect(pdf_at_mode > pdf_left);
+    try testing.expect(pdf_at_mode > pdf_right);
+}
+
+test "Gompertz: median with eta=1 b=1 is ln(1+ln(2))" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = @log(1.0 + @log(2.0));
+    try testing.expectApproxEqRel(expected, dist.median(), 1e-10);
+}
+
+test "Gompertz: median matches cdf=0.5" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const med = dist.median();
+    const cdf_val = dist.cdf(med);
+    try testing.expectApproxEqRel(0.5, cdf_val, 1e-10);
+}
+
+test "Gompertz: median with eta=1 b=2" {
+    const dist = try Gompertz(f64).init(1.0, 2.0);
+    const expected = @log(1.0 + @log(2.0)) / 2.0;
+    try testing.expectApproxEqRel(expected, dist.median(), 1e-10);
+}
+
+test "Gompertz: mean with eta=1 b=1 is approximately 0.596347362" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = 0.596347362;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-5);
+}
+
+test "Gompertz: entropy with eta=1 b=1 is approximately 0.403653" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected = 0.403653;
+    try testing.expectApproxEqRel(expected, dist.entropy(), 1e-5);
+}
+
+test "Gompertz: entropy equals 1 - mean when eta=1 b=1" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const entropy = dist.entropy();
+    const one_minus_mean = 1.0 - dist.mean();
+    try testing.expectApproxEqRel(one_minus_mean, entropy, 1e-5);
+}
+
+test "Gompertz: entropy is finite" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "Gompertz: sample is non-negative" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "Gompertz: sample is finite" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "Gompertz: samples have reasonable mean for eta=1" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    const expected_mean = 0.596347362;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 10000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 10000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.05);
+}
+
+test "Gompertz: validate passes for valid params" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "Gompertz: validate fails for eta=0" {
+    const dist = Gompertz(f64){ .eta = 0.0, .b = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Gompertz: validate fails for b=0" {
+    const dist = Gompertz(f64){ .eta = 1.0, .b = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Gompertz: validate fails for infinite eta" {
+    const dist = Gompertz(f64){ .eta = math.inf(f64), .b = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Gompertz: validate fails for infinite b" {
+    const dist = Gompertz(f64){ .eta = 1.0, .b = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Gompertz: f32 basic operations" {
+    const dist = try Gompertz(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.eta);
+    try testing.expectEqual(@as(f32, 1.0), dist.b);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val > 0.0 and cdf_val < 1.0);
+}
+
+test "Gompertz: f32 mode is 0 when eta>=1" {
+    const dist = try Gompertz(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 0.0), dist.mode());
+}
