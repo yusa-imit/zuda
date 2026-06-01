@@ -473,3 +473,6 @@
 {"timestamp":"2026-06-01T15:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Lomax (Pareto Type II) distribution — TDD GREEN phase, 13 methods, fixed 5 test syntax errors","project":"zuda","result":"success","tests_passed":65,"distribution_count":39}
 {"timestamp":"2026-06-01T07:45:08Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Gompertz distribution","project":"zuda"}
 {"timestamp":"2026-06-01T07:45:08Z","action":"subagent","agent_type":"zig-developer","task":"Implement Gompertz distribution with E1 exponential integral helper","project":"zuda"}
+{"timestamp":"2026-06-01T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Rice distribution in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-01T08:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Rice(T) distribution in src/stats/distributions.zig to pass 69 failing tests","project":"zuda"}
+{"timestamp":"2026-06-01T15:45:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Rice distribution (41st, 26th continuous)","project":"zuda"}
