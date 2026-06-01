@@ -1,3 +1,26 @@
+**Session 623 Update (2026-06-02) — FEATURE MODE:**
+
+✅ **Nakagami Distribution** — 42nd distribution, 27th continuous — commits a03cb6f, 6ee3f31
+- **Mode**: FEATURE MODE (counter: 623)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: Nakagami(T) — wireless fading channel model, generalizes Rayleigh
+  * Parameters: m (m ≥ 0.5, shape/fading), omega (Ω > 0, spread = E[X²])
+  * Support: [0, ∞); applications: wireless communications, radar, biomedical imaging
+  * PDF: (2m^m / (Γ(m)·Ω^m)) · x^(2m-1) · exp(-m·x²/Ω)
+  * CDF: regularizedGammaP(m, m·x²/Ω) — exact closed form via incomplete gamma
+  * Quantile: bisection on CDF, ~100 iterations, 1e-12 relative precision
+  * Mean: exp(logGamma(m+0.5) - logGamma(m)) · √(Ω/m); for m=1,Ω=1: √π/2 ≈ 0.88623
+  * Variance: Ω - mean²; for m=1,Ω=1: 1-π/4 ≈ 0.21460
+  * Mode: √((2m-1)·Ω/(2m)) for m>0.5; 0 for m=0.5 (HalfNormal limit)
+  * Entropy: logGamma(m) + (1-2m)/2·ψ(m) + m - ln(2) + 0.5·ln(Ω/m)
+  * Sample: √Y where Y ~ Gamma(m, m/Ω); Marsaglia-Tsang (m≥1) or boost method (m<1)
+  * Special cases: m=0.5 → HalfNormal(√Ω); m=1,Ω=2σ² → Rayleigh(σ); m→∞ → deterministic
+  * Test fix note: mean(m=1,Ω=1) = √π/2 (NOT √(π/2)); test-writer used wrong sqrt arg
+- **Tests**: 72 new tests all passing (exit code 0)
+- **Distribution count**: 42 total (27 continuous + 15 discrete)
+- **Next Priority**: Wald/InverseGaussian or Weibull-Lomax or Folded-Normal
+
 **Session 619 Update (2026-06-01) — FEATURE MODE:**
 
 ✅ **Lomax Distribution** — 39th distribution, 24th continuous — commit 9069095
