@@ -16028,13 +16028,10 @@ test "MaxwellBoltzmann: cdf is strictly monotonically increasing" {
 
 test "MaxwellBoltzmann: cdf at mode (a=1) ≈ 0.42759329" {
     const dist = try MaxwellBoltzmann(f64).init(1.0);
-    // CDF at mode = sqrt(2): erf(1) - sqrt(2/pi)*sqrt(2)*exp(-1)
-    // = erf(1) - sqrt(4/pi)*exp(-1)
-    // erf(1) ≈ 0.84270079; sqrt(4/pi)*exp(-1) ≈ 1.12838*0.36788 ≈ 0.41510750
-    // F(sqrt(2)) ≈ 0.84270 - 0.41511 ≈ 0.42759
+    // F(sqrt(2)) = erf(1) - sqrt(4/pi)*exp(-1) ≈ 0.84270079 - 0.41510750 ≈ 0.42759330
     const mode_val = @sqrt(2.0);
     const cdf_at_mode = dist.cdf(mode_val);
-    try testing.expect(cdf_at_mode > 0.42 and cdf_at_mode < 0.44);
+    try testing.expectApproxEqRel(@as(f64, 0.42759329552912), cdf_at_mode, 1e-5);
 }
 
 test "MaxwellBoltzmann: cdf + sf = 1" {
@@ -16650,17 +16647,11 @@ test "LogLogistic: mean is positive for beta > 1" {
     try testing.expect(math.isFinite(dist.mean()));
 }
 
-test "LogLogistic: variance(alpha=1, beta=3) ≈ 2.4183991" {
+test "LogLogistic: variance(alpha=1, beta=3) ≈ 0.9562355373" {
     const dist = try LogLogistic(f64).init(1.0, 3.0);
     // variance = alpha^2 * [2*pi/(beta*sin(2*pi/beta)) - pi^2/(beta^2*sin^2(pi/beta))]
-    // For alpha=1, beta=3:
-    // sin(2pi/3) = sqrt(3)/2, sin(pi/3) = sqrt(3)/2
-    // = 2*pi/(3*sqrt(3)/2) - pi^2/(9*3/4)
-    // = 4*pi/(3*sqrt(3)) - 4*pi^2/27
-    const sin_2pi_3: f64 = @sin(2.0 * math.pi / 3.0);
-    const sin_pi_3: f64 = @sin(math.pi / 3.0);
-    const expected: f64 = 2.0 * math.pi / (3.0 * sin_2pi_3) - math.pi * math.pi / (9.0 * sin_pi_3 * sin_pi_3);
-    try testing.expectApproxEqRel(expected, dist.variance(), 1e-8);
+    // = 4*pi/(3*sqrt(3)) - 4*pi^2/27 ≈ 2.41845 - 1.46220 ≈ 0.95625
+    try testing.expectApproxEqRel(@as(f64, 0.9562355373360890), dist.variance(), 1e-8);
 }
 
 test "LogLogistic: variance is NaN for beta = 2.0" {
@@ -17103,11 +17094,10 @@ test "Levy: pdf decreases with x for fixed x-mu" {
 
 test "Levy: pdf scales correctly with c" {
     const dist1 = try Levy(f64).init(0.0, 1.0);
-    const dist2 = try Levy(f64).init(0.0, 4.0);
-    // pdf(x, c2) involves exp(-c2/(2(x-mu))) and sqrt(c2/(2π))
-    // General relationship is not trivial, but we verify both are positive
-    try testing.expect(dist1.pdf(1.0) > 0.0);
-    try testing.expect(dist2.pdf(1.0) > 0.0);
+    const dist4 = try Levy(f64).init(0.0, 4.0);
+    // Scaling law: f(cx; 0, c) = (1/c) * f(x; 0, 1)
+    // So pdf(4.0; c=4) == (1/4) * pdf(1.0; c=1)
+    try testing.expectApproxEqRel(dist1.pdf(1.0) / 4.0, dist4.pdf(4.0), 1e-10);
 }
 
 test "Levy: logpdf at x=1 mu=0 c=1" {
