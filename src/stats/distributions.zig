@@ -19258,3 +19258,684 @@ test "Rice: f32 mode is sigma when nu=0" {
     const dist = try Rice(f32).init(0.0, 1.0);
     try testing.expectApproxEqRel(@as(f32, 1.0), dist.mode(), 1e-6);
 }
+
+// ============================================================================
+// Nakagami(T) — Wireless fading channel model
+// Parameters: m ≥ 0.5 (shape/fading parameter), omega > 0 (spread/power)
+// Support: [0, ∞)
+// ============================================================================
+
+pub fn Nakagami(comptime T: type) type {
+    return struct {
+        m: T,     // shape / fading parameter (m ≥ 0.5)
+        omega: T, // spread = E[X²] (Ω > 0)
+
+        const Self = @This();
+
+        // ---- Lifecycle ----
+
+        /// Create a Nakagami distribution with shape m (m ≥ 0.5) and spread omega (Ω > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(m: T, omega: T) DistributionError!Self {
+            if (m < 0.5) return error.InvalidParameter;
+            if (omega <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(m) or !math.isFinite(omega)) return error.InvalidParameter;
+            return Self{ .m = m, .omega = omega };
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.m < 0.5) return error.InvalidParameter;
+            if (self.omega <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.m) or !math.isFinite(self.omega)) return error.InvalidParameter;
+        }
+
+        // ---- PDF / LogPDF ----
+
+        /// Log probability density function at x
+        ///
+        /// log f(x) = log(2) + m·log(m) - logGamma(m) - m·log(Ω) + (2m-1)·log(x) - m·x²/Ω
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return @log(2.0) + self.m * @log(self.m) - logGamma(self.m) -
+                self.m * @log(self.omega) + (2.0 * self.m - 1.0) * @log(x) -
+                self.m * x * x / self.omega;
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (2·m^m / (Γ(m)·Ω^m)) · x^(2m-1) · exp(-m·x²/Ω)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        // ---- CDF / SF ----
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// CDF(x) = regularizedGammaP(m, m·x²/Ω)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return regularizedGammaP(self.m, self.m * x * x / self.omega);
+        }
+
+        /// Survival function: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // ---- Quantile ----
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search. Returns NaN for p < 0 or p > 1.
+        ///
+        /// Time: O(100 × O(cdf)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            var lo: T = 0.0;
+            var hi: T = self.mean() * 5.0;
+            while (self.cdf(hi) < p) hi *= 2.0;
+
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-12 * (1.0 + mid)) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // ---- Moments ----
+
+        /// Mean: E[X] = exp(logGamma(m + 0.5) - logGamma(m)) · √(Ω/m)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @exp(logGamma(self.m + 0.5) - logGamma(self.m)) * @sqrt(self.omega / self.m);
+        }
+
+        /// Variance: Var[X] = Ω - mean²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            return self.omega - m * m;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// For m = 0.5: mode = 0
+        /// For m > 0.5: mode = √((2m-1)·Ω/(2m))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.m <= 0.5) return 0.0;
+            return @sqrt((2.0 * self.m - 1.0) * self.omega / (2.0 * self.m));
+        }
+
+        /// Entropy: ln(Γ(m)) + (1-2m)/2·ψ(m) + m - ln(2) + 0.5·ln(Ω/m)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return logGamma(self.m) + (1.0 - 2.0 * self.m) / 2.0 * digamma(T, self.m) +
+                self.m - @log(2.0) + 0.5 * @log(self.omega / self.m);
+        }
+
+        // ---- Sampling ----
+
+        /// Generate a random sample using Y ~ Gamma(m, rate=m/Ω), X = √Y
+        ///
+        /// Uses Marsaglia-Tsang for shape ≥ 1, Ahrens-Dieter for shape < 1
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Sample Y ~ Gamma(m, m/Ω)
+            const rate = self.m / self.omega;
+
+            if (self.m >= 1.0) {
+                // Marsaglia & Tsang for m ≥ 1
+                const d = self.m - 1.0 / 3.0;
+                const c = 1.0 / @sqrt(9.0 * d);
+
+                while (true) {
+                    var xn: T = undefined;
+                    var v: T = undefined;
+
+                    // Generate x ~ N(0,1) using Box-Muller
+                    while (true) {
+                        const ur1 = rng.float(T);
+                        const ur2 = rng.float(T);
+                        xn = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
+                        v = 1.0 + c * xn;
+                        if (v > 0.0) break;
+                    }
+
+                    v = v * v * v;
+                    const u = rng.float(T);
+
+                    // Squeeze acceptance
+                    if (u < 1.0 - 0.0331 * xn * xn * xn * xn) {
+                        const gamma_sample = d * v / rate;
+                        return @sqrt(gamma_sample);
+                    }
+
+                    // Full acceptance test
+                    if (@log(u) < 0.5 * xn * xn + d * (1.0 - v + @log(v))) {
+                        const gamma_sample = d * v / rate;
+                        return @sqrt(gamma_sample);
+                    }
+                }
+            } else {
+                // For 0.5 ≤ m < 1: sample Gamma(m+1, rate) and scale by U^(1/m)
+                const d = self.m + 1.0 - 1.0 / 3.0;
+                const c = 1.0 / @sqrt(9.0 * d);
+
+                while (true) {
+                    var xn: T = undefined;
+                    var v: T = undefined;
+
+                    // Generate x ~ N(0,1) using Box-Muller
+                    while (true) {
+                        const ur1 = rng.float(T);
+                        const ur2 = rng.float(T);
+                        xn = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
+                        v = 1.0 + c * xn;
+                        if (v > 0.0) break;
+                    }
+
+                    v = v * v * v;
+                    const u = rng.float(T);
+
+                    const accept = u < 1.0 - 0.0331 * xn * xn * xn * xn or
+                        @log(u) < 0.5 * xn * xn + d * (1.0 - v + @log(v));
+
+                    if (accept) {
+                        const g = d * v / rate;
+                        const ur_final = rng.float(T);
+                        const gamma_sample = g * math.pow(T, ur_final, 1.0 / self.m);
+                        return @sqrt(gamma_sample);
+                    }
+                }
+            }
+        }
+    };
+}
+
+test "Nakagami: init with valid m=1, omega=1" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectEqual(1.0, dist.m);
+    try testing.expectEqual(1.0, dist.omega);
+}
+
+test "Nakagami: init with minimum m=0.5" {
+    const dist = try Nakagami(f64).init(0.5, 1.0);
+    try testing.expectEqual(0.5, dist.m);
+    try testing.expectEqual(1.0, dist.omega);
+}
+
+test "Nakagami: init with large m=10, omega=5" {
+    const dist = try Nakagami(f64).init(10.0, 5.0);
+    try testing.expectEqual(10.0, dist.m);
+    try testing.expectEqual(5.0, dist.omega);
+}
+
+test "Nakagami: init fails when m < 0.5" {
+    const result = Nakagami(f64).init(0.4, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails when m = 0" {
+    const result = Nakagami(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails when omega = 0" {
+    const result = Nakagami(f64).init(1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails when omega < 0" {
+    const result = Nakagami(f64).init(1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails when infinite params" {
+    const result = Nakagami(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: pdf at x=0 returns 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(0.0));
+}
+
+test "Nakagami: pdf at x=0 returns 0 for m=0.5" {
+    const dist = try Nakagami(f64).init(0.5, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(0.0));
+}
+
+test "Nakagami: pdf for negative x returns 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(-1.0));
+    try testing.expectEqual(0.0, dist.pdf(-0.5));
+}
+
+test "Nakagami: pdf is positive for x > 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+}
+
+test "Nakagami: pdf(1; m=1, omega=1) ≈ 0.73576" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const expected = 2.0 * math.exp(-1.0);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-5);
+}
+
+test "Nakagami: logpdf(x) = log(pdf(x)) for x > 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    try testing.expectApproxEqRel(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "Nakagami: logpdf at x=0 is negative infinity" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expect(logpdf_val == -math.inf(f64) or !math.isFinite(logpdf_val));
+}
+
+test "Nakagami: logpdf is finite for x > 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(1.5);
+    try testing.expect(math.isFinite(logpdf_val));
+}
+
+test "Nakagami: logpdf for negative x is negative infinity" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(-1.0);
+    try testing.expect(logpdf_val == -math.inf(f64) or !math.isFinite(logpdf_val));
+}
+
+test "Nakagami: pdf is zero for x < 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.pdf(-10.0));
+    try testing.expectEqual(0.0, dist.pdf(-0.001));
+}
+
+test "Nakagami: pdf has interior mode for m > 0.5" {
+    const dist = try Nakagami(f64).init(2.0, 1.0);
+    const mode_x = dist.mode();
+    const pdf_at_mode = dist.pdf(mode_x);
+    const pdf_left = dist.pdf(mode_x - 0.05);
+    const pdf_right = dist.pdf(mode_x + 0.05);
+    try testing.expect(pdf_at_mode >= pdf_left);
+    try testing.expect(pdf_at_mode >= pdf_right);
+}
+
+test "Nakagami: cdf at x=0 returns 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.cdf(0.0));
+}
+
+test "Nakagami: cdf is positive for x > 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(dist.cdf(0.5) > 0.0);
+    try testing.expect(dist.cdf(1.0) > 0.0);
+}
+
+test "Nakagami: cdf approaches 1 for large x" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const cdf_large = dist.cdf(20.0);
+    try testing.expect(cdf_large > 0.99);
+}
+
+test "Nakagami: cdf is monotone increasing" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const cdf_1 = dist.cdf(1.0);
+    const cdf_2 = dist.cdf(2.0);
+    const cdf_3 = dist.cdf(3.0);
+    try testing.expect(cdf_1 < cdf_2);
+    try testing.expect(cdf_2 < cdf_3);
+}
+
+test "Nakagami: cdf in [0,1] for all x" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const x_values = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_values) |x| {
+        const cdf_val = dist.cdf(x);
+        try testing.expect(cdf_val >= 0.0 and cdf_val <= 1.0);
+    }
+}
+
+test "Nakagami: cdf(1; m=1, omega=1) ≈ 0.63212" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const expected = 1.0 - math.exp(-1.0);
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-5);
+}
+
+test "Nakagami: sf(x) = 1 - cdf(x)" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const x = 1.5;
+    const sf_val = dist.sf(x);
+    const cdf_val = dist.cdf(x);
+    try testing.expectApproxEqRel(1.0 - cdf_val, sf_val, 1e-10);
+}
+
+test "Nakagami: sf at x=0 returns 1" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectApproxEqRel(1.0, dist.sf(0.0), 1e-10);
+}
+
+test "Nakagami: quantile at p=0 returns 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectEqual(0.0, dist.quantile(0.0));
+}
+
+test "Nakagami: quantile at p=1 returns +inf" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(q == math.inf(f64));
+}
+
+test "Nakagami: quantile at p=0.5 returns positive median" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const median = dist.quantile(0.5);
+    try testing.expect(median > 0.0);
+}
+
+test "Nakagami: quantile fails for p < 0" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expect(!math.isFinite(result));
+}
+
+test "Nakagami: quantile fails for p > 1" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expect(!math.isFinite(result) or result == math.inf(f64));
+}
+
+test "Nakagami: quantile is monotone increasing" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const q_3 = dist.quantile(0.3);
+    const q_5 = dist.quantile(0.5);
+    const q_7 = dist.quantile(0.7);
+    try testing.expect(q_3 < q_5);
+    try testing.expect(q_5 < q_7);
+}
+
+test "Nakagami: mean is positive" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(dist.mean() > 0.0);
+}
+
+test "Nakagami: mean is finite" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.mean()));
+}
+
+test "Nakagami: mean(m=1, omega=1) ≈ 0.88623" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const expected = math.sqrt(math.pi / 2.0);
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-4);
+}
+
+test "Nakagami: mean(m=2, omega=1) ≈ 0.94031" {
+    const dist = try Nakagami(f64).init(2.0, 1.0);
+    const expected = 0.94031;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-4);
+}
+
+test "Nakagami: mean(m=0.5, omega=1) ≈ 0.79788" {
+    const dist = try Nakagami(f64).init(0.5, 1.0);
+    const expected = math.sqrt(2.0 / math.pi);
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-4);
+}
+
+test "Nakagami: variance is positive" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "Nakagami: variance is finite" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.variance()));
+}
+
+test "Nakagami: variance(m=1, omega=1) ≈ 0.21460" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const expected = 1.0 - math.pi / 4.0;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
+}
+
+test "Nakagami: variance(m=2, omega=1) ≈ 0.11619" {
+    const dist = try Nakagami(f64).init(2.0, 1.0);
+    const expected = 0.11619;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
+}
+
+test "Nakagami: variance < omega" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(dist.variance() < 1.0);
+}
+
+test "Nakagami: mode is non-negative" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(dist.mode() >= 0.0);
+}
+
+test "Nakagami: mode is finite" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.mode()));
+}
+
+test "Nakagami: mode = 0 when m = 0.5" {
+    const dist = try Nakagami(f64).init(0.5, 1.0);
+    try testing.expectEqual(0.0, dist.mode());
+}
+
+test "Nakagami: mode = sqrt(1/2) when m=1, omega=1" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const expected = math.sqrt(0.5);
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-5);
+}
+
+test "Nakagami: mode is local maximum of pdf" {
+    const dist = try Nakagami(f64).init(2.0, 1.0);
+    const mode_x = dist.mode();
+    const pdf_at_mode = dist.pdf(mode_x);
+    const pdf_perturb = dist.pdf(mode_x + 0.01);
+    try testing.expect(pdf_at_mode >= pdf_perturb);
+}
+
+test "Nakagami: sample is non-negative" {
+    var prng = std.Random.DefaultPrng.init(111111);
+    const rng = prng.random();
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const sample_val = dist.sample(rng);
+    try testing.expect(sample_val >= 0.0);
+}
+
+test "Nakagami: sample is finite" {
+    var prng = std.Random.DefaultPrng.init(111111);
+    const rng = prng.random();
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const sample_val = dist.sample(rng);
+    try testing.expect(math.isFinite(sample_val));
+}
+
+test "Nakagami: multiple samples are non-negative" {
+    var prng = std.Random.DefaultPrng.init(222222);
+    const rng = prng.random();
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0.0);
+    }
+}
+
+test "Nakagami: sample mean approximately matches expected (m=1, omega=1)" {
+    var prng = std.Random.DefaultPrng.init(333333);
+    const rng = prng.random();
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const expected_mean = math.sqrt(math.pi / 2.0);
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 1000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.15);
+}
+
+test "Nakagami: samples are non-negative when m=0.5" {
+    var prng = std.Random.DefaultPrng.init(444444);
+    const rng = prng.random();
+    const dist = try Nakagami(f64).init(0.5, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0.0);
+    }
+}
+
+test "Nakagami: validate passes for valid params" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "Nakagami: validate passes for m=0.5 (boundary)" {
+    const dist = try Nakagami(f64).init(0.5, 1.0);
+    try dist.validate();
+}
+
+test "Nakagami: validate fails for m < 0.5" {
+    const dist = Nakagami(f64){ .m = 0.4, .omega = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Nakagami: validate fails for omega = 0" {
+    const dist = Nakagami(f64){ .m = 1.0, .omega = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Nakagami: validate fails for infinite omega" {
+    const dist = Nakagami(f64){ .m = 1.0, .omega = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Nakagami: f32 basic operations" {
+    const dist = try Nakagami(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.m);
+    try testing.expectEqual(@as(f32, 1.0), dist.omega);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val > 0.0 and cdf_val < 1.0);
+}
+
+test "Nakagami: f32 cdf in [0,1]" {
+    const dist = try Nakagami(f32).init(1.0, 1.0);
+    const cdf_val = dist.cdf(2.5);
+    try testing.expect(cdf_val >= 0.0 and cdf_val <= 1.0);
+}
+
+test "Nakagami: f32 mean is positive" {
+    const dist = try Nakagami(f32).init(1.0, 1.0);
+    try testing.expect(dist.mean() > 0.0);
+}
+
+test "Nakagami: quantile-cdf parity for m=1, omega=1" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const p = 0.5;
+    const q = dist.quantile(p);
+    const cdf_at_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_at_q, 1e-5);
+}
+
+test "Nakagami: quantile-cdf parity for m=2, omega=1" {
+    const dist = try Nakagami(f64).init(2.0, 1.0);
+    const p = 0.75;
+    const q = dist.quantile(p);
+    const cdf_at_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_at_q, 1e-5);
+}
+
+test "Nakagami: mean(m=1, omega=2) = sqrt(2) * mean(m=1, omega=1)" {
+    const dist1 = try Nakagami(f64).init(1.0, 1.0);
+    const dist2 = try Nakagami(f64).init(1.0, 2.0);
+    const mean1 = dist1.mean();
+    const mean2 = dist2.mean();
+    try testing.expectApproxEqRel(mean1 * math.sqrt(2.0), mean2, 1e-8);
+}
+
+test "Nakagami: variance(m=1, omega=2) = 2 * variance(m=1, omega=1)" {
+    const dist1 = try Nakagami(f64).init(1.0, 1.0);
+    const dist2 = try Nakagami(f64).init(1.0, 2.0);
+    const var1 = dist1.variance();
+    const var2 = dist2.variance();
+    try testing.expectApproxEqRel(var1 * 2.0, var2, 1e-8);
+}
+
+test "Nakagami: pdf integral approximation (cdf(large) ≈ 1)" {
+    const dist = try Nakagami(f64).init(1.0, 1.0);
+    const cdf_large = dist.cdf(10.0);
+    try testing.expect(cdf_large > 0.999);
+}
+
+test "Nakagami: mode increases with m for fixed omega" {
+    const dist1 = try Nakagami(f64).init(1.0, 1.0);
+    const dist2 = try Nakagami(f64).init(2.0, 1.0);
+    const mode1 = dist1.mode();
+    const mode2 = dist2.mode();
+    try testing.expect(mode1 < mode2);
+}
+
+test "Nakagami: init fails for negative m" {
+    const result = Nakagami(f64).init(-0.5, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails for NaN m" {
+    const result = Nakagami(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails for NaN omega" {
+    const result = Nakagami(f64).init(1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: init fails for negative infinity m" {
+    const result = Nakagami(f64).init(-math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Nakagami: pdf symmetry property for different params" {
+    const dist1 = try Nakagami(f64).init(1.0, 1.0);
+    const dist2 = try Nakagami(f64).init(1.0, 1.0);
+    try testing.expectApproxEqRel(dist1.pdf(1.5), dist2.pdf(1.5), 1e-14);
+}
