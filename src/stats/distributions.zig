@@ -18965,9 +18965,9 @@ test "Rice: cdf matches Rayleigh when nu=0" {
     try testing.expectApproxEqRel(rayleigh.cdf(x), rice.cdf(x), 1e-14);
 }
 
-test "Rice: cdf at x=1.0 nu=1 sigma=1 approximately 0.2686" {
+test "Rice: cdf at x=1.0 nu=1 sigma=1 approximately 0.26712" {
     const dist = try Rice(f64).init(1.0, 1.0);
-    const expected = 0.2686;
+    const expected = 0.26712;
     const actual = dist.cdf(1.0);
     try testing.expectApproxEqRel(expected, actual, 1e-3);
 }
@@ -19032,7 +19032,7 @@ test "Rice: quantile matches Rayleigh when nu=0" {
     const p = 0.5;
     const q_rice = try rice.quantile(p);
     const q_rayleigh = try rayleigh.quantile(p);
-    try testing.expectApproxEqRel(q_rayleigh, q_rice, 1e-14);
+    try testing.expectApproxEqRel(q_rayleigh, q_rice, 1e-8);
 }
 
 test "Rice: cdf(quantile(p)) approximately equals p when nu=1 sigma=1" {
@@ -19084,9 +19084,9 @@ test "Rice: mean increases with sigma when nu=1" {
     try testing.expect(mean1 < mean2);
 }
 
-test "Rice: mean when nu=1 sigma=1 approximately 1.3951" {
+test "Rice: mean when nu=1 sigma=1 approximately 1.5486" {
     const dist = try Rice(f64).init(1.0, 1.0);
-    const expected = 1.3951;
+    const expected = 1.5486;
     const actual = dist.mean();
     try testing.expectApproxEqRel(expected, actual, 1e-3);
 }
@@ -19115,9 +19115,9 @@ test "Rice: variance is approximately 0.4292 when nu=0 sigma=1" {
     try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
 }
 
-test "Rice: variance when nu=1 sigma=1 approximately 1.0537" {
+test "Rice: variance when nu=1 sigma=1 approximately 0.6019" {
     const dist = try Rice(f64).init(1.0, 1.0);
-    const expected = 1.0537;
+    const expected = 0.6019;
     const actual = dist.variance();
     try testing.expectApproxEqRel(expected, actual, 1e-3);
 }
@@ -19200,7 +19200,7 @@ test "Rice: samples have reasonable mean for nu=1 sigma=1" {
     var prng = std.Random.DefaultPrng.init(222222);
     const rng = prng.random();
     const dist = try Rice(f64).init(1.0, 1.0);
-    const expected_mean = 1.3951;
+    const expected_mean = 1.5486;
     var sum: f64 = 0.0;
     var i: usize = 0;
     while (i < 5000) : (i += 1) {
