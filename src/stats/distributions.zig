@@ -18145,6 +18145,284 @@ pub fn Gompertz(comptime T: type) type {
     };
 }
 
+/// Rice (Rician) distribution
+///
+/// Models the magnitude of a 2D complex Gaussian: R = √(X² + Y²)
+/// where X ~ N(ν, σ²) and Y ~ N(0, σ²).
+///
+/// Applications: radar signal processing, MRI noise modeling,
+/// wireless communications (Rician fading channel), distance metrics.
+///
+/// Parameters:
+///   - nu (ν ≥ 0): Non-centrality parameter (signal strength)
+///   - sigma (σ > 0): Scale parameter (noise standard deviation)
+///
+/// Support: [0, ∞)
+///
+/// Special case: ν = 0 → Rayleigh(σ) distribution
+///               ν >> σ → approximately Normal(ν, σ²)
+///
+/// Time: O(1) for most operations, O(n) for CDF/quantile (numerical integration)
+pub fn Rice(comptime T: type) type {
+    return struct {
+        nu: T,    // non-centrality parameter ν ≥ 0
+        sigma: T, // scale parameter σ > 0
+
+        const Self = @This();
+
+        // ---- Private Bessel helpers (A&S 9.8.1–9.8.4) ----
+
+        /// I₀(x): modified Bessel function, order 0
+        fn besselI0(x: T) T {
+            const abs_x = @abs(x);
+            if (abs_x <= 3.75) {
+                const t = (abs_x / 3.75) * (abs_x / 3.75);
+                return 1.0 + 3.5156329 * t + 3.0899424 * t * t + 1.2067492 * t * t * t +
+                    0.2659732 * t * t * t * t + 0.0360768 * t * t * t * t * t +
+                    0.0045813 * t * t * t * t * t * t;
+            } else {
+                const t = 3.75 / abs_x;
+                const ep = @exp(abs_x) / @sqrt(abs_x);
+                return ep * (0.39894228 + 0.01328592 * t + 0.00225319 * t * t -
+                    0.00157565 * t * t * t + 0.00916281 * t * t * t * t -
+                    0.02057706 * t * t * t * t * t + 0.02635537 * t * t * t * t * t * t -
+                    0.01647633 * t * t * t * t * t * t * t +
+                    0.00392377 * t * t * t * t * t * t * t * t);
+            }
+        }
+
+        /// I₁(x): modified Bessel function, order 1
+        fn besselI1(x: T) T {
+            const abs_x = @abs(x);
+            if (abs_x <= 3.75) {
+                const t = (abs_x / 3.75) * (abs_x / 3.75);
+                const r = abs_x * (0.5 + 0.87890594 * t + 0.51498869 * t * t +
+                    0.15084934 * t * t * t + 0.02658733 * t * t * t * t +
+                    0.00301532 * t * t * t * t * t + 0.00032411 * t * t * t * t * t * t);
+                return if (x < 0) -r else r;
+            } else {
+                const t = 3.75 / abs_x;
+                const ep = @exp(abs_x) / @sqrt(abs_x);
+                const r = ep * (0.39894228 - 0.03988024 * t - 0.00362018 * t * t +
+                    0.00163801 * t * t * t - 0.01031555 * t * t * t * t +
+                    0.02282967 * t * t * t * t * t - 0.02895312 * t * t * t * t * t * t +
+                    0.01787654 * t * t * t * t * t * t * t -
+                    0.00420059 * t * t * t * t * t * t * t * t);
+                return if (x < 0) -r else r;
+            }
+        }
+
+        /// log I₀(x): numerically stable log of modified Bessel function, order 0
+        /// Avoids overflow for large x by using the asymptotic expansion directly.
+        fn logBesselI0(x: T) T {
+            const abs_x = @abs(x);
+            if (abs_x <= 3.75) {
+                return @log(besselI0(abs_x));
+            } else {
+                // besselI0(x) = exp(x)/sqrt(x) * f(t) → log = x - 0.5*log(x) + log(f(t))
+                const t = 3.75 / abs_x;
+                const f = 0.39894228 + 0.01328592 * t + 0.00225319 * t * t -
+                    0.00157565 * t * t * t + 0.00916281 * t * t * t * t -
+                    0.02057706 * t * t * t * t * t + 0.02635537 * t * t * t * t * t * t -
+                    0.01647633 * t * t * t * t * t * t * t +
+                    0.00392377 * t * t * t * t * t * t * t * t;
+                return abs_x - 0.5 * @log(abs_x) + @log(f);
+            }
+        }
+
+        // ---- Lifecycle ----
+
+        /// Create a Rice distribution with non-centrality nu (ν ≥ 0) and scale sigma (σ > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(nu: T, sigma: T) DistributionError!Self {
+            if (nu < 0.0) return error.InvalidParameter;
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(nu) or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .nu = nu, .sigma = sigma };
+        }
+
+        // ---- PDF / LogPDF ----
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; ν, σ) = (x/σ²) · exp(-(x²+ν²)/(2σ²)) · I₀(xν/σ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            if (x == 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(x) - 2·log(σ) - (x²+ν²)/(2σ²) + log I₀(xν/σ²)
+        ///
+        /// Numerically stable even when xν/σ² is large.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const s2 = self.sigma * self.sigma;
+            const arg = x * self.nu / s2;
+            return @log(x) - 2.0 * @log(self.sigma) - (x * x + self.nu * self.nu) / (2.0 * s2) + logBesselI0(arg);
+        }
+
+        // ---- CDF / SF ----
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// Computed via composite Simpson's rule (200 panels) on the PDF.
+        /// Special case ν=0: CDF(x) = 1 - exp(-x²/(2σ²)) (Rayleigh CDF, closed form).
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            // Rayleigh special case: closed form
+            if (self.nu == 0.0) {
+                return 1.0 - @exp(-x * x / (2.0 * self.sigma * self.sigma));
+            }
+            // Composite Simpson's rule
+            const n: usize = 200; // must be even
+            const h = x / @as(T, @floatFromInt(n));
+            var s = self.pdf(0.0) + self.pdf(x); // f(a) + f(b)
+            var i: usize = 1;
+            while (i < n) : (i += 1) {
+                const xi = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i % 2 == 0) 2.0 else 4.0;
+                s += w * self.pdf(xi);
+            }
+            return @min(s * h / 3.0, 1.0);
+        }
+
+        /// Survival function: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // ---- Quantile ----
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search. Converges in ~50 iterations to 1e-10 relative precision.
+        ///
+        /// Time: O(200 × 50) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Initial upper bound
+            var hi: T = self.nu + 10.0 * self.sigma;
+            while (self.cdf(hi) < p) hi *= 2.0;
+            var lo: T = 0.0;
+
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-12 * (1.0 + mid)) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // ---- Moments ----
+
+        /// Mean: E[X] = σ·√(π/2)·exp(-z)·[(1+2z)·I₀(z) + 2z·I₁(z)]
+        /// where z = ν²/(4σ²)
+        ///
+        /// When ν=0: mean = σ·√(π/2)  (Rayleigh mean)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const z = self.nu * self.nu / (4.0 * self.sigma * self.sigma);
+            const factor = self.sigma * @sqrt(math.pi / 2.0);
+            return factor * @exp(-z) * ((1.0 + 2.0 * z) * besselI0(z) + 2.0 * z * besselI1(z));
+        }
+
+        /// Variance: Var[X] = 2σ² + ν² - mean²
+        ///
+        /// When ν=0: variance = σ²·(4-π)/2  (Rayleigh variance)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            return 2.0 * self.sigma * self.sigma + self.nu * self.nu - m * m;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// When ν=0: mode = σ (Rayleigh mode)
+        /// Otherwise: found via golden-section search on the PDF over [0, ν+5σ]
+        ///
+        /// Time: O(1) for ν=0, O(100) for ν>0 | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.nu == 0.0) return self.sigma;
+            // Golden-section search for maximum of logpdf on [eps, ν + 5σ]
+            const phi: T = (1.0 + @sqrt(5.0)) / 2.0;
+            var a: T = 1e-10;
+            var b: T = self.nu + 5.0 * self.sigma;
+            var c = b - (b - a) / phi;
+            var d = a + (b - a) / phi;
+            var iter: usize = 0;
+            while (@abs(c - d) > 1e-10 and iter < 200) : (iter += 1) {
+                if (self.logpdf(c) > self.logpdf(d)) {
+                    b = d;
+                } else {
+                    a = c;
+                }
+                c = b - (b - a) / phi;
+                d = a + (b - a) / phi;
+            }
+            return (a + b) / 2.0;
+        }
+
+        /// Median: solved numerically via bisection on CDF = 0.5
+        ///
+        /// Time: O(200 × 50) | Space: O(1)
+        pub fn median(self: Self) DistributionError!T {
+            return self.quantile(0.5);
+        }
+
+        // ---- Sampling ----
+
+        /// Generate a random sample using the magnitude-of-complex-Gaussian method
+        ///
+        /// R = √(X² + Y²) where X ~ N(ν, σ²), Y ~ N(0, σ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Box-Muller: z1, z2 are standard normal
+            const ur1 = rng.float(T);
+            const ur2 = rng.float(T);
+            const mag = @sqrt(-2.0 * @log(ur1));
+            const z1 = mag * @cos(2.0 * math.pi * ur2);
+            const z2 = mag * @sin(2.0 * math.pi * ur2);
+            const x = self.nu + self.sigma * z1;
+            const y = self.sigma * z2;
+            return @sqrt(x * x + y * y);
+        }
+
+        // ---- Debug / Validate ----
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.nu < 0.0) return error.InvalidParameter;
+            if (self.sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.nu) or !math.isFinite(self.sigma)) return error.InvalidParameter;
+        }
+    };
+}
+
 // ============================================================================
 // Gompertz Distribution Tests
 // ============================================================================
@@ -18522,4 +18800,461 @@ test "Gompertz: f32 basic operations" {
 test "Gompertz: f32 mode is 0 when eta>=1" {
     const dist = try Gompertz(f32).init(1.0, 1.0);
     try testing.expectEqual(@as(f32, 0.0), dist.mode());
+}
+
+// ============================================================================
+// Rice Distribution Tests
+// ============================================================================
+// Rice(ν, σ): ν ≥ 0 (non-centrality), σ > 0 (scale)
+// PDF: (x/σ²) * exp(-(x²+ν²)/(2σ²)) * I₀(xν/σ²)
+// CDF: via Marcum Q₁ or numerical integration
+// Mean: σ*√(π/2) * exp(-z) * [(1+2z)*I₀(z) + 2z*I₁(z)] where z = ν²/(4σ²)
+// Variance: 2σ² + ν² - mean²
+// Special case: ν=0 → Rayleigh(σ)
+
+test "Rice: init with valid parameters nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.nu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "Rice: init with nu=0 sigma=1" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.nu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "Rice: init with large nu" {
+    const dist = try Rice(f64).init(100.0, 1.0);
+    try testing.expectEqual(@as(f64, 100.0), dist.nu);
+}
+
+test "Rice: init fails for negative nu" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(-0.1, 1.0));
+}
+
+test "Rice: init fails for sigma=0" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(1.0, 0.0));
+}
+
+test "Rice: init fails for negative sigma" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(1.0, -1.0));
+}
+
+test "Rice: init fails for infinite nu" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(math.inf(f64), 1.0));
+}
+
+test "Rice: init fails for infinite sigma" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(1.0, math.inf(f64)));
+}
+
+test "Rice: init fails for nan nu" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(math.nan(f64), 1.0));
+}
+
+test "Rice: init fails for nan sigma" {
+    try testing.expectError(error.InvalidParameter, Rice(f64).init(1.0, math.nan(f64)));
+}
+
+test "Rice: pdf at x=0 is always 0" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const pdf_0 = dist.pdf(0.0);
+    try testing.expectEqual(@as(f64, 0.0), pdf_0);
+}
+
+test "Rice: pdf at x=0 is 0 when nu=0" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "Rice: pdf at x=0 is 0 for large nu" {
+    const dist = try Rice(f64).init(100.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "Rice: pdf is positive for x > 0 when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expect(pdf_val > 0.0);
+}
+
+test "Rice: pdf is positive for x > 0 when nu=0 sigma=1" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expect(pdf_val > 0.0);
+}
+
+test "Rice: pdf matches Rayleigh when nu=0" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    const x = 0.5;
+    try testing.expectApproxEqRel(rayleigh.pdf(x), rice.pdf(x), 1e-14);
+}
+
+test "Rice: pdf at x=1.0 nu=1 sigma=1 approximately 0.46576" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const expected = 0.46576;
+    const actual = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, actual, 1e-4);
+}
+
+test "Rice: pdf at x=2.0 nu=1 sigma=1 is positive" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+}
+
+test "Rice: pdf is positive for multiple x values nu=0" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    try testing.expect(dist.pdf(0.1) > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+}
+
+test "Rice: logpdf at x=0 is negative infinity" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const logpdf_0 = dist.logpdf(0.0);
+    try testing.expect(math.isNegativeInf(logpdf_0));
+}
+
+test "Rice: logpdf at x > 0 is finite when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expect(math.isFinite(logpdf_val));
+}
+
+test "Rice: logpdf approximately log(pdf) when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const x = 1.5;
+    const expected = @log(dist.pdf(x));
+    const actual = dist.logpdf(x);
+    try testing.expectApproxEqRel(expected, actual, 1e-10);
+}
+
+test "Rice: logpdf when nu=0 sigma=1 matches Rayleigh" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    const x = 0.7;
+    try testing.expectApproxEqRel(rayleigh.logpdf(x), rice.logpdf(x), 1e-14);
+}
+
+test "Rice: cdf at x=0 is 0" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Rice: cdf at x=0 is 0 when nu=0" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Rice: cdf is monotone increasing when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const cdf_0 = dist.cdf(0.0);
+    const cdf_1 = dist.cdf(1.0);
+    const cdf_2 = dist.cdf(2.0);
+    try testing.expect(cdf_0 <= cdf_1);
+    try testing.expect(cdf_1 <= cdf_2);
+}
+
+test "Rice: cdf matches Rayleigh when nu=0" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    const x = 0.5;
+    try testing.expectApproxEqRel(rayleigh.cdf(x), rice.cdf(x), 1e-14);
+}
+
+test "Rice: cdf at x=1.0 nu=1 sigma=1 approximately 0.2686" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const expected = 0.2686;
+    const actual = dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, actual, 1e-3);
+}
+
+test "Rice: cdf is in [0,1] for valid x nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val >= 0.0 and cdf_val <= 1.0);
+}
+
+test "Rice: sf at x=0 is 1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "Rice: sf equals 1 - cdf when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const x = 0.5;
+    const sf_val = dist.sf(x);
+    const cdf_val = dist.cdf(x);
+    try testing.expectApproxEqRel(1.0 - cdf_val, sf_val, 1e-14);
+}
+
+test "Rice: sf matches Rayleigh when nu=0" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    const x = 1.5;
+    try testing.expectApproxEqRel(rayleigh.sf(x), rice.sf(x), 1e-14);
+}
+
+test "Rice: quantile at p=0 is 0" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, 0.0), q);
+}
+
+test "Rice: quantile at p=1 is infinity" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "Rice: quantile at p=0.5 is positive when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+test "Rice: quantile fails for p < 0" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Rice: quantile fails for p > 1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Rice: quantile matches Rayleigh when nu=0" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    const p = 0.5;
+    const q_rice = try rice.quantile(p);
+    const q_rayleigh = try rayleigh.quantile(p);
+    try testing.expectApproxEqRel(q_rayleigh, q_rice, 1e-14);
+}
+
+test "Rice: cdf(quantile(p)) approximately equals p when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-10);
+}
+
+test "Rice: quantile is monotone increasing when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 <= q2);
+    try testing.expect(q2 <= q3);
+}
+
+test "Rice: mean is positive when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(mean_val > 0.0);
+}
+
+test "Rice: mean is finite when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isFinite(mean_val));
+}
+
+test "Rice: mean matches Rayleigh when nu=0 sigma=1" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    try testing.expectApproxEqRel(rayleigh.mean(), rice.mean(), 1e-14);
+}
+
+test "Rice: mean is approximately 1.2533 when nu=0 sigma=1" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    const expected = 1.2533;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-4);
+}
+
+test "Rice: mean increases with sigma when nu=1" {
+    const dist1 = try Rice(f64).init(1.0, 1.0);
+    const dist2 = try Rice(f64).init(1.0, 2.0);
+    const mean1 = dist1.mean();
+    const mean2 = dist2.mean();
+    try testing.expect(mean1 < mean2);
+}
+
+test "Rice: mean when nu=1 sigma=1 approximately 1.3951" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const expected = 1.3951;
+    const actual = dist.mean();
+    try testing.expectApproxEqRel(expected, actual, 1e-3);
+}
+
+test "Rice: variance is positive when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const variance_val = dist.variance();
+    try testing.expect(variance_val > 0.0);
+}
+
+test "Rice: variance is finite when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const variance_val = dist.variance();
+    try testing.expect(math.isFinite(variance_val));
+}
+
+test "Rice: variance matches Rayleigh when nu=0 sigma=1" {
+    const rice = try Rice(f64).init(0.0, 1.0);
+    const rayleigh = try Rayleigh(f64).init(1.0);
+    try testing.expectApproxEqRel(rayleigh.variance(), rice.variance(), 1e-14);
+}
+
+test "Rice: variance is approximately 0.4292 when nu=0 sigma=1" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    const expected = 0.4292;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
+}
+
+test "Rice: variance when nu=1 sigma=1 approximately 1.0537" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const expected = 1.0537;
+    const actual = dist.variance();
+    try testing.expectApproxEqRel(expected, actual, 1e-3);
+}
+
+test "Rice: mode is positive when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expect(mode_val > 0.0);
+}
+
+test "Rice: mode is finite when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expect(math.isFinite(mode_val));
+}
+
+test "Rice: mode equals sigma when nu=0" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    try testing.expectApproxEqRel(1.0, dist.mode(), 1e-14);
+}
+
+test "Rice: mode is local maximum of pdf when nu=1 sigma=1" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const mode = dist.mode();
+    const pdf_mode = dist.pdf(mode);
+    const pdf_left = dist.pdf(mode - 0.05);
+    const pdf_right = dist.pdf(mode + 0.05);
+    try testing.expect(pdf_mode >= pdf_left);
+    try testing.expect(pdf_mode >= pdf_right);
+}
+
+test "Rice: sample is non-negative when nu=1 sigma=1" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Rice(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "Rice: sample is finite when nu=1 sigma=1" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Rice(f64).init(1.0, 1.0);
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "Rice: sample is non-negative when nu=0 sigma=1" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Rice(f64).init(0.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "Rice: samples have reasonable mean for nu=0 sigma=1" {
+    var prng = std.Random.DefaultPrng.init(111111);
+    const rng = prng.random();
+    const dist = try Rice(f64).init(0.0, 1.0);
+    const expected_mean = 1.2533;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 5000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 5000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.1);
+}
+
+test "Rice: samples have reasonable mean for nu=1 sigma=1" {
+    var prng = std.Random.DefaultPrng.init(222222);
+    const rng = prng.random();
+    const dist = try Rice(f64).init(1.0, 1.0);
+    const expected_mean = 1.3951;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 5000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 5000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.1);
+}
+
+test "Rice: validate passes for valid params" {
+    const dist = try Rice(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "Rice: validate passes for nu=0" {
+    const dist = try Rice(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Rice: validate fails for negative nu" {
+    const dist = Rice(f64){ .nu = -0.1, .sigma = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rice: validate fails for sigma=0" {
+    const dist = Rice(f64){ .nu = 1.0, .sigma = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rice: validate fails for negative sigma" {
+    const dist = Rice(f64){ .nu = 1.0, .sigma = -1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rice: validate fails for infinite nu" {
+    const dist = Rice(f64){ .nu = math.inf(f64), .sigma = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rice: validate fails for infinite sigma" {
+    const dist = Rice(f64){ .nu = 1.0, .sigma = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Rice: f32 basic operations" {
+    const dist = try Rice(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.nu);
+    try testing.expectEqual(@as(f32, 1.0), dist.sigma);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val > 0.0 and cdf_val < 1.0);
+}
+
+test "Rice: f32 mode is sigma when nu=0" {
+    const dist = try Rice(f32).init(0.0, 1.0);
+    try testing.expectApproxEqRel(@as(f32, 1.0), dist.mode(), 1e-6);
 }
