@@ -19934,10 +19934,14 @@ test "Nakagami: init fails for negative infinity m" {
     try testing.expectError(error.InvalidParameter, result);
 }
 
-test "Nakagami: pdf symmetry property for different params" {
+test "Nakagami: scaling law — c*f(cx; m, c²Ω) = f(x; m, Ω)" {
+    // If X ~ Nakagami(m, Ω) then c*X ~ Nakagami(m, c²Ω).
+    // Equivalently: c * pdf(c*x; m, c²*Ω) = pdf(x; m, Ω).
+    const c = 2.0;
+    const x = 1.0;
     const dist1 = try Nakagami(f64).init(1.0, 1.0);
-    const dist2 = try Nakagami(f64).init(1.0, 1.0);
-    try testing.expectApproxEqRel(dist1.pdf(1.5), dist2.pdf(1.5), 1e-14);
+    const dist2 = try Nakagami(f64).init(1.0, c * c);
+    try testing.expectApproxEqRel(dist1.pdf(x), c * dist2.pdf(c * x), 1e-12);
 }
 
 // ============================================================================
