@@ -483,3 +483,5 @@
 {"timestamp":"2026-06-02T00:10:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for BirnbaumSaunders distribution","project":"zuda"}
 {"timestamp":"2026-06-02T00:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement BirnbaumSaunders distribution to pass all tests","project":"zuda"}
 {"timestamp":"2026-06-02T14:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement BirnbaumSaunders(T) distribution (44th dist, 29th continuous)","project":"zuda","tests_passing":67,"total_tests":1537,"commit":"pending"}
+{"timestamp":"2026-06-02T05:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for GeneralizedLogistic(T) distribution (45th total, 30th continuous)","project":"zuda"}
+{"timestamp":"2026-06-02T05:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedLogistic(T) distribution to pass 51 failing tests","project":"zuda"}

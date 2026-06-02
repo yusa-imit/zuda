@@ -8785,6 +8785,25 @@ fn digamma(comptime T: type, x: T) T {
     return @log(xi) - 0.5 / xi - 1.0 / (12.0 * xi2) + 1.0 / (120.0 * xi4) - 1.0 / (252.0 * xi6) + sum;
 }
 
+/// Trigamma function ψ'(x) = d/dx ψ(x).
+/// Uses recurrence ψ'(x+1) = ψ'(x) - 1/x² to shift x ≥ 8, then asymptotic expansion.
+/// Accurate to ~15 significant digits for x > 0.
+/// Time: O(1) | Space: O(1)
+fn trigamma(comptime T: type, x: T) T {
+    var sum: T = 0.0;
+    var xi = x;
+    while (xi < 8.0) {
+        sum += 1.0 / (xi * xi);
+        xi += 1.0;
+    }
+    // Asymptotic: ψ'(x) ≈ 1/x + 1/(2x²) + 1/(6x³) - 1/(30x⁵) + 1/(42x⁷)
+    const xi2 = xi * xi;
+    const xi3 = xi2 * xi;
+    const xi5 = xi3 * xi2;
+    const xi7 = xi5 * xi2;
+    return 1.0 / xi + 1.0 / (2.0 * xi2) + 1.0 / (6.0 * xi3) - 1.0 / (30.0 * xi5) + 1.0 / (42.0 * xi7) + sum;
+}
+
 /// Dirichlet distribution — multivariate continuous distribution over the probability simplex.
 /// Conjugate prior for Categorical and Multinomial distributions.
 ///
@@ -21357,4 +21376,500 @@ test "BirnbaumSaunders: f32 mean is positive" {
 test "BirnbaumSaunders: f32 median equals beta" {
     const dist = try BirnbaumSaunders(f32).init(1.0, 1.0);
     try testing.expectApproxEqAbs(dist.beta, dist.median(), 1e-5);
+}
+
+/// Generalized Logistic distribution (Type I / Exponentiated Logistic)
+///
+/// CDF: F(x) = σ((x-μ)/s)^α where σ(z) = 1/(1+exp(-z))
+/// PDF: f(x) = (α/s) · exp(-z) / (1+exp(-z))^(α+1)
+///
+/// Parameters:
+///   - mu: location (real)
+///   - s: scale (s > 0)
+///   - alpha: shape (α > 0); α=1 reduces to standard Logistic
+///
+/// Time: O(1) for pdf/cdf/quantile/mean/variance/mode/entropy/sample
+pub fn GeneralizedLogistic(comptime T: type) type {
+    return struct {
+        mu: T,
+        s: T,
+        alpha: T,
+
+        const Self = @This();
+        const euler_gamma: T = 0.5772156649015329;
+
+        /// Initialize with location mu, scale s > 0, shape alpha > 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, s: T, alpha: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (s <= 0.0 or !math.isFinite(s)) return error.InvalidParameter;
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .mu = mu, .s = s, .alpha = alpha };
+        }
+
+        /// Assert all parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.s <= 0.0 or !math.isFinite(self.s)) return error.InvalidParameter;
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+        }
+
+        /// Log-probability density function.
+        /// log f(x) = log(α) - log(s) - z - (α+1)·log(1+exp(-z))
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.s;
+            // log(1 + exp(-z)) stably: for large z use exp(-z), for large -z use -z
+            const log1p_exp_neg_z = if (z >= 0.0) math.log1p(@exp(-z)) else -z + math.log1p(@exp(z));
+            return @log(self.alpha) - @log(self.s) - z - (self.alpha + 1.0) * log1p_exp_neg_z;
+        }
+
+        /// Probability density function.
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logpdf(x));
+        }
+
+        /// Cumulative distribution function.
+        /// F(x) = σ((x-μ)/s)^α
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.s;
+            const sigma_z = 1.0 / (1.0 + @exp(-z));
+            return math.pow(T, sigma_z, self.alpha);
+        }
+
+        /// Survival function: 1 - CDF(x).
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile (inverse CDF): Q(p) = μ + s·log(p^{1/α} / (1-p^{1/α}))
+        /// Returns NaN for p outside [0,1], -inf for p=0, +inf for p=1.
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            const u = math.pow(T, p, 1.0 / self.alpha);
+            return self.mu + self.s * @log(u / (1.0 - u));
+        }
+
+        /// Mean: μ + s·(γ + ψ(α)) where γ is Euler-Mascheroni and ψ is digamma.
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            // Special case: α = 1 → mean = μ (exact)
+            if (self.alpha == 1.0) {
+                return self.mu;
+            }
+            return self.mu + self.s * (euler_gamma + digamma(T, self.alpha));
+        }
+
+        /// Variance: s²·(ψ'(α) + π²/6) where ψ' is trigamma.
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.s * self.s * (trigamma(T, self.alpha) + math.pi * math.pi / 6.0);
+        }
+
+        /// Mode: μ + s·log(α)
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu + self.s * @log(self.alpha);
+        }
+
+        /// Entropy: log(s) - log(α) + γ + ψ(α) + 1 + 1/α
+        /// Derived: H = -E[log f(X)] = log(s) - log(α) + γ + ψ(α) + 1 + 1/α
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Special case: α = 1 → entropy = log(s) + 2 (exact)
+            if (self.alpha == 1.0) {
+                return @log(self.s) + 2.0;
+            }
+            return @log(self.s) - @log(self.alpha) + euler_gamma + digamma(T, self.alpha) + 1.0 + 1.0 / self.alpha;
+        }
+
+        /// Sample via inverse transform: U ~ Uniform(0,1) → Q(U).
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            // Avoid u=0 or u=1 to prevent infinite values
+            const u_safe = @max(@min(u, 1.0 - math.floatEps(T)), math.floatEps(T));
+            return self.quantile(u_safe);
+        }
+    };
+}
+
+// ============================================================================
+// GeneralizedLogistic (Type I / Exponentiated Logistic) Tests
+// ============================================================================
+
+// --- init tests ---
+
+test "GeneralizedLogistic: init valid params" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.s);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+}
+
+test "GeneralizedLogistic: init zero scale fails" {
+    const result = GeneralizedLogistic(f64).init(0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedLogistic: init negative scale fails" {
+    const result = GeneralizedLogistic(f64).init(0.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedLogistic: init zero alpha fails" {
+    const result = GeneralizedLogistic(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedLogistic: init negative alpha fails" {
+    const result = GeneralizedLogistic(f64).init(0.0, 1.0, -0.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedLogistic: init inf scale fails" {
+    const result = GeneralizedLogistic(f64).init(0.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedLogistic: init NaN alpha fails" {
+    const result = GeneralizedLogistic(f64).init(0.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedLogistic: init inf mu fails" {
+    const result = GeneralizedLogistic(f64).init(math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- validate tests ---
+
+test "GeneralizedLogistic: validate passes for valid dist" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "GeneralizedLogistic: validate catches bad state" {
+    var dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    dist.s = 0.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- pdf tests ---
+
+test "GeneralizedLogistic: pdf at mode is positive" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(dist.mode()) > 0.0);
+}
+
+test "GeneralizedLogistic: pdf integrates to approximately 1" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    var sum: f64 = 0.0;
+    const step = 0.001;
+    var x: f64 = -20.0;
+    while (x <= 20.0) {
+        sum += dist.pdf(x) * step;
+        x += step;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum, 0.01);
+}
+
+test "GeneralizedLogistic: pdf is non-negative" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expect(dist.pdf(-5.0) >= 0.0);
+    try testing.expect(dist.pdf(0.0) >= 0.0);
+    try testing.expect(dist.pdf(5.0) >= 0.0);
+}
+
+test "GeneralizedLogistic: pdf alpha=1 at zero" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.25), dist.pdf(0.0), 1e-10);
+}
+
+test "GeneralizedLogistic: pdf is finite" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(math.isFinite(dist.pdf(-10.0)));
+    try testing.expect(math.isFinite(dist.pdf(0.0)));
+    try testing.expect(math.isFinite(dist.pdf(10.0)));
+}
+
+test "GeneralizedLogistic: logpdf equals log of pdf" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    const x = 1.5;
+    const logpdf_val = dist.logpdf(x);
+    const pdf_val = dist.pdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+// --- cdf tests ---
+
+test "GeneralizedLogistic: cdf in [0,1]" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.cdf(-10.0) >= 0.0 and dist.cdf(-10.0) <= 1.0);
+    try testing.expect(dist.cdf(0.0) >= 0.0 and dist.cdf(0.0) <= 1.0);
+    try testing.expect(dist.cdf(10.0) >= 0.0 and dist.cdf(10.0) <= 1.0);
+}
+
+test "GeneralizedLogistic: cdf is monotone" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const x1 = -5.0;
+    const x2 = 0.0;
+    const x3 = 5.0;
+    try testing.expect(dist.cdf(x1) <= dist.cdf(x2));
+    try testing.expect(dist.cdf(x2) <= dist.cdf(x3));
+}
+
+test "GeneralizedLogistic: cdf alpha=1 at zero" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(0.0), 1e-10);
+}
+
+test "GeneralizedLogistic: cdf alpha=2 at zero" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.25), dist.cdf(0.0), 1e-10);
+}
+
+test "GeneralizedLogistic: cdf alpha=0.5 at zero" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 0.5);
+    const sqrt_half = @sqrt(@as(f64, 0.5));
+    try testing.expectApproxEqAbs(sqrt_half, dist.cdf(0.0), 1e-8);
+}
+
+test "GeneralizedLogistic: cdf approaches 0 for large negative x" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.cdf(-50.0) < 1e-10);
+}
+
+test "GeneralizedLogistic: cdf approaches 1 for large positive x" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.cdf(50.0) > 1.0 - 1e-10);
+}
+
+// --- sf tests ---
+
+test "GeneralizedLogistic: sf equals 1 minus cdf" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    const x = 1.5;
+    const sf_val = dist.sf(x);
+    const expected = 1.0 - dist.cdf(x);
+    try testing.expectApproxEqAbs(expected, sf_val, 1e-12);
+}
+
+test "GeneralizedLogistic: sf is monotone decreasing" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const x1 = -5.0;
+    const x2 = 5.0;
+    try testing.expect(dist.sf(x1) >= dist.sf(x2));
+}
+
+// --- quantile tests ---
+
+test "GeneralizedLogistic: quantile(0.5) equals cdf inverse" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const median = dist.quantile(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(median), 1e-10);
+}
+
+test "GeneralizedLogistic: quantile-cdf parity" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    const ps = [_]f64{ 0.1, 0.3, 0.7, 0.9 };
+    for (ps) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, cdf_q, 1e-8);
+    }
+}
+
+test "GeneralizedLogistic: quantile NaN for p<0" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "GeneralizedLogistic: quantile NaN for p>1" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "GeneralizedLogistic: quantile is monotone" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const q1 = dist.quantile(0.3);
+    const q2 = dist.quantile(0.7);
+    try testing.expect(q1 < q2);
+}
+
+test "GeneralizedLogistic: quantile(0) is -inf" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "GeneralizedLogistic: quantile(1) is +inf" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+// --- mean tests ---
+
+test "GeneralizedLogistic: mean alpha=1 equals mu" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.mean(), 1e-10);
+}
+
+test "GeneralizedLogistic: mean alpha=2" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.mean(), 1e-8);
+}
+
+test "GeneralizedLogistic: mean alpha=0.5" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 0.5);
+    const log2 = @log(@as(f64, 2.0));
+    const expected = -2.0 * log2;
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-5);
+}
+
+test "GeneralizedLogistic: mean shifts with mu" {
+    const dist = try GeneralizedLogistic(f64).init(3.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), dist.mean(), 1e-10);
+}
+
+test "GeneralizedLogistic: mean is finite" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expect(math.isFinite(dist.mean()));
+}
+
+// --- variance tests ---
+
+test "GeneralizedLogistic: variance alpha=1" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const pi_sq_third = math.pi * math.pi / 3.0;
+    try testing.expectApproxEqAbs(pi_sq_third, dist.variance(), 1e-5);
+}
+
+test "GeneralizedLogistic: variance alpha=2" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    const pi_sq_third = math.pi * math.pi / 3.0;
+    try testing.expectApproxEqAbs(pi_sq_third - 1.0, dist.variance(), 1e-5);
+}
+
+test "GeneralizedLogistic: variance is positive" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "GeneralizedLogistic: variance scales with s squared" {
+    const dist2 = try GeneralizedLogistic(f64).init(0.0, 2.0, 1.0);
+    const pi_sq_third = math.pi * math.pi / 3.0;
+    try testing.expectApproxEqAbs(4.0 * pi_sq_third, dist2.variance(), 1e-5);
+}
+
+// --- mode tests ---
+
+test "GeneralizedLogistic: mode alpha=1 equals mu" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.mode(), 1e-10);
+}
+
+test "GeneralizedLogistic: mode alpha=2" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    const log2 = @log(@as(f64, 2.0));
+    try testing.expectApproxEqAbs(log2, dist.mode(), 1e-10);
+}
+
+test "GeneralizedLogistic: mode alpha=0.5" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 0.5);
+    const log2 = @log(@as(f64, 2.0));
+    try testing.expectApproxEqAbs(-log2, dist.mode(), 1e-10);
+}
+
+test "GeneralizedLogistic: mode is finite" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expect(math.isFinite(dist.mode()));
+}
+
+// --- entropy tests ---
+
+test "GeneralizedLogistic: entropy alpha=1" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), dist.entropy(), 1e-10);
+}
+
+test "GeneralizedLogistic: entropy is finite" {
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 2.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "GeneralizedLogistic: entropy scales with log(s)" {
+    const dist1 = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const dist2 = try GeneralizedLogistic(f64).init(0.0, 2.0, 1.0);
+    const log2 = @log(@as(f64, 2.0));
+    const expected_diff = log2;
+    try testing.expectApproxEqAbs(expected_diff, dist2.entropy() - dist1.entropy(), 1e-10);
+}
+
+// --- sample tests ---
+
+test "GeneralizedLogistic: sample is finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "GeneralizedLogistic: sample mean approaches theoretical" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.05);
+}
+
+test "GeneralizedLogistic: sample is non-deterministic" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try GeneralizedLogistic(f64).init(0.0, 1.0, 1.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+// --- f32 variant tests ---
+
+test "GeneralizedLogistic: f32 init succeeds" {
+    const dist = try GeneralizedLogistic(f32).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f32, 0.0), dist.mu);
+}
+
+test "GeneralizedLogistic: f32 pdf is positive" {
+    const dist = try GeneralizedLogistic(f32).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+}
+
+test "GeneralizedLogistic: f32 cdf in [0,1]" {
+    const dist = try GeneralizedLogistic(f32).init(0.0, 1.0, 1.0);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expect(cdf_val >= 0.0 and cdf_val <= 1.0);
+}
+
+test "GeneralizedLogistic: f32 mean is finite" {
+    const dist = try GeneralizedLogistic(f32).init(0.0, 1.0, 2.0);
+    try testing.expect(math.isFinite(dist.mean()));
 }
