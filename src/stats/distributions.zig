@@ -21873,3 +21873,528 @@ test "GeneralizedLogistic: f32 mean is finite" {
     const dist = try GeneralizedLogistic(f32).init(0.0, 1.0, 2.0);
     try testing.expect(math.isFinite(dist.mean()));
 }
+
+// ============================================================================
+// Slash Distribution
+// ============================================================================
+pub fn Slash(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        // Standard normal PDF: φ(z) = exp(-z²/2) / √(2π)
+        fn phi(z: T) T {
+            return @exp(-z * z / 2.0) / @sqrt(2.0 * math.pi);
+        }
+
+        // Standard normal CDF: Φ(z) = 0.5*(1 + erf(z/√2))
+        fn Phi(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        // phi(0) constant: 1/√(2π)
+        fn phi0val() T {
+            return 1.0 / @sqrt(@as(T, 2.0) * math.pi);
+        }
+
+        // --- Lifecycle ---
+
+        /// Initialize Slash distribution with location mu and scale sigma > 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Assert all parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return error.InvalidParameter;
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Log-probability density function.
+        /// For z=(x-μ)/σ ≠ 0: log φ₀ + log(-expm1(-z²/2)) - log σ - 2 log|z|
+        /// For z=0: log φ₀ - log 2 - log σ
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const p0 = phi0val();
+            if (z == 0.0) {
+                return @log(p0) - @log(@as(T, 2.0)) - @log(self.sigma);
+            }
+            // (1 - exp(-z²/2)) = -expm1(-z²/2), numerically stable for small z
+            const one_minus_exp = -math.expm1(-z * z / 2.0);
+            if (one_minus_exp <= 0.0) return -math.inf(T);
+            return @log(p0) + @log(one_minus_exp) - @log(self.sigma) - 2.0 * @log(@abs(z));
+        }
+
+        /// Probability density function.
+        /// f(x) = φ₀·(1−exp(−z²/2))/(σ·z²) for z≠0; φ₀/(2σ) for z=0
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logpdf(x));
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = Φ(z) + φ₀·expm1(−z²/2)/z for z≠0; 0.5 for z=0
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const p0 = phi0val();
+            if (z == 0.0) return 0.5;
+            return Phi(z) + p0 * math.expm1(-z * z / 2.0) / z;
+        }
+
+        /// Survival function: 1 - CDF(x).
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) via bisection search.
+        /// Returns NaN for p outside [0,1]; -∞ for p=0; +∞ for p=1.
+        /// Time: O(100) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            var lo: T = self.mu - 100.0 * self.sigma;
+            var hi: T = self.mu + 100.0 * self.sigma;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-12 * (1.0 + @abs(mid))) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // --- Moments ---
+
+        /// Mean: undefined (NaN) — no finite moments exist.
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Variance: undefined (NaN) — no finite moments exist.
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Mode: μ (PDF maximum is at x = μ).
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        // --- Entropy ---
+
+        /// Entropy via 2000-panel composite Simpson's rule over [−40σ, 40σ].
+        /// H(Slash(μ,σ)) = H_std + log(σ)
+        /// Time: O(2000) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n_panels: usize = 2000;
+            const x_lo: T = -40.0;
+            const x_hi: T = 40.0;
+            const h_val: T = (x_hi - x_lo) / @as(T, @floatFromInt(n_panels));
+            const p0 = phi0val();
+            // Compute standard slash entropy (sigma=1, mu=0)
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n_panels) : (i += 1) {
+                const z = x_lo + @as(T, @floatFromInt(i)) * h_val;
+                // f_std(z) and -log(f_std(z))
+                const lp: T = blk: {
+                    if (z == 0.0) break :blk @log(p0) - @log(@as(T, 2.0));
+                    const one_minus_exp = -math.expm1(-z * z / 2.0);
+                    if (one_minus_exp <= 0.0) break :blk -math.inf(T);
+                    break :blk @log(p0) + @log(one_minus_exp) - 2.0 * @log(@abs(z));
+                };
+                const f_std: T = @exp(lp);
+                // -f * log(f) contribution (0 when f=0)
+                const contrib: T = if (f_std <= 0.0 or !math.isFinite(lp)) 0.0 else -f_std * lp;
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            const h_std = sum * h_val / 3.0;
+            return h_std + @log(self.sigma);
+        }
+
+        // --- Sampling ---
+
+        /// Sample via Z/U where Z~N(0,1) (Box-Muller) and U~Uniform(0,1).
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Box-Muller for Z ~ N(0,1)
+            const rand1 = @max(rng.float(T), math.floatEps(T));
+            const rand2 = rng.float(T);
+            const z_normal = @sqrt(-2.0 * @log(rand1)) * @cos(2.0 * math.pi * rand2);
+            // U ~ Uniform(0,1), avoid 0
+            const u = @max(rng.float(T), math.floatEps(T));
+            return self.mu + self.sigma * z_normal / u;
+        }
+    };
+}
+
+// ============================================================================
+// Slash(μ, σ) Distribution Tests
+// ============================================================================
+//
+// Slash(μ, σ): μ (location, real), σ > 0 (scale)
+// Support: (-∞, +∞); defined as μ + σ·Z/U, Z~N(0,1), U~Uniform(0,1)
+// Heavy-tailed (heavier than Cauchy); NO finite moments
+//
+
+// --- init tests ---
+
+test "Slash: init with mu=0, sigma=1" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "Slash: init with mu=2, sigma=3" {
+    const dist = try Slash(f64).init(2.0, 3.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.mu);
+    try testing.expectEqual(@as(f64, 3.0), dist.sigma);
+}
+
+test "Slash: init with mu=-1, sigma=0.5" {
+    const dist = try Slash(f64).init(-1.0, 0.5);
+    try testing.expectEqual(@as(f64, -1.0), dist.mu);
+    try testing.expectEqual(@as(f64, 0.5), dist.sigma);
+}
+
+test "Slash: init fails when sigma=0" {
+    const result = Slash(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Slash: init fails when sigma is negative" {
+    const result = Slash(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Slash: init fails when sigma is infinite" {
+    const result = Slash(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Slash: init fails when mu is NaN" {
+    const result = Slash(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- pdf tests ---
+
+test "Slash: pdf at mode (x=mu) for Slash(0,1)" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const phi0 = 1.0 / math.sqrt(2.0 * math.pi);
+    const expected = phi0 / 2.0; // ≈ 0.19947114
+    const pdf_val = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-6);
+}
+
+test "Slash: pdf at x=1 for Slash(0,1)" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const expected = 0.15697155; // hardcoded
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-6);
+}
+
+test "Slash: pdf at x=-1 for Slash(0,1) is symmetric" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const pdf_pos = dist.pdf(1.0);
+    const pdf_neg = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(pdf_pos, pdf_neg, 1e-10);
+}
+
+test "Slash: pdf is positive for all finite x" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const test_points = [_]f64{ -5.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (test_points) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "Slash: pdf(mu) for Slash(2,3) equals phi0/(2*3)" {
+    const dist = try Slash(f64).init(2.0, 3.0);
+    const phi0 = 1.0 / math.sqrt(2.0 * math.pi);
+    const expected = phi0 / (2.0 * 3.0); // ≈ 0.06649038
+    const pdf_val = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-6);
+}
+
+test "Slash: pdf decays away from mode" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const pdf_at_mu = dist.pdf(0.0);
+    const pdf_at_1 = dist.pdf(1.0);
+    const pdf_at_2 = dist.pdf(2.0);
+    try testing.expect(pdf_at_mu > pdf_at_1);
+    try testing.expect(pdf_at_1 > pdf_at_2);
+}
+
+test "Slash: logpdf at x=mu returns log(phi0/(2*sigma))" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const phi0 = 1.0 / math.sqrt(2.0 * math.pi);
+    const expected = @log(phi0 / 2.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expectApproxEqAbs(expected, logpdf_val, 1e-10);
+}
+
+test "Slash: logpdf(x=1, Slash(0,1)) equals log(pdf(1))" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected_logpdf = @log(pdf_val);
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+// --- cdf tests ---
+
+test "Slash: cdf at mode (x=mu) is exactly 0.5" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, cdf_val, 1e-10);
+}
+
+test "Slash: cdf at mode for Slash(2,3) is exactly 0.5" {
+    const dist = try Slash(f64).init(2.0, 3.0);
+    const cdf_val = dist.cdf(2.0);
+    try testing.expectApproxEqAbs(0.5, cdf_val, 1e-10);
+}
+
+test "Slash: cdf(1) for Slash(0,1)" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const expected = 0.68437320; // hardcoded
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-6);
+}
+
+test "Slash: cdf(-1) for Slash(0,1)" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const expected = 0.31562680; // hardcoded
+    const cdf_val = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-6);
+}
+
+test "Slash: cdf symmetry for Slash(0,1): cdf(-x) + cdf(x) ≈ 1" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const cdf_neg_1 = dist.cdf(-1.0);
+    const cdf_pos_1 = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, cdf_neg_1 + cdf_pos_1, 1e-10);
+}
+
+test "Slash: cdf is monotone increasing" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const cdf_minus_1 = dist.cdf(-1.0);
+    const cdf_0 = dist.cdf(0.0);
+    const cdf_plus_1 = dist.cdf(1.0);
+    try testing.expect(cdf_minus_1 < cdf_0);
+    try testing.expect(cdf_0 < cdf_plus_1);
+}
+
+test "Slash: cdf approaches 1 for large positive x" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const cdf_large = dist.cdf(100.0);
+    try testing.expect(cdf_large > 0.99);
+}
+
+test "Slash: cdf approaches 0 for large negative x" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const cdf_small = dist.cdf(-100.0);
+    try testing.expect(cdf_small < 0.01);
+}
+
+test "Slash: cdf + sf = 1" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const cdf_val = dist.cdf(0.7);
+    const sf_val = dist.sf(0.7);
+    try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-10);
+}
+
+// --- quantile tests ---
+
+test "Slash: quantile(0.5) = 0 for Slash(0,1)" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-8);
+}
+
+test "Slash: quantile(0.5) = mu for Slash(mu, sigma)" {
+    const dist = try Slash(f64).init(3.0, 2.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqAbs(3.0, q, 1e-8);
+}
+
+test "Slash: quantile(NaN) returns NaN" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(math.nan(f64));
+    try testing.expect(math.isNan(q));
+}
+
+test "Slash: quantile(-0.1) returns NaN" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "Slash: quantile(1.1) returns NaN" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "Slash: quantile(0) returns -inf" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "Slash: quantile(1) returns +inf" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "Slash: quantile is inverse of cdf at p=0.7" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const q = dist.quantile(0.7);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.7, cdf_q, 1e-6);
+}
+
+// --- mean/variance tests ---
+
+test "Slash: mean() returns NaN" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "Slash: variance() returns NaN" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "Slash: mode() returns mu for Slash(0,1)" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode_val, 1e-10);
+}
+
+test "Slash: mode() returns mu for Slash(2,3)" {
+    const dist = try Slash(f64).init(2.0, 3.0);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(2.0, mode_val, 1e-10);
+}
+
+// --- entropy tests ---
+
+test "Slash: entropy is finite and positive" {
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const entropy_val = dist.entropy();
+    try testing.expect(entropy_val > 0.0);
+    try testing.expect(math.isFinite(entropy_val));
+}
+
+test "Slash: entropy scales with sigma: entropy(0,2) > entropy(0,1)" {
+    const dist1 = try Slash(f64).init(0.0, 1.0);
+    const dist2 = try Slash(f64).init(0.0, 2.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try testing.expect(ent2 > ent1);
+}
+
+test "Slash: entropy difference is approximately log(2) when sigma doubles" {
+    const dist1 = try Slash(f64).init(0.0, 1.0);
+    const dist2 = try Slash(f64).init(0.0, 2.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    const log_2 = @log(2.0);
+    const diff = ent2 - ent1;
+    try testing.expectApproxEqAbs(log_2, diff, 1e-4);
+}
+
+test "Slash: entropy is location-invariant" {
+    const dist1 = try Slash(f64).init(3.0, 1.0);
+    const dist2 = try Slash(f64).init(-3.0, 1.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try testing.expectApproxEqAbs(ent1, ent2, 1e-10);
+}
+
+// --- sample tests ---
+
+test "Slash: sample returns a finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const sample_val = dist.sample(rng.random());
+    try testing.expect(math.isFinite(sample_val));
+}
+
+test "Slash: sample(Slash(mu, sigma)) has mode near mu over 1000 samples" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Slash(f64).init(5.0, 1.0);
+    var sum: f64 = 0.0;
+    var count: i32 = 0;
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        if (math.isFinite(s)) {
+            sum += s;
+            count += 1;
+        }
+    }
+    const mean_sample = sum / @as(f64, @floatFromInt(count));
+    try testing.expect(count >= 900); // at least 900 finite samples
+    try testing.expect(math.isFinite(mean_sample));
+}
+
+test "Slash: two consecutive samples differ" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try Slash(f64).init(0.0, 1.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+// --- validate tests ---
+
+test "Slash: validate() succeeds for valid parameters" {
+    var dist = try Slash(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Slash: validate() fails after manually setting sigma to 0" {
+    var dist = try Slash(f64).init(0.0, 1.0);
+    dist.sigma = 0.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Slash: validate() fails after manually setting sigma to negative" {
+    var dist = try Slash(f64).init(0.0, 1.0);
+    dist.sigma = -1.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
