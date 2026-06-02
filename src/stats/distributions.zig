@@ -20660,3 +20660,701 @@ test "InverseGaussian: pdf has interior maximum near mu" {
     try testing.expect(pdf_at_mode >= pdf_slightly_before);
     try testing.expect(pdf_at_mode >= pdf_slightly_after);
 }
+
+// ============================================================================
+// Birnbaum-Saunders (Fatigue Life) Distribution
+// ============================================================================
+
+/// Birnbaum-Saunders distribution BS(α, β)
+///
+/// Fatigue life distribution: models time to failure due to crack propagation.
+/// If X ~ BS(α, β), then ζ(X) = (1/α)(√(X/β) - √(β/X)) ~ N(0,1).
+///
+/// Parameters:
+///   - alpha (α > 0): shape parameter (coefficient of variation)
+///   - beta (β > 0): scale parameter (median of distribution)
+///
+/// Support: (0, ∞)
+/// Mean: β(1 + α²/2) | Variance: (αβ)²(1 + 5α²/4)
+pub fn BirnbaumSaunders(comptime T: type) type {
+    return struct {
+        alpha: T, // shape parameter (α > 0)
+        beta: T,  // scale parameter (β > 0), also the median
+
+        const Self = @This();
+
+        // ---- Private helpers ----
+
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        fn normalPdf(z: T) T {
+            return @exp(-z * z / 2.0) / @sqrt(2.0 * math.pi);
+        }
+
+        fn zeta(self: Self, x: T) T {
+            return (1.0 / self.alpha) * (@sqrt(x / self.beta) - @sqrt(self.beta / x));
+        }
+
+        fn zetaPrime(self: Self, x: T) T {
+            return (x + self.beta) / (2.0 * self.alpha * x * @sqrt(x) * @sqrt(self.beta));
+        }
+
+        fn tFunc(self: Self, z: T) T {
+            const az = self.alpha * z;
+            return (az + @sqrt(az * az + 4.0)) / 2.0;
+        }
+
+        // ---- Lifecycle ----
+
+        /// Create a Birnbaum-Saunders distribution with shape α (α > 0) and scale β (β > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta: T) DistributionError!Self {
+            if (alpha <= 0.0) return error.InvalidParameter;
+            if (beta <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(alpha) or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta = beta };
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0) return error.InvalidParameter;
+            if (self.beta <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha) or !math.isFinite(self.beta)) return error.InvalidParameter;
+        }
+
+        // ---- PDF / LogPDF ----
+
+        /// Log probability density function at x
+        ///
+        /// log f(x) = log(φ(ζ(x))) + log(ζ'(x)) = -ζ²(x)/2 - log(2π)/2 + log(ζ'(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const z = self.zeta(x);
+            const zp = self.zetaPrime(x);
+            return -z * z / 2.0 - @log(2.0 * math.pi) / 2.0 + @log(zp);
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = φ(ζ(x))·ζ'(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        // ---- CDF / SF ----
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// CDF(x) = Φ(ζ(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const z = self.zeta(x);
+            return normalCdf(z);
+        }
+
+        /// Survival function: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // ---- Quantile ----
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search on normalCdf to find Φ⁻¹(p), then inverts t formula.
+        /// Returns NaN for p < 0 or p > 1.
+        ///
+        /// Time: O(100 × O(1)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Bisection search for z such that normalCdf(z) = p
+            var lo: T = -10.0;
+            var hi: T = 10.0;
+            var iter: usize = 0;
+            var z: T = 0.0;
+
+            while (iter < 100) : (iter += 1) {
+                z = (lo + hi) / 2.0;
+                if (hi - lo < 1e-12 * (1.0 + @abs(z))) break;
+                const cdf_z = normalCdf(z);
+                if (cdf_z < p) {
+                    lo = z;
+                } else {
+                    hi = z;
+                }
+            }
+
+            // Compute t from z: t = (αz + √(α²z²+4))/2
+            const t = self.tFunc(z);
+            return self.beta * t * t;
+        }
+
+        // ---- Moments ----
+
+        /// Mean: E[X] = β(1 + α²/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.beta * (1.0 + self.alpha * self.alpha / 2.0);
+        }
+
+        /// Variance: Var[X] = (αβ)²(1 + 5α²/4)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ab = self.alpha * self.beta;
+            return ab * ab * (1.0 + 5.0 * self.alpha * self.alpha / 4.0);
+        }
+
+        /// Median: always exactly β (since ζ(β)=0 → CDF(β)=Φ(0)=0.5)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.beta;
+        }
+
+        /// Mode of the distribution (golden-section search)
+        ///
+        /// Mode is always < β for all positive α, β.
+        ///
+        /// Time: O(100 iterations) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const phi_ratio = (1.0 + @sqrt(@as(T, 5.0))) / 2.0; // golden ratio
+            var lo: T = 1e-10;
+            var hi: T = self.beta;
+            var a = lo + (hi - lo) / (phi_ratio + 1.0);
+            var b = hi - (hi - lo) / (phi_ratio + 1.0);
+            var iter: usize = 0;
+
+            while (iter < 100) : (iter += 1) {
+                if (hi - lo < 1e-12 * (1.0 + lo)) break;
+                if (self.logpdf(a) < self.logpdf(b)) {
+                    lo = a;
+                } else {
+                    hi = b;
+                }
+                a = lo + (hi - lo) / (phi_ratio + 1.0);
+                b = hi - (hi - lo) / (phi_ratio + 1.0);
+            }
+
+            return (lo + hi) / 2.0;
+        }
+
+        /// Entropy: log(2αβ) + 0.5(1 + log(2π)) + ∫_{-6}^{6} φ(z)[3·log(t) - log(t²+1)] dz
+        ///
+        /// Computed via 200-panel composite Simpson's rule.
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n_panels: usize = 200;
+            const z_lo: T = -6.0;
+            const z_hi: T = 6.0;
+            const h_val: T = (z_hi - z_lo) / @as(T, @floatFromInt(n_panels));
+
+            var sum: T = 0.0;
+            var i: usize = 0;
+
+            while (i <= n_panels) : (i += 1) {
+                const z = z_lo + @as(T, @floatFromInt(i)) * h_val;
+                const t = self.tFunc(z);
+                const g_z = 3.0 * @log(t) - @log(t * t + 1.0);
+                const phi_z = normalPdf(z);
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * phi_z * g_z;
+            }
+
+            const integral = sum * h_val / 3.0;
+            return @log(2.0 * self.alpha * self.beta) + 0.5 * (1.0 + @log(2.0 * math.pi)) + integral;
+        }
+
+        // ---- Sampling ----
+
+        /// Generate a random sample using inverse transform via Box-Muller
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Step 1: z ~ N(0,1) via Box-Muller
+            const ur1 = rng.float(T);
+            const ur2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
+
+            // Step 2: compute t = (αz + √(α²z²+4))/2
+            const t = self.tFunc(z);
+
+            // Step 3: return X = β·t²
+            return self.beta * t * t;
+        }
+    };
+}
+
+// ============================================================================
+// Birnbaum-Saunders (Fatigue Life) Distribution Tests
+// ============================================================================
+//
+// BirnbaumSaunders(α, β): α > 0 (shape), β > 0 (scale/median)
+// Support: (0, ∞)
+//
+// Key transform: ζ(x) = (1/α)(√(x/β) - √(β/x)) ~ N(0,1)
+// PDF: f(x) = φ(ζ(x))·ζ'(x) where ζ'(x) = (x+β)/(2α·x^(3/2)·√β)
+// CDF: Φ(ζ(x)) — exact closed form via normal CDF
+// Mean: β(1 + α²/2)
+// Variance: (αβ)²(1 + 5α²/4)
+// Median: β (always — since ζ(β)=0)
+// Mode: golden-section search; mode < β always
+// Entropy: scale property entropy(α, cβ) = entropy(α, β) + log(c)
+// Sample: Z~N(0,1) → t=(αZ+√(α²Z²+4))/2 → X=β·t²
+
+test "BirnbaumSaunders: init with valid alpha=1, beta=1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 1.0), dist.beta);
+}
+
+test "BirnbaumSaunders: init with alpha=0.5, beta=4" {
+    const dist = try BirnbaumSaunders(f64).init(0.5, 4.0);
+    try testing.expectEqual(@as(f64, 0.5), dist.alpha);
+    try testing.expectEqual(@as(f64, 4.0), dist.beta);
+}
+
+test "BirnbaumSaunders: init with alpha=2, beta=3" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 3.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 3.0), dist.beta);
+}
+
+test "BirnbaumSaunders: init fails for alpha <= 0" {
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(0.0, 1.0));
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(-0.5, 1.0));
+}
+
+test "BirnbaumSaunders: init fails for beta <= 0" {
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(1.0, 0.0));
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(1.0, -2.0));
+}
+
+test "BirnbaumSaunders: init fails for alpha=inf" {
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(math.inf(f64), 1.0));
+}
+
+test "BirnbaumSaunders: init fails for beta=inf" {
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(1.0, math.inf(f64)));
+}
+
+test "BirnbaumSaunders: init fails for alpha=NaN" {
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(math.nan(f64), 1.0));
+}
+
+test "BirnbaumSaunders: init fails for beta=NaN" {
+    try testing.expectError(error.InvalidParameter, BirnbaumSaunders(f64).init(1.0, math.nan(f64)));
+}
+
+test "BirnbaumSaunders: validate succeeds for valid parameters" {
+    const dist = BirnbaumSaunders(f64){ .alpha = 1.5, .beta = 2.0 };
+    try dist.validate();
+}
+
+test "BirnbaumSaunders: validate fails for alpha <= 0" {
+    const dist = BirnbaumSaunders(f64){ .alpha = 0.0, .beta = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BirnbaumSaunders: validate fails for beta <= 0" {
+    const dist = BirnbaumSaunders(f64){ .alpha = 1.0, .beta = -0.5 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BirnbaumSaunders: pdf is zero for x <= 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "BirnbaumSaunders: pdf is positive for x > 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+}
+
+test "BirnbaumSaunders: pdf at beta equals 1/(alpha*beta*sqrt(2pi)) for alpha=1, beta=1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const expected = 1.0 / math.sqrt(2.0 * math.pi);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-8);
+}
+
+test "BirnbaumSaunders: pdf at beta equals 1/(alpha*beta*sqrt(2pi)) for alpha=2, beta=3" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 3.0);
+    const expected = 1.0 / (2.0 * 3.0 * math.sqrt(2.0 * math.pi));
+    const pdf_val = dist.pdf(3.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-8);
+}
+
+test "BirnbaumSaunders: pdf is unimodal" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 2.0);
+    const mode_x = dist.mode();
+    const pdf_at_mode = dist.pdf(mode_x);
+    const pdf_left = dist.pdf(mode_x - 0.1);
+    const pdf_right = dist.pdf(mode_x + 0.1);
+    try testing.expect(pdf_at_mode >= pdf_left);
+    try testing.expect(pdf_at_mode >= pdf_right);
+}
+
+test "BirnbaumSaunders: logpdf is -inf for x <= 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+}
+
+test "BirnbaumSaunders: logpdf is finite for x > 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expect(!math.isInf(logpdf_val) and !math.isNan(logpdf_val));
+}
+
+test "BirnbaumSaunders: logpdf equals log(pdf)" {
+    const dist = try BirnbaumSaunders(f64).init(1.5, 2.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqRel(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "BirnbaumSaunders: logpdf at beta equals -0.5*log(2pi) - log(alpha*beta)" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const expected = -0.5 * @log(2.0 * math.pi) - @log(1.0 * 1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-10);
+}
+
+test "BirnbaumSaunders: cdf is zero for x <= 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "BirnbaumSaunders: cdf is monotone increasing" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const cdf_0_5 = dist.cdf(0.5);
+    const cdf_1_0 = dist.cdf(1.0);
+    const cdf_2_0 = dist.cdf(2.0);
+    try testing.expect(cdf_0_5 <= cdf_1_0);
+    try testing.expect(cdf_1_0 <= cdf_2_0);
+}
+
+test "BirnbaumSaunders: cdf approaches 1 for large x" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const cdf_large = dist.cdf(1000.0);
+    try testing.expect(cdf_large > 0.9999);
+}
+
+test "BirnbaumSaunders: cdf in [0, 1] for all valid x" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        const cdf_val = dist.cdf(x);
+        try testing.expect(cdf_val >= 0.0);
+        try testing.expect(cdf_val <= 1.0);
+    }
+}
+
+test "BirnbaumSaunders: cdf(beta) = 0.5 always for alpha=1, beta=1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const cdf_at_beta = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.5, cdf_at_beta, 1e-8);
+}
+
+test "BirnbaumSaunders: cdf(beta) = 0.5 always for alpha=0.5, beta=4" {
+    const dist = try BirnbaumSaunders(f64).init(0.5, 4.0);
+    const cdf_at_beta = dist.cdf(4.0);
+    try testing.expectApproxEqAbs(0.5, cdf_at_beta, 1e-8);
+}
+
+test "BirnbaumSaunders: cdf(beta) = 0.5 always for alpha=2, beta=3" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 3.0);
+    const cdf_at_beta = dist.cdf(3.0);
+    try testing.expectApproxEqAbs(0.5, cdf_at_beta, 1e-8);
+}
+
+test "BirnbaumSaunders: sf(x) = 1 - cdf(x)" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const x = 1.5;
+    const sf_val = dist.sf(x);
+    const cdf_val = dist.cdf(x);
+    try testing.expectApproxEqRel(1.0 - cdf_val, sf_val, 1e-10);
+}
+
+test "BirnbaumSaunders: sf(0) = 1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(1.0, dist.sf(0.0), 1e-10);
+}
+
+test "BirnbaumSaunders: sf is monotone decreasing" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const sf_0_5 = dist.sf(0.5);
+    const sf_1_0 = dist.sf(1.0);
+    const sf_2_0 = dist.sf(2.0);
+    try testing.expect(sf_0_5 >= sf_1_0);
+    try testing.expect(sf_1_0 >= sf_2_0);
+}
+
+test "BirnbaumSaunders: quantile(0) = 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "BirnbaumSaunders: quantile(1) = inf" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q));
+}
+
+test "BirnbaumSaunders: quantile returns NaN for p < 0" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const q = dist.quantile(-0.5);
+    try testing.expect(math.isNan(q));
+}
+
+test "BirnbaumSaunders: quantile returns NaN for p > 1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.5);
+    try testing.expect(math.isNan(q));
+}
+
+test "BirnbaumSaunders: quantile(0.5) = beta always for alpha=1, beta=1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(1.0, q, 1e-8);
+}
+
+test "BirnbaumSaunders: quantile(0.5) = beta always for alpha=2, beta=3" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 3.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(3.0, q, 1e-8);
+}
+
+test "BirnbaumSaunders: quantile is monotone increasing" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const q_0_25 = dist.quantile(0.25);
+    const q_0_50 = dist.quantile(0.50);
+    const q_0_75 = dist.quantile(0.75);
+    try testing.expect(q_0_25 <= q_0_50);
+    try testing.expect(q_0_50 <= q_0_75);
+}
+
+test "BirnbaumSaunders: quantile-cdf parity for alpha=1, beta=1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const p = 0.6;
+    const q = dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "BirnbaumSaunders: quantile-cdf parity for alpha=1.5, beta=2.5" {
+    const dist = try BirnbaumSaunders(f64).init(1.5, 2.5);
+    const p = 0.7;
+    const q = dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "BirnbaumSaunders: quantile-cdf parity multiple p values" {
+    const dist = try BirnbaumSaunders(f64).init(0.8, 1.5);
+    const p_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_vals) |p| {
+        const q = dist.quantile(p);
+        const cdf_val = dist.cdf(q);
+        try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+    }
+}
+
+test "BirnbaumSaunders: mean for alpha=1, beta=1 is 1.5" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqRel(1.5, m, 1e-8);
+}
+
+test "BirnbaumSaunders: mean for alpha=2, beta=1 is 3.0" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqRel(3.0, m, 1e-8);
+}
+
+test "BirnbaumSaunders: mean for alpha=0.5, beta=4 is 4.5" {
+    const dist = try BirnbaumSaunders(f64).init(0.5, 4.0);
+    const m = dist.mean();
+    try testing.expectApproxEqRel(4.5, m, 1e-8);
+}
+
+test "BirnbaumSaunders: mean is always > beta" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expect(dist.mean() > dist.beta);
+}
+
+test "BirnbaumSaunders: mean is positive and finite" {
+    const dist = try BirnbaumSaunders(f64).init(1.5, 2.0);
+    const m = dist.mean();
+    try testing.expect(m > 0.0);
+    try testing.expect(!math.isInf(m));
+    try testing.expect(!math.isNan(m));
+}
+
+test "BirnbaumSaunders: variance for alpha=1, beta=1 is 2.25" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqRel(2.25, v, 1e-8);
+}
+
+test "BirnbaumSaunders: variance for alpha=2, beta=1 is 24.0" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqRel(24.0, v, 1e-8);
+}
+
+test "BirnbaumSaunders: variance is always positive" {
+    const dist = try BirnbaumSaunders(f64).init(1.5, 2.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "BirnbaumSaunders: variance is finite" {
+    const dist = try BirnbaumSaunders(f64).init(0.5, 0.5);
+    const v = dist.variance();
+    try testing.expect(!math.isInf(v));
+    try testing.expect(!math.isNan(v));
+}
+
+test "BirnbaumSaunders: median equals beta always for alpha=1, beta=1" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const med = dist.median();
+    try testing.expectEqual(dist.beta, med);
+}
+
+test "BirnbaumSaunders: median equals beta always for alpha=0.5, beta=4" {
+    const dist = try BirnbaumSaunders(f64).init(0.5, 4.0);
+    const med = dist.median();
+    try testing.expectEqual(dist.beta, med);
+}
+
+test "BirnbaumSaunders: median equals beta always for alpha=2, beta=3" {
+    const dist = try BirnbaumSaunders(f64).init(2.0, 3.0);
+    const med = dist.median();
+    try testing.expectEqual(dist.beta, med);
+}
+
+test "BirnbaumSaunders: mode is less than beta" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expect(mode < dist.beta);
+}
+
+test "BirnbaumSaunders: mode is positive" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expect(dist.mode() > 0.0);
+}
+
+test "BirnbaumSaunders: mode is less than mean" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    try testing.expect(dist.mode() < dist.mean());
+}
+
+test "BirnbaumSaunders: mode is finite" {
+    const dist = try BirnbaumSaunders(f64).init(1.5, 2.0);
+    const m = dist.mode();
+    try testing.expect(!math.isInf(m));
+    try testing.expect(!math.isNan(m));
+}
+
+test "BirnbaumSaunders: entropy is positive and finite" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(h > 0.0);
+    try testing.expect(!math.isInf(h));
+    try testing.expect(!math.isNan(h));
+}
+
+test "BirnbaumSaunders: entropy satisfies scale property entropy(alpha, c*beta) = entropy(alpha, beta) + log(c)" {
+    const dist1 = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const dist2 = try BirnbaumSaunders(f64).init(1.0, 2.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    const expected_h2 = h1 + @log(2.0);
+    try testing.expectApproxEqRel(expected_h2, h2, 1e-6);
+}
+
+test "BirnbaumSaunders: sample returns positive values" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+    }
+}
+
+test "BirnbaumSaunders: sample returns finite values" {
+    const dist = try BirnbaumSaunders(f64).init(1.5, 2.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(!math.isInf(s));
+        try testing.expect(!math.isNan(s));
+    }
+}
+
+test "BirnbaumSaunders: sample mean approaches theoretical mean for large N" {
+    const dist = try BirnbaumSaunders(f64).init(1.0, 1.0);
+    const theoretical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(999);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqRel(theoretical_mean, sample_mean, 0.02);
+}
+
+test "BirnbaumSaunders: f32 init succeeds" {
+    const dist = try BirnbaumSaunders(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.alpha);
+}
+
+test "BirnbaumSaunders: f32 pdf is positive" {
+    const dist = try BirnbaumSaunders(f32).init(1.0, 1.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+}
+
+test "BirnbaumSaunders: f32 cdf in [0,1]" {
+    const dist = try BirnbaumSaunders(f32).init(1.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expect(cdf_val >= 0.0);
+    try testing.expect(cdf_val <= 1.0);
+}
+
+test "BirnbaumSaunders: f32 mean is positive" {
+    const dist = try BirnbaumSaunders(f32).init(1.0, 1.0);
+    try testing.expect(dist.mean() > 0.0);
+}
+
+test "BirnbaumSaunders: f32 median equals beta" {
+    const dist = try BirnbaumSaunders(f32).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(dist.beta, dist.median(), 1e-5);
+}
