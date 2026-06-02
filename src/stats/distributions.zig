@@ -22398,3 +22398,761 @@ test "Slash: validate() fails after manually setting sigma to negative" {
     const result = dist.validate();
     try testing.expectError(error.InvalidParameter, result);
 }
+
+// ============================================================================
+// Fréchet Distribution
+// ============================================================================
+//
+// Fréchet(α, s, m): α > 0 (shape), s > 0 (scale), m (location)
+// Support: x > m; defined as the Type II extreme value distribution
+// Named after Maurice Fréchet; used in extreme value theory, actuarial science
+//
+
+pub fn Frechet(comptime T: type) type {
+    return struct {
+        alpha: T,
+        s: T,
+        m: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize Fréchet distribution with shape alpha > 0, scale s > 0, and location m.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, s: T, m: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (s <= 0.0 or !math.isFinite(s)) return error.InvalidParameter;
+            if (!math.isFinite(m)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .s = s, .m = m };
+        }
+
+        /// Assert all parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.s <= 0.0 or !math.isFinite(self.s)) return error.InvalidParameter;
+            if (!math.isFinite(self.m)) return error.InvalidParameter;
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Log-probability density function.
+        /// For x ≤ m: returns -∞
+        /// For x > m: log(α) - log(s) - (α+1)·log(z) - z^(-α), where z=(x-m)/s
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.m) return -math.inf(T);
+            const z = (x - self.m) / self.s;
+            const z_neg_alpha = math.pow(T, z, -self.alpha);
+            return @log(self.alpha) - @log(self.s) - (self.alpha + 1.0) * @log(z) - z_neg_alpha;
+        }
+
+        /// Probability density function.
+        /// f(x) = (α/s)·((x-m)/s)^(-α-1)·exp(-((x-m)/s)^(-α)) for x > m; 0 for x ≤ m
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logpdf(x));
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = exp(-((x-m)/s)^(-α)) for x > m; 0 for x ≤ m
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.m) return 0.0;
+            const z = (x - self.m) / self.s;
+            const z_neg_alpha = math.pow(T, z, -self.alpha);
+            return @exp(-z_neg_alpha);
+        }
+
+        /// Survival function: 1 - CDF(x).
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF).
+        /// Q(p) = m + s·(-log(p))^(-1/α)
+        /// Returns NaN for p outside [0,1]; m for p=0; +∞ for p=1.
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return self.m;
+            if (p == 1.0) return math.inf(T);
+            const neg_log_p = -@log(p);
+            const neg_one_over_alpha = -1.0 / self.alpha;
+            return self.m + self.s * math.pow(T, neg_log_p, neg_one_over_alpha);
+        }
+
+        // --- Moments ---
+
+        /// Mean: m + s·Γ(1-1/α) for α > 1; NaN otherwise.
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.alpha <= 1.0) return math.nan(T);
+            const gamma_arg = 1.0 - 1.0 / self.alpha;
+            const gamma_val = @exp(logGamma(gamma_arg));
+            return self.m + self.s * gamma_val;
+        }
+
+        /// Variance: s²·(Γ(1-2/α) - Γ(1-1/α)²) for α > 2; NaN otherwise.
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.alpha <= 2.0) return math.nan(T);
+            const g1_arg = 1.0 - 1.0 / self.alpha;
+            const g2_arg = 1.0 - 2.0 / self.alpha;
+            const g1 = @exp(logGamma(g1_arg));
+            const g2 = @exp(logGamma(g2_arg));
+            return self.s * self.s * (g2 - g1 * g1);
+        }
+
+        /// Mode: m + s·(α/(α+1))^(1/α)
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const ratio = self.alpha / (self.alpha + 1.0);
+            const one_over_alpha = 1.0 / self.alpha;
+            return self.m + self.s * math.pow(T, ratio, one_over_alpha);
+        }
+
+        // --- Entropy ---
+
+        /// Entropy: 1 + γ·(1+1/α) + log(s/α), γ≈0.5772156649
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const euler_gamma: T = 0.5772156649015329;
+            return 1.0 + euler_gamma * (1.0 + 1.0 / self.alpha) + @log(self.s / self.alpha);
+        }
+
+        // --- Sampling ---
+
+        /// Sample via X = m + s·(-log(U))^(-1/α), U ~ Uniform(0,1).
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = @max(rng.float(T), math.floatEps(T));
+            const neg_log_u = -@log(u);
+            const neg_one_over_alpha = -1.0 / self.alpha;
+            return self.m + self.s * math.pow(T, neg_log_u, neg_one_over_alpha);
+        }
+    };
+}
+
+// ============================================================================
+// Fréchet(α, s, m) Distribution Tests
+// ============================================================================
+//
+// Fréchet(α, s, m): Type II extreme value distribution
+// Parameters: α > 0 (shape), s > 0 (scale), m (location, any real)
+// Support: x > m; CDF=0 and PDF=0 for x ≤ m
+// CDF: F(x) = exp(-((x-m)/s)^(-α)) for x > m
+// PDF: f(x) = (α/s)·((x-m)/s)^(-α-1)·exp(-((x-m)/s)^(-α))
+// LogPDF: log(α) - log(s) - (α+1)·log(z) - z^(-α), z=(x-m)/s
+// Quantile: Q(p) = m + s·(-log(p))^(-1/α)
+// Mean: m + s·Γ(1-1/α) for α > 1; NaN for α ≤ 1
+// Variance: s²·(Γ(1-2/α) - Γ(1-1/α)²) for α > 2; NaN for α ≤ 2
+// Mode: m + s·(α/(α+1))^(1/α)
+// Entropy: 1 + γ·(1+1/α) + log(s/α), γ≈0.5772156649
+// Sample: X = m + s·(-log(U))^(-1/α), U ~ Uniform(0,1)
+//
+
+// --- init tests ---
+
+test "Frechet: init with alpha=2, s=1, m=0" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 1.0), dist.s);
+    try testing.expectEqual(@as(f64, 0.0), dist.m);
+}
+
+test "Frechet: init with alpha=3, s=2, m=1" {
+    const dist = try Frechet(f64).init(3.0, 2.0, 1.0);
+    try testing.expectEqual(@as(f64, 3.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 2.0), dist.s);
+    try testing.expectEqual(@as(f64, 1.0), dist.m);
+}
+
+test "Frechet: init with negative m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, -5.5);
+    try testing.expectEqual(@as(f64, -5.5), dist.m);
+}
+
+test "Frechet: init fails when alpha=0" {
+    const result = Frechet(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when alpha is negative" {
+    const result = Frechet(f64).init(-1.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when s=0" {
+    const result = Frechet(f64).init(2.0, 0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when s is negative" {
+    const result = Frechet(f64).init(2.0, -1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when alpha is NaN" {
+    const result = Frechet(f64).init(math.nan(f64), 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when s is NaN" {
+    const result = Frechet(f64).init(2.0, math.nan(f64), 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when m is NaN" {
+    const result = Frechet(f64).init(2.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when alpha is infinite" {
+    const result = Frechet(f64).init(math.inf(f64), 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when s is infinite" {
+    const result = Frechet(f64).init(2.0, math.inf(f64), 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: init fails when m is infinite" {
+    const result = Frechet(f64).init(2.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- validate tests ---
+
+test "Frechet: validate() succeeds for valid parameters" {
+    var dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "Frechet: validate() fails after manually setting alpha to 0" {
+    var dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    dist.alpha = 0.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: validate() fails after manually setting s to negative" {
+    var dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    dist.s = -1.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Frechet: validate() fails after manually setting m to NaN" {
+    var dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    dist.m = math.nan(f64);
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- pdf tests ---
+
+test "Frechet: pdf returns 0 for x=m (boundary)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(0.0);
+    try testing.expectEqual(@as(f64, 0.0), pdf_val);
+}
+
+test "Frechet: pdf returns 0 for x < m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(-1.0);
+    try testing.expectEqual(@as(f64, 0.0), pdf_val);
+}
+
+test "Frechet: pdf at x=s for Frechet(2,1,0) is 2*exp(-1)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const expected = 2.0 * @exp(-1.0); // ≈ 0.73575888
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-6);
+}
+
+test "Frechet: pdf at x=s for Frechet(3,1,0) is 3*exp(-1)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    const expected = 3.0 * @exp(-1.0); // ≈ 1.10363832
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-6);
+}
+
+test "Frechet: pdf is positive for x > m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (test_points) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "Frechet: pdf has mode at m + s*(alpha/(alpha+1))^(1/alpha)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const mode_val = dist.mode();
+    const pdf_at_mode = dist.pdf(mode_val);
+    const pdf_left = dist.pdf(mode_val - 0.05);
+    const pdf_right = dist.pdf(mode_val + 0.05);
+    try testing.expect(pdf_at_mode > pdf_left);
+    try testing.expect(pdf_at_mode > pdf_right);
+}
+
+test "Frechet: pdf is unimodal (mode is unique maximum)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const pdf_at_0_5 = dist.pdf(0.5);
+    const pdf_at_2 = dist.pdf(2.0);
+    try testing.expect(pdf_at_0_5 > pdf_at_2);
+}
+
+test "Frechet: pdf at x=s equals exp(-1)^2 * alpha" {
+    // At z=1 (x=s), pdf = (alpha/s) * 1^(-alpha-1) * exp(-1) = (alpha/s)*exp(-1)
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const expected = 2.0 * @exp(-1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-6);
+}
+
+test "Frechet: pdf for Frechet(2,1,0) at x=0.5 is computed correctly" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    // z = 0.5, z^(-alpha-1) = 0.5^(-3) = 8, exp(-0.5^(-2)) = exp(-4)
+    const z = 0.5;
+    const z_pow = math.pow(f64, z, -3.0); // 8
+    const exp_term = @exp(-math.pow(f64, z, -2.0)); // exp(-4)
+    const expected = 2.0 * z_pow * exp_term; // ≈ 0.00268
+    const pdf_val = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(expected, pdf_val, 1e-4);
+}
+
+// --- logpdf tests ---
+
+test "Frechet: logpdf returns -inf for x=m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expect(math.isNegativeInf(logpdf_val));
+}
+
+test "Frechet: logpdf returns -inf for x < m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const logpdf_val = dist.logpdf(-1.0);
+    try testing.expect(math.isNegativeInf(logpdf_val));
+}
+
+test "Frechet: logpdf at x=s for Frechet(2,1,0) equals log(2*exp(-1))" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const expected = @log(2.0 * @exp(-1.0)); // ≈ -0.25318
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expectApproxEqAbs(expected, logpdf_val, 1e-6);
+}
+
+test "Frechet: logpdf(x > m) equals log(pdf(x))" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const x = 2.0;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected, logpdf_val, 1e-10);
+}
+
+// --- cdf tests ---
+
+test "Frechet: cdf returns 0 for x=m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expectEqual(@as(f64, 0.0), cdf_val);
+}
+
+test "Frechet: cdf returns 0 for x < m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(-1.0);
+    try testing.expectEqual(@as(f64, 0.0), cdf_val);
+}
+
+test "Frechet: cdf at x=s equals exp(-1) for any alpha" {
+    // CDF at x = m + s is exp(-(1)^(-alpha)) = exp(-1), independent of alpha
+    const dist2 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist3 = try Frechet(f64).init(3.0, 1.0, 0.0);
+    const cdf2 = dist2.cdf(1.0);
+    const cdf3 = dist3.cdf(1.0);
+    const expected = @exp(-1.0); // ≈ 0.36787944
+    try testing.expectApproxEqAbs(expected, cdf2, 1e-10);
+    try testing.expectApproxEqAbs(expected, cdf3, 1e-10);
+}
+
+test "Frechet: cdf(1) for Frechet(2,1,0)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const expected = @exp(-1.0); // ≈ 0.36787944
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-10);
+}
+
+test "Frechet: cdf(1) for Frechet(3,1,0)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    const expected = @exp(-1.0); // ≈ 0.36787944
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-10);
+}
+
+test "Frechet: cdf is monotone increasing" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const cdf_0_5 = dist.cdf(0.5);
+    const cdf_1 = dist.cdf(1.0);
+    const cdf_2 = dist.cdf(2.0);
+    try testing.expect(cdf_0_5 < cdf_1);
+    try testing.expect(cdf_1 < cdf_2);
+}
+
+test "Frechet: cdf approaches 1 for large x" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const cdf_large = dist.cdf(100.0);
+    try testing.expect(cdf_large > 0.9999);
+}
+
+test "Frechet: cdf at location m equals 0" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 5.0);
+    const cdf_val = dist.cdf(5.0);
+    try testing.expectEqual(@as(f64, 0.0), cdf_val);
+}
+
+test "Frechet: cdf + sf = 1 for x > m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const x = 1.5;
+    const cdf_val = dist.cdf(x);
+    const sf_val = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-10);
+}
+
+// --- sf (survival function) tests ---
+
+test "Frechet: sf returns 1 for x=m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const sf_val = dist.sf(0.0);
+    try testing.expectEqual(@as(f64, 1.0), sf_val);
+}
+
+test "Frechet: sf at x=s equals 1-exp(-1)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const expected = 1.0 - @exp(-1.0); // ≈ 0.63212056
+    const sf_val = dist.sf(1.0);
+    try testing.expectApproxEqAbs(expected, sf_val, 1e-10);
+}
+
+// --- quantile tests ---
+
+test "Frechet: quantile(p) returns NaN for p=NaN" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const q = dist.quantile(math.nan(f64));
+    try testing.expect(math.isNan(q));
+}
+
+test "Frechet: quantile(p) returns NaN for p < 0" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "Frechet: quantile(p) returns NaN for p > 1" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "Frechet: quantile(0) returns m (location)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 5.0);
+    const q = dist.quantile(0.0);
+    try testing.expectApproxEqAbs(5.0, q, 1e-10);
+}
+
+test "Frechet: quantile(1) returns +infinity" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "Frechet: quantile(exp(-1)) = s for Frechet(alpha,s,m)" {
+    // Q(p) = m + s*(-log(p))^(-1/alpha)
+    // Q(exp(-1)) = m + s*(1)^(-1/alpha) = m + s
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const p = @exp(-1.0);
+    const q = dist.quantile(p);
+    const expected = 1.0; // m + s = 0 + 1
+    try testing.expectApproxEqAbs(expected, q, 1e-8);
+}
+
+test "Frechet: quantile(0.5) for Frechet(2,1,0)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    // Q(0.5) = s*(-log(0.5))^(-1/2) = log(2)^(-1/2) = 1/sqrt(log(2))
+    const log_2 = @log(2.0);
+    const expected = 1.0 / math.sqrt(log_2); // ≈ 1.20112240
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-8);
+}
+
+test "Frechet: quantile(0.5) for Frechet(3,1,0)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    // Q(0.5) = s*(-log(0.5))^(-1/3) = log(2)^(-1/3)
+    const log_2 = @log(2.0);
+    const expected = math.pow(f64, log_2, -1.0 / 3.0); // ≈ 0.79036...
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-8);
+}
+
+test "Frechet: quantile is inverse of cdf" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const p = 0.7;
+    const q = dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, cdf_q, 1e-8);
+}
+
+test "Frechet: quantile with non-zero location m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 5.0);
+    const p = 0.5;
+    const q = dist.quantile(p);
+    const log_2 = @log(2.0);
+    const expected = 5.0 + 1.0 / math.sqrt(log_2); // m + s*(-log(p))^(-1/alpha)
+    try testing.expectApproxEqAbs(expected, q, 1e-8);
+}
+
+// --- mean tests ---
+
+test "Frechet: mean returns NaN for alpha <= 1" {
+    const dist = try Frechet(f64).init(1.0, 1.0, 0.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "Frechet: mean returns NaN for alpha=0.5" {
+    const dist = try Frechet(f64).init(0.5, 1.0, 0.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "Frechet: mean for alpha > 1 uses gamma function" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    // Mean = m + s*Gamma(1 - 1/alpha) = 0 + 1*Gamma(0.5) = sqrt(pi)
+    const expected = math.sqrt(math.pi); // ≈ 1.77245385
+    const mean_val = dist.mean();
+    try testing.expectApproxEqAbs(expected, mean_val, 1e-6);
+}
+
+test "Frechet: mean for Frechet(3,1,0)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    // Mean = Gamma(2/3) ≈ 1.35411794
+    const mean_val = dist.mean();
+    const expected = 1.35411794;
+    try testing.expectApproxEqAbs(expected, mean_val, 1e-6);
+}
+
+test "Frechet: mean scales linearly with scale s" {
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 2.0, 0.0);
+    const mean1 = dist1.mean();
+    const mean2 = dist2.mean();
+    try testing.expectApproxEqAbs(2.0 * mean1, mean2, 1e-10);
+}
+
+test "Frechet: mean shifts with location m" {
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 1.0, 5.0);
+    const mean1 = dist1.mean();
+    const mean2 = dist2.mean();
+    try testing.expectApproxEqAbs(mean1 + 5.0, mean2, 1e-10);
+}
+
+// --- variance tests ---
+
+test "Frechet: variance returns NaN for alpha <= 2" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "Frechet: variance returns NaN for alpha=1.5" {
+    const dist = try Frechet(f64).init(1.5, 1.0, 0.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "Frechet: variance for alpha > 2 is positive" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    const var_val = dist.variance();
+    try testing.expect(var_val > 0.0);
+}
+
+test "Frechet: variance for Frechet(3,1,0)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    // Variance ≈ 0.84530305
+    const var_val = dist.variance();
+    const expected = 0.84530305;
+    try testing.expectApproxEqAbs(expected, var_val, 1e-6);
+}
+
+test "Frechet: variance scales with scale squared" {
+    const dist1 = try Frechet(f64).init(3.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(3.0, 2.0, 0.0);
+    const var1 = dist1.variance();
+    const var2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * var1, var2, 1e-10);
+}
+
+test "Frechet: variance is location-invariant" {
+    const dist1 = try Frechet(f64).init(3.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(3.0, 1.0, 5.0);
+    const var1 = dist1.variance();
+    const var2 = dist2.variance();
+    try testing.expectApproxEqAbs(var1, var2, 1e-10);
+}
+
+// --- mode tests ---
+
+test "Frechet: mode for Frechet(2,1,0)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    // Mode = m + s*(alpha/(alpha+1))^(1/alpha) = (2/3)^(1/2) = sqrt(2/3)
+    const expected = math.sqrt(2.0 / 3.0); // ≈ 0.81649658
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(expected, mode_val, 1e-6);
+}
+
+test "Frechet: mode for Frechet(3,1,0)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    // Mode = (3/4)^(1/3) = cbrt(0.75) ≈ 0.90856029
+    const expected = 0.90856029;
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(expected, mode_val, 1e-6);
+}
+
+test "Frechet: mode is always > m" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 5.0);
+    const mode_val = dist.mode();
+    try testing.expect(mode_val > 5.0);
+}
+
+test "Frechet: mode for Frechet(3,2,0)" {
+    const dist = try Frechet(f64).init(3.0, 2.0, 0.0);
+    // Mode = 2 * (3/4)^(1/3)
+    const expected = 2.0 * math.pow(f64, 0.75, 1.0 / 3.0); // ≈ 1.81712058
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(expected, mode_val, 1e-6);
+}
+
+test "Frechet: mode is less than mean for alpha > 1 (right-skewed)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const mode_val = dist.mode();
+    const mean_val = dist.mean();
+    try testing.expect(mode_val < mean_val);
+}
+
+// --- entropy tests ---
+
+test "Frechet: entropy is positive and finite" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const entropy_val = dist.entropy();
+    try testing.expect(entropy_val > 0.0);
+    try testing.expect(math.isFinite(entropy_val));
+}
+
+test "Frechet: entropy for Frechet(2,1,0)" {
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    // Entropy = 1 + gamma*(1+1/2) + log(1/2) = 1 + 0.5772*1.5 - log(2)
+    const gamma = 0.5772156649015329;
+    const expected = 1.0 + gamma * 1.5 - @log(2.0); // ≈ 1.17265
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqAbs(expected, entropy_val, 1e-5);
+}
+
+test "Frechet: entropy for Frechet(3,1,0)" {
+    const dist = try Frechet(f64).init(3.0, 1.0, 0.0);
+    // Entropy = 1 + gamma*(1+1/3) + log(1/3)
+    const gamma = 0.5772156649015329;
+    const expected = 1.0 + gamma * (4.0 / 3.0) + @log(1.0 / 3.0); // ≈ 0.67102
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqAbs(expected, entropy_val, 1e-5);
+}
+
+test "Frechet: entropy increases with scale s" {
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 2.0, 0.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try testing.expect(ent2 > ent1);
+}
+
+test "Frechet: entropy difference is log(scale_ratio)" {
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 3.0, 0.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    const expected_diff = @log(3.0);
+    const actual_diff = ent2 - ent1;
+    try testing.expectApproxEqAbs(expected_diff, actual_diff, 1e-10);
+}
+
+test "Frechet: entropy is location-invariant" {
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 1.0, 10.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try testing.expectApproxEqAbs(ent1, ent2, 1e-10);
+}
+
+// --- sample tests ---
+
+test "Frechet: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const sample_val = dist.sample(rng.random());
+    try testing.expect(math.isFinite(sample_val));
+}
+
+test "Frechet: sample returns value > m" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Frechet(f64).init(2.0, 1.0, 5.0);
+    const sample_val = dist.sample(rng.random());
+    try testing.expect(sample_val > 5.0);
+}
+
+test "Frechet: 100 samples all > m" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng.random());
+        try testing.expect(sample_val > 0.0);
+    }
+}
+
+test "Frechet: samples with different seeds differ" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+test "Frechet: sample scales with s parameter" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(42);
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 2.0, 0.0);
+    const s1 = dist1.sample(rng1.random());
+    const s2 = dist2.sample(rng2.random());
+    // Both samples use same RNG seed, so s2 should be approximately 2*s1
+    try testing.expectApproxEqRel(2.0 * s1, s2, 1e-10);
+}
+
+test "Frechet: sample shifts with m parameter" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(42);
+    const dist1 = try Frechet(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try Frechet(f64).init(2.0, 1.0, 10.0);
+    const s1 = dist1.sample(rng1.random());
+    const s2 = dist2.sample(rng2.random());
+    // Both samples use same RNG seed, so s2 should be approximately s1 + 10
+    try testing.expectApproxEqRel(s1 + 10.0, s2, 1e-10);
+}
