@@ -23156,3 +23156,629 @@ test "Frechet: sample shifts with m parameter" {
     // Both samples use same RNG seed, so s2 should be approximately s1 + 10
     try testing.expectApproxEqRel(s1 + 10.0, s2, 1e-10);
 }
+
+// ============================================================================
+// BetaPrime Distribution
+// ============================================================================
+//
+// BetaPrime(α, β): also known as inverted Beta or Beta distribution of 2nd kind
+// X ~ BetaPrime(α, β)  iff  X = Y/(1-Y) where Y ~ Beta(α, β)
+// Support: x > 0
+// Parameters: alpha (α > 0), beta_param (β > 0)
+//
+// PDF:     f(x) = x^(α-1)·(1+x)^(-α-β) / B(α,β)   for x > 0
+// LogPDF:  (α-1)·ln(x) - (α+β)·ln(1+x) - ln B(α,β)
+// CDF:     F(x) = I(x/(1+x); α, β) — regularized incomplete beta
+// Mean:    α/(β-1)  for β > 1; NaN otherwise
+// Variance: α(α+β-1)/((β-1)²(β-2))  for β > 2; NaN otherwise
+// Mode:    (α-1)/(β+1)  for α > 1; 0 for α ≤ 1 (boundary mode)
+// Entropy: ln B(α,β) − (α-1)·ψ(α) − (β+1)·ψ(β) + (α+β)·ψ(α+β)
+// Sample:  G₁/G₂ where G₁~Gamma(α,1), G₂~Gamma(β,1)
+//
+
+pub fn BetaPrime(comptime T: type) type {
+    return struct {
+        alpha: T,
+        beta_param: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize BetaPrime distribution with shape parameters alpha > 0, beta > 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta_param: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (beta_param <= 0.0 or !math.isFinite(beta_param)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta_param = beta_param };
+        }
+
+        /// Assert all parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.beta_param <= 0.0 or !math.isFinite(self.beta_param)) return error.InvalidParameter;
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Log-probability density function.
+        /// For x ≤ 0: returns -∞
+        /// For x > 0: (α-1)·ln(x) - (α+β)·ln(1+x) - ln B(α,β)
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return (self.alpha - 1.0) * @log(x) -
+                (self.alpha + self.beta_param) * @log(1.0 + x) -
+                logBeta(self.alpha, self.beta_param);
+        }
+
+        /// Probability density function.
+        /// f(x) = x^(α-1)·(1+x)^(-α-β) / B(α,β) for x > 0; 0 for x ≤ 0
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logpdf(x));
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = I(x/(1+x); α, β) where I is the regularized incomplete beta.
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const t = x / (1.0 + x);
+            return regularizedBetaI(self.alpha, self.beta_param, t);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) via adaptive-bound bisection (100 iterations).
+        /// Returns NaN for p outside [0,1]; 0 for p=0; +∞ for p=1.
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Expand upper bound until CDF(hi) >= p
+            var lo: T = 0.0;
+            var hi: T = 1.0;
+            while (self.cdf(hi) < p) hi *= 2.0;
+
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // --- Moments ---
+
+        /// Mean: α/(β-1) for β > 1; NaN otherwise.
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.beta_param <= 1.0) return math.nan(T);
+            return self.alpha / (self.beta_param - 1.0);
+        }
+
+        /// Variance: α(α+β-1)/((β-1)²(β-2)) for β > 2; NaN otherwise.
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.beta_param <= 2.0) return math.nan(T);
+            const bm1 = self.beta_param - 1.0;
+            return self.alpha * (self.alpha + self.beta_param - 1.0) /
+                (bm1 * bm1 * (self.beta_param - 2.0));
+        }
+
+        /// Mode: (α-1)/(β+1) for α > 1; 0 for α ≤ 1 (PDF peaks at boundary x=0+).
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha <= 1.0) return 0.0;
+            return (self.alpha - 1.0) / (self.beta_param + 1.0);
+        }
+
+        // --- Entropy ---
+
+        /// Entropy: ln B(α,β) − (α-1)·ψ(α) − (β+1)·ψ(β) + (α+β)·ψ(α+β)
+        /// where ψ is the digamma function and B is the beta function.
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const log_b = logBeta(self.alpha, self.beta_param);
+            const psi_a = digamma(T, self.alpha);
+            const psi_b = digamma(T, self.beta_param);
+            const psi_ab = digamma(T, self.alpha + self.beta_param);
+            return log_b -
+                (self.alpha - 1.0) * psi_a -
+                (self.beta_param + 1.0) * psi_b +
+                (self.alpha + self.beta_param) * psi_ab;
+        }
+
+        // --- Sampling ---
+
+        /// Sample via X = G₁/G₂ where G₁~Gamma(α,1), G₂~Gamma(β,1).
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const g1 = Gamma(T){ .shape = self.alpha, .rate = 1.0 };
+            const g2 = Gamma(T){ .shape = self.beta_param, .rate = 1.0 };
+            return g1.sample(rng) / g2.sample(rng);
+        }
+    };
+}
+
+// ============================================================================
+// BetaPrime(α, β) Tests
+// ============================================================================
+//
+// BetaPrime(α, β): inverted Beta; X = Y/(1-Y) where Y ~ Beta(α, β)
+// Support: x > 0; all PDF/CDF values 0 for x ≤ 0
+//
+// Key values (verified analytically):
+//   BetaPrime(1,1): pdf(x) = 1/(1+x)², cdf(x) = x/(1+x), entropy = 2
+//   BetaPrime(2,2): pdf(1) = 6/16 = 0.375, cdf(1) = 0.5, mean = 2, mode = 1/3
+//   BetaPrime(2,3): pdf(1) = 0.375, cdf(1) = 0.6875, mean = 1, var = 2, mode = 0.25
+//   BetaPrime(1,2): entropy = −ln(2) + 1.5 ≈ 0.80685
+//   BetaPrime(3,4): mean = 1, var = 1, mode = 0.4
+//
+
+// --- init tests ---
+
+test "BetaPrime: init with alpha=2, beta=2" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 2.0), dist.beta_param);
+}
+
+test "BetaPrime: init with alpha=1, beta=1 (standard inverted Pareto)" {
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 1.0), dist.beta_param);
+}
+
+test "BetaPrime: init with fractional params" {
+    const dist = try BetaPrime(f64).init(0.5, 0.5);
+    try testing.expectEqual(@as(f64, 0.5), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.5), dist.beta_param);
+}
+
+test "BetaPrime: init fails when alpha=0" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(0.0, 1.0));
+}
+
+test "BetaPrime: init fails when alpha is negative" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(-1.0, 1.0));
+}
+
+test "BetaPrime: init fails when beta=0" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(1.0, 0.0));
+}
+
+test "BetaPrime: init fails when beta is negative" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(1.0, -2.0));
+}
+
+test "BetaPrime: init fails when alpha is NaN" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(math.nan(f64), 1.0));
+}
+
+test "BetaPrime: init fails when beta is NaN" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(1.0, math.nan(f64)));
+}
+
+test "BetaPrime: init fails when alpha is infinite" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(math.inf(f64), 1.0));
+}
+
+test "BetaPrime: init fails when beta is infinite" {
+    try testing.expectError(error.InvalidParameter, BetaPrime(f64).init(1.0, math.inf(f64)));
+}
+
+// --- validate tests ---
+
+test "BetaPrime: validate passes for valid parameters" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "BetaPrime: validate fails after manually setting alpha to 0" {
+    var dist = try BetaPrime(f64).init(2.0, 3.0);
+    dist.alpha = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaPrime: validate fails after manually setting beta to negative" {
+    var dist = try BetaPrime(f64).init(2.0, 3.0);
+    dist.beta_param = -1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaPrime: validate fails after manually setting alpha to NaN" {
+    var dist = try BetaPrime(f64).init(2.0, 3.0);
+    dist.alpha = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- logpdf tests ---
+
+test "BetaPrime: logpdf returns -inf for x=0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+}
+
+test "BetaPrime: logpdf returns -inf for x < 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "BetaPrime: logpdf is finite for x > 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isFinite(dist.logpdf(1.0)));
+}
+
+test "BetaPrime: logpdf equals log(pdf) for x > 0" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    const x = 1.5;
+    try testing.expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+}
+
+// --- pdf tests ---
+
+test "BetaPrime: pdf returns 0 for x=0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "BetaPrime: pdf returns 0 for x < 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+}
+
+test "BetaPrime: pdf is positive for x > 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    for ([_]f64{ 0.1, 0.5, 1.0, 2.0, 10.0 }) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "BetaPrime(1,1): pdf(x) = 1/(1+x)^2" {
+    // BetaPrime(1,1): f(x) = x^0*(1+x)^(-2)/B(1,1) = 1/(1+x)^2 since B(1,1)=1
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    const x = 2.0;
+    const expected = 1.0 / ((1.0 + x) * (1.0 + x));
+    try testing.expectApproxEqAbs(expected, dist.pdf(x), 1e-10);
+}
+
+test "BetaPrime(1,1): pdf(1) = 0.25" {
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(0.25, dist.pdf(1.0), 1e-10);
+}
+
+test "BetaPrime(2,2): pdf(1) = 0.375" {
+    // B(2,2) = 1/6; f(1) = 1*(1+1)^(-4)/(1/6) = (1/16)*6 = 0.375
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectApproxEqAbs(0.375, dist.pdf(1.0), 1e-10);
+}
+
+test "BetaPrime(2,3): pdf(1) = 0.375" {
+    // B(2,3) = 1/12; f(1) = 1*(1+1)^(-5)/(1/12) = (1/32)*12 = 0.375
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expectApproxEqAbs(0.375, dist.pdf(1.0), 1e-8);
+}
+
+test "BetaPrime: pdf integrates to approximately 1 (quadrature check)" {
+    // Use trapezoidal rule over [0.001, 50] as a sanity check
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    const lo: f64 = 0.001;
+    const hi: f64 = 50.0;
+    const h = (hi - lo) / @as(f64, n);
+    var i: usize = 0;
+    while (i <= n) : (i += 1) {
+        const x = lo + @as(f64, @floatFromInt(i)) * h;
+        const w: f64 = if (i == 0 or i == n) 0.5 else 1.0;
+        sum += w * dist.pdf(x) * h;
+    }
+    // Should be close to 1 (small error from tail truncation)
+    try testing.expectApproxEqAbs(1.0, sum, 0.01);
+}
+
+test "BetaPrime: pdf unimodal — mode is a local maximum for alpha > 1" {
+    const dist = try BetaPrime(f64).init(3.0, 4.0);
+    const m = dist.mode(); // (3-1)/(4+1) = 0.4
+    try testing.expect(dist.pdf(m) > dist.pdf(m - 0.1));
+    try testing.expect(dist.pdf(m) > dist.pdf(m + 0.1));
+}
+
+// --- cdf tests ---
+
+test "BetaPrime: cdf returns 0 for x=0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "BetaPrime: cdf returns 0 for x < 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "BetaPrime(1,1): cdf(x) = x/(1+x)" {
+    // I(t;1,1) = t (uniform), and t = x/(1+x), so CDF = x/(1+x)
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    for ([_]f64{ 0.5, 1.0, 2.0, 4.0 }) |x| {
+        const expected = x / (1.0 + x);
+        try testing.expectApproxEqAbs(expected, dist.cdf(x), 1e-8);
+    }
+}
+
+test "BetaPrime(1,1): cdf(1) = 0.5 (median at 1)" {
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(0.5, dist.cdf(1.0), 1e-8);
+}
+
+test "BetaPrime(2,2): cdf(1) = 0.5 (median at 1 by symmetry)" {
+    // Beta(2,2) is symmetric around 0.5, so CDF(0.5) = 0.5
+    // t = x/(1+x) = 1/2 when x=1, so CDF_BetaPrime(1) = I(0.5; 2,2) = 0.5
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectApproxEqAbs(0.5, dist.cdf(1.0), 1e-8);
+}
+
+test "BetaPrime(2,3): cdf(1) = 0.6875" {
+    // I(0.5; 2, 3) = 6*(0.5)^2*(0.5)^2 + 4*(0.5)^3*(0.5) + (0.5)^4 = 0.375+0.25+0.0625 = 0.6875
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expectApproxEqAbs(0.6875, dist.cdf(1.0), 1e-6);
+}
+
+test "BetaPrime: cdf is monotone increasing" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    const xs = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (0..xs.len - 1) |i| {
+        try testing.expect(dist.cdf(xs[i]) < dist.cdf(xs[i + 1]));
+    }
+}
+
+test "BetaPrime: cdf approaches 1 for large x" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(dist.cdf(1000.0) > 0.9999);
+}
+
+test "BetaPrime: cdf + sf = 1 for x > 0" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    const x = 1.5;
+    try testing.expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-10);
+}
+
+// --- quantile tests ---
+
+test "BetaPrime: quantile returns NaN for p=NaN" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isNan(dist.quantile(math.nan(f64))));
+}
+
+test "BetaPrime: quantile returns NaN for p < 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isNan(dist.quantile(-0.1)));
+}
+
+test "BetaPrime: quantile returns NaN for p > 1" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isNan(dist.quantile(1.1)));
+}
+
+test "BetaPrime: quantile(0) returns 0" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectApproxEqAbs(0.0, dist.quantile(0.0), 1e-10);
+}
+
+test "BetaPrime: quantile(1) returns +infinity" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isPositiveInf(dist.quantile(1.0)));
+}
+
+test "BetaPrime(1,1): quantile(0.5) = 1 (median at 1)" {
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(1.0, dist.quantile(0.5), 1e-6);
+}
+
+test "BetaPrime(2,2): quantile(0.5) = 1 (median at 1 by symmetry)" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectApproxEqAbs(1.0, dist.quantile(0.5), 1e-6);
+}
+
+test "BetaPrime: quantile is left-inverse of cdf" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const q = dist.quantile(p);
+        try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-6);
+    }
+}
+
+test "BetaPrime: quantile is non-decreasing" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(dist.quantile(0.3) < dist.quantile(0.7));
+}
+
+// --- mean tests ---
+
+test "BetaPrime: mean returns NaN for beta=1" {
+    const dist = try BetaPrime(f64).init(2.0, 1.0);
+    try testing.expect(math.isNan(dist.mean()));
+}
+
+test "BetaPrime: mean returns NaN for beta < 1" {
+    const dist = try BetaPrime(f64).init(2.0, 0.5);
+    try testing.expect(math.isNan(dist.mean()));
+}
+
+test "BetaPrime(2,2): mean = 2" {
+    // mean = alpha/(beta-1) = 2/(2-1) = 2
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectApproxEqAbs(2.0, dist.mean(), 1e-10);
+}
+
+test "BetaPrime(2,3): mean = 1" {
+    // mean = 2/(3-1) = 1
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
+}
+
+test "BetaPrime(3,4): mean = 1" {
+    // mean = 3/(4-1) = 1
+    const dist = try BetaPrime(f64).init(3.0, 4.0);
+    try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
+}
+
+test "BetaPrime: mean scales linearly with alpha" {
+    const dist1 = try BetaPrime(f64).init(1.0, 3.0);
+    const dist2 = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expectApproxEqAbs(2.0 * dist1.mean(), dist2.mean(), 1e-10);
+}
+
+// --- variance tests ---
+
+test "BetaPrime: variance returns NaN for beta=2" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(math.isNan(dist.variance()));
+}
+
+test "BetaPrime: variance returns NaN for beta < 2" {
+    const dist = try BetaPrime(f64).init(2.0, 1.5);
+    try testing.expect(math.isNan(dist.variance()));
+}
+
+test "BetaPrime(2,3): variance = 2" {
+    // var = 2*(2+3-1)/((3-1)^2*(3-2)) = 2*4/(4*1) = 2
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expectApproxEqAbs(2.0, dist.variance(), 1e-10);
+}
+
+test "BetaPrime(3,4): variance = 1" {
+    // var = 3*(3+4-1)/((4-1)^2*(4-2)) = 3*6/(9*2) = 18/18 = 1
+    const dist = try BetaPrime(f64).init(3.0, 4.0);
+    try testing.expectApproxEqAbs(1.0, dist.variance(), 1e-10);
+}
+
+test "BetaPrime: variance is positive for beta > 2" {
+    const dist = try BetaPrime(f64).init(1.0, 3.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+// --- mode tests ---
+
+test "BetaPrime: mode returns 0 for alpha < 1 (boundary peak)" {
+    const dist = try BetaPrime(f64).init(0.5, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "BetaPrime: mode returns 0 for alpha = 1 (monotone decreasing PDF)" {
+    const dist = try BetaPrime(f64).init(1.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "BetaPrime(2,2): mode = 1/3" {
+    // mode = (2-1)/(2+1) = 1/3
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expectApproxEqAbs(1.0 / 3.0, dist.mode(), 1e-10);
+}
+
+test "BetaPrime(2,3): mode = 0.25" {
+    // mode = (2-1)/(3+1) = 1/4
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expectApproxEqAbs(0.25, dist.mode(), 1e-10);
+}
+
+test "BetaPrime(3,4): mode = 0.4" {
+    // mode = (3-1)/(4+1) = 2/5
+    const dist = try BetaPrime(f64).init(3.0, 4.0);
+    try testing.expectApproxEqAbs(0.4, dist.mode(), 1e-10);
+}
+
+test "BetaPrime: mode < mean for alpha > 1, beta > 1 (right-skewed)" {
+    const dist = try BetaPrime(f64).init(3.0, 4.0);
+    try testing.expect(dist.mode() < dist.mean());
+}
+
+// --- entropy tests ---
+
+test "BetaPrime: entropy is finite for valid params" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "BetaPrime(1,1): entropy = 2" {
+    // H = lnB(1,1) - 0·ψ(1) - 2·ψ(1) + 2·ψ(2) = 0 + 2γ + 2(1-γ) = 2
+    const dist = try BetaPrime(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(2.0, dist.entropy(), 1e-6);
+}
+
+test "BetaPrime(1,2): entropy = -ln(2) + 1.5" {
+    // H = lnB(1,2) - 0·ψ(1) - 3·ψ(2) + 3·ψ(3)
+    //   = ln(0.5) - 3(1-γ) + 3(3/2-γ) = -ln2 + 1.5
+    const dist = try BetaPrime(f64).init(1.0, 2.0);
+    const expected = -@log(2.0) + 1.5;
+    try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-5);
+}
+
+test "BetaPrime: entropy changes with alpha" {
+    const dist1 = try BetaPrime(f64).init(1.0, 2.0);
+    const dist2 = try BetaPrime(f64).init(2.0, 2.0);
+    try testing.expect(dist1.entropy() != dist2.entropy());
+}
+
+test "BetaPrime: entropy changes with beta" {
+    const dist1 = try BetaPrime(f64).init(2.0, 2.0);
+    const dist2 = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(dist1.entropy() != dist2.entropy());
+}
+
+// --- sample tests ---
+
+test "BetaPrime: sample returns positive value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(dist.sample(rng.random()) > 0.0);
+}
+
+test "BetaPrime: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(math.isFinite(dist.sample(rng.random())));
+}
+
+test "BetaPrime: 100 samples all positive" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    for (0..100) |_| {
+        try testing.expect(dist.sample(rng.random()) > 0.0);
+    }
+}
+
+test "BetaPrime: samples with different seeds differ" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    try testing.expect(dist.sample(rng1.random()) != dist.sample(rng2.random()));
+}
+
+test "BetaPrime: sample mean roughly equals distribution mean" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    // mean = 2/(3-1) = 1
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 2000.0;
+    try testing.expectApproxEqAbs(1.0, sample_mean, 0.1);
+}
