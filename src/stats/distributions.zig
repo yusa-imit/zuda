@@ -23782,3 +23782,621 @@ test "BetaPrime: sample mean roughly equals distribution mean" {
     const sample_mean = sum / 2000.0;
     try testing.expectApproxEqAbs(1.0, sample_mean, 0.1);
 }
+
+// ============================================================================
+// Folded Normal Distribution
+// ============================================================================
+
+/// Folded Normal distribution — distribution of |X| where X ~ N(μ, σ²)
+///
+/// Parameters:
+///   - mu (μ): Mean of the underlying normal distribution (-∞ < μ < +∞)
+///   - sigma (σ): Standard deviation of the underlying normal (σ > 0)
+///
+/// Support: [0, +∞)
+///
+/// Special cases:
+///   - μ = 0: reduces to HalfNormal(σ)
+///
+/// Applications: signal processing (signal amplitude), engineering tolerances,
+///   physics (particle speed relative to fixed point), error analysis
+///
+/// Time: O(1) for pdf/cdf/mean/variance/mode/sample; O(n) for entropy/quantile
+pub fn FoldedNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a FoldedNormal distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Probability density function
+        ///
+        /// f(x; μ, σ) = [exp(-(x-μ)²/(2σ²)) + exp(-(x+μ)²/(2σ²))] / (σ√(2π))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const inv_sigma = 1.0 / self.sigma;
+            const a = (x - self.mu) * inv_sigma;
+            const b = (x + self.mu) * inv_sigma;
+            return (@exp(-0.5 * a * a) + @exp(-0.5 * b * b)) * inv_sigma / @sqrt(2.0 * math.pi);
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x; μ, σ) for x ≥ 0; -∞ for x < 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x; μ, σ) = 0.5 × (erf((x-μ)/(σ√2)) + erf((x+μ)/(σ√2)))
+        ///
+        /// Derivation: Φ((x-μ)/σ) + Φ((x+μ)/σ) - 1, simplified via erf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const inv_s2 = 1.0 / (self.sigma * @sqrt(2.0));
+            return 0.5 * (erf((x - self.mu) * inv_s2) + erf((x + self.mu) * inv_s2));
+        }
+
+        /// Survival function S(x) = 1 - F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function — returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection with adaptive upper bound; 100 iterations for ~1e-9 accuracy.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            var hi: T = @max(@abs(self.mu) + self.sigma, self.sigma);
+            while (self.cdf(hi) < p) hi *= 2.0;
+            var lo: T = 0.0;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const mid = 0.5 * (lo + hi);
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        /// Mean E[|X|] where X ~ N(μ, σ²)
+        ///
+        /// E[|X|] = σ√(2/π)·exp(-μ²/(2σ²)) + μ·erf(μ/(σ√2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const exp_term = @exp(-self.mu * self.mu / (2.0 * self.sigma * self.sigma));
+            const erf_term = erf(self.mu / (self.sigma * @sqrt(2.0)));
+            return self.sigma * @sqrt(2.0 / math.pi) * exp_term + self.mu * erf_term;
+        }
+
+        /// Variance Var(|X|) = μ² + σ² - E[|X|]²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            return self.mu * self.mu + self.sigma * self.sigma - m * m;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// mode = 0 when |μ| ≤ σ (PDF is unimodal at 0, decreasing for x > 0).
+        /// For |μ| > σ, x=0 is a local minimum; golden section search finds the peak.
+        ///
+        /// Derivation: PDF'(x)=0 ↔ (x-μ)φ((x-μ)/σ) + (x+μ)φ((x+μ)/σ) = 0;
+        ///   second-derivative test at x=0 shows it's a max iff |μ| ≤ σ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (@abs(self.mu) <= self.sigma) return 0.0;
+            const upper = @abs(self.mu) + 3.0 * self.sigma;
+            // Golden section search for maximum of pdf on [0, upper]
+            const phi_inv: T = 2.0 / (1.0 + @sqrt(5.0));
+            var lo: T = 0.0;
+            var hi: T = upper;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const range = hi - lo;
+                const x1 = hi - phi_inv * range;
+                const x2 = lo + phi_inv * range;
+                if (self.pdf(x1) < self.pdf(x2)) {
+                    lo = x1;
+                } else {
+                    hi = x2;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        /// Differential entropy (numerical via composite Simpson's rule)
+        ///
+        /// H = -∫₀^∞ f(x)·log f(x) dx
+        ///
+        /// For μ = 0: H = 0.5·ln(π/2) + ln(σ) + 0.5 (exact HalfNormal formula).
+        /// For μ ≠ 0: no closed form; computed via 1000-point Simpson quadrature.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const upper = @abs(self.mu) + 20.0 * self.sigma;
+            const n: usize = 1000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const x = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+                if (f <= 0.0) continue;
+                const contrib = -f * @log(f);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Generate a random sample — returns |N(μ, σ)| via Box-Muller
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const r1 = rng.float(T);
+            const r2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+            return @abs(self.mu + self.sigma * z);
+        }
+
+        /// Assert internal invariants: sigma > 0, finite; mu finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.sigma <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.sigma)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.mu)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// FoldedNormal Tests
+// ============================================================================
+
+test "FoldedNormal: init with valid parameters mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "FoldedNormal: init with valid parameters mu=2, sigma=1" {
+    const dist = try FoldedNormal(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "FoldedNormal: init with valid parameters mu=-2, sigma=1" {
+    const dist = try FoldedNormal(f64).init(-2.0, 1.0);
+    try testing.expectEqual(@as(f64, -2.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+}
+
+test "FoldedNormal: init with valid parameters mu=0, sigma=2" {
+    const dist = try FoldedNormal(f64).init(0.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 2.0), dist.sigma);
+}
+
+test "FoldedNormal: init rejects sigma <= 0" {
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(0.0, 0.0));
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(0.0, -1.0));
+}
+
+test "FoldedNormal: init rejects non-finite sigma" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(0.0, inf));
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(0.0, -inf));
+    const nan = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(0.0, nan));
+}
+
+test "FoldedNormal: init rejects non-finite mu" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(inf, 1.0));
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(-inf, 1.0));
+    const nan = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, FoldedNormal(f64).init(nan, 1.0));
+}
+
+test "FoldedNormal: init allows any finite mu with valid sigma" {
+    const dist1 = try FoldedNormal(f64).init(-100.0, 0.1);
+    try testing.expectEqual(@as(f64, -100.0), dist1.mu);
+    const dist2 = try FoldedNormal(f64).init(1000.0, 2.5);
+    try testing.expectEqual(@as(f64, 1000.0), dist2.mu);
+}
+
+test "FoldedNormal: validate accepts valid parameters" {
+    const dist = try FoldedNormal(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "FoldedNormal: validate rejects sigma <= 0" {
+    var dist = FoldedNormal(f64){ .mu = 0.0, .sigma = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+    dist.sigma = -1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "FoldedNormal: validate rejects non-finite sigma" {
+    const inf = math.inf(f64);
+    var dist = FoldedNormal(f64){ .mu = 0.0, .sigma = inf };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "FoldedNormal: pdf negative x returns 0" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.1));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-100.0));
+}
+
+test "FoldedNormal: pdf at x=0 matches formula for mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    const expected = @sqrt(2.0 / math.pi);
+    try testing.expectApproxEqRel(expected, dist.pdf(0.0), 1e-7);
+}
+
+test "FoldedNormal: pdf at x=1 for mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    // pdf(1) = sqrt(2/π) * exp(-0.5)
+    const expected = @sqrt(2.0 / math.pi) * @exp(-0.5);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-7);
+}
+
+test "FoldedNormal: pdf at x=1 for mu=1, sigma=1" {
+    const dist = try FoldedNormal(f64).init(1.0, 1.0);
+    // pdf(x) = [exp(-(x-mu)²/(2σ²)) + exp(-(x+mu)²/(2σ²))] / (σ√(2π))
+    // pdf(1) = [exp(0) + exp(-(1+1)²/2)] / sqrt(2π) = [1 + exp(-2)] / sqrt(2π)
+    const numerator = 1.0 + @exp(-2.0);
+    const expected = numerator / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-7);
+}
+
+test "FoldedNormal: pdf at x=2 for mu=2, sigma=1" {
+    const dist = try FoldedNormal(f64).init(2.0, 1.0);
+    // pdf(2) = [exp(0) + exp(-(2+2)²/2)] / sqrt(2π) = [1 + exp(-8)] / sqrt(2π)
+    const numerator = 1.0 + @exp(-8.0);
+    const expected = numerator / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqRel(expected, dist.pdf(2.0), 1e-7);
+}
+
+test "FoldedNormal: pdf at x=2 for mu=0, sigma=2" {
+    const dist = try FoldedNormal(f64).init(0.0, 2.0);
+    // pdf(x; mu=0, sigma=2) = [exp(-x²/8) + exp(-x²/8)] / (2·sqrt(2π))
+    // = 2·exp(-0.5) / (2·sqrt(2π)) = exp(-0.5) / sqrt(2π)
+    const expected = @exp(-0.5) / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqRel(expected, dist.pdf(2.0), 1e-7);
+}
+
+test "FoldedNormal: pdf symmetry property pdf(x, mu, sigma) = pdf(x, -mu, sigma)" {
+    const dist1 = try FoldedNormal(f64).init(1.5, 2.0);
+    const dist2 = try FoldedNormal(f64).init(-1.5, 2.0);
+    const x = 3.0;
+    try testing.expectApproxEqRel(dist1.pdf(x), dist2.pdf(x), 1e-7);
+}
+
+test "FoldedNormal: pdf non-negative everywhere" {
+    const dist = try FoldedNormal(f64).init(1.0, 2.0);
+    for (0..200) |i| {
+        const x = @as(f64, @floatFromInt(i)) / 10.0;
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "FoldedNormal: logpdf at x < 0 returns -inf" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    const result = dist.logpdf(-1.0);
+    try testing.expect(math.isNegativeInf(result));
+}
+
+test "FoldedNormal: logpdf at x=0 for mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    const expected = @log(@sqrt(2.0 / math.pi));
+    try testing.expectApproxEqRel(expected, dist.logpdf(0.0), 1e-7);
+}
+
+test "FoldedNormal: logpdf consistency with pdf" {
+    const dist = try FoldedNormal(f64).init(1.0, 1.5);
+    const x = 2.5;
+    const log_pdf = dist.logpdf(x);
+    const expected = @log(dist.pdf(x));
+    try testing.expectApproxEqRel(expected, log_pdf, 1e-6);
+}
+
+test "FoldedNormal: cdf at x=0 is 0" {
+    const dist = try FoldedNormal(f64).init(0.5, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "FoldedNormal: cdf negative x returns 0" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-100.0));
+}
+
+test "FoldedNormal: cdf at x=1 for mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    // cdf(1) = erf(1/√2) for mu=0
+    const expected = erf(1.0 / @sqrt(2.0));
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-7);
+}
+
+test "FoldedNormal: cdf at x=1 for mu=1, sigma=1" {
+    const dist = try FoldedNormal(f64).init(1.0, 1.0);
+    // cdf(1) = 0.5*(erf((1-1)/(√2)) + erf((1+1)/(√2))) = 0.5*(erf(0) + erf(√2)) = 0.5*erf(√2)
+    const expected = 0.5 * erf(@sqrt(2.0));
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-7);
+}
+
+test "FoldedNormal: cdf monotone increasing" {
+    const dist = try FoldedNormal(f64).init(0.5, 1.0);
+    var prev_cdf = dist.cdf(0.0);
+    for (1..100) |i| {
+        const x = @as(f64, @floatFromInt(i)) / 10.0;
+        const curr_cdf = dist.cdf(x);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "FoldedNormal: cdf approaches 1 for large x" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    const large_x = 10.0;
+    const cdf_val = dist.cdf(large_x);
+    try testing.expect(cdf_val > 0.99);
+}
+
+test "FoldedNormal: sf returns 1 - cdf" {
+    const dist = try FoldedNormal(f64).init(1.0, 2.0);
+    const x = 2.5;
+    const cdf_val = dist.cdf(x);
+    const sf_val = dist.sf(x);
+    try testing.expectApproxEqRel(1.0 - cdf_val, sf_val, 1e-7);
+}
+
+test "FoldedNormal: sf at x <= 0 returns 1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(-1.0));
+}
+
+test "FoldedNormal: sf at large x approaches 0" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    const sf_val = dist.sf(10.0);
+    try testing.expect(sf_val < 0.01);
+}
+
+test "FoldedNormal: quantile out of range p < 0 returns error" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(-1.0));
+}
+
+test "FoldedNormal: quantile out of range p > 1 returns error" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(2.0));
+}
+
+test "FoldedNormal: quantile at p=0 returns 0" {
+    const dist = try FoldedNormal(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, 0.0), q);
+}
+
+test "FoldedNormal: quantile at p=1 returns inf" {
+    const dist = try FoldedNormal(f64).init(0.5, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "FoldedNormal: quantile is left-inverse of cdf" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    for (1..10) |i| {
+        const p = @as(f64, @floatFromInt(i)) / 10.0;
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try testing.expectApproxEqRel(p, cdf_q, 1e-6);
+    }
+}
+
+test "FoldedNormal: quantile monotone in p" {
+    const dist = try FoldedNormal(f64).init(1.0, 1.5);
+    var prev_q = try dist.quantile(0.01);
+    for (2..100) |i| {
+        const p = @as(f64, @floatFromInt(i)) / 100.0;
+        const q = try dist.quantile(p);
+        try testing.expect(q >= prev_q);
+        prev_q = q;
+    }
+}
+
+test "FoldedNormal: mean for mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    // mean = sigma * sqrt(2/π)
+    const expected = @sqrt(2.0 / math.pi);
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-7);
+}
+
+test "FoldedNormal: mean for mu=1, sigma=1" {
+    const dist = try FoldedNormal(f64).init(1.0, 1.0);
+    // mean = sigma·sqrt(2/π)·exp(-mu²/(2σ²)) + mu·erf(mu/(σ√2))
+    const term1 = 1.0 * @sqrt(2.0 / math.pi) * @exp(-0.5);
+    const term2 = 1.0 * erf(1.0 / @sqrt(2.0));
+    const expected = term1 + term2;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-7);
+}
+
+test "FoldedNormal: mean for mu=0, sigma=2" {
+    const dist = try FoldedNormal(f64).init(0.0, 2.0);
+    // mean = 2 * sqrt(2/π)
+    const expected = 2.0 * @sqrt(2.0 / math.pi);
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-7);
+}
+
+test "FoldedNormal: variance for mu=0, sigma=1" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    // variance = sigma² + mu² - mean²
+    const mean = dist.mean();
+    const expected = 1.0 - mean * mean;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-7);
+}
+
+test "FoldedNormal: variance for mu=0, sigma=2" {
+    const dist = try FoldedNormal(f64).init(0.0, 2.0);
+    // variance = sigma² + mu² - mean² = 4 + 0 - mean²
+    const mean = dist.mean();
+    const expected = 4.0 - mean * mean;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-7);
+}
+
+test "FoldedNormal: variance positive for valid parameters" {
+    const dist = try FoldedNormal(f64).init(1.0, 1.5);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "FoldedNormal: mode equals 0 for mu=0" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "FoldedNormal: mode equals 0 for |mu| = sigma (boundary)" {
+    const dist1 = try FoldedNormal(f64).init(1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist1.mode());
+    const dist2 = try FoldedNormal(f64).init(-1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist2.mode());
+}
+
+test "FoldedNormal: mode equals 0 for |mu| < sigma" {
+    const dist = try FoldedNormal(f64).init(0.5, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "FoldedNormal: mode positive for |mu| > sigma" {
+    const dist = try FoldedNormal(f64).init(2.0, 1.0);
+    const mode = dist.mode();
+    try testing.expect(mode > 0.0);
+}
+
+test "FoldedNormal: mode less than mean (right-skewed)" {
+    const dist = try FoldedNormal(f64).init(2.0, 1.0);
+    const mode = dist.mode();
+    const mean = dist.mean();
+    try testing.expect(mode < mean);
+}
+
+test "FoldedNormal: entropy finite for valid parameters" {
+    const dist = try FoldedNormal(f64).init(0.5, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+test "FoldedNormal: entropy positive for valid parameters" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    try testing.expect(dist.entropy() > 0.0);
+}
+
+test "FoldedNormal: entropy for mu=0, sigma=1 approximately 0.726" {
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    // entropy ≈ 0.5·ln(π/2) + 0.5 ≈ 0.7258
+    const expected = 0.5 * @log(math.pi / 2.0) + 0.5;
+    try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-3);
+}
+
+test "FoldedNormal: entropy scales with log(sigma)" {
+    const dist1 = try FoldedNormal(f64).init(0.0, 1.0);
+    const dist2 = try FoldedNormal(f64).init(0.0, 2.0);
+    // H(sigma2) = H(sigma1) + log(2)
+    const diff = dist2.entropy() - dist1.entropy();
+    try testing.expectApproxEqAbs(@log(2.0), diff, 1e-3);
+}
+
+test "FoldedNormal: sample returns value >= 0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try FoldedNormal(f64).init(0.5, 1.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample >= 0.0);
+}
+
+test "FoldedNormal: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try FoldedNormal(f64).init(1.0, 2.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(math.isFinite(sample));
+}
+
+test "FoldedNormal: 100 samples all non-negative" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "FoldedNormal: samples with different seeds differ" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try FoldedNormal(f64).init(1.0, 1.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+test "FoldedNormal: sample mean roughly equals distribution mean for mu=0" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try FoldedNormal(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 2000.0;
+    const expected_mean = dist.mean();
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.1);
+}
+
+test "FoldedNormal: sample mean roughly equals distribution mean for mu=1" {
+    var rng = std.Random.DefaultPrng.init(456);
+    const dist = try FoldedNormal(f64).init(1.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 2000.0;
+    const expected_mean = dist.mean();
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.15);
+}
