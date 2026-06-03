@@ -1,3 +1,25 @@
+**Session 636 Update (2026-06-04) — FEATURE MODE:**
+
+✅ **LogCauchy Distribution** — 51st distribution, 36th continuous — commit d4e1a1f
+- **Mode**: FEATURE MODE (counter: 636)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: LogCauchy(T) — X = exp(Y) where Y ~ Cauchy(μ, σ)
+  * Parameters: mu (any finite real), sigma (σ > 0); support (0, ∞)
+  * PDF: 1/(πσx·(1+((ln x-μ)/σ)²)); logPDF: exact closed form
+  * CDF: 0.5 + (1/π)·arctan((ln x-μ)/σ); SF: complement
+  * Quantile: exp(μ + σ·tan(π(p-0.5))); exact O(1), returns T (not DistributionError!T)
+  * Mean: NaN (undefined — heavy-tailed like Cauchy)
+  * Variance: NaN (undefined)
+  * Median: exp(μ); Mode: exp(μ-1+√(1-σ²)) for σ≤1; NaN for σ>1
+  * Entropy: ln(4πσ) + μ (principal-value: H[exp(Y)] = H[Cauchy(μ,σ)] + PV E[Y] = ln(4πσ) + μ)
+  * Sample: exp(μ + σ·tan(π·(U-0.5))) via inverse transform, O(1)
+  * Key test fix: cdf(1e10)≈0.9862 (not >0.99) — changed test to use 1e30 (≈0.995)
+  * Note: CDF grows as arctan(ln x)/π — logarithmically slow convergence to 1
+- **Tests**: 56 new tests all passing (exit code 0)
+- **Distribution count**: 51 total (36 continuous + 15 discrete)
+- **Next Priority**: Burr or Dagum distribution
+
 **Session 623 Update (2026-06-02) — FEATURE MODE:**
 
 ✅ **Nakagami Distribution** — 42nd distribution, 27th continuous — commits a03cb6f, 6ee3f31
