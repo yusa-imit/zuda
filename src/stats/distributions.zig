@@ -25714,3 +25714,597 @@ test "LogCauchy: validate passes for valid params (mu=2, sigma=0.5)" {
     const dist = try LogCauchy(f64).init(2.0, 0.5);
     try dist.validate();
 }
+
+// =============================================================================
+// Burr Type XII Distribution (52nd distribution, 37th continuous)
+// =============================================================================
+
+/// Burr Type XII distribution with location and scale.
+/// X has Burr(c, k, μ, σ) if (X-μ)/σ has standard Burr(c, k) distribution.
+/// Applications: reliability, survival analysis, income modeling.
+pub fn Burr(comptime T: type) type {
+    return struct {
+        c: T,
+        k: T,
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize Burr(c, k, μ, σ) distribution.
+        /// Returns error.InvalidParameter if c ≤ 0, k ≤ 0, σ ≤ 0, or any param is not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(c: T, k: T, mu: T, sigma: T) DistributionError!Self {
+            if (c <= 0.0 or math.isNan(c) or math.isInf(c)) return error.InvalidParameter;
+            if (k <= 0.0 or math.isNan(k) or math.isInf(k)) return error.InvalidParameter;
+            if (sigma <= 0.0 or math.isNan(sigma) or math.isInf(sigma)) return error.InvalidParameter;
+            if (math.isNan(mu) or math.isInf(mu)) return error.InvalidParameter;
+            return Self{ .c = c, .k = k, .mu = mu, .sigma = sigma };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = (ck/σ)·z^(c−1)/(1+z^c)^(k+1) where z=(x−μ)/σ; 0 for x≤μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= self.mu) return 0.0;
+            const z = (x - self.mu) / self.sigma;
+            const zc = math.pow(T, z, self.c);
+            return (self.c * self.k / self.sigma) * math.pow(T, z, self.c - 1.0) /
+                math.pow(T, 1.0 + zc, self.k + 1.0);
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = log(ck/σ) + (c−1)·log(z) − (k+1)·log(1+z^c); −∞ for x≤μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.mu) return -math.inf(T);
+            const z = (x - self.mu) / self.sigma;
+            const zc = math.pow(T, z, self.c);
+            return @log(self.c * self.k / self.sigma) + (self.c - 1.0) * @log(z) -
+                (self.k + 1.0) * @log(1.0 + zc);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = 1 − (1+z^c)^(−k) where z=(x−μ)/σ; 0 for x≤μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.mu) return 0.0;
+            const z = (x - self.mu) / self.sigma;
+            const zc = math.pow(T, z, self.c);
+            return 1.0 - math.pow(T, 1.0 + zc, -self.k);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Q(p) = μ + σ·((1−p)^(−1/k) − 1)^(1/c)
+        /// Returns NaN for p < 0 or p > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p < 0.0 or p > 1.0 or math.isNan(p)) return math.nan(T);
+            if (p == 0.0) return self.mu;
+            if (p == 1.0) return math.inf(T);
+            const inner = math.pow(T, 1.0 - p, -1.0 / self.k) - 1.0;
+            return self.mu + self.sigma * math.pow(T, inner, 1.0 / self.c);
+        }
+
+        // --- Moments ---
+
+        /// Mean: μ + σ·k·B(k − 1/c, 1 + 1/c) for kc > 1; NaN otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.k * self.c <= 1.0) return math.nan(T);
+            const mean_std = self.k * @exp(logBeta(self.k - 1.0 / self.c, 1.0 + 1.0 / self.c));
+            return self.mu + self.sigma * mean_std;
+        }
+
+        /// Variance: σ²·[k·B(k − 2/c, 1 + 2/c) − mean_std²] for kc > 2; NaN otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.k * self.c <= 2.0) return math.nan(T);
+            const mean_std = self.k * @exp(logBeta(self.k - 1.0 / self.c, 1.0 + 1.0 / self.c));
+            const ex2 = self.k * @exp(logBeta(self.k - 2.0 / self.c, 1.0 + 2.0 / self.c));
+            return self.sigma * self.sigma * (ex2 - mean_std * mean_std);
+        }
+
+        /// Mode: μ + σ·((c−1)/(ck+1))^(1/c) for c > 1; μ otherwise (PDF peaks at boundary).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.c <= 1.0) return self.mu;
+            const ratio = (self.c - 1.0) / (self.c * self.k + 1.0);
+            return self.mu + self.sigma * math.pow(T, ratio, 1.0 / self.c);
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy.
+        /// H = log(σ) − log(ck) + (k+1)/k − (c−1)·(ψ(1) − ψ(k))/c
+        /// where ψ is the digamma function and ψ(1) = −γ (Euler-Mascheroni constant).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const psi1 = digamma(T, 1.0);
+            const psik = digamma(T, self.k);
+            return @log(self.sigma) - @log(self.c * self.k) +
+                (self.k + 1.0) / self.k -
+                (self.c - 1.0) * (psi1 - psik) / self.c;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        /// X = μ + σ·((1−U)^(−1/k) − 1)^(1/c) where U ~ Uniform(0,1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const inner = math.pow(T, 1.0 - u, -1.0 / self.k) - 1.0;
+            return self.mu + self.sigma * math.pow(T, inner, 1.0 / self.c);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: c > 0, k > 0, σ > 0, all params finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.c <= 0.0 or math.isNan(self.c) or math.isInf(self.c))
+                return error.InvalidParameter;
+            if (self.k <= 0.0 or math.isNan(self.k) or math.isInf(self.k))
+                return error.InvalidParameter;
+            if (self.sigma <= 0.0 or math.isNan(self.sigma) or math.isInf(self.sigma))
+                return error.InvalidParameter;
+            if (math.isNan(self.mu) or math.isInf(self.mu))
+                return error.InvalidParameter;
+        }
+    };
+}
+
+// Burr Tests (52nd distribution, 37th continuous)
+
+test "Burr: init with valid params (c=2, k=1, mu=0, sigma=1) succeeds" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.c == 2.0);
+    try testing.expect(dist.k == 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.sigma == 1.0);
+}
+
+test "Burr: init with c <= 0 returns error" {
+    const result = Burr(f64).init(-1.0, 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: init with k <= 0 returns error" {
+    const result = Burr(f64).init(2.0, -1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: init with sigma <= 0 returns error" {
+    const result = Burr(f64).init(2.0, 1.0, 0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: init with c=inf returns error" {
+    const result = Burr(f64).init(std.math.inf(f64), 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: init with k=nan returns error" {
+    const result = Burr(f64).init(2.0, std.math.nan(f64), 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: init with mu=nan returns error" {
+    const result = Burr(f64).init(2.0, 1.0, std.math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: init with sigma=nan returns error" {
+    const result = Burr(f64).init(2.0, 1.0, 0.0, std.math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: pdf at boundary (x=mu) returns 0" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(p == 0.0);
+}
+
+test "Burr: pdf at x < mu returns 0" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expect(p == 0.0);
+}
+
+test "Burr(2,1): pdf(1) = 0.5" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.5, p, 1e-9);
+}
+
+test "Burr(2,2): pdf(1) = 0.5" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.5, p, 1e-9);
+}
+
+test "Burr(1,2): pdf(1) = 0.25" {
+    const dist = try Burr(f64).init(1.0, 2.0, 0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.25, p, 1e-9);
+}
+
+test "Burr: pdf positive for x > mu" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(0.5);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "Burr: pdf with location shift" {
+    const dist1 = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const dist2 = try Burr(f64).init(2.0, 1.0, 5.0, 1.0);
+    try testing.expectApproxEqRel(dist1.pdf(1.0), dist2.pdf(6.0), 1e-9);
+}
+
+test "Burr: pdf with scale factor" {
+    const dist1 = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const dist2 = try Burr(f64).init(2.0, 1.0, 0.0, 2.0);
+    try testing.expectApproxEqRel(dist1.pdf(2.0) / 2.0, dist2.pdf(4.0), 1e-9);
+}
+
+test "Burr: logpdf at x=mu returns -inf" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isInf(lp) and lp < 0);
+}
+
+test "Burr: logpdf at x < mu returns -inf" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const lp = dist.logpdf(-1.0);
+    try testing.expect(math.isInf(lp) and lp < 0);
+}
+
+test "Burr(2,1): logpdf(1) = log(0.5)" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const lp = dist.logpdf(1.0);
+    try testing.expectApproxEqRel(@log(0.5), lp, 1e-9);
+}
+
+test "Burr: logpdf finite for x > mu" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const lp = dist.logpdf(2.0);
+    try testing.expect(math.isFinite(lp));
+}
+
+test "Burr: logpdf matches log(pdf) for x > mu" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const x = 0.8;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try testing.expectApproxEqRel(@log(p), lp, 1e-9);
+}
+
+test "Burr: cdf(mu) = 0" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expect(c == 0.0);
+}
+
+test "Burr: cdf(x < mu) = 0" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const c = dist.cdf(-5.0);
+    try testing.expect(c == 0.0);
+}
+
+test "Burr(2,1): cdf(1) = 0.5" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.5, c, 1e-9);
+}
+
+test "Burr(2,2): cdf(1) = 0.75" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.75, c, 1e-9);
+}
+
+test "Burr(1,2): cdf(1) = 0.75" {
+    const dist = try Burr(f64).init(1.0, 2.0, 0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.75, c, 1e-9);
+}
+
+test "Burr: cdf monotone increasing" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const c1 = dist.cdf(0.5);
+    const c2 = dist.cdf(1.0);
+    const c3 = dist.cdf(2.0);
+    try testing.expect(c1 < c2 and c2 < c3);
+}
+
+test "Burr: cdf + sf = 1" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const x = 1.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqRel(1.0, c + s, 1e-9);
+}
+
+test "Burr: sf(mu) = 1" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const s = dist.sf(0.0);
+    try testing.expect(s == 1.0);
+}
+
+test "Burr: sf monotone decreasing" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const s1 = dist.sf(0.5);
+    const s2 = dist.sf(1.0);
+    const s3 = dist.sf(2.0);
+    try testing.expect(s1 > s2 and s2 > s3);
+}
+
+test "Burr: quantile(0) = mu (or very close)" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "Burr: quantile(1) = inf" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0);
+}
+
+test "Burr(2,1): quantile(0.5) = 1.0" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(1.0, q, 1e-9);
+}
+
+test "Burr(2,2): quantile(0.75) = 1.0" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const q = dist.quantile(0.75);
+    try testing.expectApproxEqRel(1.0, q, 1e-9);
+}
+
+test "Burr: quantile(p<0) returns nan" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = dist.quantile(-0.5);
+    try testing.expect(math.isNan(q));
+}
+
+test "Burr: quantile(p>1) returns nan" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = dist.quantile(1.5);
+    try testing.expect(math.isNan(q));
+}
+
+test "Burr: quantile(p) in [0,1] returns finite value > mu" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expect(math.isFinite(q) and q > 0.0);
+}
+
+test "Burr: quantile is inverse of cdf" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const p = 0.7;
+    const q = dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqRel(p, c, 1e-8);
+}
+
+test "Burr(2,1): mode ≈ 0.57735 (1/sqrt(3))" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const m = dist.mode();
+    const expected = 1.0 / math.sqrt(3.0);
+    try testing.expectApproxEqRel(expected, m, 1e-9);
+}
+
+test "Burr(2,2): mode ≈ 0.44721 (1/sqrt(5))" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const m = dist.mode();
+    const expected = 1.0 / math.sqrt(5.0);
+    try testing.expectApproxEqRel(expected, m, 1e-9);
+}
+
+test "Burr(1,2): mode = mu" {
+    const dist = try Burr(f64).init(1.0, 2.0, 0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqRel(0.0, m, 1e-9);
+}
+
+test "Burr(2,1): mode < mean" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const mode = dist.mode();
+    const mean = dist.mean();
+    try testing.expect(mode < mean);
+}
+
+test "Burr: mode > mu for c > 1" {
+    const dist = try Burr(f64).init(2.0, 1.0, 5.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(m > 5.0);
+}
+
+test "Burr(2,1): mean = pi/2 ≈ 1.57080" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const mean = dist.mean();
+    try testing.expectApproxEqRel(math.pi / 2.0, mean, 1e-9);
+}
+
+test "Burr(2,2): mean = pi/4 ≈ 0.78540" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const mean = dist.mean();
+    try testing.expectApproxEqRel(math.pi / 4.0, mean, 1e-9);
+}
+
+test "Burr(1,2): mean = 1.0" {
+    const dist = try Burr(f64).init(1.0, 2.0, 0.0, 1.0);
+    const mean = dist.mean();
+    try testing.expectApproxEqRel(1.0, mean, 1e-9);
+}
+
+test "Burr: mean returns nan when kc <= 1" {
+    const dist = try Burr(f64).init(0.5, 1.5, 0.0, 1.0);
+    const mean = dist.mean();
+    try testing.expect(math.isNan(mean));
+}
+
+test "Burr: mean affected by location shift" {
+    const dist1 = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const dist2 = try Burr(f64).init(2.0, 1.0, 5.0, 1.0);
+    try testing.expectApproxEqRel(dist1.mean() + 5.0, dist2.mean(), 1e-9);
+}
+
+test "Burr: mean affected by scale factor" {
+    const dist1 = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const dist2 = try Burr(f64).init(2.0, 1.0, 0.0, 2.0);
+    try testing.expectApproxEqRel(dist1.mean() * 2.0, dist2.mean(), 1e-9);
+}
+
+test "Burr(2,2): variance ≈ 0.38306" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const var_val = dist.variance();
+    const expected = 1.0 - (math.pi * math.pi) / 16.0;
+    try testing.expectApproxEqRel(expected, var_val, 1e-9);
+}
+
+test "Burr(1,2): variance returns nan (kc=2)" {
+    const dist = try Burr(f64).init(1.0, 2.0, 0.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "Burr(2,1): variance returns nan (kc=2)" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "Burr: variance positive when defined and > 0" {
+    const dist = try Burr(f64).init(3.0, 2.0, 0.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(var_val > 0.0);
+}
+
+test "Burr(2,1): entropy ≈ 2 - log(2)" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const ent = dist.entropy();
+    const expected = 2.0 - @log(2.0);
+    try testing.expectApproxEqRel(expected, ent, 1e-9);
+}
+
+test "Burr(2,2): entropy ≈ 2 - log(4)" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const ent = dist.entropy();
+    const expected = 2.0 - @log(4.0);
+    try testing.expectApproxEqRel(expected, ent, 1e-9);
+}
+
+test "Burr(1,2): entropy ≈ 3/2 - log(2)" {
+    const dist = try Burr(f64).init(1.0, 2.0, 0.0, 1.0);
+    const ent = dist.entropy();
+    const expected = 1.5 - @log(2.0);
+    try testing.expectApproxEqRel(expected, ent, 1e-9);
+}
+
+test "Burr: entropy increases with scale sigma" {
+    const dist1 = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const dist2 = try Burr(f64).init(2.0, 1.0, 0.0, 2.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try testing.expect(ent2 > ent1);
+}
+
+test "Burr: entropy finite for all valid params" {
+    const dist = try Burr(f64).init(2.0, 2.0, 0.0, 1.0);
+    const ent = dist.entropy();
+    try testing.expect(math.isFinite(ent));
+}
+
+test "Burr: sample > mu" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample > 0.0);
+}
+
+test "Burr: 100 samples all > mu" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "Burr: samples with location parameter > mu" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Burr(f64).init(2.0, 1.0, 5.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 5.0);
+    }
+}
+
+test "Burr: different seeds produce different samples" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+test "Burr: samples are finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "Burr: validate passes for valid params (c=2, k=1, mu=0, sigma=1)" {
+    const dist = try Burr(f64).init(2.0, 1.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "Burr: validate passes for valid params (c=2, k=2, mu=5, sigma=2)" {
+    const dist = try Burr(f64).init(2.0, 2.0, 5.0, 2.0);
+    try dist.validate();
+}
+
+test "Burr: validate fails when c <= 0" {
+    const result = Burr(f64).init(-1.0, 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Burr: validate fails when k <= 0" {
+    const result = Burr(f64).init(2.0, -1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
