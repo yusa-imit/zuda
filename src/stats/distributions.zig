@@ -23730,16 +23730,20 @@ test "BetaPrime(1,2): entropy = -ln(2) + 1.5" {
     try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-5);
 }
 
-test "BetaPrime: entropy changes with alpha" {
-    const dist1 = try BetaPrime(f64).init(1.0, 2.0);
-    const dist2 = try BetaPrime(f64).init(2.0, 2.0);
-    try testing.expect(dist1.entropy() != dist2.entropy());
+test "BetaPrime: entropy for alpha=2, beta=2 matches closed form" {
+    const dist = try BetaPrime(f64).init(2.0, 2.0);
+    // H = lnB(2,2) - 1·ψ(2) - 3·ψ(2) + 4·ψ(4)
+    // γ terms cancel: H = -ln6 + 4·(11/6) - 4·1 = -ln6 + 44/6 - 4 = -ln6 + 10/3
+    const expected = -@log(6.0) + 10.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-5);
 }
 
-test "BetaPrime: entropy changes with beta" {
-    const dist1 = try BetaPrime(f64).init(2.0, 2.0);
-    const dist2 = try BetaPrime(f64).init(2.0, 3.0);
-    try testing.expect(dist1.entropy() != dist2.entropy());
+test "BetaPrime: entropy for alpha=2, beta=3 matches closed form" {
+    const dist = try BetaPrime(f64).init(2.0, 3.0);
+    // H = lnB(2,3) - 1·ψ(2) - 4·ψ(3) + 5·ψ(5)
+    // γ terms cancel: H = -ln12 + (41/12) where B(2,3)=1/12
+    const expected = -@log(12.0) + 41.0 / 12.0;
+    try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-5);
 }
 
 // --- sample tests ---
@@ -24505,18 +24509,16 @@ test "FoldedNormal: mean for mu=0, sigma=2" {
 
 test "FoldedNormal: variance for mu=0, sigma=1" {
     const dist = try FoldedNormal(f64).init(0.0, 1.0);
-    // variance = sigma² + mu² - mean²
-    const mean = dist.mean();
-    const expected = 1.0 - mean * mean;
-    try testing.expectApproxEqRel(expected, dist.variance(), 1e-7);
+    // variance = sigma²(1 - 2/π) for mu=0; derived from E[X²]-E[X]²=1-2/π
+    const expected = 1.0 - 2.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-7);
 }
 
 test "FoldedNormal: variance for mu=0, sigma=2" {
     const dist = try FoldedNormal(f64).init(0.0, 2.0);
-    // variance = sigma² + mu² - mean² = 4 + 0 - mean²
-    const mean = dist.mean();
-    const expected = 4.0 - mean * mean;
-    try testing.expectApproxEqRel(expected, dist.variance(), 1e-7);
+    // variance = sigma²(1 - 2/π) = 4(1 - 2/π) for mu=0
+    const expected = 4.0 * (1.0 - 2.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-7);
 }
 
 test "FoldedNormal: variance positive for valid parameters" {
@@ -24763,9 +24765,10 @@ test "GeneralizedPareto: pdf at location mu is non-negative" {
 
 test "GeneralizedPareto: logpdf(0) for GPD(0,1,0) equals -log(1)=0" {
     const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
-    const expected = 0.0;
     const logpdf_val = dist.logpdf(0.0);
-    try testing.expectApproxEqRel(expected, logpdf_val, 1e-6);
+    // logpdf(0) = -log(sigma) - (1+1/xi)*log(1+xi*(0-mu)/sigma) = -log(1) = 0
+    // use Abs not Rel because Rel is undefined when expected=0
+    try testing.expectApproxEqAbs(0.0, logpdf_val, 1e-10);
 }
 
 test "GeneralizedPareto: logpdf(1) for GPD(0,1,0) equals -1" {
