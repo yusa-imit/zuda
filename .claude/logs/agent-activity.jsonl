@@ -493,3 +493,5 @@
 {"timestamp":"2026-06-03T00:00:00Z","action":"subagent","agent_type":"orchestrator-inline","task":"Implement BetaPrime distribution (48th total, 33rd continuous)","project":"zuda"}
 {"timestamp":"2026-06-03T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for FoldedNormal distribution in distributions.zig","project":"zuda"}
 {"timestamp":"2026-06-03T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement FoldedNormal distribution in distributions.zig and fix 3 test bugs","project":"zuda"}
+{"timestamp":"2026-06-03T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for GeneralizedPareto distribution in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-03T08:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedPareto distribution in src/stats/distributions.zig","project":"zuda"}

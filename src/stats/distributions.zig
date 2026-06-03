@@ -23984,6 +23984,241 @@ pub fn FoldedNormal(comptime T: type) type {
 }
 
 // ============================================================================
+// Generalized Pareto Distribution
+// ============================================================================
+
+/// Generalized Pareto Distribution GPD(μ, σ, ξ)
+///
+/// The generalized Pareto distribution is a family of continuous probability
+/// distributions often used in extreme value theory and actuarial applications.
+/// It is the distribution of excess values over a threshold in many real-world
+/// phenomena.
+///
+/// Parameters:
+///   - mu: location parameter (any finite real)
+///   - sigma: scale parameter (σ > 0)
+///   - xi: shape parameter (any finite real; ξ > -1 for finite entropy)
+///
+/// Support:
+///   - For ξ ≥ 0: [μ, +∞)
+///   - For ξ < 0: [μ, μ - σ/ξ] (finite upper bound)
+///
+/// Relationships:
+///   - When ξ = 0: reduces to Exponential(μ, σ)
+///   - When ξ > 0: heavy-tailed (Pareto-like)
+///   - When ξ < 0: bounded support (Beta-like)
+///
+/// Applications: extreme value analysis, risk assessment, insurance,
+///   exceedance modeling, reliability engineering
+///
+/// Time: O(1) for pdf/cdf/quantile/mean/variance/mode/entropy/sample
+pub fn GeneralizedPareto(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        xi: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize GeneralizedPareto distribution with parameters μ, σ > 0, ξ.
+        /// Returns error.InvalidParameter if σ ≤ 0 or any parameter is not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, xi: T) DistributionError!Self {
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!math.isFinite(xi)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .xi = xi };
+        }
+
+        /// Compute upper bound of support for ξ < 0.
+        /// For ξ ≥ 0, support is unbounded; this returns mu + sigma/|xi|.
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn upperBound(self: Self) T {
+            if (self.xi >= 0.0) return math.inf(T);
+            return self.mu - self.sigma / self.xi;
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Log-probability density function.
+        /// For x < μ or (ξ < 0 and x ≥ upper_bound): returns -∞
+        /// For |ξ| < 1e-10: -log(σ) - (x-μ)/σ
+        /// For ξ ≠ 0: -log(σ) - (1 + 1/ξ)·log(1 + ξ·(x-μ)/σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.mu) return -math.inf(T);
+            if (self.xi < 0.0) {
+                const upper = self.upperBound();
+                if (x >= upper) return -math.inf(T);
+            }
+
+            const t = (x - self.mu) / self.sigma;
+            if (@abs(self.xi) < 1e-10) {
+                return -@log(self.sigma) - t;
+            }
+
+            const z = 1.0 + self.xi * t;
+            if (z <= 0.0) return -math.inf(T);
+            return -@log(self.sigma) - (1.0 + 1.0 / self.xi) * @log(z);
+        }
+
+        /// Probability density function.
+        /// f(x) = (1/σ) · (1 + ξ·(x-μ)/σ)^(-(1+1/ξ)) for x ≥ μ (and x < upper bound if ξ < 0)
+        /// f(x) = 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.mu) return 0.0;
+            if (self.xi < 0.0) {
+                const upper = self.upperBound();
+                if (x > upper) return 0.0;
+            }
+
+            const t = (x - self.mu) / self.sigma;
+            if (@abs(self.xi) < 1e-10) {
+                return (1.0 / self.sigma) * @exp(-t);
+            }
+
+            const z = 1.0 + self.xi * t;
+            if (z <= 0.0) return 0.0;
+            return (1.0 / self.sigma) * std.math.pow(T, z, -(1.0 + 1.0 / self.xi));
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = 0 for x ≤ μ
+        /// F(x) = 1 for ξ < 0 and x ≥ μ - σ/ξ
+        /// For |ξ| < 1e-10: F(x) = 1 - exp(-(x-μ)/σ)
+        /// For ξ ≠ 0: F(x) = 1 - (1 + ξ·(x-μ)/σ)^(-1/ξ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.mu) return 0.0;
+            if (self.xi < 0.0) {
+                const upper = self.upperBound();
+                if (x >= upper) return 1.0;
+            }
+
+            const t = (x - self.mu) / self.sigma;
+            if (@abs(self.xi) < 1e-10) {
+                return 1.0 - @exp(-t);
+            }
+
+            const z = 1.0 + self.xi * t;
+            if (z <= 0.0) return 1.0;
+            return 1.0 - std.math.pow(T, z, -1.0 / self.xi);
+        }
+
+        /// Survival function: 1 - CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Q(p) = μ + σ·((1-p)^(-ξ) - 1) / ξ for ξ ≠ 0
+        /// Q(p) = μ - σ·log(1-p) for |ξ| < 1e-10
+        /// Returns NaN if p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return self.mu;
+            if (p == 1.0) {
+                if (self.xi < 0.0) {
+                    return self.mu - self.sigma / self.xi;
+                }
+                return math.inf(T);
+            }
+
+            if (@abs(self.xi) < 1e-10) {
+                return self.mu - self.sigma * @log(1.0 - p);
+            }
+
+            return self.mu + self.sigma *
+                (std.math.pow(T, 1.0 - p, -self.xi) - 1.0) / self.xi;
+        }
+
+        // --- Moments ---
+
+        /// Mean: μ + σ/(1-ξ) for ξ < 1; NaN otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.xi >= 1.0) return math.nan(T);
+            return self.mu + self.sigma / (1.0 - self.xi);
+        }
+
+        /// Variance: σ² / ((1-ξ)² · (1-2ξ)) for ξ < 0.5; NaN otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.xi >= 0.5) return math.nan(T);
+            const denom = (1.0 - self.xi) * (1.0 - self.xi) * (1.0 - 2.0 * self.xi);
+            return self.sigma * self.sigma / denom;
+        }
+
+        /// Mode: always μ (the lower boundary is the mode for ξ > -1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy.
+        /// H = log(σ) + ξ + 1 for ξ > -1
+        /// H = NaN for ξ ≤ -1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            if (self.xi <= -1.0) return math.nan(T);
+            return @log(self.sigma) + self.xi + 1.0;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample from the distribution.
+        /// Uses U^(-ξ) - 1 formula where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            // Avoid log(0) for u very close to 0
+            u = @max(u, std.math.floatMin(T));
+
+            if (@abs(self.xi) < 1e-10) {
+                return self.mu - self.sigma * @log(u);
+            }
+
+            return self.mu + self.sigma * (std.math.pow(T, u, -self.xi) - 1.0) / self.xi;
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: σ > 0 and all fields finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!math.isFinite(self.xi)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
 // FoldedNormal Tests
 // ============================================================================
 
@@ -24399,4 +24634,500 @@ test "FoldedNormal: sample mean roughly equals distribution mean for mu=1" {
     const sample_mean = sum / 2000.0;
     const expected_mean = dist.mean();
     try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.15);
+}
+
+// ============================================================================
+// GeneralizedPareto Tests
+// ============================================================================
+
+test "GeneralizedPareto: init with valid parameters" {
+    const dist1 = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(0.0, dist1.mu);
+    try testing.expectEqual(1.0, dist1.sigma);
+    try testing.expectEqual(0.0, dist1.xi);
+
+    const dist2 = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    try testing.expectEqual(0.5, dist2.xi);
+
+    const dist3 = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    try testing.expectEqual(-0.5, dist3.xi);
+
+    const dist4 = try GeneralizedPareto(f64).init(2.0, 3.0, 0.5);
+    try testing.expectEqual(2.0, dist4.mu);
+    try testing.expectEqual(3.0, dist4.sigma);
+
+    const dist5 = try GeneralizedPareto(f64).init(-1.0, 2.0, -0.3);
+    try testing.expectEqual(-1.0, dist5.mu);
+}
+
+test "GeneralizedPareto: init with sigma=0 returns error" {
+    const result = GeneralizedPareto(f64).init(0.0, 0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPareto: init with sigma<0 returns error" {
+    const result = GeneralizedPareto(f64).init(0.0, -1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPareto: init with sigma=inf returns error" {
+    const result = GeneralizedPareto(f64).init(0.0, math.inf(f64), 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPareto: init with mu=inf returns error" {
+    const result = GeneralizedPareto(f64).init(math.inf(f64), 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPareto: init with xi=inf returns error" {
+    const result = GeneralizedPareto(f64).init(0.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPareto: pdf at mu equals 1/sigma for exponential case (xi=0)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(0.0);
+    try testing.expectApproxEqRel(1.0, pdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: pdf(1) for GPD(0,1,0) equals exp(-1)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = math.exp(-1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: pdf(2) for GPD(0,1,0) equals exp(-2)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = math.exp(-2.0);
+    const pdf_val = dist.pdf(2.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: pdf outside support returns 0 for GPD(0,1,0)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(-0.1);
+    try testing.expectApproxEqAbs(0.0, pdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: pdf(1) for GPD(0,1,0.5) equals 8/27" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const expected = 8.0 / 27.0;
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: pdf(2) for GPD(0,1,0.5) equals 0.125" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const expected = 0.125;
+    const pdf_val = dist.pdf(2.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: pdf(-1) for GPD(0,1,0.5) equals 0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const pdf_val = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, pdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: pdf(1) for GPD(0,1,-0.5) equals 0.5" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const expected = 0.5;
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: pdf at upper boundary for GPD(0,1,-0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const pdf_val = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(0.0, pdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: pdf outside support for GPD(0,1,-0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const pdf_val = dist.pdf(2.1);
+    try testing.expectApproxEqAbs(0.0, pdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: pdf at location mu is non-negative" {
+    const dist1 = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    try testing.expect(dist1.pdf(0.0) >= 0.0);
+
+    const dist2 = try GeneralizedPareto(f64).init(2.0, 3.0, 0.5);
+    try testing.expect(dist2.pdf(2.0) >= 0.0);
+
+    const dist3 = try GeneralizedPareto(f64).init(-1.0, 2.0, -0.3);
+    try testing.expect(dist3.pdf(-1.0) >= 0.0);
+}
+
+test "GeneralizedPareto: logpdf(0) for GPD(0,1,0) equals -log(1)=0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = 0.0;
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: logpdf(1) for GPD(0,1,0) equals -1" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = -1.0;
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: logpdf matches log(pdf) for xi!=0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const pdf_val = dist.pdf(1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: logpdf outside support returns -inf" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const logpdf_val = dist.logpdf(-0.1);
+    try testing.expect(math.isNegativeInf(logpdf_val));
+}
+
+test "GeneralizedPareto: cdf(mu) equals 0 for exponential case" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, cdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: cdf(1) for GPD(0,1,0) equals 1-exp(-1)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = 1.0 - math.exp(-1.0);
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: cdf(2) for GPD(0,1,0) equals 1-exp(-2)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = 1.0 - math.exp(-2.0);
+    const cdf_val = dist.cdf(2.0);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: cdf(1) for GPD(0,1,0.5) equals 5/9" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const expected = 5.0 / 9.0;
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: cdf(0) for GPD(0,1,0.5) equals 0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, cdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: cdf(1) for GPD(0,1,-0.5) equals 0.75" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const expected = 0.75;
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: cdf(2) for GPD(0,1,-0.5) equals 1.0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const cdf_val = dist.cdf(2.0);
+    try testing.expectApproxEqRel(1.0, cdf_val, 1e-6);
+}
+
+test "GeneralizedPareto: cdf below mu returns 0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(-0.001);
+    try testing.expectApproxEqAbs(0.0, cdf_val, 1e-10);
+}
+
+test "GeneralizedPareto: cdf is monotone increasing" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const cdf1 = dist.cdf(1.0);
+    const cdf2 = dist.cdf(2.0);
+    try testing.expect(cdf1 < cdf2);
+}
+
+test "GeneralizedPareto: survival function equals 1-cdf" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const sf_val = dist.sf(1.0);
+    const expected = 1.0 - dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, sf_val, 1e-6);
+}
+
+test "GeneralizedPareto: quantile(0) equals mu for exponential case" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const q = dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "GeneralizedPareto: quantile(0.5) for GPD(0,1,0) equals log(2)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = @log(2.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(expected, q, 1e-6);
+}
+
+test "GeneralizedPareto: quantile(1) for GPD(0,1,0) is infinite" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "GeneralizedPareto: quantile(0.5) for GPD(0,1,0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const expected = 2.0 * (math.sqrt(2.0) - 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(expected, q, 1e-6);
+}
+
+test "GeneralizedPareto: quantile(0) for GPD(0,1,-0.5) equals mu" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const q = dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "GeneralizedPareto: quantile(1) for GPD(0,1,-0.5) equals upper bound" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const q = dist.quantile(1.0);
+    try testing.expectApproxEqRel(2.0, q, 1e-6);
+}
+
+test "GeneralizedPareto: quantile(0.5) for GPD(0,1,-0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const expected = 2.0 * (1.0 - 1.0 / math.sqrt(2.0));
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(expected, q, 1e-6);
+}
+
+test "GeneralizedPareto: quantile with p<0 returns error" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const result = dist.quantile(-0.1);
+    try testing.expect(math.isNan(result));
+}
+
+test "GeneralizedPareto: quantile with p>1 returns error" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const result = dist.quantile(1.1);
+    try testing.expect(math.isNan(result));
+}
+
+test "GeneralizedPareto: mean for GPD(0,1,0) equals 1" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = 1.0;
+    const mean_val = dist.mean();
+    try testing.expectApproxEqRel(expected, mean_val, 1e-6);
+}
+
+test "GeneralizedPareto: mean for GPD(2,3,0) equals 5" {
+    const dist = try GeneralizedPareto(f64).init(2.0, 3.0, 0.0);
+    const expected = 5.0;
+    const mean_val = dist.mean();
+    try testing.expectApproxEqRel(expected, mean_val, 1e-6);
+}
+
+test "GeneralizedPareto: mean for GPD(0,1,0.5) equals 2" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const expected = 2.0;
+    const mean_val = dist.mean();
+    try testing.expectApproxEqRel(expected, mean_val, 1e-6);
+}
+
+test "GeneralizedPareto: mean for GPD(0,1,-0.5) equals 2/3" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const expected = 2.0 / 3.0;
+    const mean_val = dist.mean();
+    try testing.expectApproxEqRel(expected, mean_val, 1e-6);
+}
+
+test "GeneralizedPareto: mean for GPD(0,1,1.0) is NaN" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "GeneralizedPareto: mean for GPD(0,1,1.5) is NaN" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 1.5);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "GeneralizedPareto: variance for GPD(0,1,0) equals 1" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = 1.0;
+    const var_val = dist.variance();
+    try testing.expectApproxEqRel(expected, var_val, 1e-6);
+}
+
+test "GeneralizedPareto: variance for GPD(0,1,0.3)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.3);
+    const expected = 1.0 / (0.7 * 0.7 * 0.4);
+    const var_val = dist.variance();
+    try testing.expectApproxEqRel(expected, var_val, 1e-5);
+}
+
+test "GeneralizedPareto: variance for GPD(0,1,-0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const expected = 1.0 / (1.5 * 1.5 * 2.0);
+    const var_val = dist.variance();
+    try testing.expectApproxEqRel(expected, var_val, 1e-6);
+}
+
+test "GeneralizedPareto: variance for GPD(0,1,0.5) is NaN" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "GeneralizedPareto: variance for GPD(0,1,0.6) is NaN" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.6);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "GeneralizedPareto: mode equals mu for GPD(0,1,0)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode_val, 1e-10);
+}
+
+test "GeneralizedPareto: mode equals mu for GPD(0,1,0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode_val, 1e-10);
+}
+
+test "GeneralizedPareto: mode equals mu for GPD(2,3,-0.5)" {
+    const dist = try GeneralizedPareto(f64).init(2.0, 3.0, -0.5);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(2.0, mode_val, 1e-10);
+}
+
+test "GeneralizedPareto: entropy for GPD(0,1,0) equals 1.0" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const expected = 1.0;
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-6);
+}
+
+test "GeneralizedPareto: entropy for GPD(0,1,0.5) equals 1.5" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const expected = 1.5;
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-6);
+}
+
+test "GeneralizedPareto: entropy for GPD(0,1,-0.5) equals 0.5" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const expected = 0.5;
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-6);
+}
+
+test "GeneralizedPareto: entropy for GPD(0,2,0)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 2.0, 0.0);
+    const expected = @log(2.0) + 1.0;
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-6);
+}
+
+test "GeneralizedPareto: entropy for GPD(0,2,0.5)" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 2.0, 0.5);
+    const expected = @log(2.0) + 1.5;
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-6);
+}
+
+test "GeneralizedPareto: entropy for GPD(0,1,-1.0) is NaN" {
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -1.0);
+    const entropy_val = dist.entropy();
+    try testing.expect(math.isNan(entropy_val));
+}
+
+test "GeneralizedPareto: sample returns value in support for xi=0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample >= 0.0);
+}
+
+test "GeneralizedPareto: sample returns value in support for xi>0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample >= 0.0);
+}
+
+test "GeneralizedPareto: sample returns value in support for xi<0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample >= 0.0 and sample <= 2.0);
+}
+
+test "GeneralizedPareto: 100 samples all in support for xi=0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "GeneralizedPareto: 100 samples all in support for xi>0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0);
+    }
+}
+
+test "GeneralizedPareto: 100 samples all in support for xi<0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, -0.5);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0 and sample <= 2.0);
+    }
+}
+
+test "GeneralizedPareto: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(math.isFinite(sample));
+}
+
+test "GeneralizedPareto: samples with different seeds differ" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.5);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+test "GeneralizedPareto: sample mean roughly equals distribution mean for xi=0" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.0);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 2000.0;
+    const expected_mean = dist.mean();
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.15);
+}
+
+test "GeneralizedPareto: sample mean roughly equals distribution mean for xi=0.3" {
+    var rng = std.Random.DefaultPrng.init(456);
+    const dist = try GeneralizedPareto(f64).init(0.0, 1.0, 0.3);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 2000.0;
+    const expected_mean = dist.mean();
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.2);
 }
