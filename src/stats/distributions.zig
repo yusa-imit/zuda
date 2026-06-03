@@ -25134,3 +25134,583 @@ test "GeneralizedPareto: sample mean roughly equals distribution mean for xi=0.3
     const expected_mean = dist.mean();
     try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.2);
 }
+
+// ============================================================================
+// Log-Cauchy Distribution
+// ============================================================================
+
+/// Log-Cauchy Distribution
+///
+/// The log-Cauchy distribution is the distribution of X = exp(Y) where Y ~ Cauchy(μ, σ).
+/// It is a heavy-tailed distribution with no defined mean or variance, related to the
+/// Cauchy distribution through logarithmic transformation.
+///
+/// Parameters:
+///   - mu: location parameter (any finite real)
+///   - sigma: scale parameter (σ > 0)
+///
+/// Support: x ∈ (0, ∞)
+///
+/// Applications: extreme value theory, financial modeling, reliability engineering
+///
+/// Time: O(1) for pdf/cdf/quantile/median/mode/entropy/sample
+pub fn LogCauchy(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize LogCauchy distribution with parameters μ (any finite real), σ > 0.
+        /// Returns error.InvalidParameter if σ ≤ 0 or any parameter is not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (sigma <= 0.0 or math.isNan(sigma) or math.isInf(sigma)) return error.InvalidParameter;
+            if (math.isNan(mu) or math.isInf(mu)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = 1 / (πσx · (1 + ((ln x - μ)/σ)²)) for x > 0; 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0) return 0;
+            const z = (@log(x) - self.mu) / self.sigma;
+            return 1.0 / (math.pi * self.sigma * x * (1.0 + z * z));
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = -ln(πσ) - ln(x) - ln(1 + ((ln x - μ)/σ)²)
+        /// Returns -∞ for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0) return -math.inf(T);
+            const z = (@log(x) - self.mu) / self.sigma;
+            return -@log(math.pi * self.sigma) - @log(x) - @log(1.0 + z * z);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = 0.5 + (1/π) · arctan((ln x - μ)/σ) for x > 0; 0 for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0) return 0;
+            const z = (@log(x) - self.mu) / self.sigma;
+
+            // For very large z, use complementary formula for better accuracy
+            // arctan(z) + arctan(1/z) = π/2 for z > 0
+            // So arctan(z) = π/2 - arctan(1/z) and we compute arctan(1/z) instead
+            if (z > 20.0) {
+                // arctan(z) = π/2 - arctan(1/z) for large z
+                const reciprocal_atan = math.atan(1.0 / z);
+                return 0.5 + (1.0 / math.pi) * (math.pi / 2.0 - reciprocal_atan);
+            }
+            if (z < -20.0) {
+                // arctan(z) = -π/2 - arctan(1/z) for z < -20
+                const reciprocal_atan = math.atan(1.0 / z);
+                return 0.5 + (1.0 / math.pi) * (-math.pi / 2.0 - reciprocal_atan);
+            }
+
+            return 0.5 + math.atan(z) / math.pi;
+        }
+
+        /// Survival function: 1 - CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Q(p) = exp(μ + σ · tan(π(p - 0.5)))
+        /// Returns NaN if p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p < 0 or p > 1 or math.isNan(p)) return math.nan(T);
+            if (p == 0) return 0;
+            if (p == 1) return math.inf(T);
+
+            const exponent = self.mu + self.sigma * @tan(math.pi * (p - 0.5));
+            const result = @exp(exponent);
+
+            // Prevent underflow for extreme p values
+            if (!math.isFinite(result) or result == 0.0) {
+                // If exp underflowed, return a small positive number
+                // This handles cases where p is extremely close to 0
+                if (exponent < 0.0) {
+                    return std.math.floatMin(T);
+                }
+                return result;
+            }
+
+            return result;
+        }
+
+        // --- Moments ---
+
+        /// Mean is undefined (NaN) — heavy-tailed like Cauchy.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Variance is undefined (NaN) — heavy-tailed like Cauchy.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Median: exp(μ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return @exp(self.mu);
+        }
+
+        /// Mode: exp(μ - 1 + √(1 - σ²)) for σ ≤ 1; NaN for σ > 1
+        /// (when σ > 1, PDF is strictly decreasing; no finite mode)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.sigma > 1) return math.nan(T);
+            const disc = 1.0 - self.sigma * self.sigma;
+            return @exp(self.mu - 1.0 + @sqrt(disc));
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy: ln(4πσ) + μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(4.0 * math.pi * self.sigma) + self.mu;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample from the distribution.
+        /// Uses inverse CDF: exp(μ + σ · tan(π(U - 0.5))) where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return @exp(self.mu + self.sigma * @tan(math.pi * (u - 0.5)));
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: σ > 0 and all fields finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0 or math.isNan(self.sigma) or math.isInf(self.sigma))
+                return error.InvalidParameter;
+            if (math.isNan(self.mu) or math.isInf(self.mu))
+                return error.InvalidParameter;
+        }
+    };
+}
+
+// LogCauchy Tests (51st distribution, 36th continuous)
+
+test "LogCauchy: init with valid params (mu=0, sigma=1) succeeds" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.sigma == 1.0);
+}
+
+test "LogCauchy: init with valid params (mu=1, sigma=0.5) succeeds" {
+    const dist = try LogCauchy(f64).init(1.0, 0.5);
+    try testing.expect(dist.mu == 1.0);
+    try testing.expect(dist.sigma == 0.5);
+}
+
+test "LogCauchy: init with sigma=0 fails with InvalidParameter" {
+    const result = LogCauchy(f64).init(0.0, 0.0);
+    try testing.expectError(DistributionError.InvalidParameter, result);
+}
+
+test "LogCauchy: init with sigma=-1 fails with InvalidParameter" {
+    const result = LogCauchy(f64).init(0.0, -1.0);
+    try testing.expectError(DistributionError.InvalidParameter, result);
+}
+
+test "LogCauchy: pdf(1) for LogCauchy(0,1) equals 1/pi" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 1.0 / math.pi;
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-9);
+}
+
+test "LogCauchy: pdf(1) for LogCauchy(0,0.5) equals 2/pi" {
+    const dist = try LogCauchy(f64).init(0.0, 0.5);
+    const expected = 2.0 / math.pi;
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-9);
+}
+
+test "LogCauchy: pdf(e) for LogCauchy(0,1) equals 1/(2*pi*e)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 1.0 / (2.0 * math.pi * math.e);
+    const pdf_val = dist.pdf(math.e);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-9);
+}
+
+test "LogCauchy: pdf(e) for LogCauchy(1,1) equals 1/(pi*e)" {
+    const dist = try LogCauchy(f64).init(1.0, 1.0);
+    const expected = 1.0 / (math.pi * math.e);
+    const pdf_val = dist.pdf(math.e);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-9);
+}
+
+test "LogCauchy: pdf(0) equals 0 (boundary, out of support)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.0, pdf_val, 1e-15);
+}
+
+test "LogCauchy: pdf(-1) equals 0 (negative, out of support)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, pdf_val, 1e-15);
+}
+
+test "LogCauchy: pdf is positive for x in (0, inf)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const pdf_half = dist.pdf(0.5);
+    const pdf_two = dist.pdf(2.0);
+    const pdf_ten = dist.pdf(10.0);
+    try testing.expect(pdf_half > 0.0);
+    try testing.expect(pdf_two > 0.0);
+    try testing.expect(pdf_ten > 0.0);
+}
+
+test "LogCauchy: pdf(e^2) for LogCauchy(2,0.5) equals 2/(pi*e^2)" {
+    const dist = try LogCauchy(f64).init(2.0, 0.5);
+    const expected = 2.0 / (math.pi * math.e * math.e);
+    const pdf_val = dist.pdf(math.e * math.e);
+    try testing.expectApproxEqRel(expected, pdf_val, 1e-9);
+}
+
+test "LogCauchy: logpdf(1) for LogCauchy(0,1) equals -ln(pi)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = -@log(math.pi);
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-9);
+}
+
+test "LogCauchy: logpdf matches log(pdf) for x=1" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqRel(expected_logpdf, logpdf_val, 1e-9);
+}
+
+test "LogCauchy: logpdf matches log(pdf) for x=e" {
+    const dist = try LogCauchy(f64).init(0.5, 0.75);
+    const pdf_val = dist.pdf(math.e);
+    const logpdf_val = dist.logpdf(math.e);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqRel(expected_logpdf, logpdf_val, 1e-9);
+}
+
+test "LogCauchy: cdf(1) for LogCauchy(0,1) equals 0.5" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 0.5;
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-9);
+}
+
+test "LogCauchy: cdf(1) for LogCauchy(0,0.5) equals 0.5" {
+    const dist = try LogCauchy(f64).init(0.0, 0.5);
+    const expected = 0.5;
+    const cdf_val = dist.cdf(1.0);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-9);
+}
+
+test "LogCauchy: cdf(e) for LogCauchy(0,1) equals 0.75" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 0.75;
+    const cdf_val = dist.cdf(math.e);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-9);
+}
+
+test "LogCauchy: cdf(e^2) for LogCauchy(2,0.5) equals 0.5" {
+    const dist = try LogCauchy(f64).init(2.0, 0.5);
+    const expected = 0.5;
+    const cdf_val = dist.cdf(math.e * math.e);
+    try testing.expectApproxEqRel(expected, cdf_val, 1e-9);
+}
+
+test "LogCauchy: cdf(0) equals 0 (boundary)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, cdf_val, 1e-15);
+}
+
+test "LogCauchy: cdf is monotone increasing: cdf(e) > cdf(1)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const cdf_one = dist.cdf(1.0);
+    const cdf_e = dist.cdf(math.e);
+    try testing.expect(cdf_e > cdf_one);
+}
+
+test "LogCauchy: cdf approaches 1 for large x" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    // LogCauchy CDF grows as arctan(ln x)/π — logarithmically slow.
+    // cdf(1e30) = 0.5 + arctan(ln(1e30))/π ≈ 0.5 + arctan(69.08)/π ≈ 0.995
+    const cdf_large = dist.cdf(1e30);
+    try testing.expect(cdf_large > 0.99);
+}
+
+test "LogCauchy: sf(1) for LogCauchy(0,1) equals 0.5" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 0.5;
+    const sf_val = dist.sf(1.0);
+    try testing.expectApproxEqRel(expected, sf_val, 1e-9);
+}
+
+test "LogCauchy: sf(e) for LogCauchy(0,1) equals 0.25" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 0.25;
+    const sf_val = dist.sf(math.e);
+    try testing.expectApproxEqRel(expected, sf_val, 1e-9);
+}
+
+test "LogCauchy: sf + cdf equals 1 at x=1" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    const sf_val = dist.sf(1.0);
+    try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-14);
+}
+
+test "LogCauchy: sf + cdf equals 1 at x=e" {
+    const dist = try LogCauchy(f64).init(0.5, 0.75);
+    const cdf_val = dist.cdf(math.e);
+    const sf_val = dist.sf(math.e);
+    try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-14);
+}
+
+test "LogCauchy: quantile(0.5) for LogCauchy(0,1) equals 1" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 1.0;
+    const q_val = dist.quantile(0.5);
+    try testing.expectApproxEqRel(expected, q_val, 1e-9);
+}
+
+test "LogCauchy: quantile(0.5) for LogCauchy(1,1) equals e" {
+    const dist = try LogCauchy(f64).init(1.0, 1.0);
+    const expected = math.e;
+    const q_val = dist.quantile(0.5);
+    try testing.expectApproxEqRel(expected, q_val, 1e-9);
+}
+
+test "LogCauchy: quantile(0.75) for LogCauchy(0,1) equals e" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = math.e;
+    const q_val = dist.quantile(0.75);
+    try testing.expectApproxEqRel(expected, q_val, 1e-9);
+}
+
+test "LogCauchy: quantile(p) for p->0 returns small positive" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const q_val = dist.quantile(1e-15);
+    try testing.expect(q_val > 0.0);
+    try testing.expect(q_val < 0.01);
+}
+
+test "LogCauchy: cdf(quantile(0.5)) approximately equals 0.5" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const q = dist.quantile(0.5);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.5, cdf_q, 1e-6);
+}
+
+test "LogCauchy: cdf(quantile(0.25)) approximately equals 0.25" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const q = dist.quantile(0.25);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.25, cdf_q, 1e-6);
+}
+
+test "LogCauchy: cdf(quantile(0.75)) approximately equals 0.75" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const q = dist.quantile(0.75);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.75, cdf_q, 1e-6);
+}
+
+test "LogCauchy: mean for LogCauchy(0,1) is NaN" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "LogCauchy: mean for LogCauchy(1,0.5) is NaN" {
+    const dist = try LogCauchy(f64).init(1.0, 0.5);
+    const mean_val = dist.mean();
+    try testing.expect(math.isNan(mean_val));
+}
+
+test "LogCauchy: variance for LogCauchy(0,1) is NaN" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "LogCauchy: variance for LogCauchy(2,0.75) is NaN" {
+    const dist = try LogCauchy(f64).init(2.0, 0.75);
+    const var_val = dist.variance();
+    try testing.expect(math.isNan(var_val));
+}
+
+test "LogCauchy: median for LogCauchy(0,1) equals 1" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 1.0;
+    const median_val = dist.median();
+    try testing.expectApproxEqRel(expected, median_val, 1e-9);
+}
+
+test "LogCauchy: median for LogCauchy(1,1) equals e" {
+    const dist = try LogCauchy(f64).init(1.0, 1.0);
+    const expected = math.e;
+    const median_val = dist.median();
+    try testing.expectApproxEqRel(expected, median_val, 1e-9);
+}
+
+test "LogCauchy: median for LogCauchy(2,0.5) equals e^2" {
+    const dist = try LogCauchy(f64).init(2.0, 0.5);
+    const expected = math.e * math.e;
+    const median_val = dist.median();
+    try testing.expectApproxEqRel(expected, median_val, 1e-9);
+}
+
+test "LogCauchy: mode for LogCauchy(0,1) equals exp(-1)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = 1.0 / math.e;
+    const mode_val = dist.mode();
+    try testing.expectApproxEqRel(expected, mode_val, 1e-9);
+}
+
+test "LogCauchy: mode for LogCauchy(0,0.5) equals exp(-1 + sqrt(0.75))" {
+    const dist = try LogCauchy(f64).init(0.0, 0.5);
+    const expected = @exp(-1.0 + @sqrt(0.75));
+    const mode_val = dist.mode();
+    try testing.expectApproxEqRel(expected, mode_val, 1e-9);
+}
+
+test "LogCauchy: mode < median for LogCauchy(0,1)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const mode_val = dist.mode();
+    const median_val = dist.median();
+    try testing.expect(mode_val < median_val);
+}
+
+test "LogCauchy: mode for LogCauchy(0,2) is NaN (sigma>1)" {
+    const dist = try LogCauchy(f64).init(0.0, 2.0);
+    const mode_val = dist.mode();
+    try testing.expect(math.isNan(mode_val));
+}
+
+test "LogCauchy: mode for LogCauchy(0,1.5) is NaN (sigma>1)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.5);
+    const mode_val = dist.mode();
+    try testing.expect(math.isNan(mode_val));
+}
+
+test "LogCauchy: entropy for LogCauchy(0,1) equals ln(4*pi)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const expected = @log(4.0 * math.pi);
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-9);
+}
+
+test "LogCauchy: entropy for LogCauchy(0,0.5) equals ln(2*pi)" {
+    const dist = try LogCauchy(f64).init(0.0, 0.5);
+    const expected = @log(2.0 * math.pi);
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-9);
+}
+
+test "LogCauchy: entropy for LogCauchy(1,1) equals ln(4*pi) + 1" {
+    const dist = try LogCauchy(f64).init(1.0, 1.0);
+    const expected = @log(4.0 * math.pi) + 1.0;
+    const entropy_val = dist.entropy();
+    try testing.expectApproxEqRel(expected, entropy_val, 1e-9);
+}
+
+test "LogCauchy: entropy increases with sigma" {
+    const dist_small = try LogCauchy(f64).init(0.0, 1.0);
+    const dist_large = try LogCauchy(f64).init(0.0, 2.0);
+    const entropy_small = dist_small.entropy();
+    const entropy_large = dist_large.entropy();
+    try testing.expect(entropy_large > entropy_small);
+}
+
+test "LogCauchy: sample returns x > 0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample > 0.0);
+}
+
+test "LogCauchy: 100 samples all > 0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "LogCauchy: samples with different seeds differ" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+test "LogCauchy: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(math.isFinite(sample));
+}
+
+test "LogCauchy: 100 samples return finite values" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "LogCauchy: validate passes for valid params (mu=0, sigma=1)" {
+    const dist = try LogCauchy(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "LogCauchy: validate passes for valid params (mu=2, sigma=0.5)" {
+    const dist = try LogCauchy(f64).init(2.0, 0.5);
+    try dist.validate();
+}
