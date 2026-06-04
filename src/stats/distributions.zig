@@ -26946,3 +26946,663 @@ test "Dagum: f32 quantile and mean" {
     try testing.expect(math.isFinite(q));
     try testing.expect(math.isFinite(m));
 }
+
+// ============================================================================
+// TruncatedNormal Distribution
+// ============================================================================
+
+/// Truncated Normal distribution — N(μ,σ) conditioned on X ∈ [a,b]
+///
+/// PDF: f(x) = φ((x-μ)/σ) / (σ·Z)   for x ∈ [a,b], else 0
+/// where Z = Φ(β) - Φ(α), α=(a-μ)/σ, β=(b-μ)/σ
+///
+/// Parameters:
+///   - mu (μ): location (-∞, +∞)
+///   - sigma (σ): scale (σ > 0)
+///   - a: lower bound (may be -∞)
+///   - b: upper bound (may be +∞, must satisfy b > a)
+///
+/// Support: [a, b]
+///
+/// Special cases: a=-∞,b=+∞ → Normal(μ,σ); a=0,b=+∞,μ=0 → HalfNormal(σ)
+///
+/// Time: O(1) for all operations
+pub fn TruncatedNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        a: T,
+        b: T,
+        /// Normalization: Z = Φ((b-μ)/σ) - Φ((a-μ)/σ), cached at init
+        z_const: T,
+
+        const Self = @This();
+
+        /// Initialize TruncatedNormal distribution
+        ///
+        /// Errors: sigma ≤ 0 or non-finite, mu non-finite, a ≥ b, or Z ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, a: T, b: T) DistributionError!Self {
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (a >= b) return error.InvalidParameter;
+            const alpha = (a - mu) / sigma;
+            const beta = (b - mu) / sigma;
+            const z = stdCdf(beta) - stdCdf(alpha);
+            if (z <= 0.0) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .a = a, .b = b, .z_const = z };
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            try testing.expect(self.sigma > 0.0);
+            try testing.expect(math.isFinite(self.mu));
+            try testing.expect(self.a < self.b);
+            try testing.expect(self.z_const > 0.0);
+        }
+
+        /// Probability density function
+        ///
+        /// f(x) = φ((x-μ)/σ) / (σ·Z) for x ∈ [a,b], else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return 0.0;
+            const z = (x - self.mu) / self.sigma;
+            return stdPdf(z) / (self.sigma * self.z_const);
+        }
+
+        /// Log probability density function
+        ///
+        /// logf(x) = -0.5·z² - 0.5·ln(2π) - ln(σ) - ln(Z) for x ∈ [a,b], else -∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return -math.inf(T);
+            const z = (x - self.mu) / self.sigma;
+            return stdLogPdf(z) - @log(self.sigma) - @log(self.z_const);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x) = (Φ((x-μ)/σ) - Φ(α)) / Z, clamped to [0,1] outside support
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.a) return 0.0;
+            if (x >= self.b) return 1.0;
+            const alpha = (self.a - self.mu) / self.sigma;
+            const xi = (x - self.mu) / self.sigma;
+            return (stdCdf(xi) - stdCdf(alpha)) / self.z_const;
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Q(p) = μ + σ·Φ⁻¹(Φ(α) + p·Z) for p ∈ [0,1]
+        /// Returns NaN for p outside [0,1]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return self.a;
+            if (p == 1.0) return self.b;
+            const alpha = (self.a - self.mu) / self.sigma;
+            const phi_a = stdCdf(alpha);
+            const inner = phi_a + p * self.z_const;
+            return self.mu + self.sigma * stdNormalQuantile(inner);
+        }
+
+        /// Mean: μ + σ·(φ(α) - φ(β))/Z
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const alpha = (self.a - self.mu) / self.sigma;
+            const beta = (self.b - self.mu) / self.sigma;
+            const pa = stdPdf(alpha);
+            const pb = stdPdf(beta);
+            return self.mu + self.sigma * (pa - pb) / self.z_const;
+        }
+
+        /// Variance: σ²·(1 + (α·φ(α) - β·φ(β))/Z - ((φ(α)-φ(β))/Z)²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const alpha = (self.a - self.mu) / self.sigma;
+            const beta = (self.b - self.mu) / self.sigma;
+            const pa = stdPdf(alpha);
+            const pb = stdPdf(beta);
+            const apa = zPhiBounded(alpha);
+            const bpb = zPhiBounded(beta);
+            const ratio = (pa - pb) / self.z_const;
+            return self.sigma * self.sigma * (1.0 + (apa - bpb) / self.z_const - ratio * ratio);
+        }
+
+        /// Mode: clamp(μ, a, b)
+        ///
+        /// Normal mode μ clamped to [a,b]: equals μ if μ∈[a,b], else nearest bound
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.mu <= self.a) return self.a;
+            if (self.mu >= self.b) return self.b;
+            return self.mu;
+        }
+
+        /// Entropy: 0.5·ln(2πe·σ²) + ln(Z) + (α·φ(α) - β·φ(β))/(2·Z)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const alpha = (self.a - self.mu) / self.sigma;
+            const beta = (self.b - self.mu) / self.sigma;
+            const apa = zPhiBounded(alpha);
+            const bpb = zPhiBounded(beta);
+            const log_normal_h = 0.5 * @log(2.0 * math.pi * math.e * self.sigma * self.sigma);
+            return log_normal_h + @log(self.z_const) + (apa - bpb) / (2.0 * self.z_const);
+        }
+
+        /// Generate a random sample via inverse CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const alpha = (self.a - self.mu) / self.sigma;
+            const phi_a = stdCdf(alpha);
+            const inner = phi_a + u * self.z_const;
+            return self.mu + self.sigma * stdNormalQuantile(inner);
+        }
+
+        // ── private helpers ────────────────────────────────────────────────
+
+        // Standard normal PDF φ(z); returns 0 for infinite z
+        fn stdPdf(z: T) T {
+            if (!math.isFinite(z)) return 0.0;
+            return @exp(-0.5 * z * z) / @sqrt(2.0 * math.pi);
+        }
+
+        // Log standard normal PDF; returns -∞ for infinite z
+        fn stdLogPdf(z: T) T {
+            if (!math.isFinite(z)) return -math.inf(T);
+            return -0.5 * z * z - 0.5 * @log(2.0 * math.pi);
+        }
+
+        // Standard normal CDF Φ(z); exact at ±∞
+        fn stdCdf(z: T) T {
+            if (math.isInf(z)) return if (z > 0.0) 1.0 else 0.0;
+            return 0.5 * (1.0 + erf(z / @sqrt(2.0)));
+        }
+
+        // Standard normal quantile Φ⁻¹(p) = √2·erfInv(2p-1)
+        fn stdNormalQuantile(p: T) T {
+            if (p <= 0.0) return -math.inf(T);
+            if (p >= 1.0) return math.inf(T);
+            return @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+        }
+
+        // z·φ(z) with boundary: 0 at ±∞ (limit holds since exp dominates polynomial)
+        fn zPhiBounded(z: T) T {
+            if (!math.isFinite(z)) return 0.0;
+            return z * stdPdf(z);
+        }
+    };
+}
+
+// ============================================================================
+// TruncatedNormal Tests (54th distribution, 39th continuous)
+// ============================================================================
+
+// TruncatedNormal(μ, σ, a, b) — Normal distribution truncated to [a,b]
+// Parameters: μ ∈ ℝ (location), σ > 0 (scale), a < b (bounds, may be ±∞)
+// Support: [a, b]
+// PDF: φ((x-μ)/σ) / (σ·Z) for x∈[a,b], else 0
+// CDF: (Φ((x-μ)/σ) - Φ(α)) / Z where α=(a-μ)/σ, β=(b-μ)/σ, Z=Φ(β)-Φ(α)
+
+// Init/Validation Tests
+
+test "TruncatedNormal: init with valid params (0, 1, -1, 1) succeeds" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.sigma == 1.0);
+    try testing.expect(dist.a == -1.0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "TruncatedNormal: init with half-infinite lower bound (-inf, 1) succeeds" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -math.inf(f64), 1.0);
+    try testing.expect(math.isInf(dist.a) and dist.a < 0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "TruncatedNormal: init with half-infinite upper bound (-1, +inf) succeeds" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, math.inf(f64));
+    try testing.expect(dist.a == -1.0);
+    try testing.expect(math.isInf(dist.b) and dist.b > 0);
+}
+
+test "TruncatedNormal: init unbounded (-inf, +inf) succeeds" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -math.inf(f64), math.inf(f64));
+    try testing.expect(math.isInf(dist.a) and dist.a < 0);
+    try testing.expect(math.isInf(dist.b) and dist.b > 0);
+}
+
+test "TruncatedNormal: init with sigma <= 0 returns error" {
+    const result = TruncatedNormal(f64).init(0.0, -1.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedNormal: init with sigma = 0 returns error" {
+    const result = TruncatedNormal(f64).init(0.0, 0.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedNormal: init with sigma = nan returns error" {
+    const result = TruncatedNormal(f64).init(0.0, math.nan(f64), -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedNormal: init with a >= b returns error" {
+    const result = TruncatedNormal(f64).init(0.0, 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedNormal: init with a > b returns error" {
+    const result = TruncatedNormal(f64).init(0.0, 1.0, 2.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "TruncatedNormal: validate passes for N(0,1)[-1,1]" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    try dist.validate();
+}
+
+test "TruncatedNormal: validate passes for N(5,2)[3,9]" {
+    const dist = try TruncatedNormal(f64).init(5.0, 2.0, 3.0, 9.0);
+    try dist.validate();
+}
+
+test "TruncatedNormal: validate passes for semi-infinite bounds" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    try dist.validate();
+}
+
+// PDF Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: pdf(0) ≈ 0.58441" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.58441, p, 1e-4);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: pdf(-2) = 0 (outside support)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const p = dist.pdf(-2.0);
+    try testing.expect(p == 0.0);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: pdf(2) = 0 (outside support)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const p = dist.pdf(2.0);
+    try testing.expect(p == 0.0);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: pdf(-1) > 0 (at boundary)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expect(p > 0.0);
+}
+
+test "TruncatedNormal: pdf > 0 for all x in [a,b]" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, 0.0, 0.5, 0.9 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p > 0.0);
+    }
+}
+
+test "TruncatedNormal: pdf is symmetric around mu for symmetric bounds" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -2.0, 2.0);
+    const p_neg = dist.pdf(-0.5);
+    const p_pos = dist.pdf(0.5);
+    try testing.expectApproxEqRel(p_neg, p_pos, 1e-10);
+}
+
+test "TruncatedNormal N(2,3)[-1,5]: pdf at x=2 matches formula" {
+    const dist = try TruncatedNormal(f64).init(2.0, 3.0, -1.0, 5.0);
+    const p = dist.pdf(2.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "TruncatedNormal N(0,1)[0,inf): pdf(1) is finite and positive" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    const p = dist.pdf(1.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+// logPdf Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: logpdf(0) ≈ ln(0.58441)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.58441);
+    try testing.expectApproxEqAbs(expected, lp, 1e-4);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: logpdf(-2) = -inf (outside support)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const lp = dist.logpdf(-2.0);
+    try testing.expect(math.isInf(lp) and lp < 0.0);
+}
+
+test "TruncatedNormal: logpdf(x) = log(pdf(x)) for x in support" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const x = 0.5;
+    const lp = dist.logpdf(x);
+    const p = dist.pdf(x);
+    try testing.expectApproxEqRel(@log(p), lp, 1e-9);
+}
+
+// CDF Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: cdf(-1) = 0 (at lower bound)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try testing.expect(c == 0.0);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: cdf(1) = 1 (at upper bound)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c == 1.0);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: cdf(0) = 0.5 (by symmetry)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqRel(0.5, c, 1e-9);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: cdf(-1.5) = 0 (below support)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const c = dist.cdf(-1.5);
+    try testing.expect(c == 0.0);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: cdf(1.5) = 1 (above support)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const c = dist.cdf(1.5);
+    try testing.expect(c == 1.0);
+}
+
+test "TruncatedNormal: cdf is monotonically increasing" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const c1 = dist.cdf(-0.9);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(0.9);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+}
+
+test "TruncatedNormal: cdf(x) + sf(x) = 1" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const x = 0.3;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqRel(1.0, c + s, 1e-10);
+}
+
+test "TruncatedNormal N(0,1)[0,inf): cdf at boundaries" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    const c_lower = dist.cdf(0.0);
+    const c_upper = dist.cdf(math.inf(f64));
+    try testing.expect(c_lower == 0.0);
+    try testing.expect(c_upper == 1.0);
+}
+
+// Quantile Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: quantile(0) = -1 (lower bound)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, -1.0), q);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: quantile(1) = 1 (upper bound)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expectEqual(@as(f64, 1.0), q);
+}
+
+test "TruncatedNormal N(0,1)[-1,1]: quantile(0.5) = 0 (median, by symmetry)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(0.0, q, 1e-10);
+}
+
+test "TruncatedNormal: quantile returns error.InvalidProbability for p < 0" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expect(math.isNan(result));
+}
+
+test "TruncatedNormal: quantile returns error.InvalidProbability for p > 1" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expect(math.isNan(result));
+}
+
+test "TruncatedNormal: quantile round-trip cdf(quantile(p)) ≈ p" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const p_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_vals) |p| {
+        const q = dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqRel(p, c, 1e-9);
+    }
+}
+
+// Mean Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: mean = 0 (by symmetry)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-12);
+}
+
+test "TruncatedNormal N(0,1)[0,inf): mean = sqrt(2/pi) ≈ 0.79788" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    const m = dist.mean();
+    const expected = math.sqrt(2.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "TruncatedNormal N(0,1)[-inf,0]: mean = -sqrt(2/pi)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -math.inf(f64), 0.0);
+    const m = dist.mean();
+    const expected = -math.sqrt(2.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "TruncatedNormal N(0,1)[0.5,2]: mean != mu (asymmetric truncation)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.5, 2.0);
+    const m = dist.mean();
+    try testing.expect(m != 0.0);
+    try testing.expect(m > 0.5);
+    try testing.expect(m < 2.0);
+}
+
+test "TruncatedNormal: mean is within [a,b]" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(m >= -1.0);
+    try testing.expect(m <= 1.0);
+}
+
+// Variance Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: variance ≈ 0.29128" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(0.29128, v, 2e-4);
+}
+
+test "TruncatedNormal N(0,1)[0,inf): variance = 1 - 2/pi ≈ 0.36338" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    const v = dist.variance();
+    const expected = 1.0 - 2.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "TruncatedNormal: variance > 0" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "TruncatedNormal: variance < sigma^2 (truncation reduces variance)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(v < 1.0);
+}
+
+test "TruncatedNormal N(0,1)[-0.01,0.01]: variance is small (tight bounds)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -0.01, 0.01);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+    try testing.expect(v < 1e-4);
+}
+
+// Mode Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: mode = 0 (mu in bounds)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expectEqual(@as(f64, 0.0), mode);
+}
+
+test "TruncatedNormal N(-2,1)[-0.5,0.5]: mode = a (mu < a)" {
+    const dist = try TruncatedNormal(f64).init(-2.0, 1.0, -0.5, 0.5);
+    const mode = dist.mode();
+    try testing.expectEqual(@as(f64, -0.5), mode);
+}
+
+test "TruncatedNormal N(2,1)[-0.5,0.5]: mode = b (mu > b)" {
+    const dist = try TruncatedNormal(f64).init(2.0, 1.0, -0.5, 0.5);
+    const mode = dist.mode();
+    try testing.expectEqual(@as(f64, 0.5), mode);
+}
+
+test "TruncatedNormal: mode is within [a,b]" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expect(mode >= -1.0);
+    try testing.expect(mode <= 1.0);
+}
+
+test "TruncatedNormal N(3,1)[2,5]: mode = mu (mu in interior)" {
+    const dist = try TruncatedNormal(f64).init(3.0, 1.0, 2.0, 5.0);
+    const mode = dist.mode();
+    try testing.expectEqual(@as(f64, 3.0), mode);
+}
+
+// Entropy Tests
+
+test "TruncatedNormal N(0,1)[-1,1]: entropy ≈ 0.6826" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.6826, h, 1e-3);
+}
+
+test "TruncatedNormal: entropy < 0.5*ln(2*pi*e*sigma^2) (truncation reduces entropy)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const h = dist.entropy();
+    const unbounded_entropy = 0.5 * @log(2.0 * math.pi * math.e);
+    try testing.expect(h < unbounded_entropy);
+}
+
+test "TruncatedNormal: entropy increases as bounds widen" {
+    const dist_tight = try TruncatedNormal(f64).init(0.0, 1.0, -0.5, 0.5);
+    const dist_wide = try TruncatedNormal(f64).init(0.0, 1.0, -2.0, 2.0);
+    const h_tight = dist_tight.entropy();
+    const h_wide = dist_wide.entropy();
+    try testing.expect(h_tight < h_wide);
+}
+
+test "TruncatedNormal N(0,1)[0,inf): entropy ≈ half-normal (0.7258)" {
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    const h = dist.entropy();
+    const expected = 0.5 * @log(2.0 * math.pi * math.e) - @log(2.0);
+    try testing.expectApproxEqAbs(expected, h, 1e-4);
+}
+
+// Sample Tests
+
+test "TruncatedNormal: sample returns value in [a,b]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= -1.0);
+    try testing.expect(s <= 1.0);
+}
+
+test "TruncatedNormal: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+test "TruncatedNormal: 100 samples all within [a,b]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, -1.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= -1.0);
+        try testing.expect(s <= 1.0);
+    }
+}
+
+test "TruncatedNormal N(0,1)[0,inf): samples are positive" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try TruncatedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+    }
+}
+
+// f32 Support Tests
+
+test "TruncatedNormal: f32 init(0, 1, -1, 1) succeeds" {
+    const dist = try TruncatedNormal(f32).init(0.0, 1.0, -1.0, 1.0);
+    try testing.expect(dist.sigma == 1.0);
+}
+
+test "TruncatedNormal: f32 pdf and cdf are finite" {
+    const dist = try TruncatedNormal(f32).init(0.0, 1.0, -1.0, 1.0);
+    const p = dist.pdf(0.0);
+    const c = dist.cdf(0.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "TruncatedNormal: f32 sample returns value in [a,b]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try TruncatedNormal(f32).init(0.0, 1.0, -1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= -1.0);
+    try testing.expect(s <= 1.0);
+}
