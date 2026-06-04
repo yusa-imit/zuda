@@ -26308,3 +26308,641 @@ test "Burr: validate fails when k <= 0" {
     const result = Burr(f64).init(2.0, -1.0, 0.0, 1.0);
     try testing.expectError(error.InvalidParameter, result);
 }
+
+// ============================================================================
+// Dagum Distribution Dagum(p, a, b) — Burr Type III / Inverse Burr
+// Applications: income distribution, wealth inequality, actuarial science, reliability.
+// ============================================================================
+
+/// Dagum Distribution Dagum(p, a, b)
+/// Also known as Burr Type III or Inverse Burr.
+/// Applications: income distribution, wealth inequality, actuarial science, reliability.
+pub fn Dagum(comptime T: type) type {
+    return struct {
+        p: T,
+        a: T,
+        b: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize Dagum(p, a, b) distribution.
+        /// Returns error.InvalidParameter if p ≤ 0, a ≤ 0, b ≤ 0, or any param is not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(p: T, a: T, b: T) DistributionError!Self {
+            if (p <= 0.0 or math.isNan(p) or math.isInf(p)) return error.InvalidParameter;
+            if (a <= 0.0 or math.isNan(a) or math.isInf(a)) return error.InvalidParameter;
+            if (b <= 0.0 or math.isNan(b) or math.isInf(b)) return error.InvalidParameter;
+            return Self{ .p = p, .a = a, .b = b };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = (a*p/b) * (x/b)^(-a-1) * (1 + (x/b)^(-a))^(-p-1); 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const z = x / self.b;
+            const z_neg_a = math.pow(T, z, -self.a);
+            return (self.a * self.p / self.b) * math.pow(T, z, -self.a - 1.0) /
+                math.pow(T, 1.0 + z_neg_a, self.p + 1.0);
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = log(a*p/b) + (-a-1)*log(x/b) + (-p-1)*log(1 + (x/b)^(-a)); -∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const z = x / self.b;
+            const z_neg_a = math.pow(T, z, -self.a);
+            return @log(self.a * self.p / self.b) + (-self.a - 1.0) * @log(z) +
+                (-self.p - 1.0) * @log(1.0 + z_neg_a);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = (1 + (x/b)^(-a))^(-p); 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const z = x / self.b;
+            const z_neg_a = math.pow(T, z, -self.a);
+            return math.pow(T, 1.0 + z_neg_a, -self.p);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Q(q) = b * (q^(-1/p) - 1)^(-1/a)
+        /// Returns NaN for q < 0 or q > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, q: T) T {
+            if (q < 0.0 or q > 1.0 or math.isNan(q)) return math.nan(T);
+            if (q == 0.0) return 0.0;
+            if (q == 1.0) return math.inf(T);
+            const inner = math.pow(T, q, -1.0 / self.p) - 1.0;
+            return self.b * math.pow(T, inner, -1.0 / self.a);
+        }
+
+        // --- Moments ---
+
+        /// Mean: b * Γ(p + 1/a) * Γ(1 - 1/a) / Γ(p) for a > 1; NaN otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.a <= 1.0) return math.nan(T);
+            const log_mean = logGamma(self.p + 1.0 / self.a) +
+                logGamma(1.0 - 1.0 / self.a) - logGamma(self.p);
+            return self.b * @exp(log_mean);
+        }
+
+        /// Variance: b² * [E_std2 - E_std1²] for a > 2; NaN otherwise.
+        /// E_std2 = Γ(p + 2/a) * Γ(1 - 2/a) / Γ(p)
+        /// E_std1 = mean / b (standardized mean)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.a <= 2.0) return math.nan(T);
+            const mean_std = @exp(logGamma(self.p + 1.0 / self.a) +
+                logGamma(1.0 - 1.0 / self.a) - logGamma(self.p));
+            const ex2 = @exp(logGamma(self.p + 2.0 / self.a) +
+                logGamma(1.0 - 2.0 / self.a) - logGamma(self.p));
+            return self.b * self.b * (ex2 - mean_std * mean_std);
+        }
+
+        /// Mode: b * ((a*p - 1) / (a + 1))^(1/a) for a*p > 1; 0 otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.a * self.p <= 1.0) return 0.0;
+            const ratio = (self.a * self.p - 1.0) / (self.a + 1.0);
+            return self.b * math.pow(T, ratio, 1.0 / self.a);
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy via numerical integration (Simpson's rule, 1000 points).
+        /// H = -integral f(x) * log(f(x)) dx from ε to large x.
+        /// Scale property: H(p, a, b*c) = H(p, a, b) + log(c).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const eps = @as(T, 1e-8);
+            const upper = 20.0 * self.b;
+            const n_points = 1000;
+            const h = (upper - eps) / @as(T, @floatFromInt(n_points - 1));
+
+            var sum: T = 0.0;
+            for (0..n_points) |i| {
+                const x = eps + h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+                if (f > 0.0 and math.isFinite(f)) {
+                    const lf = @log(f);
+                    const weight = @as(T, if (i == 0 or i == n_points - 1) 1.0 else if (i % 2 == 1) 4.0 else 2.0);
+                    sum += weight * f * lf;
+                }
+            }
+
+            return -h / 3.0 * sum;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        /// X = b * (U^(-1/p) - 1)^(-1/a) where U ~ Uniform(0,1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const u_clamped = if (u < 1e-10) 1e-10 else if (u > 1.0 - 1e-10) 1.0 - 1e-10 else u;
+            const inner = math.pow(T, u_clamped, -1.0 / self.p) - 1.0;
+            return self.b * math.pow(T, inner, -1.0 / self.a);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: p > 0, a > 0, b > 0, all params finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.p <= 0.0 or math.isNan(self.p) or math.isInf(self.p))
+                return error.InvalidParameter;
+            if (self.a <= 0.0 or math.isNan(self.a) or math.isInf(self.a))
+                return error.InvalidParameter;
+            if (self.b <= 0.0 or math.isNan(self.b) or math.isInf(self.b))
+                return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Dagum Distribution Tests (53rd distribution, 38th continuous)
+// ============================================================================
+
+// Dagum(p, a, b) — Burr Type III / Inverse Burr
+// Parameters: p > 0 (shape), a > 0 (shape), b > 0 (scale)
+// Support: x > 0
+// CDF: (1 + (x/b)^(-a))^(-p)
+// PDF: (a*p/b) * (x/b)^(-a-1) * (1 + (x/b)^(-a))^(-p-1)
+
+test "Dagum: init with valid params (p=1, a=1, b=1) succeeds" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    try testing.expect(dist.p == 1.0);
+    try testing.expect(dist.a == 1.0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "Dagum: init with p <= 0 returns error" {
+    const result = Dagum(f64).init(-1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with p = 0 returns error" {
+    const result = Dagum(f64).init(0.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with a <= 0 returns error" {
+    const result = Dagum(f64).init(1.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with a = 0 returns error" {
+    const result = Dagum(f64).init(1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with b <= 0 returns error" {
+    const result = Dagum(f64).init(1.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with b = 0 returns error" {
+    const result = Dagum(f64).init(1.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with p = inf returns error" {
+    const result = Dagum(f64).init(std.math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with a = inf returns error" {
+    const result = Dagum(f64).init(1.0, std.math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with b = inf returns error" {
+    const result = Dagum(f64).init(1.0, 1.0, std.math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with p = nan returns error" {
+    const result = Dagum(f64).init(std.math.nan(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with a = nan returns error" {
+    const result = Dagum(f64).init(1.0, std.math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Dagum: init with b = nan returns error" {
+    const result = Dagum(f64).init(1.0, 1.0, std.math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF tests
+test "Dagum(1,1,1): pdf(1) = 0.25" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.25, p, 1e-9);
+}
+
+test "Dagum(2,2,1): pdf(1) = 0.5" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.5, p, 1e-9);
+}
+
+test "Dagum(1,2,1): pdf(1) = 0.5" {
+    const dist = try Dagum(f64).init(1.0, 2.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.5, p, 1e-9);
+}
+
+test "Dagum: pdf at x = 0 returns 0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(p == 0.0);
+}
+
+test "Dagum: pdf positive for x > 0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const p = dist.pdf(2.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "Dagum: pdf with scale factor" {
+    const dist1 = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const dist2 = try Dagum(f64).init(1.0, 1.0, 2.0);
+    // pdf(x; b=2) = (1/2) * pdf(x/2; b=1)
+    try testing.expectApproxEqRel(dist1.pdf(2.0) / 2.0, dist2.pdf(4.0), 1e-9);
+}
+
+test "Dagum: pdf decreases with scale parameter b" {
+    const dist1 = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const dist2 = try Dagum(f64).init(2.0, 2.0, 2.0);
+    // At the same relative position, pdf should decrease
+    const p1 = dist1.pdf(0.5);
+    const p2 = dist2.pdf(1.0); // Same relative position (0.5 * b)
+    try testing.expect(p2 < p1);
+}
+
+// logpdf tests
+test "Dagum: logpdf at x = 0 returns -inf" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isInf(lp) and lp < 0);
+}
+
+test "Dagum(1,1,1): logpdf(1) = log(0.25)" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const lp = dist.logpdf(1.0);
+    try testing.expectApproxEqRel(@log(0.25), lp, 1e-9);
+}
+
+test "Dagum: logpdf finite for x > 0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const lp = dist.logpdf(5.0);
+    try testing.expect(math.isFinite(lp));
+}
+
+test "Dagum: logpdf matches log(pdf) for x > 0" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const x = 0.8;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try testing.expectApproxEqRel(@log(p), lp, 1e-9);
+}
+
+// CDF tests
+test "Dagum(1,1,1): cdf(1) = 0.5" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.5, c, 1e-9);
+}
+
+test "Dagum(2,2,1): cdf(1) = 0.25" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.25, c, 1e-9);
+}
+
+test "Dagum(1,2,1): cdf(1) = 0.5" {
+    const dist = try Dagum(f64).init(1.0, 2.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.5, c, 1e-9);
+}
+
+test "Dagum: cdf(0) = 0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expect(c == 0.0);
+}
+
+test "Dagum: cdf increases monotonically" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const c1 = dist.cdf(0.5);
+    const c2 = dist.cdf(1.0);
+    const c3 = dist.cdf(2.0);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+}
+
+test "Dagum: cdf approaches 1 as x -> inf" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const c = dist.cdf(1e6);
+    try testing.expect(c > 0.99);
+}
+
+// Survival function tests
+test "Dagum: sf(x) + cdf(x) = 1" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const x = 0.75;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqRel(1.0, c + s, 1e-9);
+}
+
+test "Dagum: sf decreases from 1 to 0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const s0 = dist.sf(0.0);
+    const s1 = dist.sf(1.0);
+    const s_inf = dist.sf(1e6);
+    try testing.expect(s0 == 1.0);
+    try testing.expect(s1 < s0);
+    try testing.expect(s_inf < s1);
+}
+
+// Quantile tests
+test "Dagum: quantile(0) = 0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expect(q == 0.0 or (math.isNan(q) or q < 1e-10));
+}
+
+test "Dagum(1,1,1): quantile(0.5) = 1.0" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectApproxEqRel(1.0, q, 1e-9);
+}
+
+test "Dagum: quantile(1) = inf" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0);
+}
+
+test "Dagum: quantile is monotonically increasing" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const q1 = dist.quantile(0.25);
+    const q2 = dist.quantile(0.5);
+    const q3 = dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "Dagum: quantile-cdf round-trip" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const p = 0.6;
+    const q = dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqRel(p, c, 1e-8);
+}
+
+test "Dagum: quantile with scale parameter b" {
+    const dist1 = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const dist2 = try Dagum(f64).init(2.0, 2.0, 2.0);
+    // Quantile(p; b=2) = 2 * Quantile(p; b=1)
+    const q1 = dist1.quantile(0.5);
+    const q2 = dist2.quantile(0.5);
+    try testing.expectApproxEqRel(2.0 * q1, q2, 1e-9);
+}
+
+// Mean tests
+test "Dagum(1,1,1): mean is nan (a <= 1)" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Dagum(2,2,1): mean ≈ 2.356" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const m = dist.mean();
+    // Mean = 3π/4 ≈ 2.356
+    try testing.expectApproxEqRel(3.0 * std.math.pi / 4.0, m, 1e-2);
+}
+
+test "Dagum(1,2,1): mean ≈ π/2" {
+    const dist = try Dagum(f64).init(1.0, 2.0, 1.0);
+    const m = dist.mean();
+    // Mean = π/2 ≈ 1.5708
+    try testing.expectApproxEqRel(std.math.pi / 2.0, m, 1e-2);
+}
+
+test "Dagum: mean scales with b parameter" {
+    const dist1 = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const dist2 = try Dagum(f64).init(2.0, 2.0, 3.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try testing.expectApproxEqRel(3.0 * m1, m2, 1e-9);
+}
+
+test "Dagum: mean is positive" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(m > 0.0);
+    try testing.expect(math.isFinite(m));
+}
+
+// Variance tests
+test "Dagum(2,2,1): variance is nan (a <= 2)" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+test "Dagum(3,3,1): variance is positive and finite" {
+    const dist = try Dagum(f64).init(3.0, 3.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+    try testing.expect(math.isFinite(v));
+}
+
+test "Dagum: variance scales with b²" {
+    const dist1 = try Dagum(f64).init(3.0, 3.0, 1.0);
+    const dist2 = try Dagum(f64).init(3.0, 3.0, 2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqRel(4.0 * v1, v2, 1e-8);
+}
+
+// Mode tests
+test "Dagum(1,1,1): mode = 0 (a*p <= 1)" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(m == 0.0);
+}
+
+test "Dagum(2,2,1): mode = 1.0" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const m = dist.mode();
+    // Mode = b * ((a*p - 1) / (a + 1))^(1/a) = 1 * ((4-1)/(3))^(1/2) = 1
+    try testing.expectApproxEqRel(1.0, m, 1e-9);
+}
+
+test "Dagum(1,2,1): mode ≈ 0.5774" {
+    const dist = try Dagum(f64).init(1.0, 2.0, 1.0);
+    const m = dist.mode();
+    // Mode = ((2-1)/(3))^(1/2) = (1/3)^(1/2) ≈ 0.5774
+    try testing.expectApproxEqRel(1.0 / std.math.sqrt(3.0), m, 1e-9);
+}
+
+test "Dagum: mode < mean for valid params" {
+    const dist = try Dagum(f64).init(3.0, 3.0, 1.0);
+    const mode = dist.mode();
+    const mean = dist.mean();
+    try testing.expect(mode < mean);
+}
+
+test "Dagum: mode scales with b" {
+    const dist1 = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const dist2 = try Dagum(f64).init(2.0, 2.0, 2.0);
+    const mode1 = dist1.mode();
+    const mode2 = dist2.mode();
+    try testing.expectApproxEqRel(2.0 * mode1, mode2, 1e-9);
+}
+
+// Entropy tests
+test "Dagum: entropy is positive and finite" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(h > 0.0);
+    try testing.expect(math.isFinite(h));
+}
+
+test "Dagum: entropy increases with scale b" {
+    const dist1 = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const dist2 = try Dagum(f64).init(2.0, 2.0, 2.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try testing.expect(h2 > h1);
+}
+
+test "Dagum: entropy(b=c) = entropy(b=1) + log(c)" {
+    const dist1 = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const dist2 = try Dagum(f64).init(2.0, 2.0, 3.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try testing.expectApproxEqRel(h1 + @log(3.0), h2, 1e-2);
+}
+
+// Sample tests
+test "Dagum: sample returns positive value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    const sample = dist.sample(rng.random());
+    try testing.expect(sample > 0.0);
+    try testing.expect(math.isFinite(sample));
+}
+
+test "Dagum: 100 samples all positive" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "Dagum: samples are finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "Dagum: different seeds produce different samples" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(43);
+    const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
+    const s1 = dist.sample(rng1.random());
+    const s2 = dist.sample(rng2.random());
+    try testing.expect(s1 != s2);
+}
+
+test "Dagum: sample with scale parameter" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Dagum(f64).init(1.0, 1.0, 5.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+// Validate tests
+test "Dagum: validate passes for valid params" {
+    const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Dagum: validate passes for various valid params" {
+    const dist = try Dagum(f64).init(2.0, 2.0, 2.0);
+    try dist.validate();
+}
+
+test "Dagum: validate passes for large params" {
+    const dist = try Dagum(f64).init(100.0, 100.0, 100.0);
+    try dist.validate();
+}
+
+// f32 support tests
+test "Dagum: f32 support init" {
+    const dist = try Dagum(f32).init(1.0, 1.0, 1.0);
+    try testing.expect(dist.p == 1.0);
+}
+
+test "Dagum: f32 pdf and cdf" {
+    const dist = try Dagum(f32).init(2.0, 2.0, 1.0);
+    const p = dist.pdf(1.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "Dagum: f32 quantile and mean" {
+    const dist = try Dagum(f32).init(2.0, 2.0, 1.0);
+    const q = dist.quantile(0.5);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(q));
+    try testing.expect(math.isFinite(m));
+}
