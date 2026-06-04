@@ -1,3 +1,25 @@
+**Session 641 Update (2026-06-05) — FEATURE MODE:**
+
+✅ **TruncatedNormal Distribution** — 54th distribution, 39th continuous — commit 940bcf1
+- **Mode**: FEATURE MODE (counter: 641)
+- **CI Status**: CI green before session (3/3 success)
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: TruncatedNormal(μ,σ,a,b) — N(μ,σ) conditioned on X ∈ [a,b]
+  * Parameters: μ (any finite), σ > 0, a < b (bounds may be ±∞)
+  * Normalization Z = Φ(β) - Φ(α) cached at init time
+  * All operations O(1) via closed-form expressions
+  * PDF: φ((x-μ)/σ)/(σ·Z); CDF: (Φ(ξ)-Φ(α))/Z
+  * Quantile: μ+σ·Φ⁻¹(Φ(α)+p·Z) — returns T, NaN for invalid p
+  * Mean: μ+σ·(φ(α)-φ(β))/Z
+  * Variance: σ²·(1+(α·φ(α)-β·φ(β))/Z-((φ(α)-φ(β))/Z)²)
+  * Mode: clamp(μ, a, b)
+  * Entropy: 0.5·ln(2πeσ²)+ln(Z)+(α·φ(α)-β·φ(β))/(2·Z)
+  * Sample: inverse CDF, O(1)
+  * Key test values: N(0,1)[-1,1] mean=0, var≈0.291; N(0,1)[0,∞) mean=√(2/π), var=1-2/π
+- **Tests**: 63 tests all passing (exit code 0)
+- **Distribution count**: 54 total (39 continuous + 15 discrete)
+- **Next Priority**: PowerLaw (Power Function), Dagum Type II, or ExponentialPower
+
 **Session 640 Update (2026-06-04) — STABILIZATION MODE:**
 
 ✅ **Stabilization Complete** — commit d92f25f
