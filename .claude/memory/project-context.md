@@ -1,3 +1,21 @@
+**Session 642 Update (2026-06-05) — FEATURE MODE:**
+
+✅ **PowerLaw Distribution** — 55th distribution, 40th continuous — commit 0563857
+- **Mode**: FEATURE MODE (counter: 642)
+- **CI Status**: CI green before session (3/3 success)
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: PowerLaw(T) — Power Function distribution on [0,1]
+  * Parameter: a > 0 (shape/exponent); support x ∈ [0,1]
+  * PDF: a·x^(a-1); CDF: x^a (clamped); quantile: p^(1/a) — all O(1) closed-form
+  * Mean: a/(a+1); Variance: a/((a+1)²·(a+2)); Mode: 1 if a≥1, 0 if a<1
+  * Entropy: 1 - 1/a - ln(a) (nats)
+  * Sample: U^(1/a) via inverse transform, O(1)
+  * Special case: a=1 → Uniform(0,1)
+  * Key values: a=2: pdf(0.5)=1.0, cdf(0.5)=0.25, mean=2/3, var=1/18
+- **Tests**: 72 tests all passing (exit code 0)
+- **Distribution count**: 55 total (40 continuous + 15 discrete)
+- **Next Priority**: ExponentialPower, SkewNormal, or GeneralizedNormal
+
 **Session 641 Update (2026-06-05) — FEATURE MODE:**
 
 ✅ **TruncatedNormal Distribution** — 54th distribution, 39th continuous — commit 940bcf1
