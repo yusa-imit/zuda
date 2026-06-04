@@ -26705,7 +26705,7 @@ test "Dagum: sf decreases from 1 to 0" {
 test "Dagum: quantile(0) = 0" {
     const dist = try Dagum(f64).init(1.0, 1.0, 1.0);
     const q = dist.quantile(0.0);
-    try testing.expect(q == 0.0 or (math.isNan(q) or q < 1e-10));
+    try testing.expectEqual(@as(f64, 0.0), q);
 }
 
 test "Dagum(1,1,1): quantile(0.5) = 1.0" {
@@ -26757,14 +26757,14 @@ test "Dagum(2,2,1): mean ≈ 2.356" {
     const dist = try Dagum(f64).init(2.0, 2.0, 1.0);
     const m = dist.mean();
     // Mean = 3π/4 ≈ 2.356
-    try testing.expectApproxEqRel(3.0 * std.math.pi / 4.0, m, 1e-2);
+    try testing.expectApproxEqRel(3.0 * std.math.pi / 4.0, m, 1e-9);
 }
 
 test "Dagum(1,2,1): mean ≈ π/2" {
     const dist = try Dagum(f64).init(1.0, 2.0, 1.0);
     const m = dist.mean();
     // Mean = π/2 ≈ 1.5708
-    try testing.expectApproxEqRel(std.math.pi / 2.0, m, 1e-2);
+    try testing.expectApproxEqRel(std.math.pi / 2.0, m, 1e-9);
 }
 
 test "Dagum: mean scales with b parameter" {
