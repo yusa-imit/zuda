@@ -725,7 +725,7 @@ pub const stats = struct {
     /// Bayesian inference — conjugate priors, credible intervals, Bayes factors
     pub const bayesian = @import("stats/bayesian.zig");
 
-    /// Probability distributions — Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Dirichlet, Zipf, BetaBinomial, DirichletMultinomial, DiscreteUniform, Logarithmic, Skellam, Rademacher, Triangular, VonMises, Rayleigh, Kumaraswamy, HalfNormal, MaxwellBoltzmann, LogLogistic, Levy, Lomax, Gompertz, Rice, Nakagami, InverseGaussian, BirnbaumSaunders, GeneralizedLogistic, Slash, Frechet, BetaPrime, FoldedNormal, GeneralizedPareto, LogCauchy, Burr, Dagum, TruncatedNormal
+    /// Probability distributions — Normal, Uniform, Exponential, Laplace, Weibull, Pareto, LogNormal, Cauchy, Gumbel, Gamma, Beta, ChiSquared, StudentT, F, Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial, Hypergeometric, Categorical, Multinomial, Dirichlet, Zipf, BetaBinomial, DirichletMultinomial, DiscreteUniform, Logarithmic, Skellam, Rademacher, Triangular, VonMises, Rayleigh, Kumaraswamy, HalfNormal, MaxwellBoltzmann, LogLogistic, Levy, Lomax, Gompertz, Rice, Nakagami, InverseGaussian, BirnbaumSaunders, GeneralizedLogistic, Slash, Frechet, BetaPrime, FoldedNormal, GeneralizedPareto, LogCauchy, Burr, Dagum, TruncatedNormal, PowerLaw
     pub const distributions = @import("stats/distributions.zig");
 
     /// Random number generation — PCG64, Xoshiro256**, shuffle, choice, multinomial

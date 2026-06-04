@@ -27606,3 +27606,645 @@ test "TruncatedNormal: f32 sample returns value in [a,b]" {
     try testing.expect(s >= -1.0);
     try testing.expect(s <= 1.0);
 }
+
+// ============================================================================
+// PowerLaw Distribution
+// ============================================================================
+
+/// PowerLaw distribution — Power Function distribution on [0, 1]
+///
+/// PDF: f(x) = a · x^(a-1)   for x ∈ [0, 1], else 0
+/// CDF: F(x) = x^a           for x ∈ [0, 1], clamped outside
+///
+/// Parameters:
+///   - a: shape/exponent (a > 0)
+///
+/// Support: [0, 1]
+///
+/// Special cases: a=1 → Uniform(0,1)
+///
+/// Time: O(1) for all operations
+pub fn PowerLaw(comptime T: type) type {
+    return struct {
+        a: T,
+
+        const Self = @This();
+
+        /// Initialize PowerLaw distribution
+        ///
+        /// Errors: a ≤ 0, a = NaN, or a = ±∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T) DistributionError!Self {
+            if (a <= 0.0 or !math.isFinite(a)) return error.InvalidParameter;
+            return Self{ .a = a };
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            try testing.expect(self.a > 0.0);
+            try testing.expect(math.isFinite(self.a));
+        }
+
+        /// Probability density function
+        ///
+        /// f(x) = a · x^(a-1) for x ∈ [0, 1], else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return 0.0;
+            if (x == 0.0) {
+                if (self.a > 1.0) return 0.0;
+                if (self.a == 1.0) return 1.0;
+                return math.inf(T); // 0 < a < 1: f(0) = +∞
+            }
+            return self.a * math.pow(T, x, self.a - 1.0);
+        }
+
+        /// Log probability density function
+        ///
+        /// logf(x) = ln(a) + (a-1)·ln(x) for x ∈ (0, 1], else -∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return -math.inf(T);
+            if (x == 0.0) {
+                // ln(a) + (a-1)*ln(0) = ln(a) + (a-1)*(-∞)
+                if (self.a > 1.0) return -math.inf(T);
+                if (self.a == 1.0) return 0.0;
+                return math.inf(T); // 0 < a < 1
+            }
+            return @log(self.a) + (self.a - 1.0) * @log(x);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x) = x^a for x ∈ [0, 1], clamped to [0, 1] outside
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= 1.0) return 1.0;
+            return math.pow(T, x, self.a);
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Q(p) = p^(1/a)
+        ///
+        /// Returns error.InvalidParameter for p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidParameter;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+            return math.pow(T, p, 1.0 / self.a);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = a / (a + 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.a / (self.a + 1.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = a / ((a+1)² · (a+2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ap1 = self.a + 1.0;
+            return self.a / (ap1 * ap1 * (self.a + 2.0));
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = 1 if a ≥ 1 (PDF increasing), 0 if 0 < a < 1 (PDF decreasing)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return if (self.a >= 1.0) 1.0 else 0.0;
+        }
+
+        /// Differential entropy (in nats)
+        ///
+        /// H = 1 - 1/a - ln(a)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 1.0 - 1.0 / self.a - @log(self.a);
+        }
+
+        /// Draw a random sample via inverse transform
+        ///
+        /// X = U^(1/a) where U ~ Uniform(0, 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return math.pow(T, u, 1.0 / self.a);
+        }
+    };
+}
+
+// PowerLaw Tests (55th distribution, 40th continuous)
+// ============================================================================
+// PowerLaw(a) — Power Function distribution on [0, 1]
+// Parameters: a > 0 (shape). Support: [0, 1].
+// PDF: a·x^(a-1); CDF: x^a; Quantile: p^(1/a); Mean: a/(a+1)
+// Variance: a/((a+1)²·(a+2)); Entropy: 1 - 1/a - ln(a)
+
+// Init/Validation Tests
+
+test "PowerLaw: init with valid a=1 succeeds" {
+    const dist = try PowerLaw(f64).init(1.0);
+    try testing.expect(dist.a == 1.0);
+}
+
+test "PowerLaw: init with valid a=2 succeeds" {
+    const dist = try PowerLaw(f64).init(2.0);
+    try testing.expect(dist.a == 2.0);
+}
+
+test "PowerLaw: init with valid a=0.5 succeeds" {
+    const dist = try PowerLaw(f64).init(0.5);
+    try testing.expect(dist.a == 0.5);
+}
+
+test "PowerLaw: init with valid a=3 succeeds" {
+    const dist = try PowerLaw(f64).init(3.0);
+    try testing.expect(dist.a == 3.0);
+}
+
+test "PowerLaw: init with valid a=10 succeeds" {
+    const dist = try PowerLaw(f64).init(10.0);
+    try testing.expect(dist.a == 10.0);
+}
+
+test "PowerLaw: init with a=0 returns error.InvalidParameter" {
+    const result = PowerLaw(f64).init(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerLaw: init with a=-1 returns error.InvalidParameter" {
+    const result = PowerLaw(f64).init(-1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerLaw: init with a=nan returns error.InvalidParameter" {
+    const result = PowerLaw(f64).init(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerLaw: init with a=+inf returns error.InvalidParameter" {
+    const result = PowerLaw(f64).init(math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "PowerLaw: validate passes for a=1" {
+    const dist = try PowerLaw(f64).init(1.0);
+    try dist.validate();
+}
+
+test "PowerLaw: validate passes for a=2" {
+    const dist = try PowerLaw(f64).init(2.0);
+    try dist.validate();
+}
+
+test "PowerLaw: validate passes for a=0.5" {
+    const dist = try PowerLaw(f64).init(0.5);
+    try dist.validate();
+}
+
+// PDF Tests
+
+test "PowerLaw a=1: pdf(0.5) == 1.0" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(1.0, p, 1e-9);
+}
+
+test "PowerLaw a=2: pdf(0.5) == 1.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(1.0, p, 1e-9);
+}
+
+test "PowerLaw a=3: pdf(0.5) == 0.75" {
+    const dist = try PowerLaw(f64).init(3.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(0.75, p, 1e-9);
+}
+
+test "PowerLaw a=0.5: pdf(0.5) ≈ 1/√2 ≈ 0.7071" {
+    const dist = try PowerLaw(f64).init(0.5);
+    const p = dist.pdf(0.5);
+    const expected = 1.0 / @sqrt(2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "PowerLaw a=2: pdf(1.0) == 2.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(2.0, p, 1e-9);
+}
+
+test "PowerLaw a=3: pdf(1.0) == 3.0" {
+    const dist = try PowerLaw(f64).init(3.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(3.0, p, 1e-9);
+}
+
+test "PowerLaw a=2: pdf(0.0) == 0.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(p == 0.0);
+}
+
+test "PowerLaw a=2: pdf(1.1) == 0.0 (outside support)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const p = dist.pdf(1.1);
+    try testing.expect(p == 0.0);
+}
+
+test "PowerLaw a=2: pdf(-0.1) == 0.0 (outside support)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const p = dist.pdf(-0.1);
+    try testing.expect(p == 0.0);
+}
+
+test "PowerLaw a=2: pdf is monotonically increasing (pdf(0.3) < pdf(0.7))" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const p1 = dist.pdf(0.3);
+    const p2 = dist.pdf(0.7);
+    try testing.expect(p1 < p2);
+}
+
+test "PowerLaw a=0.5: pdf is monotonically decreasing (pdf(0.3) > pdf(0.7))" {
+    const dist = try PowerLaw(f64).init(0.5);
+    const p1 = dist.pdf(0.3);
+    const p2 = dist.pdf(0.7);
+    try testing.expect(p1 > p2);
+}
+
+// LogPDF Tests
+
+test "PowerLaw a=2: logpdf(0.5) ≈ ln(2) + ln(0.5)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const lp = dist.logpdf(0.5);
+    const expected = @log(2.0) + @log(0.5);
+    try testing.expectApproxEqAbs(expected, lp, 1e-9);
+}
+
+test "PowerLaw a=2: logpdf(0.0) returns -inf" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "PowerLaw a=2: logpdf outside [0,1] returns -inf" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const lp1 = dist.logpdf(-0.1);
+    const lp2 = dist.logpdf(1.1);
+    try testing.expect(math.isNegativeInf(lp1));
+    try testing.expect(math.isNegativeInf(lp2));
+}
+
+test "PowerLaw a=2: exp(logpdf(x)) ≈ pdf(x) for interior point" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const x = 0.7;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    const exp_lp = @exp(lp);
+    try testing.expectApproxEqAbs(p, exp_lp, 1e-9);
+}
+
+test "PowerLaw a=2: logpdf(1.0) == ln(2)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const lp = dist.logpdf(1.0);
+    try testing.expectApproxEqAbs(@log(2.0), lp, 1e-9);
+}
+
+// CDF Tests
+
+test "PowerLaw a=1: cdf(0.5) == 0.5" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-9);
+}
+
+test "PowerLaw a=2: cdf(0.5) == 0.25" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.25, c, 1e-9);
+}
+
+test "PowerLaw a=3: cdf(0.5) == 0.125" {
+    const dist = try PowerLaw(f64).init(3.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.125, c, 1e-9);
+}
+
+test "PowerLaw a=2: cdf(0.0) == 0.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-9);
+}
+
+test "PowerLaw a=2: cdf(1.0) == 1.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-9);
+}
+
+test "PowerLaw a=2: cdf(-0.1) == 0.0 (clamped)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const c = dist.cdf(-0.1);
+    try testing.expect(c == 0.0);
+}
+
+test "PowerLaw a=2: cdf(1.5) == 1.0 (clamped)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const c = dist.cdf(1.5);
+    try testing.expect(c == 1.0);
+}
+
+test "PowerLaw a=2: sf(0.5) == 0.75" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const s = dist.sf(0.5);
+    try testing.expectApproxEqAbs(0.75, s, 1e-9);
+}
+
+test "PowerLaw a=2: cdf is monotonically increasing" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const c1 = dist.cdf(0.2);
+    const c2 = dist.cdf(0.5);
+    const c3 = dist.cdf(0.8);
+    try testing.expect(c1 < c2 and c2 < c3);
+}
+
+test "PowerLaw a=2: cdf(x) + sf(x) == 1.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const x = 0.6;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-9);
+}
+
+// Quantile Tests
+
+test "PowerLaw a=2: quantile(0.25) == 0.5" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const q = try dist.quantile(0.25);
+    try testing.expectApproxEqAbs(0.5, q, 1e-9);
+}
+
+test "PowerLaw a=2: quantile(0.0) == 0.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "PowerLaw a=2: quantile(1.0) == 1.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-9);
+}
+
+test "PowerLaw a=1: quantile(0.7) == 0.7" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const q = try dist.quantile(0.7);
+    try testing.expectApproxEqAbs(0.7, q, 1e-9);
+}
+
+test "PowerLaw a=4: quantile(0.5) ≈ 0.5^0.25 ≈ 0.8409" {
+    const dist = try PowerLaw(f64).init(4.0);
+    const q = try dist.quantile(0.5);
+    const expected = math.pow(f64, 0.5, 0.25);
+    try testing.expectApproxEqAbs(expected, q, 1e-9);
+}
+
+test "PowerLaw a=2: round-trip quantile(cdf(0.3)) ≈ 0.3" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const x = 0.3;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-9);
+}
+
+test "PowerLaw a=2: quantile(-0.1) returns error.InvalidParameter" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerLaw a=2: quantile(1.1) returns error.InvalidParameter" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Mean Tests
+
+test "PowerLaw a=1: mean == 0.5" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-9);
+}
+
+test "PowerLaw a=2: mean ≈ 2/3" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(2.0 / 3.0, m, 1e-9);
+}
+
+test "PowerLaw a=3: mean == 0.75" {
+    const dist = try PowerLaw(f64).init(3.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.75, m, 1e-9);
+}
+
+test "PowerLaw a=0.5: mean ≈ 1/3" {
+    const dist = try PowerLaw(f64).init(0.5);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.0 / 3.0, m, 1e-9);
+}
+
+test "PowerLaw a=10: mean ≈ 10/11" {
+    const dist = try PowerLaw(f64).init(10.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(10.0 / 11.0, m, 1e-9);
+}
+
+// Variance Tests
+
+test "PowerLaw a=1: variance ≈ 1/12" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 12.0, v, 1e-9);
+}
+
+test "PowerLaw a=2: variance ≈ 1/18" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 18.0, v, 1e-9);
+}
+
+test "PowerLaw a=3: variance == 3/80 == 0.0375" {
+    const dist = try PowerLaw(f64).init(3.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(3.0 / 80.0, v, 1e-9);
+}
+
+test "PowerLaw a=2: variance is positive" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "PowerLaw a=10: variance == 10/(11²·12)" {
+    const dist = try PowerLaw(f64).init(10.0);
+    const v = dist.variance();
+    const expected = 10.0 / (11.0 * 11.0 * 12.0);
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+// Mode Tests
+
+test "PowerLaw a=1: mode == 1.0" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const mo = dist.mode();
+    try testing.expectApproxEqAbs(1.0, mo, 1e-9);
+}
+
+test "PowerLaw a=2: mode == 1.0" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const mo = dist.mode();
+    try testing.expectApproxEqAbs(1.0, mo, 1e-9);
+}
+
+test "PowerLaw a=0.5: mode == 0.0" {
+    const dist = try PowerLaw(f64).init(0.5);
+    const mo = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mo, 1e-9);
+}
+
+test "PowerLaw a=0.1: mode == 0.0" {
+    const dist = try PowerLaw(f64).init(0.1);
+    const mo = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mo, 1e-9);
+}
+
+// Entropy Tests
+
+test "PowerLaw a=1: entropy == 0.0" {
+    const dist = try PowerLaw(f64).init(1.0);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.0, h, 1e-9);
+}
+
+test "PowerLaw a=2: entropy ≈ 0.5 - ln(2)" {
+    const dist = try PowerLaw(f64).init(2.0);
+    const h = dist.entropy();
+    const expected = 0.5 - @log(2.0);
+    try testing.expectApproxEqAbs(expected, h, 1e-9);
+}
+
+test "PowerLaw a=3: entropy ≈ 2/3 - ln(3)" {
+    const dist = try PowerLaw(f64).init(3.0);
+    const h = dist.entropy();
+    const expected = 2.0 / 3.0 - @log(3.0);
+    try testing.expectApproxEqAbs(expected, h, 1e-9);
+}
+
+test "PowerLaw a=0.5: entropy ≈ ln(2) - 1" {
+    const dist = try PowerLaw(f64).init(0.5);
+    const h = dist.entropy();
+    const expected = @log(2.0) - 1.0;
+    try testing.expectApproxEqAbs(expected, h, 1e-9);
+}
+
+test "PowerLaw: entropy decreases for a>1 (a=1 has higher entropy than a=2)" {
+    const dist1 = try PowerLaw(f64).init(1.0);
+    const dist2 = try PowerLaw(f64).init(2.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try testing.expect(h1 > h2);
+}
+
+// Sample Tests
+
+test "PowerLaw a=2: sample returns value in [0,1]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try PowerLaw(f64).init(2.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0.0);
+    try testing.expect(s <= 1.0);
+}
+
+test "PowerLaw a=2: 100 samples all in [0,1]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try PowerLaw(f64).init(2.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+        try testing.expect(s <= 1.0);
+    }
+}
+
+test "PowerLaw a=1: empirical mean ≈ 0.5 (10000 samples)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try PowerLaw(f64).init(1.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.5, empirical_mean, 0.1);
+}
+
+test "PowerLaw a=2: sample returns f64 value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try PowerLaw(f64).init(2.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+// f32 Support Tests
+
+test "PowerLaw: f32 init(2.0) succeeds" {
+    const dist = try PowerLaw(f32).init(2.0);
+    try testing.expect(dist.a == 2.0);
+}
+
+test "PowerLaw: f32 pdf and cdf are finite" {
+    const dist = try PowerLaw(f32).init(2.0);
+    const p = dist.pdf(0.5);
+    const c = dist.cdf(0.5);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "PowerLaw: f32 sample returns value in [0,1]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try PowerLaw(f32).init(2.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0.0);
+    try testing.expect(s <= 1.0);
+}
