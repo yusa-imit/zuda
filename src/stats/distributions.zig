@@ -28248,3 +28248,787 @@ test "PowerLaw: f32 sample returns value in [0,1]" {
     try testing.expect(s >= 0.0);
     try testing.expect(s <= 1.0);
 }
+
+// ============================================================================
+// SkewNormal Distribution (Azzalini 1985)
+// ============================================================================
+
+/// SkewNormal distribution — Azzalini's skew-normal family
+///
+/// A continuous distribution extending the normal distribution with
+/// an additional shape parameter α to control skewness.
+///
+/// PDF: f(x) = (2/ω) · φ((x-ξ)/ω) · Φ(α·(x-ξ)/ω)
+///   where φ(z) = exp(-z²/2)/√(2π), Φ(z) = CDF of standard normal
+///
+/// CDF: F(x) = Φ((x-ξ)/ω) - 2·T((x-ξ)/ω, α)
+///   where T is Owen's T-function (computed via Gauss-Legendre quadrature)
+///
+/// Parameters:
+///   - ξ (xi): location, any finite real
+///   - ω (omega): scale, > 0
+///   - α (alpha): shape/skewness, any finite real
+///
+/// Support: (-∞, +∞)
+///
+/// Special cases:
+///   - α = 0 → Normal(ξ, ω²)
+///
+/// Time: O(1) for pdf/cdf/quantile/mean/variance/entropy/sample
+pub fn SkewNormal(comptime T: type) type {
+    return struct {
+        xi: T,
+        omega: T,
+        alpha: T,
+
+        const Self = @This();
+
+        /// Initialize SkewNormal distribution
+        ///
+        /// Errors: omega ≤ 0, or any parameter is NaN/±∞ (except xi/alpha which may be ±∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, omega: T, alpha: T) DistributionError!Self {
+            if (omega <= 0.0 or !math.isFinite(omega)) return error.InvalidParameter;
+            if (!math.isFinite(xi)) return error.InvalidParameter;
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .xi = xi, .omega = omega, .alpha = alpha };
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            try testing.expect(self.omega > 0.0);
+            try testing.expect(math.isFinite(self.omega));
+            try testing.expect(math.isFinite(self.xi));
+            try testing.expect(math.isFinite(self.alpha));
+        }
+
+        /// Probability density function
+        ///
+        /// f(x) = (2/ω) · φ((x-ξ)/ω) · Φ(α·(x-ξ)/ω)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+            const phi_z = (1.0 / @sqrt(2.0 * math.pi)) * @exp(-z * z / 2.0);
+            const alpha_z = self.alpha * z;
+            const Phi_alpha_z = 0.5 * (1.0 + erf(alpha_z / @sqrt(2.0)));
+            return (2.0 / self.omega) * phi_z * Phi_alpha_z;
+        }
+
+        /// Log probability density function
+        ///
+        /// logf(x) = log(2) - log(ω) + log(φ((x-ξ)/ω)) + log(Φ(α·(x-ξ)/ω))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+            const log_phi_z = -z * z / 2.0 - 0.5 * @log(2.0 * math.pi);
+            const alpha_z = self.alpha * z;
+            const Phi_alpha_z = 0.5 * (1.0 + erf(alpha_z / @sqrt(2.0)));
+            if (Phi_alpha_z <= 0.0) return -math.inf(T);
+            return @log(2.0) - @log(self.omega) + log_phi_z + @log(Phi_alpha_z);
+        }
+
+        /// Cumulative distribution function (numerical via Owen's T-function)
+        ///
+        /// F(x) = Φ(z) - 2·T(z, α), where z = (x-ξ)/ω
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+            const Phi_z = 0.5 * (1.0 + erf(z / @sqrt(2.0)));
+            const t = owensT(z, self.alpha);
+            const result = Phi_z - 2.0 * t;
+            // Clamp to [0, 1] to handle numerical precision
+            if (result < 0.0) return 0.0;
+            if (result > 1.0) return 1.0;
+            return result;
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) via Newton-Raphson iteration
+        ///
+        /// Returns error.InvalidParameter for p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidParameter;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            // Newton-Raphson: start from normal quantile (α=0)
+            var q = self.xi + self.omega * quantileStdNormal(p);
+            for (0..30) |_| {
+                const cdf_q = self.cdf(q);
+                const f = cdf_q - p;
+                if (@abs(f) < 1e-12) break;
+                const f_prime = self.pdf(q);
+                if (f_prime < 1e-14) break;
+                const delta = f / f_prime;
+                if (@abs(delta) < 1e-12) break;
+                q -= delta;
+            }
+            return q;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = ξ + ω · δ · √(2/π), where δ = α/√(1+α²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+            return self.xi + self.omega * delta * @sqrt(2.0 / math.pi);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = ω² · (1 - 2·δ²/π), where δ = α/√(1+α²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+            const delta_sq = delta * delta;
+            return self.omega * self.omega * (1.0 - 2.0 * delta_sq / math.pi);
+        }
+
+        /// Mode of the distribution (via golden section search)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const left = self.xi - 5.0 * self.omega;
+            const right = self.xi + 5.0 * self.omega;
+
+            var a = left;
+            var b = right;
+            const golden_ratio = (1.0 + @sqrt(5.0)) / 2.0;
+            const resphi = 2.0 - golden_ratio;
+
+            for (0..100) |_| {
+                if (@abs(b - a) < 1e-10) break;
+                const x1 = a + resphi * (b - a);
+                const x2 = b - resphi * (b - a);
+                if (self.pdf(x1) > self.pdf(x2)) {
+                    b = x2;
+                } else {
+                    a = x1;
+                }
+            }
+            return (a + b) / 2.0;
+        }
+
+        /// Differential entropy (in nats) via numerical integration
+        ///
+        /// H = ln(ω) + 0.5·ln(2πe) - E[ln(2·Φ(α·Z))], Z ~ N(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Gauss-Hermite quadrature for E[ln(2*Phi(alpha*Z))]
+            // Nodes and weights for 10-point GHQ
+            const nodes = [_]T{ -3.436159783, -2.532731674, -1.756683649, -1.036610830, -0.342901327,
+                                 0.342901327,  1.036610830,  1.756683649,  2.532731674,  3.436159783 };
+            const weights = [_]T{ 7.64043285e-6, 1.34364574e-3, 3.38743944e-2, 2.40138611e-1, 6.10862633e-1,
+                                   6.10862633e-1, 2.40138611e-1, 3.38743944e-2, 1.34364574e-3, 7.64043285e-6 };
+
+            var integral: T = 0.0;
+            for (0..10) |i| {
+                const z = nodes[i] * @sqrt(2.0);
+                const Phi_alpha_z = 0.5 * (1.0 + erf(self.alpha * z / @sqrt(2.0)));
+                if (Phi_alpha_z > 0.0) {
+                    integral += weights[i] * @log(2.0 * Phi_alpha_z);
+                }
+            }
+            integral *= 1.0 / @sqrt(math.pi);
+
+            return @log(self.omega) + 0.5 * @log(2.0 * math.pi * math.e) - integral;
+        }
+
+        /// Draw a random sample
+        ///
+        /// X = ξ + ω·(δ·|U₁| + √(1-δ²)·U₂), where U₁, U₂ ~ N(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+
+            // Generate standard normal samples using Box-Muller
+            const uniform1 = rng.float(T);
+            const uniform2 = rng.float(T);
+            const z1 = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2);
+
+            const uniform3 = rng.float(T);
+            const uniform4 = rng.float(T);
+            const z2 = @sqrt(-2.0 * @log(uniform3)) * @cos(2.0 * math.pi * uniform4);
+
+            return self.xi + self.omega * (delta * @abs(z1) + @sqrt(1.0 - delta * delta) * z2);
+        }
+
+        // Helper: Owen's T-function via Gauss-Legendre quadrature (16-point)
+        fn owensT(h: T, a: T) T {
+            if (h == 0.0) {
+                return math.atan(a) / (2.0 * math.pi);
+            }
+
+            // 16-point Gauss-Legendre quadrature nodes and weights
+            const nodes = [_]T{
+                -0.9894009349916499325961541734,
+                -0.9445750230732325760779884155,
+                -0.8656312023878317438804678732,
+                -0.7554044083550030338951011948,
+                -0.6178762444026437647431482869,
+                -0.4545454545454545454545454545,
+                -0.2756581394264004997553461107,
+                -0.0947992761666747500218999389,
+                0.0947992761666747500218999389,
+                0.2756581394264004997553461107,
+                0.4545454545454545454545454545,
+                0.6178762444026437647431482869,
+                0.7554044083550030338951011948,
+                0.8656312023878317438804678732,
+                0.9445750230732325760779884155,
+                0.9894009349916499325961541734,
+            };
+            const weights = [_]T{
+                0.0271524594117540948517805529,
+                0.0622535239386478928628438369,
+                0.0951585116824927848099251076,
+                0.1246289712555338720524762822,
+                0.1495959888597201378529657384,
+                0.1691565193950025381893120790,
+                0.1826034150449235888667636322,
+                0.1894506104550684962853967311,
+                0.1894506104550684962853967311,
+                0.1826034150449235888667636322,
+                0.1691565193950025381893120790,
+                0.1495959888597201378529657384,
+                0.1246289712555338720524762822,
+                0.0951585116824927848099251076,
+                0.0622535239386478928628438369,
+                0.0271524594117540948517805529,
+            };
+
+            var integral: T = 0.0;
+            for (0..16) |i| {
+                const t = nodes[i];
+                const denom = 1.0 + t * t;
+                const arg = h * h * (1.0 + t * t) / 2.0;
+                const exp_term = @exp(-arg);
+                integral += weights[i] * exp_term / denom;
+            }
+
+            return (a / (2.0 * math.pi)) * integral;
+        }
+
+        // Helper: Quantile of standard normal (inverse of Φ)
+        fn quantileStdNormal(p: T) T {
+            // Use rational approximation (Newton iteration would be more complex)
+            if (p < 0.5) {
+                const t = @sqrt(-2.0 * @log(p));
+                const num = 2.515517 + 0.802853 * t + 0.010328 * t * t;
+                const denom = 1.0 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t;
+                return -(t - num / denom);
+            } else {
+                const t = @sqrt(-2.0 * @log(1.0 - p));
+                const num = 2.515517 + 0.802853 * t + 0.010328 * t * t;
+                const denom = 1.0 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t;
+                return t - num / denom;
+            }
+        }
+    };
+}
+
+// SkewNormal Tests (56th distribution, 41st continuous)
+// ============================================================================
+// SkewNormal(ξ, ω, α) — Azzalini's skew-normal
+// Parameters: ξ ∈ ℝ (location), ω > 0 (scale), α ∈ ℝ (shape/skewness)
+// PDF: (2/ω)·φ((x-ξ)/ω)·Φ(α·(x-ξ)/ω); CDF: Φ(z)-2T(z,α)
+// Mean: ξ + ω·δ·√(2/π); Variance: ω²·(1-2δ²/π); δ=α/√(1+α²)
+
+// Init/Validation Tests
+
+test "SkewNormal: init with valid xi=0, omega=1, alpha=0 succeeds" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    try testing.expect(dist.xi == 0.0);
+    try testing.expect(dist.omega == 1.0);
+    try testing.expect(dist.alpha == 0.0);
+}
+
+test "SkewNormal: init with valid xi=1, omega=2, alpha=1 succeeds" {
+    const dist = try SkewNormal(f64).init(1.0, 2.0, 1.0);
+    try testing.expect(dist.xi == 1.0);
+    try testing.expect(dist.omega == 2.0);
+    try testing.expect(dist.alpha == 1.0);
+}
+
+test "SkewNormal: init with valid xi=0, omega=1, alpha=-2 succeeds" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, -2.0);
+    try testing.expect(dist.alpha == -2.0);
+}
+
+test "SkewNormal: init with valid xi=-5, omega=0.5, alpha=3 succeeds" {
+    const dist = try SkewNormal(f64).init(-5.0, 0.5, 3.0);
+    try testing.expect(dist.xi == -5.0);
+    try testing.expect(dist.omega == 0.5);
+    try testing.expect(dist.alpha == 3.0);
+}
+
+test "SkewNormal: init with omega=0 returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(0.0, 0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: init with omega=-1 returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(0.0, -1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: init with omega=nan returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(0.0, math.nan(f64), 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: init with omega=+inf returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(0.0, math.inf(f64), 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: init with xi=nan returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(math.nan(f64), 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: init with alpha=nan returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(0.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: init with alpha=+inf returns error.InvalidParameter" {
+    const result = SkewNormal(f64).init(0.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "SkewNormal: validate passes for xi=0, omega=1, alpha=0" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "SkewNormal: validate passes for xi=2, omega=3, alpha=-1" {
+    const dist = try SkewNormal(f64).init(2.0, 3.0, -1.0);
+    try dist.validate();
+}
+
+test "SkewNormal: validate passes for xi=-10, omega=0.1, alpha=5" {
+    const dist = try SkewNormal(f64).init(-10.0, 0.1, 5.0);
+    try dist.validate();
+}
+
+// PDF Tests
+
+test "SkewNormal alpha=0: pdf(xi) = 1/(omega*sqrt(2*pi)) (reduces to normal)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const p = dist.pdf(0.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "SkewNormal alpha=1: pdf(xi) is between normal and its double" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    const normal_pdf = 1.0 / @sqrt(2.0 * math.pi);
+    // At x=ξ, PDF = (2/ω)·φ(0)·Φ(0) = (2/ω)·(1/√(2π))·0.5 = normal_pdf
+    try testing.expectApproxEqAbs(normal_pdf, p, 1e-3);
+}
+
+test "SkewNormal: pdf always positive" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.5);
+    const p1 = dist.pdf(-2.0);
+    const p2 = dist.pdf(0.0);
+    const p3 = dist.pdf(2.0);
+    try testing.expect(p1 > 0.0);
+    try testing.expect(p2 > 0.0);
+    try testing.expect(p3 > 0.0);
+}
+
+test "SkewNormal alpha=1: pdf asymmetry (pdf(1) != pdf(-1))" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const p_pos = dist.pdf(1.0);
+    const p_neg = dist.pdf(-1.0);
+    try testing.expect(p_pos != p_neg); // Asymmetric
+}
+
+test "SkewNormal alpha=0: pdf symmetry around xi" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const p_pos = dist.pdf(1.0);
+    const p_neg = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(p_pos, p_neg, 1e-9); // Symmetric (normal)
+}
+
+test "SkewNormal: pdf(x) scales with omega^(-1)" {
+    const dist1 = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const dist2 = try SkewNormal(f64).init(0.0, 2.0, 0.0);
+    const p1_at_0 = dist1.pdf(0.0);
+    const p2_at_0 = dist2.pdf(0.0);
+    try testing.expectApproxEqAbs(p1_at_0 / 2.0, p2_at_0, 1e-9);
+}
+
+test "SkewNormal xi=1, omega=2, alpha=0.5: pdf(1) is finite and positive" {
+    const dist = try SkewNormal(f64).init(1.0, 2.0, 0.5);
+    const p = dist.pdf(1.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(p > 0.0);
+}
+
+// LogPDF Tests
+
+test "SkewNormal: logpdf(xi; alpha=0) = log(1/sqrt(2*pi))" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(1.0 / @sqrt(2.0 * math.pi));
+    try testing.expectApproxEqAbs(expected, lp, 1e-9);
+}
+
+test "SkewNormal: exp(logpdf(x)) ≈ pdf(x) for interior point" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.5);
+    const x = 0.5;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    const exp_lp = @exp(lp);
+    try testing.expectApproxEqAbs(p, exp_lp, 1e-8);
+}
+
+test "SkewNormal: logpdf is finite for normal points" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const lp1 = dist.logpdf(-2.0);
+    const lp2 = dist.logpdf(0.0);
+    const lp3 = dist.logpdf(2.0);
+    try testing.expect(math.isFinite(lp1));
+    try testing.expect(math.isFinite(lp2));
+    try testing.expect(math.isFinite(lp3));
+}
+
+// CDF Tests
+
+test "SkewNormal alpha=0: cdf(xi) = 0.5 (normal property)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-3);
+}
+
+test "SkewNormal alpha=1: cdf(xi) = 0.5 - 2*T(0,1) = 0.25" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.25, c, 1e-2);
+}
+
+test "SkewNormal alpha=-1: cdf(xi) = 0.5 + 2*T(0,1) = 0.75" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, -1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.75, c, 1e-2);
+}
+
+test "SkewNormal: cdf monotonically increasing" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.5);
+    const c1 = dist.cdf(-2.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(2.0);
+    try testing.expect(c1 < c2 and c2 < c3);
+}
+
+test "SkewNormal: cdf(-inf) → 0" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-100.0);
+    try testing.expect(c < 0.01);
+}
+
+test "SkewNormal: cdf(+inf) → 1" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(100.0);
+    try testing.expect(c > 0.99);
+}
+
+test "SkewNormal: cdf is valid probability (in [0,1])" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    for (0..11) |idx| {
+        const i = @as(i32, @intCast(idx)) - 5;
+        const x = @as(f64, @floatFromInt(i));
+        const c = dist.cdf(x);
+        // CDF should be in [0,1], allowing for small numerical error
+        try testing.expect(c >= -1e-10);
+        try testing.expect(c <= 1.0 + 1e-10);
+    }
+}
+
+test "SkewNormal: sf(x) = 1 - cdf(x)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-8);
+}
+
+// Quantile Tests
+
+test "SkewNormal: quantile(-0.1) returns error.InvalidParameter" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: quantile(1.1) returns error.InvalidParameter" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewNormal: quantile(0.0) = -inf" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "SkewNormal: quantile(1.0) = +inf" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "SkewNormal alpha=0: quantile(0.5) = xi (median equals location)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-3);
+}
+
+test "SkewNormal: round-trip quantile(cdf(x)) ≈ x" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.5);
+    const x = 0.3;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-3);
+}
+
+test "SkewNormal: quantile is monotonically increasing" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+// Mean Tests
+
+test "SkewNormal alpha=0: mean = xi (normal property)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-9);
+}
+
+test "SkewNormal alpha=0: mean = xi for arbitrary xi" {
+    const dist = try SkewNormal(f64).init(5.0, 1.0, 0.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(5.0, m, 1e-9);
+}
+
+test "SkewNormal xi=0, omega=1, alpha=1: mean ≈ 1/sqrt(pi) ≈ 0.5642" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    const expected = 1.0 / @sqrt(math.pi);
+    try testing.expectApproxEqAbs(expected, m, 1e-3);
+}
+
+test "SkewNormal xi=0, omega=1, alpha=-1: mean ≈ -1/sqrt(pi)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, -1.0);
+    const m = dist.mean();
+    const expected = -1.0 / @sqrt(math.pi);
+    try testing.expectApproxEqAbs(expected, m, 1e-3);
+}
+
+test "SkewNormal: mean = xi + omega * delta * sqrt(2/pi)" {
+    const dist = try SkewNormal(f64).init(2.0, 3.0, 2.0);
+    const m = dist.mean();
+    const alpha_sq = 2.0 * 2.0;
+    const delta = 2.0 / @sqrt(1.0 + alpha_sq);
+    const expected = 2.0 + 3.0 * delta * @sqrt(2.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, m, 1e-8);
+}
+
+// Variance Tests
+
+test "SkewNormal alpha=0: variance = omega^2 (normal property)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 1e-9);
+}
+
+test "SkewNormal xi=0, omega=1, alpha=0: variance = 1" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 1e-9);
+}
+
+test "SkewNormal xi=0, omega=1, alpha=1: variance ≈ 1 - 1/pi ≈ 0.6817" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    const expected = 1.0 - 1.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, v, 1e-3);
+}
+
+test "SkewNormal: variance is positive" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "SkewNormal: variance scales with omega^2" {
+    const dist1 = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const dist2 = try SkewNormal(f64).init(0.0, 2.0, 0.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * v1, v2, 1e-9);
+}
+
+// Mode Tests
+
+test "SkewNormal alpha=0: mode = xi (symmetric normal)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const mode = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode, 1e-3);
+}
+
+test "SkewNormal alpha=1: mode > xi (positive skew)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expect(mode > 0.0);
+}
+
+test "SkewNormal alpha=-1: mode < xi (negative skew)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, -1.0);
+    const mode = dist.mode();
+    try testing.expect(mode < 0.0);
+}
+
+test "SkewNormal: mode is finite" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.5);
+    const mode = dist.mode();
+    try testing.expect(math.isFinite(mode));
+}
+
+// Entropy Tests
+
+test "SkewNormal alpha=0: entropy ≈ 0.5*ln(2*pi*e) ≈ 1.4189" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const h = dist.entropy();
+    const expected = 0.5 * @log(2.0 * math.pi * math.e);
+    try testing.expectApproxEqAbs(expected, h, 1e-3);
+}
+
+test "SkewNormal: entropy is finite" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+test "SkewNormal: entropy scales as ln(omega) + ln(normal entropy)" {
+    const dist1 = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const dist2 = try SkewNormal(f64).init(0.0, 2.0, 0.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    const diff = h2 - h1;
+    try testing.expectApproxEqAbs(@log(2.0), diff, 1e-9);
+}
+
+// Sample Tests
+
+test "SkewNormal: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+test "SkewNormal: 100 samples all finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "SkewNormal alpha=0: empirical mean ≈ xi (10000 samples)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.0, empirical_mean, 0.1);
+}
+
+test "SkewNormal xi=5, omega=2, alpha=0: empirical mean ≈ 5 (10000 samples)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewNormal(f64).init(5.0, 2.0, 0.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(5.0, empirical_mean, 0.2);
+}
+
+test "SkewNormal: multiple samples show variety" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.5);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    // Check that not all samples are identical
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
+
+// f32 Support Tests
+
+test "SkewNormal: f32 init(0, 1, 0) succeeds" {
+    const dist = try SkewNormal(f32).init(0.0, 1.0, 0.0);
+    try testing.expect(dist.omega == 1.0);
+}
+
+test "SkewNormal: f32 pdf and cdf are finite" {
+    const dist = try SkewNormal(f32).init(0.0, 1.0, 0.5);
+    const p = dist.pdf(0.0);
+    const c = dist.cdf(0.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "SkewNormal: f32 sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewNormal(f32).init(0.0, 1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
