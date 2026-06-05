@@ -29680,3 +29680,839 @@ test "HalfCauchy: f32 entropy returns finite value" {
     const h = dist.entropy();
     try testing.expect(math.isFinite(h));
 }
+
+/// LogUniform Distribution (Reciprocal Distribution) LogUniform(a, b)
+///
+/// The LogUniform distribution, also known as the Reciprocal distribution, is defined
+/// such that if X ~ LogUniform(a, b), then ln(X) ~ Uniform(ln(a), ln(b)).
+/// The PDF is inversely proportional to x, giving equal probability density in log space.
+///
+/// Parameters:
+///   - a (a): Lower bound (a > 0)
+///   - b (b): Upper bound (b > a)
+///
+/// Support: [a, b]
+///
+/// PDF: f(x; a, b) = 1 / (x · ln(b/a)) for x ∈ [a, b], = 0 otherwise
+/// CDF: F(x; a, b) = ln(x/a) / ln(b/a) for x ∈ [a, b]
+pub fn LogUniform(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+        log_ratio: T, // ln(b/a) cached for efficiency
+
+        const Self = @This();
+
+        /// Create a LogUniform distribution with bounds a and b.
+        ///
+        /// Errors: a ≤ 0, b ≤ a, a or b not finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (a <= 0.0 or !math.isFinite(a)) return error.InvalidParameter;
+            if (b <= a or !math.isFinite(b)) return error.InvalidParameter;
+            const log_ratio = @log(b / a);
+            return Self{ .a = a, .b = b, .log_ratio = log_ratio };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; a, b) = 1 / (x · ln(b/a)) for x ∈ [a, b], = 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return 0.0;
+            return 1.0 / (x * self.log_ratio);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; a, b) = -log(x) - log(ln(b/a)) for x ∈ [a, b], = -∞ otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return -math.inf(T);
+            return -@log(x) - @log(self.log_ratio);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; a, b) = ln(x/a) / ln(b/a) for x ∈ [a, b]; 0 if x < a; 1 if x > b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.a) return 0.0;
+            if (x > self.b) return 1.0;
+            return @log(x / self.a) / self.log_ratio;
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = (ln(b) - ln(x)) / ln(b/a) for x ∈ [a, b]; 1 if x ≤ a; 0 if x ≥ b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= self.a) return 1.0;
+            if (x >= self.b) return 0.0;
+            return (@log(self.b) - @log(x)) / self.log_ratio;
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = a · (b/a)^p = a · exp(p · ln(b/a))
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.a;
+            if (p == 1.0) return self.b;
+            return self.a * @exp(p * self.log_ratio);
+        }
+
+        /// Mode of the distribution (always a)
+        ///
+        /// Since PDF = 1/(x·ln(b/a)) is monotonically decreasing, the mode is at x = a
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.a;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = √(a·b) = exp((ln(a) + ln(b))/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return @sqrt(self.a * self.b);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = (b - a) / ln(b/a)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (self.b - self.a) / self.log_ratio;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = (b² - a²)/(2·ln(b/a)) - E[X]²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            return (self.b * self.b - self.a * self.a) / (2.0 * self.log_ratio) - m * m;
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = 0.5·ln(a·b) + ln(ln(b/a))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 0.5 * @log(self.a * self.b) + @log(self.log_ratio);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = a · (b/a)^U = a · exp(U · ln(b/a)) where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.a * @exp(u * self.log_ratio);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= 0.0 or !math.isFinite(self.a)) return error.InvalidParameter;
+            if (self.b <= self.a or !math.isFinite(self.b)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the domain [a, b]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            if (x < self.a or x > self.b) return error.OutOfDomain;
+        }
+    };
+}
+
+// ============================================================================
+// LogUniform Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "LogUniform: init(1, 2) succeeds with f64" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    try testing.expect(dist.a == 1.0);
+    try testing.expect(dist.b == 2.0);
+}
+
+test "LogUniform: init(1, e) succeeds with f64" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    try testing.expect(dist.a == 1.0);
+    try testing.expectApproxEqAbs(math.e, dist.b, 1e-10);
+}
+
+test "LogUniform: init(2, 4) succeeds with f64" {
+    const dist = try LogUniform(f64).init(2.0, 4.0);
+    try testing.expect(dist.a == 2.0);
+    try testing.expect(dist.b == 4.0);
+}
+
+test "LogUniform: init with a=0 returns InvalidParameter" {
+    const result = LogUniform(f64).init(0.0, 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogUniform: init with negative a returns InvalidParameter" {
+    const result = LogUniform(f64).init(-1.0, 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogUniform: init with b=a returns InvalidParameter" {
+    const result = LogUniform(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogUniform: init with b<a returns InvalidParameter" {
+    const result = LogUniform(f64).init(2.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogUniform: init with very small a succeeds" {
+    const dist = try LogUniform(f64).init(1e-10, 1.0);
+    try testing.expect(dist.a == 1e-10);
+}
+
+// PDF Tests
+
+test "LogUniform: pdf(1; 1, e) = 1.0" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-10);
+}
+
+test "LogUniform: pdf(e; 1, e) = 1/e" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const p = dist.pdf(math.e);
+    const expected = 1.0 / math.e;
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "LogUniform: pdf(sqrt(e); 1, e) = 1/sqrt(e)" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const sqrt_e = @sqrt(math.e);
+    const p = dist.pdf(sqrt_e);
+    const expected = 1.0 / sqrt_e;
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "LogUniform: pdf(1; 1, 2) = 1/ln(2)" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const p = dist.pdf(1.0);
+    const expected = 1.0 / @log(2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "LogUniform: pdf(1.5; 1, 2) = 1/(1.5*ln(2))" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const p = dist.pdf(1.5);
+    const expected = 1.0 / (1.5 * @log(2.0));
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "LogUniform: pdf is monotonically decreasing in domain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const p1 = dist.pdf(1.0);
+    const p2 = dist.pdf(1.3);
+    const p3 = dist.pdf(1.6);
+    const p4 = dist.pdf(2.0);
+    try testing.expect(p1 > p2);
+    try testing.expect(p2 > p3);
+    try testing.expect(p3 > p4);
+}
+
+test "LogUniform: pdf(x) = 0 for x < a" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "LogUniform: pdf(x) = 0 for x > b" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const p = dist.pdf(3.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+// LogPDF Tests
+
+test "LogUniform: logpdf(1; 1, e) = 0" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const lp = dist.logpdf(1.0);
+    try testing.expectApproxEqAbs(0.0, lp, 1e-10);
+}
+
+test "LogUniform: logpdf(sqrt(e); 1, e) ≈ log(1/sqrt(e)) = -0.5" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const sqrt_e = @sqrt(math.e);
+    const lp = dist.logpdf(sqrt_e);
+    const expected = -0.5;
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "LogUniform: logpdf(e; 1, e) ≈ log(1/e) = -1" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const lp = dist.logpdf(math.e);
+    const expected = -1.0;
+    try testing.expectApproxEqAbs(expected, lp, 1e-9);
+}
+
+test "LogUniform: logpdf ≈ log(pdf) for various x in domain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 1.0, 1.2, 1.4, 1.6, 1.8, 2.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        const expected_lp = @log(p);
+        try testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "LogUniform: logpdf(x < a) is very negative" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const lp = dist.logpdf(0.5);
+    try testing.expect(lp < -50.0);
+}
+
+test "LogUniform: logpdf(x > b) is very negative" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const lp = dist.logpdf(3.0);
+    try testing.expect(lp < -50.0);
+}
+
+// CDF Tests
+
+test "LogUniform: cdf(1; 1, e) = 0" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "LogUniform: cdf(e; 1, e) = 1" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const c = dist.cdf(math.e);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "LogUniform: cdf(sqrt(e); 1, e) = 0.5" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const sqrt_e = @sqrt(math.e);
+    const c = dist.cdf(sqrt_e);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "LogUniform: cdf(1.5; 1, 2) = ln(1.5)/ln(2)" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const c = dist.cdf(1.5);
+    const expected = @log(1.5) / @log(2.0);
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "LogUniform: cdf(x < a) = 0" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "LogUniform: cdf(x > b) = 1" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const c = dist.cdf(3.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "LogUniform: cdf is monotonically increasing" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(1.3);
+    const c3 = dist.cdf(1.6);
+    const c4 = dist.cdf(2.0);
+    try testing.expect(c1 <= c2);
+    try testing.expect(c2 <= c3);
+    try testing.expect(c3 <= c4);
+}
+
+// SF Tests
+
+test "LogUniform: sf(1; 1, e) = 1" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const s = dist.sf(1.0);
+    try testing.expectApproxEqAbs(1.0, s, 1e-10);
+}
+
+test "LogUniform: sf(e; 1, e) = 0" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const s = dist.sf(math.e);
+    try testing.expectApproxEqAbs(0.0, s, 1e-10);
+}
+
+test "LogUniform: sf(sqrt(e); 1, e) = 0.5" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const sqrt_e = @sqrt(math.e);
+    const s = dist.sf(sqrt_e);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "LogUniform: sf(sqrt(2); 1, 2) = 0.5" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const sqrt_2 = @sqrt(2.0);
+    const s = dist.sf(sqrt_2);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "LogUniform: sf + cdf = 1 throughout domain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 1.0, 1.2, 1.4, 1.6, 1.8, 2.0 };
+    for (x_vals) |x| {
+        const sum = dist.sf(x) + dist.cdf(x);
+        try testing.expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+test "LogUniform: sf(x < a) = 1" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const s = dist.sf(0.5);
+    try testing.expectApproxEqAbs(1.0, s, 1e-10);
+}
+
+test "LogUniform: sf(x > b) = 0" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const s = dist.sf(3.0);
+    try testing.expectApproxEqAbs(0.0, s, 1e-10);
+}
+
+// Quantile Tests
+
+test "LogUniform: quantile(0; 1, 2) = 1" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "LogUniform: quantile(1; 1, 2) = 2" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(2.0, q, 1e-10);
+}
+
+test "LogUniform: quantile(0.5; 1, 2) = sqrt(2)" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.5);
+    const expected = @sqrt(2.0);
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "LogUniform: quantile(0.5; 1, e) = sqrt(e)" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const q = try dist.quantile(0.5);
+    const expected = @sqrt(math.e);
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "LogUniform: quantile(0; 1, e) = 1" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "LogUniform: quantile(1; 1, e) = e" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(math.e, q, 1e-10);
+}
+
+test "LogUniform: quantile(0.25; 1, 2) correct" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.25);
+    const expected = @sqrt(2.0) * @exp(-0.25 * @log(2.0));
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "LogUniform: quantile(0.75; 1, 2) correct" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.75);
+    const expected = @sqrt(2.0) * @exp(0.25 * @log(2.0));
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "LogUniform: quantile(p < 0) returns InvalidProbability" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogUniform: quantile(p > 1) returns InvalidProbability" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogUniform: cdf(quantile(p)) = p roundtrip" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-9);
+    }
+}
+
+test "LogUniform: quantile(cdf(x)) = x roundtrip" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 1.1, 1.3, 1.5, 1.7, 1.9 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const q = try dist.quantile(c);
+        try testing.expectApproxEqAbs(x, q, 1e-9);
+    }
+}
+
+// Mode Tests
+
+test "LogUniform: mode(1, 2) = 1" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(1.0, m, 1e-10);
+}
+
+test "LogUniform: mode(2, 4) = 2" {
+    const dist = try LogUniform(f64).init(2.0, 4.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "LogUniform: mode equals a for any valid (a, b)" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 0.5, 2.5 },
+        [_]f64{ 2.0, 10.0 },
+        [_]f64{ 0.1, 100.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try LogUniform(f64).init(pair[0], pair[1]);
+        const m = dist.mode();
+        try testing.expectApproxEqAbs(pair[0], m, 1e-10);
+    }
+}
+
+// Median Tests
+
+test "LogUniform: median(1, 2) = sqrt(2)" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const med = dist.median();
+    const expected = @sqrt(2.0);
+    try testing.expectApproxEqAbs(expected, med, 1e-10);
+}
+
+test "LogUniform: median(1, e) = sqrt(e)" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const med = dist.median();
+    const expected = @sqrt(math.e);
+    try testing.expectApproxEqAbs(expected, med, 1e-10);
+}
+
+test "LogUniform: median(2, 4) = sqrt(8) = 2*sqrt(2)" {
+    const dist = try LogUniform(f64).init(2.0, 4.0);
+    const med = dist.median();
+    const expected = 2.0 * @sqrt(2.0);
+    try testing.expectApproxEqAbs(expected, med, 1e-10);
+}
+
+test "LogUniform: mode < median < mean" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const mode = dist.mode();
+    const median = dist.median();
+    const mean = dist.mean();
+    try testing.expect(mode < median);
+    try testing.expect(median < mean);
+}
+
+// Mean Tests
+
+test "LogUniform: mean(1, 2) = 1/ln(2)" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const m = dist.mean();
+    const expected = 1.0 / @log(2.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+test "LogUniform: mean(1, e) = e - 1" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const m = dist.mean();
+    const expected = math.e - 1.0;
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+test "LogUniform: mean(2, 4) = 2/ln(2)" {
+    const dist = try LogUniform(f64).init(2.0, 4.0);
+    const m = dist.mean();
+    const expected = 2.0 / @log(2.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+test "LogUniform: mean is between a and b" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 1.0, math.e },
+        [_]f64{ 2.0, 4.0 },
+        [_]f64{ 0.5, 5.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try LogUniform(f64).init(pair[0], pair[1]);
+        const m = dist.mean();
+        try testing.expect(m > pair[0]);
+        try testing.expect(m < pair[1]);
+    }
+}
+
+// Variance Tests
+
+test "LogUniform: variance(1, 2) = (4-1)/(2*ln(2)) - mean^2" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const v = dist.variance();
+    const mean = dist.mean();
+    const expected = (4.0 - 1.0) / (2.0 * @log(2.0)) - mean * mean;
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "LogUniform: variance(1, e) > 0" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "LogUniform: variance is positive" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 1.0, math.e },
+        [_]f64{ 2.0, 4.0 },
+        [_]f64{ 0.5, 5.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try LogUniform(f64).init(pair[0], pair[1]);
+        const v = dist.variance();
+        try testing.expect(v > 0.0);
+    }
+}
+
+// Entropy Tests
+
+test "LogUniform: entropy(1, e) = 0.5" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.5, h, 1e-10);
+}
+
+test "LogUniform: entropy(1, 2) = 0.5*ln(2) + ln(ln(2))" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const h = dist.entropy();
+    const expected = 0.5 * @log(2.0) + @log(@log(2.0));
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "LogUniform: entropy(2, 4) is finite" {
+    const dist = try LogUniform(f64).init(2.0, 4.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+test "LogUniform: entropy is always finite for valid params" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 1.0, math.e },
+        [_]f64{ 2.0, 4.0 },
+        [_]f64{ 0.5, 5.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try LogUniform(f64).init(pair[0], pair[1]);
+        const h = dist.entropy();
+        try testing.expect(math.isFinite(h));
+    }
+}
+
+// Sampling Tests
+
+test "LogUniform: sample(1, 2) returns value in [1, 2]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 1.0);
+        try testing.expect(s <= 2.0);
+    }
+}
+
+test "LogUniform: sample(1, e) returns value in [1, e]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 1.0);
+        try testing.expect(s <= math.e);
+    }
+}
+
+test "LogUniform: empirical mean approaches theoretical mean (10000 samples, 1% tolerance)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    const tolerance = 0.01 * theoretical_mean;
+    try testing.expectApproxEqAbs(theoretical_mean, empirical_mean, tolerance);
+}
+
+test "LogUniform: samples show variety (not all identical)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
+
+// f32 Support Tests
+
+test "LogUniform: f32 init(1, 2) succeeds" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    try testing.expect(dist.a == 1.0);
+}
+
+test "LogUniform: f32 pdf and cdf are finite" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const p = dist.pdf(1.5);
+    const c = dist.cdf(1.5);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "LogUniform: f32 quantile(0.5) is finite" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+}
+
+test "LogUniform: f32 sample returns finite value in range" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+    try testing.expect(s >= 1.0);
+    try testing.expect(s <= 2.0);
+}
+
+test "LogUniform: f32 mean(1, 2) is finite" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+}
+
+test "LogUniform: f32 variance(1, 2) is finite and positive" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+    try testing.expect(v > 0.0);
+}
+
+test "LogUniform: f32 median(1, 2) is finite" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const med = dist.median();
+    try testing.expect(math.isFinite(med));
+}
+
+test "LogUniform: f32 entropy(1, 2) is finite" {
+    const dist = try LogUniform(f32).init(1.0, 2.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+// Validate Tests
+
+test "LogUniform: validate() passes for valid params (1, 2)" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "LogUniform: validate() passes for valid params (1, e)" {
+    const dist = try LogUniform(f64).init(1.0, math.e);
+    try dist.validate();
+}
+
+test "LogUniform: validateValue(x in [a, b]) passes" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    try dist.validateValue(1.0);
+    try dist.validateValue(1.5);
+    try dist.validateValue(2.0);
+}
+
+test "LogUniform: validateValue(x < a) returns OutOfDomain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const result = dist.validateValue(0.5);
+    try testing.expectError(error.OutOfDomain, result);
+}
+
+test "LogUniform: validateValue(x > b) returns OutOfDomain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const result = dist.validateValue(3.0);
+    try testing.expectError(error.OutOfDomain, result);
+}
+
+// Invariant Tests
+
+test "LogUniform: pdf >= 0 throughout domain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 1.0, 1.2, 1.4, 1.6, 1.8, 2.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "LogUniform: cdf in [0, 1] throughout domain" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "LogUniform: mode <= median <= mean" {
+    const dist = try LogUniform(f64).init(1.0, 2.0);
+    const mode = dist.mode();
+    const median = dist.median();
+    const mean = dist.mean();
+    try testing.expect(mode <= median);
+    try testing.expect(median <= mean);
+}
