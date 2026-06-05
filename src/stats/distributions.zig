@@ -31392,3 +31392,876 @@ test "Arcsine: support boundaries a < all samples < b" {
         try testing.expect(s <= 8.0);
     }
 }
+
+// ============================================================================
+// Logistic Distribution
+// ============================================================================
+
+/// Logistic distribution on (-∞, +∞).
+///
+/// Parameters: mu (location, any real), s (scale, s > 0)
+/// The CDF is the logistic sigmoid: F(x) = 1/(1 + exp(-(x-μ)/s))
+pub fn Logistic(comptime T: type) type {
+    return struct {
+        mu: T,
+        s: T,
+        log_s: T, // ln(s) — cached for logpdf and entropy
+
+        const Self = @This();
+
+        /// Create a Logistic distribution with location mu and scale s.
+        ///
+        /// Errors: s <= 0, non-finite mu or s
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, s: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!math.isFinite(s) or s <= 0.0) return error.InvalidParameter;
+            return Self{ .mu = mu, .s = s, .log_s = @log(s) };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; μ, s) = exp(-(x-μ)/s) / (s·(1+exp(-(x-μ)/s))²)
+        ///            = 1/(4s) · sech²((x-μ)/(2s))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.s;
+            const e = @exp(-z);
+            const denom = 1.0 + e;
+            return e / (self.s * denom * denom);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; μ, s) = -(x-μ)/s - ln(s) - 2·ln(1+exp(-(x-μ)/s))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.s;
+            // Use numerically stable form
+            const neg_z = -z;
+            return neg_z - self.log_s - 2.0 * math.log1p(@exp(neg_z));
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; μ, s) = 1/(1 + exp(-(x-μ)/s)) — the logistic sigmoid
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.s;
+            return 1.0 / (1.0 + @exp(-z));
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = 1/(1 + exp((x-μ)/s)) — numerically stable complement
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.s;
+            return 1.0 / (1.0 + @exp(z));
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = μ + s·ln(p/(1-p))  — exact logit transform
+        /// Q(0) = -∞, Q(1) = +∞
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            return self.mu + self.s * @log(p / (1.0 - p));
+        }
+
+        /// Mode of the distribution: the value x that maximizes f(x)
+        ///
+        /// Mode = μ (peak of the symmetric distribution)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = μ (symmetric distribution)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.mu;
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = s²·π²/3
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.s * self.s * math.pi * math.pi / 3.0;
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = ln(s) + 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return self.log_s + 2.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = μ + s·ln(U/(1-U)) where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            // Clamp away from exact 0 and 1 to avoid -inf/inf
+            const u_clamped = @max(@as(T, 1e-15), @min(u, @as(T, 1.0) - @as(T, 1e-15)));
+            return self.mu + self.s * @log(u_clamped / (1.0 - u_clamped));
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!math.isFinite(self.s) or self.s <= 0.0) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the domain (always succeeds — Logistic has full real line support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            _ = self;
+            _ = x;
+        }
+    };
+}
+
+// Init Tests
+
+test "Logistic: init(0, 1) succeeds" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.s == 1.0);
+}
+
+test "Logistic: init(-5, 2) succeeds with negative mu" {
+    const dist = try Logistic(f64).init(-5.0, 2.0);
+    try testing.expect(dist.mu == -5.0);
+    try testing.expect(dist.s == 2.0);
+}
+
+test "Logistic: init(0, 0.5) succeeds with small scale" {
+    const dist = try Logistic(f64).init(0.0, 0.5);
+    try testing.expect(dist.s == 0.5);
+}
+
+test "Logistic: init(100, 10) succeeds with large values" {
+    const dist = try Logistic(f64).init(100.0, 10.0);
+    try testing.expect(dist.mu == 100.0);
+    try testing.expect(dist.s == 10.0);
+}
+
+test "Logistic: init(0, 0) returns InvalidParameter" {
+    const result = Logistic(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logistic: init(0, -1) returns InvalidParameter" {
+    const result = Logistic(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logistic: init with inf scale returns InvalidParameter" {
+    const result = Logistic(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logistic: init with NaN mu returns InvalidParameter" {
+    const result = Logistic(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logistic: init with NaN scale returns InvalidParameter" {
+    const result = Logistic(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Logistic: init with inf mu succeeds (location can be infinite in theory)" {
+    // Actually: mu should be finite. Let me correct this.
+    const result = Logistic(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF Tests
+
+test "Logistic: pdf(0; 0, 1) = 0.25" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.25, p, 1e-10);
+}
+
+test "Logistic: pdf(1; 0, 1) ≈ 0.196611933" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    const expected = 0.19661193324148185;
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "Logistic: pdf(2; 0, 1) ≈ 0.104993585" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const p = dist.pdf(2.0);
+    const expected = 0.10499358540350662;
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "Logistic: pdf(-1; 0, 1) = pdf(1; 0, 1) by symmetry" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const p_pos = dist.pdf(1.0);
+    const p_neg = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+}
+
+test "Logistic: pdf is symmetric about mu for general location" {
+    const dist = try Logistic(f64).init(3.0, 1.0);
+    const p_left = dist.pdf(2.0);
+    const p_right = dist.pdf(4.0);
+    try testing.expectApproxEqAbs(p_left, p_right, 1e-10);
+}
+
+test "Logistic: pdf(mu; mu, s) = 1/(4s)" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    const p = dist.pdf(2.0);
+    const expected = 1.0 / (4.0 * 3.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Logistic: pdf is always positive" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p > 0.0);
+    }
+}
+
+test "Logistic: pdf peaks at mu (mode)" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const p_mode = dist.pdf(0.0);
+    const p_left = dist.pdf(-0.5);
+    const p_right = dist.pdf(0.5);
+    try testing.expect(p_mode > p_left);
+    try testing.expect(p_mode > p_right);
+}
+
+test "Logistic: pdf(0; 0, 2) = 0.125" {
+    const dist = try Logistic(f64).init(0.0, 2.0);
+    const p = dist.pdf(0.0);
+    const expected = 0.125; // 1/(4*2)
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+// LogPDF Tests
+
+test "Logistic: logpdf(0; 0, 1) = ln(0.25) ≈ -1.386294" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.25);
+    try testing.expectApproxEqAbs(expected, lp, 1e-9);
+}
+
+test "Logistic: logpdf(1; 0, 1) ≈ ln(0.196611933)" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.0);
+    const expected = @log(0.19661193324148185);
+    try testing.expectApproxEqAbs(expected, lp, 1e-9);
+}
+
+test "Logistic: logpdf ≈ ln(pdf) for various x" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        const expected_lp = @log(p);
+        try testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "Logistic: logpdf is always finite" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -100.0, -1.0, 0.0, 1.0, 100.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        try testing.expect(math.isFinite(lp));
+    }
+}
+
+test "Logistic: logpdf is symmetric about mu" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const lp_neg = dist.logpdf(-1.5);
+    const lp_pos = dist.logpdf(1.5);
+    try testing.expectApproxEqAbs(lp_neg, lp_pos, 1e-10);
+}
+
+// CDF Tests
+
+test "Logistic: cdf(0; 0, 1) = 0.5" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "Logistic: cdf(1; 0, 1) ≈ 0.7310585786" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    const expected = 0.7310585786300049;
+    try testing.expectApproxEqAbs(expected, c, 1e-9);
+}
+
+test "Logistic: cdf(-1; 0, 1) ≈ 0.2689414214 (by symmetry)" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.0);
+    const expected = 0.2689414213699951;
+    try testing.expectApproxEqAbs(expected, c, 1e-9);
+}
+
+test "Logistic: cdf(5; 0, 1) ≈ 0.99330715" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(5.0);
+    const expected = 0.9933071490757153;
+    try testing.expectApproxEqAbs(expected, c, 1e-9);
+}
+
+test "Logistic: cdf(mu; mu, s) = 0.5 for any mu, s" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ -5.0, 0.5 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const c = dist.cdf(case[0]);
+        try testing.expectApproxEqAbs(0.5, c, 1e-10);
+    }
+}
+
+test "Logistic: cdf(-x; 0, s) + cdf(x; 0, s) = 1 symmetry" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (x_vals) |x| {
+        const c_neg = dist.cdf(-x);
+        const c_pos = dist.cdf(x);
+        try testing.expectApproxEqAbs(1.0, c_neg + c_pos, 1e-10);
+    }
+}
+
+test "Logistic: cdf approaches 1 for large x" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(50.0);
+    try testing.expect(c > 0.999999);
+}
+
+test "Logistic: cdf approaches 0 for large negative x" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(-50.0);
+    try testing.expect(c < 0.000001);
+}
+
+test "Logistic: cdf is monotonically increasing" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -10.0, -5.0, -1.0, 0.0, 1.0, 5.0, 10.0 };
+    for (0..x_vals.len - 1) |i| {
+        const c1 = dist.cdf(x_vals[i]);
+        const c2 = dist.cdf(x_vals[i + 1]);
+        try testing.expect(c1 <= c2);
+    }
+}
+
+// SF Tests
+
+test "Logistic: sf(0; 0, 1) = 0.5" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "Logistic: sf(1; 0, 1) ≈ 0.2689414214" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const s = dist.sf(1.0);
+    const expected = 0.2689414213699951;
+    try testing.expectApproxEqAbs(expected, s, 1e-9);
+}
+
+test "Logistic: sf(x) + cdf(x) = 1 for various x" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (x_vals) |x| {
+        const sum = dist.sf(x) + dist.cdf(x);
+        try testing.expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+test "Logistic: sf(mu; mu, s) = 0.5" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    const s = dist.sf(2.0);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+// Quantile Tests
+
+test "Logistic: quantile(0.5; 0, 1) = 0" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "Logistic: quantile(0.75; 0, 1) = ln(3) ≈ 1.0986123" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.75);
+    const expected = @log(3.0);
+    try testing.expectApproxEqAbs(expected, q, 1e-9);
+}
+
+test "Logistic: quantile(0.25; 0, 1) = -ln(3) ≈ -1.0986123" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.25);
+    const expected = -@log(3.0);
+    try testing.expectApproxEqAbs(expected, q, 1e-9);
+}
+
+test "Logistic: quantile(0.9; 0, 1) = ln(9) ≈ 2.1972246" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.9);
+    const expected = @log(9.0);
+    try testing.expectApproxEqAbs(expected, q, 1e-9);
+}
+
+test "Logistic: quantile(0.1; 0, 1) = -ln(9) ≈ -2.1972246" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.1);
+    const expected = -@log(9.0);
+    try testing.expectApproxEqAbs(expected, q, 1e-9);
+}
+
+test "Logistic: quantile(0.5; 2, 3) = 2" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(2.0, q, 1e-10);
+}
+
+test "Logistic: quantile(0) returns -inf" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(q == -math.inf(f64));
+}
+
+test "Logistic: quantile(1) returns +inf" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(q == math.inf(f64));
+}
+
+test "Logistic: quantile(p < 0) returns InvalidProbability" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Logistic: quantile(p > 1) returns InvalidProbability" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Logistic: cdf(quantile(p)) = p roundtrip" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-9);
+    }
+}
+
+test "Logistic: quantile(cdf(x)) = x roundtrip" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const q = try dist.quantile(c);
+        try testing.expectApproxEqAbs(x, q, 1e-8);
+    }
+}
+
+// Mean/Mode/Median Tests
+
+test "Logistic: mean(0, 1) = 0" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "Logistic: mean(2, 3) = 2" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "Logistic: mean = mu for any parameters" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ -5.0, 0.5 },
+        [_]f64{ 10.0, 0.1 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const m = dist.mean();
+        try testing.expectApproxEqAbs(case[0], m, 1e-10);
+    }
+}
+
+test "Logistic: median(0, 1) = 0" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(0.0, med, 1e-10);
+}
+
+test "Logistic: median = mean = mode for all distributions" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ -5.0, 0.5 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const m = dist.mean();
+        const med = dist.median();
+        const mode = dist.mode();
+        try testing.expectApproxEqAbs(m, med, 1e-10);
+        try testing.expectApproxEqAbs(m, mode, 1e-10);
+    }
+}
+
+test "Logistic: mode(0, 1) = 0" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const mo = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mo, 1e-10);
+}
+
+test "Logistic: mode equals mu for any parameters" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ -5.0, 0.5 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const mo = dist.mode();
+        try testing.expectApproxEqAbs(case[0], mo, 1e-10);
+    }
+}
+
+// Variance Tests
+
+test "Logistic: variance(0, 1) = π²/3 ≈ 3.28986813" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    const expected = (math.pi * math.pi) / 3.0;
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "Logistic: variance(0, 2) = 4π²/3" {
+    const dist = try Logistic(f64).init(0.0, 2.0);
+    const v = dist.variance();
+    const expected = 4.0 * (math.pi * math.pi) / 3.0;
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "Logistic: variance(2, 3) = 9π²/3 = 3π²" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    const v = dist.variance();
+    const expected = 3.0 * (math.pi * math.pi);
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "Logistic: variance = s²π²/3 for general s" {
+    const test_scales = [_]f64{ 0.5, 1.0, 2.0, 3.0, 10.0 };
+    for (test_scales) |s| {
+        const dist = try Logistic(f64).init(0.0, s);
+        const v = dist.variance();
+        const expected = (s * s * math.pi * math.pi) / 3.0;
+        try testing.expectApproxEqAbs(expected, v, 1e-9);
+    }
+}
+
+// Entropy Tests
+
+test "Logistic: entropy(0, 1) = 2" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(2.0, h, 1e-10);
+}
+
+test "Logistic: entropy(0, 2) = ln(2) + 2" {
+    const dist = try Logistic(f64).init(0.0, 2.0);
+    const h = dist.entropy();
+    const expected = @log(2.0) + 2.0;
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "Logistic: entropy(2, 3) = ln(3) + 2" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    const h = dist.entropy();
+    const expected = @log(3.0) + 2.0;
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "Logistic: entropy = ln(s) + 2 for general s and any mu" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 0.5 },
+        [_]f64{ 2.0, 1.0 },
+        [_]f64{ -5.0, 2.0 },
+        [_]f64{ 10.0, 3.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const h = dist.entropy();
+        const expected = @log(case[1]) + 2.0;
+        try testing.expectApproxEqAbs(expected, h, 1e-10);
+    }
+}
+
+// Sample Tests
+
+test "Logistic: sample(0, 1) returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+test "Logistic: sample(0, 1) covers expected range" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    var min_val = math.inf(f64);
+    var max_val = -math.inf(f64);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        min_val = @min(min_val, s);
+        max_val = @max(max_val, s);
+    }
+    // Full real line, so expect reasonable spread
+    try testing.expect(min_val < -1.0);
+    try testing.expect(max_val > 1.0);
+}
+
+test "Logistic: 100 samples all finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Logistic: samples show variety (not all identical)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
+
+test "Logistic: 1000 samples from Logistic(2, 3) all finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Logistic: sample(0, 1) empirical mean ≈ 0 over 10k samples" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const emp_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.0, emp_mean, 0.1); // Loose tolerance for empirical test
+}
+
+// f32 Support Tests
+
+test "Logistic: f32 init(0, 1) succeeds" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.s == 1.0);
+}
+
+test "Logistic: f32 pdf(0; 0, 1) ≈ 0.25" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.25, p, 1e-5);
+}
+
+test "Logistic: f32 cdf(0; 0, 1) = 0.5" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-5);
+}
+
+test "Logistic: f32 quantile(0.5; 0, 1) = 0" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-5);
+}
+
+test "Logistic: f32 sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+test "Logistic: f32 mean(0, 1) = 0" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-5);
+}
+
+test "Logistic: f32 variance(0, 1) ≈ π²/3" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const v = dist.variance();
+    const expected = (math.pi * math.pi) / 3.0;
+    try testing.expectApproxEqAbs(expected, v, 1e-4);
+}
+
+test "Logistic: f32 entropy(0, 1) = 2" {
+    const dist = try Logistic(f32).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(2.0, h, 1e-5);
+}
+
+// Validate Tests
+
+test "Logistic: validate() passes for valid params (0, 1)" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Logistic: validate() passes for valid params (2, 3)" {
+    const dist = try Logistic(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "Logistic: validate() passes for valid params (-5, 0.5)" {
+    const dist = try Logistic(f64).init(-5.0, 0.5);
+    try dist.validate();
+}
+
+test "Logistic: validateValue(x) always passes (full real line support)" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -1e10, -1.0, 0.0, 1.0, 1e10 };
+    for (x_vals) |x| {
+        try dist.validateValue(x);
+    }
+}
+
+test "Logistic: validateValue(inf) passes" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    try dist.validateValue(math.inf(f64));
+}
+
+// Invariant Tests
+
+test "Logistic: pdf >= 0 throughout extended real line" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -100.0, -10.0, -1.0, 0.0, 1.0, 10.0, 100.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "Logistic: cdf in [0, 1] throughout extended real line" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -1e10, -100.0, -1.0, 0.0, 1.0, 100.0, 1e10 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "Logistic: median = mean = mode (perfectly symmetric)" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ -5.0, 0.5 },
+        [_]f64{ 100.0, 10.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const m = dist.mean();
+        const med = dist.median();
+        const mo = dist.mode();
+        try testing.expectApproxEqAbs(m, med, 1e-10);
+        try testing.expectApproxEqAbs(m, mo, 1e-10);
+    }
+}
+
+test "Logistic: variance > 0 for all valid parameters" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 0.1 },
+        [_]f64{ 2.0, 1.0 },
+        [_]f64{ -5.0, 10.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try Logistic(f64).init(case[0], case[1]);
+        const v = dist.variance();
+        try testing.expect(v > 0.0);
+    }
+}
+
+test "Logistic: entropy = ln(s) + 2 (s=0.1 can be negative, formula is correct)" {
+    // Entropy = ln(s) + 2, can be negative when s < exp(-2) ≈ 0.1353
+    const dist_small = try Logistic(f64).init(0.0, 0.1);
+    try testing.expectApproxEqAbs(@log(0.1) + 2.0, dist_small.entropy(), 1e-12);
+    // For s >= 1, entropy >= 2 > 0
+    const dist_unit = try Logistic(f64).init(2.0, 1.0);
+    try testing.expect(dist_unit.entropy() > 0.0);
+    const dist_large = try Logistic(f64).init(-5.0, 10.0);
+    try testing.expect(dist_large.entropy() > 0.0);
+}
