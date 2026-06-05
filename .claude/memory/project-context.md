@@ -1,3 +1,22 @@
+**Session 646 Update (2026-06-05) — FEATURE MODE:**
+
+✅ **LogUniform Distribution** — 58th total, 43rd continuous — commit 119bab6
+- **Mode**: FEATURE MODE (counter: 646)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: LogUniform(T) — Reciprocal distribution; ln(X) ~ Uniform(ln(a), ln(b))
+  * Parameters: a > 0, b > a (lower/upper bounds)
+  * PDF: 1/(x·ln(b/a)); monotonically decreasing on [a,b]
+  * CDF: ln(x/a)/ln(b/a); Quantile: a·exp(p·ln(b/a)) — exact closed form
+  * Mean: (b-a)/ln(b/a); Variance: (b²-a²)/(2·ln(b/a)) - mean²
+  * Mode: a (PDF decreasing); Median: √(ab); Entropy: 0.5·ln(ab)+ln(ln(b/a))
+  * Sample: inverse transform — exp(Uniform(ln(a), ln(b)))
+  * Cached log_ratio=ln(b/a) for efficiency; validate() + validateValue(x)
+  * Key values: (a=1,b=e) entropy=0.5; median=√e; mean=e-1
+- **Tests**: 115 new tests; 2454 total in distributions.zig, all passing
+- **Distribution count**: 58 total (43 continuous + 15 discrete)
+- **Next Priority**: Arcsine distribution
+
 **Session 645 Update (2026-06-05) — STABILIZATION MODE:**
 
 ✅ **ALL SYSTEMS GREEN** — commit f730fc9
