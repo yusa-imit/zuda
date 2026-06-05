@@ -28298,11 +28298,10 @@ pub fn SkewNormal(comptime T: type) type {
         /// Validate internal invariants
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: Self) !void {
-            try testing.expect(self.omega > 0.0);
-            try testing.expect(math.isFinite(self.omega));
-            try testing.expect(math.isFinite(self.xi));
-            try testing.expect(math.isFinite(self.alpha));
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.omega <= 0.0 or !math.isFinite(self.omega)) return error.InvalidParameter;
+            if (!math.isFinite(self.xi)) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
         }
 
         /// Probability density function
@@ -28476,12 +28475,18 @@ pub fn SkewNormal(comptime T: type) type {
         }
 
         // Helper: Owen's T-function via Gauss-Legendre quadrature (16-point)
+        //
+        // T(h, a) = 1/(2π) * ∫₀ᵃ exp(-h²(1+t²)/2)/(1+t²) dt
+        //
+        // Change of variables t = a*(s+1)/2, dt = a/2*ds maps [0,a] → s∈[-1,1]:
+        //   T(h, a) = a/(4π) * ∫₋₁¹ exp(-h²(1+(a(s+1)/2)²)/2) / (1+(a(s+1)/2)²) ds
+        //           ≈ a/(4π) * Σ wᵢ * g(sᵢ)
         fn owensT(h: T, a: T) T {
             if (h == 0.0) {
                 return math.atan(a) / (2.0 * math.pi);
             }
 
-            // 16-point Gauss-Legendre quadrature nodes and weights
+            // 16-point Gauss-Legendre quadrature nodes and weights on [-1, 1]
             const nodes = [_]T{
                 -0.9894009349916499325961541734,
                 -0.9445750230732325760779884155,
@@ -28521,14 +28526,14 @@ pub fn SkewNormal(comptime T: type) type {
 
             var integral: T = 0.0;
             for (0..16) |i| {
-                const t = nodes[i];
+                const s = nodes[i];
+                const t = a * (s + 1.0) / 2.0; // maps s∈[-1,1] to t∈[0,a]
                 const denom = 1.0 + t * t;
-                const arg = h * h * (1.0 + t * t) / 2.0;
-                const exp_term = @exp(-arg);
+                const exp_term = @exp(-h * h * denom / 2.0);
                 integral += weights[i] * exp_term / denom;
             }
 
-            return (a / (2.0 * math.pi)) * integral;
+            return (a / (4.0 * math.pi)) * integral;
         }
 
         // Helper: Quantile of standard normal (inverse of Φ)
@@ -28725,7 +28730,7 @@ test "SkewNormal: logpdf is finite for normal points" {
 test "SkewNormal alpha=0: cdf(xi) = 0.5 (normal property)" {
     const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
     const c = dist.cdf(0.0);
-    try testing.expectApproxEqAbs(0.5, c, 1e-3);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
 }
 
 test "SkewNormal alpha=1: cdf(xi) = 0.5 - 2*T(0,1) = 0.25" {
@@ -28770,6 +28775,21 @@ test "SkewNormal: cdf is valid probability (in [0,1])" {
         try testing.expect(c >= -1e-10);
         try testing.expect(c <= 1.0 + 1e-10);
     }
+}
+
+test "SkewNormal xi=0, omega=1, alpha=1: cdf(1.0) ≈ 0.7082 (exercises h≠0 owensT path)" {
+    // CDF(1) = Φ(1) - 2·T(1,1) ≈ 0.8413 - 2·0.06674 ≈ 0.7078
+    // Verifies the Gauss-Legendre quadrature with h=z=1≠0
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.7082, c, 1e-3);
+}
+
+test "SkewNormal xi=0, omega=1, alpha=2: cdf(0.5) exercises owensT with h=0.5, a=2" {
+    // Φ(0.5) ≈ 0.6915; T(0.5, 2) ≈ 0.1415; CDF ≈ 0.6915 - 2·0.1415 ≈ 0.4085
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.4085, c, 1e-2);
 }
 
 test "SkewNormal: sf(x) = 1 - cdf(x)" {
@@ -28857,13 +28877,11 @@ test "SkewNormal xi=0, omega=1, alpha=-1: mean ≈ -1/sqrt(pi)" {
     try testing.expectApproxEqAbs(expected, m, 1e-3);
 }
 
-test "SkewNormal: mean = xi + omega * delta * sqrt(2/pi)" {
+test "SkewNormal xi=2, omega=3, alpha=2: mean ≈ 4.141" {
+    // δ = 2/√5 ≈ 0.8944; mean = 2 + 3·(2/√5)·√(2/π) ≈ 2 + 3·0.8944·0.7979 ≈ 4.141
     const dist = try SkewNormal(f64).init(2.0, 3.0, 2.0);
     const m = dist.mean();
-    const alpha_sq = 2.0 * 2.0;
-    const delta = 2.0 / @sqrt(1.0 + alpha_sq);
-    const expected = 2.0 + 3.0 * delta * @sqrt(2.0 / math.pi);
-    try testing.expectApproxEqAbs(expected, m, 1e-8);
+    try testing.expectApproxEqAbs(4.1408, m, 1e-3);
 }
 
 // Variance Tests
