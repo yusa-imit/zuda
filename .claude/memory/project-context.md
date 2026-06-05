@@ -1,3 +1,23 @@
+**Session 649 Update (2026-06-06) — FEATURE MODE:**
+
+✅ **Logistic Distribution** — 60th total, 45th continuous — commit f9438e4
+- **Mode**: FEATURE MODE (counter: 649)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: Logistic(T) — symmetric distribution on full real line (-∞,+∞)
+  * Parameters: mu (location, any real), s (scale, s > 0)
+  * PDF: exp(-(x-μ)/s) / (s·(1+exp(-(x-μ)/s))²) = sigmoid-based
+  * CDF: 1/(1+exp(-(x-μ)/s)) — the logistic sigmoid function
+  * Quantile: μ + s·ln(p/(1-p)) — exact logit transform; Q(0)=-∞, Q(1)=+∞
+  * Mean = Mode = Median = μ (perfectly symmetric)
+  * Variance: s²·π²/3; Entropy: ln(s)+2 (can be negative for s < e^(-2)≈0.135)
+  * Sample: μ + s·ln(U/(1-U)) via inverse transform
+  * Cached log_s=ln(s) for logpdf and entropy; full real line support (validateValue always OK)
+  * Key values: pdf(μ)=1/(4s); cdf(μ)=0.5; quantile(0.75)=μ+s·ln(3)
+- **Tests**: 88 tests passing
+- **Note**: Entropy corrected — can be negative for small s (test fixed from incorrect entropy>0 assumption)
+- **Distribution count**: 60 total (45 continuous + 15 discrete)
+- **Next Priority**: InverseGamma or Chi distribution
 **Session 646 Update (2026-06-05) — FEATURE MODE:**
 
 ✅ **LogUniform Distribution** — 58th total, 43rd continuous — commit 119bab6
