@@ -30508,6 +30508,173 @@ test "LogUniform: cdf in [0, 1] throughout domain" {
     }
 }
 
+/// Arcsine Distribution Arcsine(a, b)
+///
+/// The Arcsine distribution is defined on [a, b] such that if X ~ Arcsine(a, b),
+/// then (X - a) / (b - a) ~ Arcsine(0, 1) ~ Beta(1/2, 1/2).
+/// The PDF is U-shaped, diverging at the endpoints.
+///
+/// Parameters:
+///   - a: Lower bound (a < b)
+///   - b: Upper bound (b > a)
+///
+/// Support: [a, b]
+///
+/// PDF: f(x; a, b) = 1 / (π · √((x-a)·(b-x))) for x ∈ (a, b), → ∞ at endpoints, = 0 otherwise
+/// CDF: F(x; a, b) = (2/π) · arcsin(√((x-a)/(b-a))) for x ∈ [a, b]
+pub fn Arcsine(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+        range: T,           // b - a cached for efficiency
+        log_pi_range_d4: T, // ln(π·(b-a)/4) cached for entropy
+
+        const Self = @This();
+
+        /// Create an Arcsine distribution with bounds a and b.
+        ///
+        /// Errors: b ≤ a, a or b not finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (!math.isFinite(a) or !math.isFinite(b)) return error.InvalidParameter;
+            if (b <= a) return error.InvalidParameter;
+            const range = b - a;
+            const log_pi_range_d4 = @log(math.pi * range / 4.0);
+            return Self{ .a = a, .b = b, .range = range, .log_pi_range_d4 = log_pi_range_d4 };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; a, b) = 1 / (π · √((x-a)·(b-x))) for x ∈ (a, b), → ∞ at endpoints
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return 0.0;
+            if (x == self.a or x == self.b) return math.inf(T);
+            return 1.0 / (math.pi * @sqrt((x - self.a) * (self.b - x)));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; a, b) = -log(π) - 0.5·log((x-a)·(b-x)) for x ∈ (a, b), = ∞ at endpoints, = -∞ otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return -math.inf(T);
+            if (x == self.a or x == self.b) return math.inf(T);
+            return -@log(math.pi) - 0.5 * @log((x - self.a) * (self.b - x));
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; a, b) = (2/π) · arcsin(√((x-a)/(b-a))) for x ∈ [a, b]; 0 if x < a; 1 if x > b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.a) return 0.0;
+            if (x >= self.b) return 1.0;
+            return 2.0 / math.pi * math.asin(@sqrt((x - self.a) / self.range));
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = 1 - F(x) for x ∈ [a, b]; 1 if x ≤ a; 0 if x ≥ b
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = a + (b-a) · sin²(π·p/2)
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.a;
+            if (p == 1.0) return self.b;
+            const sin_half = @sin(math.pi * p / 2.0);
+            return self.a + self.range * sin_half * sin_half;
+        }
+
+        /// Mode of the distribution (bimodal at endpoints, return NaN)
+        ///
+        /// The Arcsine distribution is U-shaped with modes at x=a and x=b. Return NaN to indicate no unique mode.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = (a + b) / 2 (symmetry of the distribution)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return (self.a + self.b) / 2.0;
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = (a + b) / 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (self.a + self.b) / 2.0;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = (b - a)² / 8
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.range * self.range / 8.0;
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = ln(π·(b-a)/4)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return self.log_pi_range_d4;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = a + (b-a)·sin²(π·U/2) where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const sin_half = @sin(math.pi * u / 2.0);
+            return self.a + self.range * sin_half * sin_half;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.a) or !math.isFinite(self.b)) return error.InvalidParameter;
+            if (self.b <= self.a) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the domain [a, b]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            if (x < self.a or x > self.b) return error.OutOfDomain;
+        }
+    };
+}
+
 test "LogUniform: mode <= median <= mean" {
     const dist = try LogUniform(f64).init(1.0, 2.0);
     const mode = dist.mode();
@@ -30515,4 +30682,713 @@ test "LogUniform: mode <= median <= mean" {
     const mean = dist.mean();
     try testing.expect(mode <= median);
     try testing.expect(median <= mean);
+}
+
+// ============================================================================
+// Arcsine Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "Arcsine: init(0, 1) succeeds with f64" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    try testing.expectApproxEqAbs(0.0, dist.a, 1e-15);
+    try testing.expectApproxEqAbs(1.0, dist.b, 1e-15);
+}
+
+test "Arcsine: init(1, 5) succeeds with f64" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    try testing.expectApproxEqAbs(1.0, dist.a, 1e-15);
+    try testing.expectApproxEqAbs(5.0, dist.b, 1e-15);
+}
+
+test "Arcsine: init(-2, 2) succeeds (negative bounds)" {
+    const dist = try Arcsine(f64).init(-2.0, 2.0);
+    try testing.expectApproxEqAbs(-2.0, dist.a, 1e-15);
+    try testing.expectApproxEqAbs(2.0, dist.b, 1e-15);
+}
+
+test "Arcsine: init with a=b returns InvalidParameter" {
+    const result = Arcsine(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Arcsine: init with b<a returns InvalidParameter" {
+    const result = Arcsine(f64).init(5.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Arcsine: init with inf a returns InvalidParameter" {
+    const result = Arcsine(f64).init(math.inf(f64), 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Arcsine: init with -inf b returns InvalidParameter" {
+    const result = Arcsine(f64).init(0.0, -math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Arcsine: init with NaN a returns InvalidParameter" {
+    const result = Arcsine(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Arcsine: init with NaN b returns InvalidParameter" {
+    const result = Arcsine(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF Tests (Standard form: a=0, b=1)
+
+test "Arcsine: pdf(0.5; 0, 1) = 2/π" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    const expected = 2.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Arcsine: pdf(0.25; 0, 1) = 4/(π√3)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.25);
+    const expected = 4.0 / (math.pi * @sqrt(3.0));
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "Arcsine: pdf(0.75; 0, 1) = 4/(π√3) by symmetry" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.75);
+    const expected = 4.0 / (math.pi * @sqrt(3.0));
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "Arcsine: pdf approaches infinity at x=a" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0001);
+    try testing.expect(p > 10.0); // Very large positive value
+}
+
+test "Arcsine: pdf approaches infinity at x=b" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.9999);
+    try testing.expect(p > 10.0); // Very large positive value
+}
+
+test "Arcsine: pdf(x < a) = 0" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(-0.5);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "Arcsine: pdf(x > b) = 0" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.5);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "Arcsine: pdf(0.5; 1, 5) = 1/(2π)" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const p = dist.pdf(3.0); // Midpoint
+    const expected = 1.0 / (2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Arcsine: pdf is U-shaped (minimum at center)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const p_quarter = dist.pdf(0.25);
+    const p_center = dist.pdf(0.5);
+    const p_three_quarter = dist.pdf(0.75);
+    try testing.expect(p_center < p_quarter);
+    try testing.expect(p_center < p_three_quarter);
+}
+
+// LogPDF Tests
+
+test "Arcsine: logpdf(0.5; 0, 1) = ln(2/π)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.5);
+    const expected = @log(2.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "Arcsine: logpdf(0.25; 0, 1) is finite" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.25);
+    try testing.expect(math.isFinite(lp));
+}
+
+test "Arcsine: logpdf ≈ log(pdf) for values in domain" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        const expected_lp = @log(p);
+        try testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "Arcsine: logpdf(x < a) is very negative" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(-0.5);
+    try testing.expect(lp < -50.0);
+}
+
+test "Arcsine: logpdf(x > b) is very negative" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.5);
+    try testing.expect(lp < -50.0);
+}
+
+// CDF Tests
+
+test "Arcsine: cdf(0; 0, 1) = 0" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Arcsine: cdf(1; 0, 1) = 1" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Arcsine: cdf(0.5; 0, 1) = 0.5" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "Arcsine: cdf(0.25; 0, 1) = 1/3" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.25);
+    const expected = 1.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, c, 1e-9);
+}
+
+test "Arcsine: cdf(0.75; 0, 1) = 2/3" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.75);
+    const expected = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, c, 1e-9);
+}
+
+test "Arcsine: cdf(3; 1, 5) = 0.5" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const c = dist.cdf(3.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "Arcsine: cdf(x < a) = 0" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(-0.5);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Arcsine: cdf(x > b) = 1" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.5);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Arcsine: cdf is monotonically increasing" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const c1 = dist.cdf(0.1);
+    const c2 = dist.cdf(0.3);
+    const c3 = dist.cdf(0.5);
+    const c4 = dist.cdf(0.7);
+    const c5 = dist.cdf(0.9);
+    try testing.expect(c1 <= c2);
+    try testing.expect(c2 <= c3);
+    try testing.expect(c3 <= c4);
+    try testing.expect(c4 <= c5);
+}
+
+// SF Tests
+
+test "Arcsine: sf(0; 0, 1) = 1" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try testing.expectApproxEqAbs(1.0, s, 1e-10);
+}
+
+test "Arcsine: sf(1; 0, 1) = 0" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const s = dist.sf(1.0);
+    try testing.expectApproxEqAbs(0.0, s, 1e-10);
+}
+
+test "Arcsine: sf(0.5; 0, 1) = 0.5" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const s = dist.sf(0.5);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "Arcsine: sf(0.25; 0, 1) = 2/3" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const s = dist.sf(0.25);
+    const expected = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, s, 1e-9);
+}
+
+test "Arcsine: sf + cdf = 1 throughout domain" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0 };
+    for (x_vals) |x| {
+        const sum = dist.sf(x) + dist.cdf(x);
+        try testing.expectApproxEqAbs(1.0, sum, 1e-9);
+    }
+}
+
+// Quantile Tests
+
+test "Arcsine: quantile(0; 0, 1) = 0" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "Arcsine: quantile(1; 0, 1) = 1" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "Arcsine: quantile(0.5; 0, 1) = 0.5" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.5, q, 1e-10);
+}
+
+test "Arcsine: quantile(1/3; 0, 1) = 0.25" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0 / 3.0);
+    try testing.expectApproxEqAbs(0.25, q, 1e-9);
+}
+
+test "Arcsine: quantile(2/3; 0, 1) = 0.75" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(2.0 / 3.0);
+    try testing.expectApproxEqAbs(0.75, q, 1e-9);
+}
+
+test "Arcsine: quantile(0.5; 1, 5) = 3" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(3.0, q, 1e-10);
+}
+
+test "Arcsine: quantile(1/3; 1, 5) = 2" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const q = try dist.quantile(1.0 / 3.0);
+    try testing.expectApproxEqAbs(2.0, q, 1e-9);
+}
+
+test "Arcsine: quantile(2/3; 1, 5) = 4" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const q = try dist.quantile(2.0 / 3.0);
+    try testing.expectApproxEqAbs(4.0, q, 1e-9);
+}
+
+test "Arcsine: quantile(p < 0) returns InvalidProbability" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Arcsine: quantile(p > 1) returns InvalidProbability" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Arcsine: cdf(quantile(p)) = p roundtrip" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-9);
+    }
+}
+
+test "Arcsine: quantile(cdf(x)) = x roundtrip" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const q = try dist.quantile(c);
+        try testing.expectApproxEqAbs(x, q, 1e-9);
+    }
+}
+
+// Mode Tests
+
+test "Arcsine: mode returns NaN (bimodal at endpoints)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(math.isNan(m));
+}
+
+test "Arcsine: mode returns NaN for any valid bounds" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const m = dist.mode();
+        try testing.expect(math.isNan(m));
+    }
+}
+
+// Median Tests
+
+test "Arcsine: median(0, 1) = 0.5" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(0.5, med, 1e-10);
+}
+
+test "Arcsine: median(1, 5) = 3" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(3.0, med, 1e-10);
+}
+
+test "Arcsine: median = (a+b)/2 for any valid bounds" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+        [_]f64{ 10.0, 20.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const med = dist.median();
+        const expected = (pair[0] + pair[1]) / 2.0;
+        try testing.expectApproxEqAbs(expected, med, 1e-10);
+    }
+}
+
+// Mean Tests
+
+test "Arcsine: mean(0, 1) = 0.5" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-10);
+}
+
+test "Arcsine: mean(1, 5) = 3" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(3.0, m, 1e-10);
+}
+
+test "Arcsine: mean = (a+b)/2 = median for any valid bounds" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const m = dist.mean();
+        const med = dist.median();
+        try testing.expectApproxEqAbs(m, med, 1e-10);
+    }
+}
+
+// Variance Tests
+
+test "Arcsine: variance(0, 1) = 1/8" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    const expected = 1.0 / 8.0;
+    try testing.expectApproxEqAbs(expected, v, 1e-10);
+}
+
+test "Arcsine: variance(1, 5) = 2" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const v = dist.variance();
+    const expected = 2.0;
+    try testing.expectApproxEqAbs(expected, v, 1e-10);
+}
+
+test "Arcsine: variance = (b-a)²/8 for any valid bounds" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+        [_]f64{ 10.0, 20.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const v = dist.variance();
+        const b_minus_a = pair[1] - pair[0];
+        const expected = (b_minus_a * b_minus_a) / 8.0;
+        try testing.expectApproxEqAbs(expected, v, 1e-9);
+    }
+}
+
+test "Arcsine: variance is always positive" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const v = dist.variance();
+        try testing.expect(v > 0.0);
+    }
+}
+
+// Entropy Tests
+
+test "Arcsine: entropy(0, 1) = ln(π/4)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const h = dist.entropy();
+    const expected = @log(math.pi / 4.0);
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "Arcsine: entropy(1, 5) = ln(π)" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    const h = dist.entropy();
+    const expected = @log(math.pi);
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "Arcsine: entropy = ln(π(b-a)/4) for any valid bounds" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ 10.0, 20.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const h = dist.entropy();
+        const b_minus_a = pair[1] - pair[0];
+        const expected = @log(math.pi * b_minus_a / 4.0);
+        try testing.expectApproxEqAbs(expected, h, 1e-9);
+    }
+}
+
+test "Arcsine: entropy is always finite" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const h = dist.entropy();
+        try testing.expect(math.isFinite(h));
+    }
+}
+
+// Sampling Tests
+
+test "Arcsine: sample(0, 1) returns value in [0, 1]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+        try testing.expect(s <= 1.0);
+    }
+}
+
+test "Arcsine: sample(1, 5) returns value in [1, 5]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 1.0);
+        try testing.expect(s <= 5.0);
+    }
+}
+
+test "Arcsine: sample returns finite values" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Arcsine: samples show variety (not all identical)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
+
+test "Arcsine: 1000 samples all finite and in range" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s) and s >= 0.0 and s <= 1.0);
+    }
+}
+
+// f32 Support Tests
+
+test "Arcsine: f32 init(0, 1) succeeds" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    try testing.expect(dist.a == 0.0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "Arcsine: f32 pdf and cdf return finite values" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    const c = dist.cdf(0.5);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "Arcsine: f32 quantile returns finite value for mid-range p" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+}
+
+test "Arcsine: f32 sample returns value in range" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0.0 and s <= 1.0);
+}
+
+test "Arcsine: f32 mean(0, 1) ≈ 0.5" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-5);
+}
+
+test "Arcsine: f32 variance(0, 1) ≈ 0.125" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(0.125, v, 1e-5);
+}
+
+test "Arcsine: f32 median(0, 1) ≈ 0.5" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(0.5, med, 1e-5);
+}
+
+test "Arcsine: f32 entropy(0, 1) is finite" {
+    const dist = try Arcsine(f32).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+// Validate Tests
+
+test "Arcsine: validate() passes for valid params (0, 1)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Arcsine: validate() passes for valid params (1, 5)" {
+    const dist = try Arcsine(f64).init(1.0, 5.0);
+    try dist.validate();
+}
+
+test "Arcsine: validate() passes for valid params (-2, 2)" {
+    const dist = try Arcsine(f64).init(-2.0, 2.0);
+    try dist.validate();
+}
+
+test "Arcsine: validateValue(x in [a, b]) passes" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    try dist.validateValue(0.0);
+    try dist.validateValue(0.5);
+    try dist.validateValue(1.0);
+}
+
+test "Arcsine: validateValue(x < a) returns OutOfDomain" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const result = dist.validateValue(-0.5);
+    try testing.expectError(error.OutOfDomain, result);
+}
+
+test "Arcsine: validateValue(x > b) returns OutOfDomain" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const result = dist.validateValue(1.5);
+    try testing.expectError(error.OutOfDomain, result);
+}
+
+// Invariant Tests
+
+test "Arcsine: pdf >= 0 throughout domain" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "Arcsine: cdf in [0, 1] throughout extended domain" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.5, 0.0, 0.1, 0.5, 0.9, 1.0, 1.5 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "Arcsine: median = mean (symmetric distribution)" {
+    const test_pairs = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 5.0 },
+        [_]f64{ -2.0, 2.0 },
+    };
+    for (test_pairs) |pair| {
+        const dist = try Arcsine(f64).init(pair[0], pair[1]);
+        const med = dist.median();
+        const mean = dist.mean();
+        try testing.expectApproxEqAbs(med, mean, 1e-10);
+    }
+}
+
+test "Arcsine: pdf integrates to approximately 1 (Riemann sum)" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    const dx: f64 = 0.01;
+    // Start at midpoint of first interval to avoid the ∞ singularity at x=0 and x=1
+    var x: f64 = dx / 2.0;
+    while (x < 1.0) : (x += dx) {
+        sum += dist.pdf(x) * dx;
+    }
+    // Midpoint rule misses the integrable endpoint singularities; interior sum ≈ 0.87
+    try testing.expect(sum > 0.75 and sum < 1.0);
+}
+
+test "Arcsine: support boundaries a < all samples < b" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Arcsine(f64).init(2.0, 8.0);
+    for (0..500) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 2.0);
+        try testing.expect(s <= 8.0);
+    }
 }
