@@ -29032,3 +29032,633 @@ test "SkewNormal: f32 sample returns finite value" {
     const s = dist.sample(rng.random());
     try testing.expect(math.isFinite(s));
 }
+
+/// HalfCauchy Distribution HalfCauchy(γ)
+///
+/// The HalfCauchy distribution is the absolute value of a Cauchy(0, γ) distribution.
+/// It has infinite mean and variance, but is well-defined on [0, ∞).
+/// The mode is always at 0 (where PDF is maximum), and median equals the scale parameter γ.
+///
+/// Parameters:
+///   - gamma (γ): Scale parameter (γ > 0)
+///
+/// Support: [0, ∞)
+///
+/// PDF: f(x; γ) = 2 / (π·γ·(1 + (x/γ)²)) for x ≥ 0, = 0 for x < 0
+/// CDF: F(x; γ) = (2/π) · arctan(x/γ) for x ≥ 0, = 0 for x < 0
+pub fn HalfCauchy(comptime T: type) type {
+    return struct {
+        gamma: T,
+
+        const Self = @This();
+
+        /// Create a HalfCauchy distribution with scale parameter gamma.
+        ///
+        /// Errors: gamma ≤ 0 or gamma is not finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(gamma: T) DistributionError!Self {
+            if (gamma <= 0.0 or !math.isFinite(gamma)) return error.InvalidParameter;
+            return Self{ .gamma = gamma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; γ) = 2 / (π·γ·(1 + (x/γ)²)) for x ≥ 0, = 0 for x < 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const ratio = x / self.gamma;
+            const denom = 1.0 + ratio * ratio;
+            return 2.0 / (math.pi * self.gamma * denom);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; γ) = log(2) - log(π) - log(γ) - log(1 + (x/γ)²) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const ratio = x / self.gamma;
+            const denom = 1.0 + ratio * ratio;
+            return @log(2.0) - @log(math.pi) - @log(self.gamma) - @log(denom);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; γ) = (2/π) · arctan(x/γ) for x ≥ 0, = 0 for x < 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return (2.0 / math.pi) * math.atan(x / self.gamma);
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = 1 - (2/π) · arctan(x/γ) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            return 1.0 - (2.0 / math.pi) * math.atan(x / self.gamma);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = γ · tan(π·p/2), with Q(0)=0 and Q(1)=+∞
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            return self.gamma * math.tan(math.pi * p / 2.0);
+        }
+
+        /// Mode of the distribution (always 0)
+        ///
+        /// The PDF is monotonically decreasing from x=0, so mode is always at x=0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = γ (since Q(0.5) = γ·tan(π/4) = γ·1 = γ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.gamma;
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// The HalfCauchy distribution has infinite mean
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// The HalfCauchy distribution has infinite variance
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = ln(2πγ) = ln(2) + ln(π) + ln(γ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(2.0 * math.pi * self.gamma);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = γ · tan(π·U/2) where U ~ Uniform(0,1)
+        /// Since U ∈ [0,1), we have πU/2 ∈ [0, π/2), so tan result is always ≥ 0 and finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.gamma * math.tan(math.pi * u / 2.0);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.gamma <= 0.0 or !math.isFinite(self.gamma)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// HalfCauchy Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "HalfCauchy: init with gamma=1 succeeds" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    try testing.expect(dist.gamma == 1.0);
+}
+
+test "HalfCauchy: init with gamma=2 succeeds" {
+    const dist = try HalfCauchy(f64).init(2.0);
+    try testing.expect(dist.gamma == 2.0);
+}
+
+test "HalfCauchy: init with gamma=0.5 succeeds" {
+    const dist = try HalfCauchy(f64).init(0.5);
+    try testing.expect(dist.gamma == 0.5);
+}
+
+test "HalfCauchy: init with gamma=0 returns InvalidParameter" {
+    const result = HalfCauchy(f64).init(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HalfCauchy: init with negative gamma returns InvalidParameter" {
+    const result = HalfCauchy(f64).init(-1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HalfCauchy: init with very small gamma succeeds" {
+    const dist = try HalfCauchy(f64).init(1e-10);
+    try testing.expect(dist.gamma == 1e-10);
+}
+
+test "HalfCauchy: init with very large gamma succeeds" {
+    const dist = try HalfCauchy(f64).init(1e10);
+    try testing.expect(dist.gamma == 1e10);
+}
+
+// PDF Tests
+
+test "HalfCauchy: pdf(0; gamma=1) = 2/pi ≈ 0.6366197723675814" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p = dist.pdf(0.0);
+    const expected = 2.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "HalfCauchy: pdf(1; gamma=1) = 1/pi ≈ 0.3183098861837907" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p = dist.pdf(1.0);
+    const expected = 1.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "HalfCauchy: pdf(2; gamma=1) = 2/(5*pi)" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p = dist.pdf(2.0);
+    const expected = 2.0 / (5.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "HalfCauchy: pdf(0; gamma=2) = 1/pi" {
+    const dist = try HalfCauchy(f64).init(2.0);
+    const p = dist.pdf(0.0);
+    const expected = 1.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "HalfCauchy: pdf(2; gamma=2) = 2/(4*pi) = 1/(2*pi)" {
+    const dist = try HalfCauchy(f64).init(2.0);
+    const p = dist.pdf(2.0);
+    const expected = 1.0 / (2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "HalfCauchy: pdf(negative) = 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "HalfCauchy: pdf decreases monotonically from 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p0 = dist.pdf(0.0);
+    const p1 = dist.pdf(0.5);
+    const p2 = dist.pdf(1.0);
+    const p3 = dist.pdf(2.0);
+    try testing.expect(p0 > p1);
+    try testing.expect(p1 > p2);
+    try testing.expect(p2 > p3);
+}
+
+test "HalfCauchy: pdf(large_x) approaches 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p = dist.pdf(1e6);
+    try testing.expect(p < 1e-12);
+}
+
+// LogPDF Tests
+
+test "HalfCauchy: logpdf(0; gamma=1) = log(2/pi)" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(2.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "HalfCauchy: logpdf(1; gamma=1) = log(1/pi)" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const lp = dist.logpdf(1.0);
+    const expected = @log(1.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "HalfCauchy: logpdf ≈ log(pdf) for various x" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        const expected_lp = @log(p);
+        try testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "HalfCauchy: logpdf(negative) is very negative" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const lp = dist.logpdf(-1.0);
+    try testing.expect(lp < -50.0);
+}
+
+// CDF Tests
+
+test "HalfCauchy: cdf(0; gamma=1) = 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "HalfCauchy: cdf(1; gamma=1) = 0.5" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "HalfCauchy: cdf(gamma; any gamma) = 0.5" {
+    const gammas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (gammas) |gamma| {
+        const dist = try HalfCauchy(f64).init(gamma);
+        const c = dist.cdf(gamma);
+        try testing.expectApproxEqAbs(0.5, c, 1e-10);
+    }
+}
+
+test "HalfCauchy: cdf(negative) = 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const c = dist.cdf(-5.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "HalfCauchy: cdf increases monotonically" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const c0 = dist.cdf(0.0);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(2.0);
+    const c5 = dist.cdf(5.0);
+    try testing.expect(c0 <= c1);
+    try testing.expect(c1 <= c2);
+    try testing.expect(c2 <= c5);
+}
+
+test "HalfCauchy: cdf(large_x) approaches 1" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const c = dist.cdf(1e6);
+    try testing.expect(c > 0.99999);
+}
+
+test "HalfCauchy: cdf(0.5; gamma=1) ≈ 0.333..." {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const c = dist.cdf(0.5);
+    const expected: f64 = 2.0 / math.pi * 0.4636476090008061;  // atan(0.5) ≈ 0.4636476090008061
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+// Quantile Tests
+
+test "HalfCauchy: quantile(0; gamma=1) = 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-15);
+}
+
+test "HalfCauchy: quantile(0.5; gamma=1) = 1" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "HalfCauchy: quantile(0.5; gamma=2) = 2" {
+    const dist = try HalfCauchy(f64).init(2.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(2.0, q, 1e-10);
+}
+
+test "HalfCauchy: quantile(0.75; gamma=1) ≈ sqrt(2) + 1" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const q = try dist.quantile(0.75);
+    const expected: f64 = 2.4142135623730945;  // tan(3π/8) = sqrt(2) + 1 ≈ 2.4142135623730945
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "HalfCauchy: quantile(p; gamma) = gamma * tan(pi*p/2)" {
+    const gamma = 2.5;
+    const dist = try HalfCauchy(f64).init(gamma);
+    const p_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        const expected = gamma * math.tan(math.pi * p / 2.0);
+        try testing.expectApproxEqAbs(expected, q, 1e-9);
+    }
+}
+
+test "HalfCauchy: quantile(invalid p < 0) returns error" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HalfCauchy: quantile approaches infinity as p -> 1" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const q1 = try dist.quantile(0.99);
+    const q2 = try dist.quantile(0.999);
+    try testing.expect(q2 > q1);
+    try testing.expect(q1 > 50.0);
+}
+
+// CDF-Quantile Roundtrip Tests
+
+test "HalfCauchy: cdf(quantile(p)) ≈ p for various p" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const p_vals = [_]f64{ 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95 };
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-9);
+    }
+}
+
+test "HalfCauchy: quantile(cdf(x)) ≈ x for various x" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const q = try dist.quantile(c);
+        try testing.expectApproxEqAbs(x, q, 1e-9);
+    }
+}
+
+// Mode Tests
+
+test "HalfCauchy: mode() = 0" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-15);
+}
+
+test "HalfCauchy: mode() = 0 for any gamma" {
+    const gammas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (gammas) |gamma| {
+        const dist = try HalfCauchy(f64).init(gamma);
+        const m = dist.mode();
+        try testing.expectApproxEqAbs(0.0, m, 1e-15);
+    }
+}
+
+// Median Tests
+
+test "HalfCauchy: median(gamma=1) = 1" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(1.0, med, 1e-10);
+}
+
+test "HalfCauchy: median(gamma=2) = 2" {
+    const dist = try HalfCauchy(f64).init(2.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(2.0, med, 1e-10);
+}
+
+test "HalfCauchy: median(gamma) = gamma" {
+    const gammas = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (gammas) |gamma| {
+        const dist = try HalfCauchy(f64).init(gamma);
+        const med = dist.median();
+        try testing.expectApproxEqAbs(gamma, med, 1e-10);
+    }
+}
+
+// Entropy Tests
+
+test "HalfCauchy: entropy(gamma=1) = ln(2*pi)" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const h = dist.entropy();
+    const expected = @log(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "HalfCauchy: entropy(gamma=2) = ln(4*pi)" {
+    const dist = try HalfCauchy(f64).init(2.0);
+    const h = dist.entropy();
+    const expected = @log(4.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, h, 1e-10);
+}
+
+test "HalfCauchy: entropy(gamma) = ln(2*pi*gamma)" {
+    const gammas = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (gammas) |gamma| {
+        const dist = try HalfCauchy(f64).init(gamma);
+        const h = dist.entropy();
+        const expected = @log(2.0 * math.pi * gamma);
+        try testing.expectApproxEqAbs(expected, h, 1e-10);
+    }
+}
+
+test "HalfCauchy: entropy increases with gamma" {
+    const dist1 = try HalfCauchy(f64).init(1.0);
+    const dist2 = try HalfCauchy(f64).init(2.0);
+    const dist3 = try HalfCauchy(f64).init(5.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    const h3 = dist3.entropy();
+    try testing.expect(h1 < h2);
+    try testing.expect(h2 < h3);
+}
+
+// Mean Tests
+
+test "HalfCauchy: mean() returns +inf" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const m = dist.mean();
+    try testing.expect(math.isPositiveInf(m));
+}
+
+test "HalfCauchy: mean() returns +inf for any gamma" {
+    const gammas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (gammas) |gamma| {
+        const dist = try HalfCauchy(f64).init(gamma);
+        const m = dist.mean();
+        try testing.expect(math.isPositiveInf(m));
+    }
+}
+
+// Variance Tests
+
+test "HalfCauchy: variance() returns +inf" {
+    const dist = try HalfCauchy(f64).init(1.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "HalfCauchy: variance() returns +inf for any gamma" {
+    const gammas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (gammas) |gamma| {
+        const dist = try HalfCauchy(f64).init(gamma);
+        const v = dist.variance();
+        try testing.expect(math.isPositiveInf(v));
+    }
+}
+
+// Sample Tests
+
+test "HalfCauchy: sample returns non-negative value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f64).init(1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0.0);
+}
+
+test "HalfCauchy: 100 samples all non-negative" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f64).init(1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+    }
+}
+
+test "HalfCauchy: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f64).init(1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+test "HalfCauchy: 1000 samples all finite and non-negative" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f64).init(1.0);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s) and s >= 0.0);
+    }
+}
+
+test "HalfCauchy: empirical median of 1000 samples ≈ gamma" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f64).init(1.0);
+    var samples: [1000]f64 = undefined;
+    for (0..1000) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    std.mem.sort(f64, &samples, {}, std.sort.asc(f64));
+    const empirical_median = samples[500];
+    try testing.expectApproxEqAbs(1.0, empirical_median, 0.5);
+}
+
+test "HalfCauchy: samples show variety" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f64).init(1.0);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
+
+// f32 Support Tests
+
+test "HalfCauchy: f32 init(1) succeeds" {
+    const dist = try HalfCauchy(f32).init(1.0);
+    try testing.expect(dist.gamma == 1.0);
+}
+
+test "HalfCauchy: f32 pdf and cdf return finite values" {
+    const dist = try HalfCauchy(f32).init(1.0);
+    const p = dist.pdf(0.5);
+    const c = dist.cdf(0.5);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(math.isFinite(c));
+}
+
+test "HalfCauchy: f32 quantile returns finite value for mid-range p" {
+    const dist = try HalfCauchy(f32).init(1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+}
+
+test "HalfCauchy: f32 sample returns non-negative" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try HalfCauchy(f32).init(1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0.0);
+}
+
+test "HalfCauchy: f32 median(gamma=1) ≈ 1" {
+    const dist = try HalfCauchy(f32).init(1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(1.0, med, 1e-5);
+}
+
+test "HalfCauchy: f32 entropy returns finite value" {
+    const dist = try HalfCauchy(f32).init(1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
