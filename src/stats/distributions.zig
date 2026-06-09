@@ -31440,9 +31440,15 @@ pub fn Logistic(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn logpdf(self: Self, x: T) T {
             const z = (x - self.mu) / self.s;
-            // Use numerically stable form
             const neg_z = -z;
-            return neg_z - self.log_s - 2.0 * math.log1p(@exp(neg_z));
+            // Stable softplus: log1p(exp(neg_z))
+            //   neg_z > 0 (x < μ): softplus = neg_z + log1p(exp(-neg_z))
+            //   neg_z <= 0 (x >= μ): softplus = log1p(exp(neg_z))
+            const softplus = if (neg_z > 0.0)
+                neg_z + math.log1p(@exp(-neg_z))
+            else
+                math.log1p(@exp(neg_z));
+            return neg_z - self.log_s - 2.0 * softplus;
         }
 
         /// Cumulative distribution function (CDF) at x
@@ -31713,6 +31719,27 @@ test "Logistic: logpdf is always finite" {
         const lp = dist.logpdf(x);
         try testing.expect(math.isFinite(lp));
     }
+}
+
+test "Logistic: logpdf finite at extreme x values (overflow stress test)" {
+    // Regression test: exp(neg_z) overflowed when x << mu without softplus fix
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    const extremes = [_]f64{ -1000.0, -500.0, -100.0, 100.0, 500.0, 1000.0 };
+    for (extremes) |x| {
+        const lp = dist.logpdf(x);
+        try testing.expect(math.isFinite(lp));
+        try testing.expect(lp < 0.0); // logpdf is always negative
+    }
+}
+
+test "Logistic: logpdf at x=mu-100s is finite and correct asymptotically" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    // For x << mu: logpdf ≈ z - log_s = (x-mu)/s - log(s)
+    const x = -100.0;
+    const lp = dist.logpdf(x);
+    const expected_approx = x - 0.0; // (x-0)/1 - log(1) = x
+    try testing.expect(math.isFinite(lp));
+    try testing.expectApproxEqAbs(expected_approx, lp, 0.1); // Loose: asymptotic
 }
 
 test "Logistic: logpdf is symmetric about mu" {
