@@ -33395,3 +33395,594 @@ test "Chi: mode < mean (right-skewed for k >= 2)" {
     const mn = dist.mean();
     try testing.expect(m < mn);
 }
+
+// ============================================================================
+// Noncentral Chi-Squared Distribution
+// ============================================================================
+
+pub fn NoncentralChiSquared(comptime T: type) type {
+    return struct {
+        k: T,      // degrees of freedom, k > 0
+        lambda: T, // noncentrality parameter, lambda >= 0
+
+        const Self = @This();
+
+        /// Create a noncentral chi-squared distribution with k degrees of freedom and noncentrality lambda.
+        ///
+        /// Errors: k ≤ 0, lambda < 0, NaN, or infinite values.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(k: T, lambda: T) DistributionError!Self {
+            if (k <= 0.0 or !math.isFinite(k)) return error.InvalidParameter;
+            if (lambda < 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .k = k, .lambda = lambda };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; k, λ) = exp(-(k+λ)/2) · (x/λ)^(k/4-1/2) · I_{k/2-1}(√(λx))
+        /// where I is the modified Bessel function of the first kind.
+        /// Alternatively via Poisson mixture: f(x) = Σ_{j=0}^∞ w_j · f_χ²_{k+2j}(x)
+        ///
+        /// Time: O(1) for λ=0, O(series_terms) for λ>0 | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Time: O(1) for λ=0, O(series_terms) for λ>0 | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+
+            // Special case: lambda = 0 reduces to chi-squared
+            if (self.lambda == 0.0) {
+                // Chi²(k) PDF log: (k/2-1)·ln(x) - x/2 - (k/2)·ln(2) - logΓ(k/2)
+                return (self.k / 2.0 - 1.0) * @log(x) - x / 2.0 - (self.k / 2.0) * @log(2.0) - logGamma(self.k / 2.0);
+            }
+
+            // General case: Poisson mixture
+            // f(x) = Σ_{j=0}^∞ w_j · f_χ²_{k+2j}(x)
+            // where w_j = exp(-λ/2) · (λ/2)^j / j!
+            var sum: T = 0.0;
+            const half_lambda = self.lambda / 2.0;
+
+            // Smart starting index: peak of Poisson(λ/2) is near λ/2
+            var j_start: usize = 0;
+            if (self.lambda > 0.0) {
+                const peak = half_lambda;
+                j_start = if (peak > 6.0 * @sqrt(peak)) @intFromFloat(@floor(peak - 6.0 * @sqrt(peak))) else 0;
+            }
+
+            // Compute first log_w at j_start
+            var log_w: T = -half_lambda + @as(T, @floatFromInt(j_start)) * @log(half_lambda) - logGamma(@as(T, @floatFromInt(j_start)) + 1.0);
+
+            // Accumulate series
+            const max_terms = 300;
+            var j = j_start;
+            while (j < j_start + max_terms) : (j += 1) {
+                const w = @exp(log_w);
+
+                // Chi²(k+2j) PDF log: ((k+2j)/2 - 1)·ln(x) - x/2 - ((k+2j)/2)·ln(2) - logΓ((k+2j)/2)
+                const k_plus_2j = self.k + 2.0 * @as(T, @floatFromInt(j));
+                const half_k_plus_2j = k_plus_2j / 2.0;
+                const chi2_logpdf = (half_k_plus_2j - 1.0) * @log(x) - x / 2.0 - half_k_plus_2j * @log(2.0) - logGamma(half_k_plus_2j);
+                const term = w * @exp(chi2_logpdf);
+
+                sum += term;
+
+                // Stop when term is negligible AND j is past the peak (to catch all significant mass for large λ)
+                if (term < 1e-14 and @as(T, @floatFromInt(j)) > half_lambda) break;
+
+                // Update log_w for next iteration: log_w_{j+1} = log_w_j + log(λ/2) - log(j+1)
+                log_w += @log(half_lambda) - @log(@as(T, @floatFromInt(j + 1)));
+            }
+
+            return @log(sum);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; k, λ) = Σ_{j=0}^∞ w_j · P((k+2j)/2, x/2)
+        /// where P is the regularized lower incomplete gamma and w_j is Poisson(λ/2) PMF.
+        ///
+        /// Time: O(1) for λ=0, O(series_terms) for λ>0 | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            // Special case: lambda = 0 reduces to chi-squared
+            if (self.lambda == 0.0) {
+                return regularizedGammaP(self.k / 2.0, x / 2.0);
+            }
+
+            // General case: Poisson mixture of incomplete gammas
+            var sum: T = 0.0;
+            const half_lambda = self.lambda / 2.0;
+
+            // Smart starting index
+            var j_start: usize = 0;
+            if (self.lambda > 0.0) {
+                const peak = half_lambda;
+                j_start = if (peak > 6.0 * @sqrt(peak)) @intFromFloat(@floor(peak - 6.0 * @sqrt(peak))) else 0;
+            }
+
+            var log_w: T = -half_lambda + @as(T, @floatFromInt(j_start)) * @log(half_lambda) - logGamma(@as(T, @floatFromInt(j_start)) + 1.0);
+
+            const max_terms = 300;
+            var j = j_start;
+            while (j < j_start + max_terms) : (j += 1) {
+                const w = @exp(log_w);
+                const k_plus_2j = self.k + 2.0 * @as(T, @floatFromInt(j));
+                const gamma_p = regularizedGammaP(k_plus_2j / 2.0, x / 2.0);
+                const term = w * gamma_p;
+
+                sum += term;
+
+                if (@abs(w) < 1e-14 and @as(T, @floatFromInt(j)) > half_lambda) break;
+
+                log_w += @log(half_lambda) - @log(@as(T, @floatFromInt(j + 1)));
+            }
+
+            return @min(1.0, @max(0.0, sum));
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; k, λ) = 1 - F(x; k, λ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection on the CDF (no closed form exists).
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(log(1/ε)) for tolerance ε | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            var low: T = 0.0;
+            var high: T = @max(self.k + self.lambda, 10.0);
+
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+                if (!math.isFinite(high)) return math.inf(T);
+            }
+
+            const tolerance: T = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                if (mid <= 0.0) break;
+                const cdf_mid = self.cdf(mid);
+                if (@abs(cdf_mid - p) < tolerance) return mid;
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+                if (high - low < tolerance) return (low + high) / 2.0;
+            }
+            return (low + high) / 2.0;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// For noncentral chi-squared, mode ≈ max(0, k + λ - 2) [exact for central chi-squared]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return @max(0.0, self.k + self.lambda - 2.0);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = k + λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.k + self.lambda;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = 2·(k + 2λ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return 2.0 * (self.k + 2.0 * self.lambda);
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = 0.5·log(2π·e·(k+λ)) + ψ(k/2)
+        /// (approximate; exact formula involves modified Bessel function)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const k_plus_lambda = self.k + self.lambda;
+            const half_k = self.k / 2.0;
+            return 0.5 * @log(2.0 * math.pi * math.e * k_plus_lambda) + digamma(T, half_k);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses mixture: M ~ Poisson(λ/2), then X ~ Chi²(k + 2M) via Gamma.
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Step 1: Sample M ~ Poisson(λ/2)
+            // For λ=0: M=0 always; Knuth inter-arrival otherwise
+            const half_lambda = self.lambda / 2.0;
+            const m: usize = blk: {
+                if (half_lambda == 0.0) break :blk 0;
+                var cnt: usize = 0;
+                var cumsum: T = 0.0;
+                while (true) {
+                    cumsum += -@log(rng.float(T)) / half_lambda;
+                    if (cumsum >= 1.0) break;
+                    cnt += 1;
+                }
+                break :blk cnt;
+            };
+
+            // Step 2: X ~ 2·Gamma(k/2 + M, rate=1) via Marsaglia-Tsang with boost trick
+            const alpha = self.k / 2.0 + @as(T, @floatFromInt(m));
+            const alpha_mt = if (alpha >= 1.0) alpha else alpha + 1.0;
+            const d = alpha_mt - 1.0 / 3.0;
+            const c = 1.0 / @sqrt(9.0 * d);
+
+            var gamma_val: T = undefined;
+            while (true) {
+                var z: T = undefined;
+                var v: T = undefined;
+                while (true) {
+                    const ra = rng.float(T);
+                    const rb = rng.float(T);
+                    z = @sqrt(-2.0 * @log(ra)) * @cos(2.0 * math.pi * rb);
+                    v = 1.0 + c * z;
+                    if (v > 0.0) break;
+                }
+                v = v * v * v;
+                const rc = rng.float(T);
+                if (rc < 1.0 - 0.0331 * z * z * z * z) {
+                    gamma_val = d * v;
+                    break;
+                }
+                if (@log(rc) < 0.5 * z * z + d * (1.0 - v + @log(v))) {
+                    gamma_val = d * v;
+                    break;
+                }
+            }
+            if (alpha < 1.0) {
+                const rb = rng.float(T);
+                gamma_val *= math.pow(T, rb, 1.0 / alpha);
+            }
+
+            return 2.0 * gamma_val;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.k <= 0.0 or !math.isFinite(self.k)) return error.InvalidParameter;
+            if (self.lambda < 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (0, ∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            _ = self;
+            if (x <= 0.0 or !math.isFinite(x)) return error.OutOfDomain;
+        }
+    };
+}
+
+test "NoncentralChiSquared: init valid parameters" {
+    _ = try NoncentralChiSquared(f64).init(1.0, 0.0);
+    _ = try NoncentralChiSquared(f64).init(2.0, 3.0);
+    _ = try NoncentralChiSquared(f64).init(0.5, 0.0);
+    _ = try NoncentralChiSquared(f64).init(10.0, 10.0);
+}
+
+test "NoncentralChiSquared: init invalid k zero" {
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(0.0, 1.0));
+}
+
+test "NoncentralChiSquared: init invalid k negative" {
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(-1.0, 1.0));
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(-0.5, 0.0));
+}
+
+test "NoncentralChiSquared: init invalid k NaN" {
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(math.nan(f64), 0.0));
+}
+
+test "NoncentralChiSquared: init invalid k infinity" {
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(math.inf(f64), 1.0));
+}
+
+test "NoncentralChiSquared: init invalid lambda negative" {
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(2.0, -0.1));
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(3.0, -1.0));
+}
+
+test "NoncentralChiSquared: init invalid lambda infinity" {
+    try expectError(error.InvalidParameter, NoncentralChiSquared(f64).init(2.0, math.inf(f64)));
+}
+
+test "NoncentralChiSquared: validate passes for valid params" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 2.0);
+    try dist.validate();
+}
+
+test "NoncentralChiSquared: validateValue rejects non-positive x" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(0.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-1.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-0.01));
+}
+
+test "NoncentralChiSquared: validateValue rejects NaN and infinity" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+    try expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+}
+
+test "NoncentralChiSquared: validateValue accepts positive finite x" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e6 };
+    for (x_vals) |x| {
+        try dist.validateValue(x);
+    }
+}
+
+test "NoncentralChiSquared: lambda=0 cdf matches chi-squared" {
+    // k=4, lambda=0: cdf(4) should match Chi²(4) = regularizedGammaP(2, 2)
+    const dist = try NoncentralChiSquared(f64).init(4.0, 0.0);
+    const expected = regularizedGammaP(2.0, 2.0); // ≈ 1 - 3·exp(-2) ≈ 0.59399
+    try expectApproxEqAbs(expected, dist.cdf(4.0), 1e-6);
+}
+
+test "NoncentralChiSquared: lambda=0 cdf matches chi-squared k=2" {
+    // k=2, lambda=0: cdf(2) should match Chi²(2) = regularizedGammaP(1, 1) = 1 - exp(-1)
+    const dist = try NoncentralChiSquared(f64).init(2.0, 0.0);
+    const expected = 1.0 - @exp(-1.0); // ≈ 0.63212
+    try expectApproxEqAbs(expected, dist.cdf(2.0), 1e-6);
+}
+
+test "NoncentralChiSquared: mean formula k + lambda" {
+    const dist1 = try NoncentralChiSquared(f64).init(3.0, 4.0);
+    try expectApproxEqAbs(7.0, dist1.mean(), 1e-12);
+
+    const dist2 = try NoncentralChiSquared(f64).init(5.0, 0.0);
+    try expectApproxEqAbs(5.0, dist2.mean(), 1e-12);
+
+    const dist3 = try NoncentralChiSquared(f64).init(2.0, 6.0);
+    try expectApproxEqAbs(8.0, dist3.mean(), 1e-12);
+}
+
+test "NoncentralChiSquared: variance formula 2(k + 2λ)" {
+    const dist1 = try NoncentralChiSquared(f64).init(3.0, 4.0);
+    const expected1 = 2.0 * (3.0 + 2.0 * 4.0); // = 2 * 11 = 22
+    try expectApproxEqAbs(expected1, dist1.variance(), 1e-12);
+
+    const dist2 = try NoncentralChiSquared(f64).init(5.0, 0.0);
+    const expected2 = 2.0 * 5.0; // = 10
+    try expectApproxEqAbs(expected2, dist2.variance(), 1e-12);
+
+    const dist3 = try NoncentralChiSquared(f64).init(2.0, 6.0);
+    const expected3 = 2.0 * (2.0 + 2.0 * 6.0); // = 28
+    try expectApproxEqAbs(expected3, dist3.variance(), 1e-12);
+}
+
+test "NoncentralChiSquared: mode formula k + lambda - 2" {
+    const dist1 = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    try expectApproxEqAbs(4.0, dist1.mode(), 1e-12); // 4 + 2 - 2 = 4
+
+    const dist2 = try NoncentralChiSquared(f64).init(1.0, 0.0);
+    try expectApproxEqAbs(0.0, dist2.mode(), 1e-12); // max(0, 1 + 0 - 2) = 0
+
+    const dist3 = try NoncentralChiSquared(f64).init(2.0, 0.0);
+    try expectApproxEqAbs(0.0, dist3.mode(), 1e-12); // max(0, 2 + 0 - 2) = 0
+
+    const dist4 = try NoncentralChiSquared(f64).init(5.0, 3.0);
+    try expectApproxEqAbs(6.0, dist4.mode(), 1e-12); // 5 + 3 - 2 = 6
+}
+
+test "NoncentralChiSquared: pdf positive on support" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "NoncentralChiSquared: pdf zero for non-positive x" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+    try testing.expect(dist.pdf(-0.01) == 0.0);
+}
+
+test "NoncentralChiSquared: logpdf equals log of pdf" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+    }
+}
+
+test "NoncentralChiSquared: logpdf negative infinity for non-positive x" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "NoncentralChiSquared: pdf integrates to approximately 1" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 1.0);
+    var sum: f64 = 0.0;
+    const dx = 0.05;
+    var x: f64 = 0.05;
+    while (x < 50.0) : (x += dx) {
+        sum += dist.pdf(x) * dx;
+    }
+    try expectApproxEqAbs(1.0, sum, 0.02);
+}
+
+test "NoncentralChiSquared: cdf zero at origin" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 2.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+}
+
+test "NoncentralChiSquared: cdf approaches one" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 2.0);
+    try testing.expect(dist.cdf(1e6) > 0.9999);
+}
+
+test "NoncentralChiSquared: cdf is monotonically increasing" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "NoncentralChiSquared: cdf in [0, 1]" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e3 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "NoncentralChiSquared: sf equals 1 minus cdf" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 1.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "NoncentralChiSquared: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-7);
+    }
+}
+
+test "NoncentralChiSquared: quantile boundary cases" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    try testing.expect((try dist.quantile(0.0)) == 0.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "NoncentralChiSquared: quantile rejects invalid probabilities" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "NoncentralChiSquared: higher lambda shifts cdf left (smaller CDF for fixed x)" {
+    const dist_0 = try NoncentralChiSquared(f64).init(4.0, 0.0);
+    const dist_2 = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    const x = 6.0;
+    // Higher lambda shifts distribution right, so CDF(x) is smaller
+    try testing.expect(dist_2.cdf(x) < dist_0.cdf(x));
+}
+
+test "NoncentralChiSquared: sample is positive and finite" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralChiSquared: empirical sample mean converges to theoretical" {
+    const dist = try NoncentralChiSquared(f64).init(4.0, 2.0);
+    const expected_mean = 6.0; // k + lambda = 4 + 2
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(expected_mean, empirical, 0.1);
+}
+
+test "NoncentralChiSquared: sample works with lambda=0" {
+    const dist = try NoncentralChiSquared(f64).init(3.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralChiSquared: f32 support basic operations" {
+    const dist = try NoncentralChiSquared(f32).init(3.0, 1.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+test "NoncentralChiSquared: f32 quantile roundtrip" {
+    const dist = try NoncentralChiSquared(f32).init(4.0, 1.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
+
+test "NoncentralChiSquared: sample works with small k (exercises boost trick)" {
+    // k=0.5 gives alpha=k/2+m; for m=0 alpha=0.25 < 1 — must use boost trick
+    const dist = try NoncentralChiSquared(f64).init(0.5, 0.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralChiSquared: sample lambda=0 empirical mean converges to k" {
+    const k = 5.0;
+    const dist = try NoncentralChiSquared(f64).init(k, 0.0);
+    var rng = std.Random.DefaultPrng.init(99);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    // For lambda=0 this is chi-squared(5), mean = 5
+    try expectApproxEqAbs(k, empirical, 0.1);
+}
