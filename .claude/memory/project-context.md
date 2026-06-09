@@ -1,3 +1,23 @@
+**Session 651 Update (2026-06-09) — FEATURE MODE:**
+
+✅ **InverseGamma Distribution** — 61st total, 46th continuous — commit e33e407
+- **Mode**: FEATURE MODE (counter: 651)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: InverseGamma(T) — conjugate prior for Normal variance in Bayesian analysis
+  * Parameters: α (shape) > 0, β (scale) > 0; support: (0, ∞)
+  * If X ~ InverseGamma(α, β), then 1/X ~ Gamma(α, rate=β)
+  * PDF: β^α/Γ(α) · x^(-α-1) · exp(-β/x)
+  * CDF: 1 - P(α, β/x) where P is regularizedGammaP; SF: P(α, β/x)
+  * Quantile: bisection on CDF (no closed form); NaN guard: !(p≥0 && p≤1) check
+  * Mode: β/(α+1); Mean: β/(α-1) for α>1 else NaN; Variance: β²/((α-1)²(α-2)) for α>2 else NaN
+  * Entropy: α + ln(β) + logGamma(α) - (1+α)·ψ(α); digamma tolerance: 1e-7 for α=3
+  * Sample: Marsaglia-Tsang generates Y ~ Gamma(α, rate=β), return 1/Y; boost trick for α<1
+  * Key values: InverseGamma(1,1): cdf(1)=pdf(1)=e^(-1); InverseGamma(3,1): mode=0.25, mean=0.5, var=0.25
+- **Tests**: 34 tests all passing (exit code 0)
+- **Distribution count**: 61 total (46 continuous + 15 discrete)
+- **Next Priority**: Chi distribution or Reciprocal Inverse Gaussian
+
 **Session 650 Update (2026-06-09) — STABILIZATION MODE:**
 
 ✅ **ALL SYSTEMS GREEN** — bug fix committed

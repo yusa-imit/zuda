@@ -516,3 +516,5 @@
 {"timestamp":"2026-06-06T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Arcsine distribution","project":"zuda"}
 {"timestamp":"2026-06-06T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Logistic distribution in distributions.zig","project":"zuda"}
 {"timestamp":"2026-06-06T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Logistic distribution struct in distributions.zig to pass 88 failing tests","project":"zuda"}
+{"timestamp":"2026-06-09T00:01:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for InverseGamma distribution in distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-09T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement InverseGamma distribution in distributions.zig","project":"zuda"}
