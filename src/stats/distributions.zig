@@ -32836,3 +32836,562 @@ test "InverseGamma: cdf(mode) < 0.5 (right-skewed distribution)" {
     const dist = try InverseGamma(f64).init(5.0, 2.0);
     try testing.expect(dist.cdf(dist.mode()) < 0.5);
 }
+
+/// Chi(k) distribution — generalization of Rayleigh, HalfNormal, and Maxwell-Boltzmann.
+///
+/// X ~ Chi(k) ⟺ X = √(X₁² + ... + Xₖ²), Xᵢ ~ N(0,1) i.i.d.
+/// Equivalently, X = √Y where Y ~ ChiSquared(k) = Gamma(k/2, rate=0.5).
+///
+/// Parameter: k > 0 (degrees of freedom, continuous)
+/// Support: [0, ∞)
+pub fn Chi(comptime T: type) type {
+    return struct {
+        k: T, // degrees of freedom, k > 0
+
+        const Self = @This();
+
+        /// Create a Chi distribution with k degrees of freedom.
+        ///
+        /// Errors: k ≤ 0, NaN, or infinite k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(k: T) DistributionError!Self {
+            if (k <= 0.0 or !math.isFinite(k)) return error.InvalidParameter;
+            return Self{ .k = k };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; k) = 2^(1-k/2) · x^(k-1) · exp(-x²/2) / Γ(k/2)  for x > 0; 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = (1-k/2)·ln(2) + (k-1)·ln(x) - x²/2 - logΓ(k/2); -∞ for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return (1.0 - self.k / 2.0) * @log(2.0) + (self.k - 1.0) * @log(x) - x * x / 2.0 - logGamma(self.k / 2.0);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; k) = P(k/2, x²/2)  where P is the regularized lower incomplete gamma; 0 for x ≤ 0
+        ///
+        /// Time: O(1) with series/CF approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return regularizedGammaP(self.k / 2.0, x * x / 2.0);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; k) = 1 - P(k/2, x²/2); 1 for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection on the CDF (no closed form exists).
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(log(1/ε)) for tolerance ε | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            var low: T = 0.0;
+            var high: T = @max(1.0, self.mode() + 1.0);
+
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+                if (!math.isFinite(high)) return math.inf(T);
+            }
+
+            const tolerance: T = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                if (mid <= 0.0) break;
+                const cdf_mid = self.cdf(mid);
+                if (@abs(cdf_mid - p) < tolerance) return mid;
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+                if (high - low < tolerance) return (low + high) / 2.0;
+            }
+            return (low + high) / 2.0;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// mode = √(k - 1) for k ≥ 1; 0 for k < 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.k < 1.0) return 0.0;
+            return @sqrt(self.k - 1.0);
+        }
+
+        /// Median of the distribution (no closed form, computed via quantile(0.5))
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn median(self: Self) DistributionError!T {
+            return self.quantile(0.5);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = √2 · Γ((k+1)/2) / Γ(k/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @sqrt(2.0) * @exp(logGamma((self.k + 1.0) / 2.0) - logGamma(self.k / 2.0));
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = k - E[X]²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mu = self.mean();
+            return self.k - mu * mu;
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = logΓ(k/2) + k/2 - ½·ln(2) - ((k-1)/2)·ψ(k/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const half_k = self.k / 2.0;
+            return logGamma(half_k) + half_k - 0.5 * @log(2.0) - (self.k - 1.0) / 2.0 * digamma(T, half_k);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses Chi²(k) = 2·Gamma(k/2, rate=1) via Marsaglia-Tsang, then Chi = sqrt(Chi²).
+        /// Boost trick applied for k/2 < 1.
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const half_k = self.k / 2.0;
+            const alpha_mt = if (half_k >= 1.0) half_k else half_k + 1.0;
+            const d = alpha_mt - 1.0 / 3.0;
+            const c = 1.0 / @sqrt(9.0 * d);
+
+            var gamma_val: T = undefined;
+            while (true) {
+                var z: T = undefined;
+                var v: T = undefined;
+                while (true) {
+                    const ra = rng.float(T);
+                    const rb = rng.float(T);
+                    z = @sqrt(-2.0 * @log(ra)) * @cos(2.0 * math.pi * rb);
+                    v = 1.0 + c * z;
+                    if (v > 0.0) break;
+                }
+                v = v * v * v;
+                const rc = rng.float(T);
+                if (rc < 1.0 - 0.0331 * z * z * z * z) {
+                    gamma_val = d * v;
+                    break;
+                }
+                if (@log(rc) < 0.5 * z * z + d * (1.0 - v + @log(v))) {
+                    gamma_val = d * v;
+                    break;
+                }
+            }
+
+            // Boost trick for half_k < 1: Y ~ Gamma(half_k+1) · U^(1/half_k)
+            if (half_k < 1.0) {
+                const rb = rng.float(T);
+                gamma_val *= std.math.pow(T, rb, 1.0 / half_k);
+            }
+
+            // Chi²(k) = 2 * Gamma(k/2, rate=1); Chi(k) = sqrt(Chi²(k))
+            return @sqrt(2.0 * gamma_val);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.k <= 0.0 or !math.isFinite(self.k)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (0, ∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            _ = self;
+            if (x <= 0.0 or !math.isFinite(x)) return error.OutOfDomain;
+        }
+    };
+}
+
+test "Chi: init validation" {
+    _ = try Chi(f64).init(1.0);
+    _ = try Chi(f64).init(2.0);
+    _ = try Chi(f64).init(0.5);
+    try expectError(error.InvalidParameter, Chi(f64).init(0.0));
+    try expectError(error.InvalidParameter, Chi(f64).init(-1.0));
+    try expectError(error.InvalidParameter, Chi(f64).init(-0.5));
+    try expectError(error.InvalidParameter, Chi(f64).init(math.nan(f64)));
+    try expectError(error.InvalidParameter, Chi(f64).init(math.inf(f64)));
+    try expectError(error.InvalidParameter, Chi(f64).init(-math.inf(f64)));
+}
+
+test "Chi: pdf exact value Chi(1).pdf(1) = sqrt(2/π) * e^(-0.5)" {
+    const dist = try Chi(f64).init(1.0);
+    const expected = @sqrt(2.0 / math.pi) * @exp(-0.5);
+    try expectApproxEqAbs(expected, dist.pdf(1.0), 1e-12);
+}
+
+test "Chi: pdf exact value Chi(2).pdf(1) = e^(-0.5)" {
+    const dist = try Chi(f64).init(2.0);
+    const expected = @exp(-0.5);
+    try expectApproxEqAbs(expected, dist.pdf(1.0), 1e-12);
+}
+
+test "Chi: pdf exact value Chi(3).pdf(1) = sqrt(2/π) * e^(-0.5)" {
+    const dist = try Chi(f64).init(3.0);
+    const expected = @sqrt(2.0 / math.pi) * @exp(-0.5);
+    try expectApproxEqAbs(expected, dist.pdf(1.0), 1e-12);
+}
+
+test "Chi: pdf positive on support" {
+    const dist = try Chi(f64).init(3.0);
+    // x=100 underflows exp(-x²/2) to 0 in float64 — test up to x=15
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "Chi: pdf zero for non-positive x" {
+    const dist = try Chi(f64).init(3.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+    try testing.expect(dist.pdf(-0.01) == 0.0);
+}
+
+test "Chi: pdf integrates to approximately 1" {
+    const dist = try Chi(f64).init(3.0);
+    var sum: f64 = 0.0;
+    const dx = 0.01;
+    var x: f64 = 0.01;
+    while (x < 20.0) : (x += dx) {
+        sum += dist.pdf(x) * dx;
+    }
+    try expectApproxEqAbs(1.0, sum, 0.02);
+}
+
+test "Chi: logpdf exact values" {
+    const dist_1 = try Chi(f64).init(1.0);
+    const dist_2 = try Chi(f64).init(2.0);
+    const dist_3 = try Chi(f64).init(3.0);
+
+    // Chi(1).logpdf(1) = ln(sqrt(2/π)) - 0.5
+    const log_pdf_1 = dist_1.logpdf(1.0);
+    const expected_1 = 0.5 * @log(2.0 / math.pi) - 0.5;
+    try expectApproxEqAbs(expected_1, log_pdf_1, 1e-12);
+
+    // Chi(2).logpdf(1) = -0.5
+    const log_pdf_2 = dist_2.logpdf(1.0);
+    try expectApproxEqAbs(-0.5, log_pdf_2, 1e-12);
+
+    // Chi(3).logpdf(1) = ln(sqrt(2/π)) - 0.5
+    const log_pdf_3 = dist_3.logpdf(1.0);
+    try expectApproxEqAbs(expected_1, log_pdf_3, 1e-12);
+}
+
+test "Chi: logpdf equals log(pdf)" {
+    const dist = try Chi(f64).init(3.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-12);
+    }
+}
+
+test "Chi: logpdf negative infinity for non-positive x" {
+    const dist = try Chi(f64).init(3.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "Chi: cdf monotone and bounded" {
+    const dist = try Chi(f64).init(3.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+    try testing.expect(dist.cdf(1e6) > 0.9999);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "Chi: cdf exact formula for Chi(2): 1 - e^(-x^2/2)" {
+    const dist = try Chi(f64).init(2.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 1.5, 2.0, 3.0 };
+    for (x_vals) |x| {
+        const expected = 1.0 - @exp(-x * x / 2.0);
+        // regularizedGammaP has ~1e-11 precision
+        try expectApproxEqAbs(expected, dist.cdf(x), 1e-10);
+    }
+}
+
+test "Chi: cdf in [0, 1]" {
+    const dist = try Chi(f64).init(3.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e3 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "Chi: sf = 1 - cdf" {
+    const dist = try Chi(f64).init(3.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "Chi: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try Chi(f64).init(3.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-8);
+    }
+}
+
+test "Chi: quantile roundtrip quantile(cdf(x)) = x" {
+    const dist = try Chi(f64).init(3.0);
+    // Exclude very large x where cdf(x) rounds to exactly 1.0 (quantile returns inf)
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const q = try dist.quantile(dist.cdf(x));
+        try expectApproxEqAbs(x, q, 1e-7);
+    }
+}
+
+test "Chi: quantile boundary cases" {
+    const dist = try Chi(f64).init(3.0);
+    try testing.expect((try dist.quantile(0.0)) == 0.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+    // Near-boundary: very small quantile should be positive and small
+    const q_small = try dist.quantile(0.0001);
+    try testing.expect(q_small > 0.0 and q_small < 1.0);
+    // Chi(3) 99.99th percentile ≈ sqrt(Chi²(3) at 0.9999) ≈ sqrt(18.5) ≈ 4.3
+    const q_large = try dist.quantile(0.9999);
+    try testing.expect(q_large > 3.0);
+}
+
+test "Chi: quantile rejects invalid probabilities" {
+    const dist = try Chi(f64).init(3.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Chi: mode formula sqrt(k-1) for k >= 1" {
+    // Chi(1): mode = 0
+    const dist_1 = try Chi(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist_1.mode(), 1e-12);
+
+    // Chi(2): mode = 1
+    const dist_2 = try Chi(f64).init(2.0);
+    try expectApproxEqAbs(1.0, dist_2.mode(), 1e-12);
+
+    // Chi(5): mode = 2
+    const dist_5 = try Chi(f64).init(5.0);
+    try expectApproxEqAbs(2.0, dist_5.mode(), 1e-12);
+}
+
+test "Chi: mode is zero for k < 1" {
+    const dist = try Chi(f64).init(0.5);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "Chi: mode is PDF peak" {
+    const dist = try Chi(f64).init(5.0);
+    const m = dist.mode();
+    const dx = 0.001;
+    try testing.expect(dist.pdf(m) > dist.pdf(m - dx));
+    try testing.expect(dist.pdf(m) > dist.pdf(m + dx));
+}
+
+test "Chi: mean exact values" {
+    // Chi(1).mean() = sqrt(2/π)
+    const dist_1 = try Chi(f64).init(1.0);
+    const expected_1 = @sqrt(2.0 / math.pi);
+    try expectApproxEqAbs(expected_1, dist_1.mean(), 1e-12);
+
+    // Chi(2).mean() = sqrt(π/2)
+    const dist_2 = try Chi(f64).init(2.0);
+    const expected_2 = @sqrt(math.pi / 2.0);
+    try expectApproxEqAbs(expected_2, dist_2.mean(), 1e-12);
+
+    // Chi(3).mean() = 2 * sqrt(2/π)
+    const dist_3 = try Chi(f64).init(3.0);
+    const expected_3 = 2.0 * @sqrt(2.0 / math.pi);
+    try expectApproxEqAbs(expected_3, dist_3.mean(), 1e-12);
+}
+
+test "Chi: variance = k - mean^2" {
+    // Chi(1).variance() = 1 - 2/π
+    const dist_1 = try Chi(f64).init(1.0);
+    const expected_1 = 1.0 - 2.0 / math.pi;
+    try expectApproxEqAbs(expected_1, dist_1.variance(), 1e-12);
+
+    // Chi(2).variance() = 2 - π/2
+    const dist_2 = try Chi(f64).init(2.0);
+    const expected_2 = 2.0 - math.pi / 2.0;
+    try expectApproxEqAbs(expected_2, dist_2.variance(), 1e-12);
+
+    // Chi(3).variance() = 3 - 8/π
+    const dist_3 = try Chi(f64).init(3.0);
+    const expected_3 = 3.0 - 8.0 / math.pi;
+    try expectApproxEqAbs(expected_3, dist_3.variance(), 1e-12);
+}
+
+test "Chi: entropy formula matches related distributions" {
+    // Chi(1) entropy = 0.5*ln(π/2) + 0.5  [= HalfNormal(σ=1) entropy]
+    const dist_1 = try Chi(f64).init(1.0);
+    const expected_1 = 0.5 * @log(math.pi / 2.0) + 0.5;
+    try expectApproxEqAbs(expected_1, dist_1.entropy(), 1e-7);
+
+    // Chi(2) entropy = 1 - 0.5*ln(2) + γ/2  [= Rayleigh(σ=1) entropy]
+    const dist_2 = try Chi(f64).init(2.0);
+    const gamma_e = 0.5772156649015329;
+    const expected_2 = 1.0 - 0.5 * @log(2.0) + gamma_e / 2.0;
+    try expectApproxEqAbs(expected_2, dist_2.entropy(), 1e-7);
+
+    // Chi(3) entropy = 0.5*ln(2π) + γ - 0.5  [= MaxwellBoltzmann(a=1) entropy]
+    const dist_3 = try Chi(f64).init(3.0);
+    const expected_3 = 0.5 * @log(2.0 * math.pi) + gamma_e - 0.5;
+    try expectApproxEqAbs(expected_3, dist_3.entropy(), 1e-7);
+}
+
+test "Chi: sample is positive and finite" {
+    const dist = try Chi(f64).init(3.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Chi: empirical sample mean converges to theoretical" {
+    // Chi(3).mean() = 2 * sqrt(2/π)
+    const dist = try Chi(f64).init(3.0);
+    const expected_mean = 2.0 * @sqrt(2.0 / math.pi);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(expected_mean, empirical, 0.05);
+}
+
+test "Chi: sample works with non-integer k=2.5" {
+    const dist = try Chi(f64).init(2.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Chi: sample works with k=0.5 (exercises boost trick)" {
+    const dist = try Chi(f64).init(0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Chi: validate passes for valid params" {
+    const dist = try Chi(f64).init(3.0);
+    try dist.validate();
+}
+
+test "Chi: validateValue rejects non-positive and non-finite x" {
+    const dist = try Chi(f64).init(3.0);
+    try expectError(error.OutOfDomain, dist.validateValue(0.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-1.0));
+    try expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+    try expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+}
+
+test "Chi: validateValue accepts positive finite x" {
+    const dist = try Chi(f64).init(3.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e6 };
+    for (x_vals) |x| {
+        try dist.validateValue(x);
+    }
+}
+
+test "Chi: f32 support basic operations" {
+    const dist = try Chi(f32).init(3.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+test "Chi: f32 quantile roundtrip" {
+    const dist = try Chi(f32).init(3.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-4);
+    }
+}
+
+test "Chi: increasing k increases mean" {
+    const dist_1 = try Chi(f64).init(1.0);
+    const dist_2 = try Chi(f64).init(2.0);
+    const dist_3 = try Chi(f64).init(3.0);
+    const dist_10 = try Chi(f64).init(10.0);
+    try testing.expect(dist_1.mean() < dist_2.mean());
+    try testing.expect(dist_2.mean() < dist_3.mean());
+    try testing.expect(dist_3.mean() < dist_10.mean());
+}
+
+test "Chi: mode < mean (right-skewed for k >= 2)" {
+    const dist = try Chi(f64).init(5.0);
+    const m = dist.mode();
+    const mn = dist.mean();
+    try testing.expect(m < mn);
+}
