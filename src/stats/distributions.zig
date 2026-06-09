@@ -34376,6 +34376,30 @@ test "ToppLeone: variance is positive" {
     }
 }
 
+test "ToppLeone: variance exact for alpha=1 is 1/18" {
+    const dist = try ToppLeone(f64).init(1.0);
+    // For alpha=1: E[X]=1/3, Var(X)=1/(1+1)-(1/3)²=1/2-1/9=1/18
+    const expected = 1.0 / 18.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "ToppLeone: variance exact for alpha=2 is 11/225" {
+    const dist = try ToppLeone(f64).init(2.0);
+    // For alpha=2: E[X]=7/15, Var(X)=1/(2+1)-(7/15)²=1/3-49/225=11/225
+    const expected = 11.0 / 225.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "ToppLeone: mean increases with alpha" {
+    const dist_1 = try ToppLeone(f64).init(1.0);
+    const dist_2 = try ToppLeone(f64).init(2.0);
+    const dist_5 = try ToppLeone(f64).init(5.0);
+    // Mean values: alpha=1 → 1/3 ≈ 0.3333, alpha=2 → 0.4667, alpha=5 → 0.6306
+    // Mean increases with alpha (distribution shifts right as α increases)
+    try testing.expect(dist_1.mean() < dist_2.mean());
+    try testing.expect(dist_2.mean() < dist_5.mean());
+}
+
 test "ToppLeone: f32 support basic operations" {
     const dist = try ToppLeone(f32).init(2.0);
     try testing.expect(dist.mean() > 0.0);
