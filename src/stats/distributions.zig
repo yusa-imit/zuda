@@ -6,6 +6,7 @@ pub const DistributionError = error{
     InvalidParameter,
     InvalidProbability,
     OutOfDomain,
+    OutOfSupport,
 };
 
 // ============================================================================
@@ -33985,4 +33986,449 @@ test "NoncentralChiSquared: sample lambda=0 empirical mean converges to k" {
     const empirical = sum / @as(f64, @floatFromInt(n));
     // For lambda=0 this is chi-squared(5), mean = 5
     try expectApproxEqAbs(k, empirical, 0.1);
+}
+
+pub fn ToppLeone(comptime T: type) type {
+    return struct {
+        alpha: T, // shape parameter, alpha > 0
+
+        const Self = @This();
+
+        /// Create a Topp-Leone distribution with shape parameter alpha.
+        ///
+        /// Errors: alpha ≤ 0, NaN, or infinite values.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T) DistributionError!Self {
+            if (!(alpha > 0.0) or !math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .alpha = alpha };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; α) = 2α(1-x)(2x-x²)^(α-1)  for x ∈ [0, 1]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return 0.0;
+            if (x == 1.0) return 0.0;
+            const u = 2.0 * x - x * x; // = x(2-x) = 1-(1-x)²
+            if (u <= 0.0) return 0.0;
+            return 2.0 * self.alpha * (1.0 - x) * math.pow(T, u, self.alpha - 1.0);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return -math.inf(T);
+            if (x == 1.0) return -math.inf(T);
+            const u = 2.0 * x - x * x;
+            if (u <= 0.0) return -math.inf(T);
+            return @log(2.0 * self.alpha) + @log(1.0 - x) + (self.alpha - 1.0) * @log(u);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; α) = (2x - x²)^α  for x ∈ [0, 1]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= 1.0) return 1.0;
+            const u = 2.0 * x - x * x;
+            return math.pow(T, u, self.alpha);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; α) = 1 - (2x - x²)^α
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// x = 1 - √(1 - p^(1/α))   [exact closed form]
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+            const u = math.pow(T, p, 1.0 / self.alpha);
+            return 1.0 - @sqrt(1.0 - u);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// For α ≥ 1: mode = 1 - 1/√(2α-1)
+        /// For 0 < α < 1: mode = 0 (PDF is decreasing from ∞ near 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha >= 1.0) {
+                return 1.0 - 1.0 / @sqrt(2.0 * self.alpha - 1.0);
+            }
+            return 0.0;
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = 1 - (√π/2) · exp(logΓ(α+1) - logΓ(α+3/2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const log_ratio = logGamma(self.alpha + 1.0) - logGamma(self.alpha + 1.5);
+            return 1.0 - 0.5 * @sqrt(math.pi) * @exp(log_ratio);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = E[X²] - (E[X])²
+        /// where E[X²] = 1 - √π·exp(logΓ(α+1) - logΓ(α+3/2)) + 1/(α+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            const log_ratio = logGamma(self.alpha + 1.0) - logGamma(self.alpha + 3.0 / 2.0);
+            const ex2 = 1.0 - @sqrt(math.pi) * @exp(log_ratio) + 1.0 / (self.alpha + 1.0);
+            return ex2 - m * m;
+        }
+
+        /// Differential entropy (numerical approximation via Simpson's rule)
+        ///
+        /// H(X) = -∫₀¹ f(x)·ln f(x) dx
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Avoid boundary issues with very small/large x
+            const n = 1000;
+            const a: T = 1e-9;
+            const b: T = 1.0 - 1e-9;
+            const h = (b - a) / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const xi = a + @as(T, @floatFromInt(i)) * h;
+                const fi = self.pdf(xi);
+                const lfi = self.logpdf(xi);
+                const val = if (fi > 0.0) -fi * lfi else 0.0;
+                const weight: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 0) 2.0 else 4.0;
+                sum += weight * val;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inversion: x = 1 - √(1 - U^(1/α)), U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const upow = math.pow(T, u, 1.0 / self.alpha);
+            return 1.0 - @sqrt(1.0 - upow);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0.0) or !math.isFinite(self.alpha)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support [0, 1]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            _ = self;
+            if (!(x >= 0.0 and x <= 1.0) or !math.isFinite(x)) return error.OutOfSupport;
+        }
+    };
+}
+
+test "ToppLeone: init with valid alpha" {
+    const alphas = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (alphas) |alpha| {
+        const dist = try ToppLeone(f64).init(alpha);
+        try testing.expect(dist.alpha == alpha);
+    }
+}
+
+test "ToppLeone: init rejects alpha <= 0" {
+    try expectError(error.InvalidParameter, ToppLeone(f64).init(0.0));
+    try expectError(error.InvalidParameter, ToppLeone(f64).init(-1.0));
+}
+
+test "ToppLeone: init rejects NaN alpha" {
+    try expectError(error.InvalidParameter, ToppLeone(f64).init(math.nan(f64)));
+}
+
+test "ToppLeone: init rejects infinite alpha" {
+    try expectError(error.InvalidParameter, ToppLeone(f64).init(math.inf(f64)));
+}
+
+test "ToppLeone: validate passes for valid parameters" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try dist.validate();
+}
+
+test "ToppLeone: validateValue rejects x < 0" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectError(error.OutOfSupport, dist.validateValue(-0.1));
+}
+
+test "ToppLeone: validateValue rejects x > 1" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectError(error.OutOfSupport, dist.validateValue(1.1));
+}
+
+test "ToppLeone: validateValue rejects NaN" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectError(error.OutOfSupport, dist.validateValue(math.nan(f64)));
+}
+
+test "ToppLeone: validateValue rejects infinite x" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectError(error.OutOfSupport, dist.validateValue(math.inf(f64)));
+}
+
+test "ToppLeone: validateValue accepts x in [0, 1]" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const x_vals = [_]f64{ 0.0, 0.25, 0.5, 0.75, 1.0 };
+    for (x_vals) |x| {
+        try dist.validateValue(x);
+    }
+}
+
+test "ToppLeone: cdf exact for alpha=1" {
+    const dist = try ToppLeone(f64).init(1.0);
+    // CDF = 2x - x^2 for alpha=1; at x=0.5: 2*0.5 - 0.25 = 0.75
+    try expectApproxEqAbs(0.75, dist.cdf(0.5), 1e-12);
+    try expectApproxEqAbs(0.96, dist.cdf(0.8), 1e-12); // 2*0.8 - 0.64 = 0.96
+}
+
+test "ToppLeone: cdf exact for alpha=2 at x=0.5" {
+    const dist = try ToppLeone(f64).init(2.0);
+    // F(0.5) = (2*0.5 - 0.5^2)^2 = 0.75^2 = 0.5625
+    try expectApproxEqAbs(0.5625, dist.cdf(0.5), 1e-12);
+}
+
+test "ToppLeone: cdf boundary cases" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-14);
+    try expectApproxEqAbs(1.0, dist.cdf(1.0), 1e-14);
+}
+
+test "ToppLeone: cdf is monotonically increasing" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "ToppLeone: cdf in [0, 1] for all x in support" {
+    const dist = try ToppLeone(f64).init(3.0);
+    const x_vals = [_]f64{ 0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "ToppLeone: pdf exact for alpha=1 at x=0.5" {
+    const dist = try ToppLeone(f64).init(1.0);
+    // f(0.5) = 2*1*(1-0.5)*(2*0.5-0.5^2)^0 = 2*0.5*1 = 1.0
+    try expectApproxEqAbs(1.0, dist.pdf(0.5), 1e-10);
+}
+
+test "ToppLeone: pdf exact for alpha=2 at x=0.5" {
+    const dist = try ToppLeone(f64).init(2.0);
+    // f(0.5) = 2*2*0.5*0.75 = 1.5
+    try expectApproxEqAbs(1.5, dist.pdf(0.5), 1e-10);
+}
+
+test "ToppLeone: pdf is zero outside support" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectApproxEqAbs(0.0, dist.pdf(-0.1), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(1.1), 1e-12);
+}
+
+test "ToppLeone: pdf is non-negative on support" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "ToppLeone: logpdf equals log(pdf)" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 0.75, 0.99 };
+    for (x_vals) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        try expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+    }
+}
+
+test "ToppLeone: logpdf is -inf outside support" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-0.1)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(1.1)));
+}
+
+test "ToppLeone: pdf integrates to approximately 1" {
+    const dist = try ToppLeone(f64).init(2.0);
+    // Numerical integration via Simpson's rule
+    var sum: f64 = 0.0;
+    const n = 1000;
+    const h = 1.0 / @as(f64, @floatFromInt(n));
+    for (0..n + 1) |i| {
+        const x = @as(f64, @floatFromInt(i)) * h;
+        const w: f64 = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+        sum += w * dist.pdf(x);
+    }
+    const integral = (h / 3.0) * sum;
+    try expectApproxEqAbs(1.0, integral, 0.01);
+}
+
+test "ToppLeone: quantile exact for alpha=1 at p=0.75" {
+    const dist = try ToppLeone(f64).init(1.0);
+    // q(0.75) = 1 - sqrt(1 - 0.75^1) = 1 - sqrt(0.25) = 0.5
+    try expectApproxEqAbs(0.5, try dist.quantile(0.75), 1e-12);
+}
+
+test "ToppLeone: quantile exact for alpha=2 at p=0.5625" {
+    const dist = try ToppLeone(f64).init(2.0);
+    // q(0.5625) = 1 - sqrt(1 - 0.5625^0.5) = 1 - sqrt(0.25) = 0.5
+    try expectApproxEqAbs(0.5, try dist.quantile(0.5625), 1e-12);
+}
+
+test "ToppLeone: quantile boundary cases" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectApproxEqAbs(0.0, try dist.quantile(0.0), 1e-12);
+    try expectApproxEqAbs(1.0, try dist.quantile(1.0), 1e-12);
+}
+
+test "ToppLeone: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-10);
+    }
+}
+
+test "ToppLeone: quantile rejects invalid probabilities" {
+    const dist = try ToppLeone(f64).init(2.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "ToppLeone: sf equals 1 minus cdf" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "ToppLeone: mean exact for alpha=1" {
+    const dist = try ToppLeone(f64).init(1.0);
+    // Mean = 1/3 for alpha=1
+    try expectApproxEqAbs(1.0 / 3.0, dist.mean(), 1e-10);
+}
+
+test "ToppLeone: mode alpha=1 is 0" {
+    const dist = try ToppLeone(f64).init(1.0);
+    // mode = 1 - 1/sqrt(2*alpha-1) = 1 - 1/sqrt(1) = 0
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "ToppLeone: mode alpha=2 is 1-1/sqrt(3)" {
+    const dist = try ToppLeone(f64).init(2.0);
+    // mode = 1 - 1/sqrt(2*2-1) = 1 - 1/sqrt(3)
+    try expectApproxEqAbs(1.0 - 1.0 / @sqrt(3.0), dist.mode(), 1e-10);
+}
+
+test "ToppLeone: mode alpha<1 is 0" {
+    const dist = try ToppLeone(f64).init(0.5);
+    // mode = 0 for alpha < 1
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "ToppLeone: variance is positive" {
+    const alphas = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (alphas) |alpha| {
+        const dist = try ToppLeone(f64).init(alpha);
+        try testing.expect(dist.variance() > 0.0);
+    }
+}
+
+test "ToppLeone: f32 support basic operations" {
+    const dist = try ToppLeone(f32).init(2.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0.0 and q <= 1.0);
+}
+
+test "ToppLeone: f32 quantile roundtrip" {
+    const dist = try ToppLeone(f32).init(2.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
+
+test "ToppLeone: sample is in [0, 1] and finite" {
+    const dist = try ToppLeone(f64).init(2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "ToppLeone: empirical sample mean converges to theoretical" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const expected_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(expected_mean, empirical, 0.05);
+}
+
+test "ToppLeone: higher alpha shifts cdf right (stochastic dominance)" {
+    const dist_1 = try ToppLeone(f64).init(1.0);
+    const dist_2 = try ToppLeone(f64).init(2.0);
+    const x = 0.5;
+    // Higher alpha → CDF shifts right (smaller CDF at fixed x in (0,1), since u^α decreases for u<1)
+    try testing.expect(dist_2.cdf(x) < dist_1.cdf(x));
+}
+
+test "ToppLeone: quantile(0.5) gives median with cdf(median) ≈ 0.5" {
+    const dist = try ToppLeone(f64).init(2.0);
+    const median = try dist.quantile(0.5);
+    try expectApproxEqAbs(0.5, dist.cdf(median), 1e-10);
 }
