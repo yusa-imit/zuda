@@ -1,3 +1,25 @@
+**Session 654 Update (2026-06-10) — FEATURE MODE:**
+
+✅ **ToppLeone Distribution** — 64th total, 49th continuous — commit 204aa23
+- **Mode**: FEATURE MODE (counter: 654)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: ToppLeone(α) — bounded [0,1] distribution
+  * Parameter: α > 0 (shape); support: [0, 1]
+  * CDF: (2x-x²)^α = (1-(1-x)²)^α — exact closed form
+  * PDF: 2α(1-x)(2x-x²)^(α-1)
+  * Quantile: x = 1 - √(1 - p^(1/α)) — exact closed form; O(1) sampling via inversion
+  * Mode: 1-1/√(2α-1) for α≥1; 0 for 0<α<1
+  * Mean: 1 - (√π/2)·exp(logΓ(α+1) - logΓ(α+3/2))
+  * Variance: E[X²] - mean² where E[X²] = 1 - √π·exp(logΓ(α+1)-logΓ(α+3/2)) + 1/(α+1)
+  * Entropy: numerical Simpson's rule (no closed form)
+  * Note: DistributionError.OutOfSupport added for validateValue (alongside existing OutOfDomain)
+  * Special case: α=1 → CDF=2x-x²; mean=1/3; mode=0
+  * Stochastic dominance: higher α → CDF shifts right (u^α decreases for u∈(0,1))
+- **Tests**: 39 tests all passing (exit code 0)
+- **Distribution count**: 64 total (49 continuous + 15 discrete)
+- **Next Priority**: NoncentralT or ReciprocalInverseGaussian or GompertzMakehamLaw
+
 **Session 653 Update (2026-06-10) — FEATURE MODE:**
 
 ✅ **NoncentralChiSquared Distribution** — 63rd total, 48th continuous — commit dc5109f
