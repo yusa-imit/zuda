@@ -1,3 +1,16 @@
+**Session 650 Update (2026-06-09) — STABILIZATION MODE:**
+
+✅ **ALL SYSTEMS GREEN** — bug fix committed
+- **Mode**: STABILIZATION (counter: 650)
+- **CI Status**: ✅ GREEN (all 5 recent runs successful)
+- **Open Issues**: 0
+- **Cross-Compilation**: ✅ All 6 targets pass
+- **Bug Fixed**: Logistic.logpdf overflow for x << μ — softplus numerically stable form applied
+  * When neg_z = -(x-μ)/s > 0: use `neg_z + log1p(exp(-neg_z))` instead of `log1p(exp(neg_z))`
+- **Test Quality Audit**: LogUniform, Arcsine, Logistic — all PASS (validate, validateValue, Big-O docs, exact formulas)
+- **Distribution count**: 60 total (45 continuous + 15 discrete)
+- **Next Priority**: InverseGamma or Chi distribution (FEATURE mode)
+
 **Session 649 Update (2026-06-06) — FEATURE MODE:**
 
 ✅ **Logistic Distribution** — 60th total, 45th continuous — commit f9438e4
