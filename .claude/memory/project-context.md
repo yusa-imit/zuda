@@ -1,3 +1,30 @@
+**Session 652 Update (2026-06-09) — FEATURE MODE:**
+
+✅ **Chi Distribution** — 62nd total, 47th continuous — commit acaecb6
+- **Mode**: FEATURE MODE (counter: 652)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: Chi(T) — generalization of HalfNormal, Rayleigh, Maxwell-Boltzmann
+  * Parameter: k > 0 (degrees of freedom, continuous); support: [0, ∞)
+  * X ~ Chi(k) iff X = √(X₁²+...+Xₖ²), Xᵢ ~ N(0,1) i.i.d. (equivalently X = √(ChiSquared(k)))
+  * PDF: 2^(1-k/2) · x^(k-1) · exp(-x²/2) / Γ(k/2)
+  * CDF: regularizedGammaP(k/2, x²/2) — exact closed form
+  * CDF exact for k=2: 1 - exp(-x²/2)
+  * Quantile: bisection; NaN guard: !(p≥0 && p≤1)
+  * Mean: √2 · exp(logΓ((k+1)/2) - logΓ(k/2))
+  * Variance: k - mean²
+  * Mode: √(k-1) for k≥1; 0 otherwise
+  * Entropy: logΓ(k/2) + k/2 - 0.5·ln(2) - (k-1)/2·ψ(k/2)
+  * Sample: sqrt(2·Gamma(k/2, rate=1)) via Marsaglia-Tsang + boost trick for k/2 < 1
+  * Key relationships: Chi(1) = HalfNormal(σ=1); Chi(2) = Rayleigh(σ=1); Chi(3) = MaxwellBoltzmann(a=1)
+  * Chi(1).mean = √(2/π); Chi(2).mean = √(π/2); Chi(3).mean = 2√(2/π)
+  * Test fix: pdf(100) underflows to 0 (exp(-5000)) — test max x=15, not 100
+  * Test fix: cdf tolerance 1e-10 not 1e-12 (regularizedGammaP precision)
+  * Test fix: quantile roundtrip excludes x=10 (cdf→1.0 → inf); q_large > 3.0 not 5.0
+- **Tests**: 37 tests all passing (exit code 0)
+- **Distribution count**: 62 total (47 continuous + 15 discrete)
+- **Next Priority**: Reciprocal Inverse Gaussian or NoncentralChiSquared or Gumbel-Softmax
+
 **Session 651 Update (2026-06-09) — FEATURE MODE:**
 
 ✅ **InverseGamma Distribution** — 61st total, 46th continuous — commit e33e407
