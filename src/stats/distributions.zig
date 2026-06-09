@@ -32292,3 +32292,547 @@ test "Logistic: entropy = ln(s) + 2 (s=0.1 can be negative, formula is correct)"
     const dist_large = try Logistic(f64).init(-5.0, 10.0);
     try testing.expect(dist_large.entropy() > 0.0);
 }
+
+// ============================================================================
+// InverseGamma Distribution
+// ============================================================================
+// InverseGamma(α, β): if X ~ InverseGamma(α, β), then 1/X ~ Gamma(α, rate=β).
+// Conjugate prior for the variance of a Normal distribution in Bayesian analysis.
+//
+// Parameters: α > 0 (shape), β > 0 (scale)
+// Support: x ∈ (0, ∞)
+// PDF: (β^α / Γ(α)) · x^(-α-1) · exp(-β/x)
+// CDF: 1 - P(α, β/x) where P is the regularized lower incomplete gamma
+// Mean: β/(α-1) for α > 1, else undefined
+// Variance: β²/((α-1)²(α-2)) for α > 2, else undefined
+// Mode: β/(α+1)
+// Entropy: α + ln(β) + logΓ(α) - (1+α)·ψ(α)
+
+pub fn InverseGamma(comptime T: type) type {
+    return struct {
+        alpha: T, // shape α > 0
+        beta: T, // scale β > 0
+
+        const Self = @This();
+
+        /// Create an InverseGamma distribution with shape α and scale β.
+        ///
+        /// Errors: α ≤ 0, β ≤ 0, or non-finite parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (beta <= 0.0 or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta = beta };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; α, β) = (β^α / Γ(α)) · x^(-α-1) · exp(-β/x) for x > 0; 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = α·ln(β) - logΓ(α) - (α+1)·ln(x) - β/x; -∞ for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return self.alpha * @log(self.beta) - logGamma(self.alpha) - (self.alpha + 1.0) * @log(x) - self.beta / x;
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; α, β) = 1 - P(α, β/x) where P is the regularized lower incomplete gamma; 0 for x ≤ 0
+        ///
+        /// Time: O(1) with series/CF approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return 1.0 - regularizedGammaP(self.alpha, self.beta / x);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; α, β) = P(α, β/x) where P is the regularized lower incomplete gamma; 1 for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return regularizedGammaP(self.alpha, self.beta / x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection on the CDF (no closed form exists).
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(log(1/ε)) for tolerance ε | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Start from mode as initial upper bracket
+            var low: T = 0.0;
+            var high: T = self.beta / (self.alpha + 1.0); // mode
+
+            // Expand upper bracket until CDF(high) >= p
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+                if (!math.isFinite(high)) return math.inf(T);
+            }
+
+            const tolerance: T = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                if (mid <= 0.0) break;
+                const cdf_mid = self.cdf(mid);
+                if (@abs(cdf_mid - p) < tolerance) return mid;
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+                if (high - low < tolerance) return (low + high) / 2.0;
+            }
+            return (low + high) / 2.0;
+        }
+
+        /// Mode of the distribution: β / (α + 1)
+        ///
+        /// The peak of the PDF, always less than the mean for α > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.beta / (self.alpha + 1.0);
+        }
+
+        /// Median of the distribution (no closed form, computed via quantile(0.5))
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn median(self: Self) DistributionError!T {
+            return self.quantile(0.5);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = β / (α - 1) for α > 1, else NaN (undefined)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.alpha <= 1.0) return math.nan(T);
+            return self.beta / (self.alpha - 1.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = β² / ((α-1)² · (α-2)) for α > 2, else NaN (undefined)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.alpha <= 2.0) return math.nan(T);
+            const a_minus_1 = self.alpha - 1.0;
+            return (self.beta * self.beta) / (a_minus_1 * a_minus_1 * (self.alpha - 2.0));
+        }
+
+        /// Differential entropy: α + ln(β) + logΓ(α) - (1+α)·ψ(α)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return self.alpha + @log(self.beta) + logGamma(self.alpha) - (1.0 + self.alpha) * digamma(T, self.alpha);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse sampling: X = 1/Y where Y ~ Gamma(α, rate=β).
+        /// Marsaglia-Tsang algorithm for Y, with boost trick for α < 1.
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Generate Y ~ Gamma(alpha, rate=beta) using Marsaglia-Tsang (works for alpha >= 1).
+            // For alpha < 1, use boost: generate Gamma(alpha+1), then multiply by U^(1/alpha).
+            const alpha_mt = if (self.alpha >= 1.0) self.alpha else self.alpha + 1.0;
+            const d = alpha_mt - 1.0 / 3.0;
+            const c = 1.0 / @sqrt(9.0 * d);
+
+            var gamma_val: T = undefined;
+            while (true) {
+                var z: T = undefined;
+                var v: T = undefined;
+                while (true) {
+                    const ra = rng.float(T);
+                    const rb = rng.float(T);
+                    z = @sqrt(-2.0 * @log(ra)) * @cos(2.0 * math.pi * rb);
+                    v = 1.0 + c * z;
+                    if (v > 0.0) break;
+                }
+                v = v * v * v;
+                const rc = rng.float(T);
+                if (rc < 1.0 - 0.0331 * z * z * z * z) {
+                    gamma_val = d * v / self.beta;
+                    break;
+                }
+                if (@log(rc) < 0.5 * z * z + d * (1.0 - v + @log(v))) {
+                    gamma_val = d * v / self.beta;
+                    break;
+                }
+            }
+
+            // Boost trick for alpha < 1: X = Y · U^(1/alpha) where Y ~ Gamma(alpha+1)
+            if (self.alpha < 1.0) {
+                const rb = rng.float(T);
+                gamma_val *= std.math.pow(T, rb, 1.0 / self.alpha);
+            }
+
+            return 1.0 / gamma_val;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.beta <= 0.0 or !math.isFinite(self.beta)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (0, ∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            _ = self;
+            if (x <= 0.0 or !math.isFinite(x)) return error.OutOfDomain;
+        }
+    };
+}
+
+test "InverseGamma: init validation" {
+    _ = try InverseGamma(f64).init(3.0, 1.0);
+    _ = try InverseGamma(f64).init(0.5, 2.0);
+    _ = try InverseGamma(f64).init(1.0, 1.0);
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(0.0, 1.0));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(-1.0, 1.0));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(1.0, 0.0));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(1.0, -1.0));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(math.nan(f64), 1.0));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(1.0, math.nan(f64)));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(math.inf(f64), 1.0));
+    try expectError(error.InvalidParameter, InverseGamma(f64).init(1.0, math.inf(f64)));
+}
+
+test "InverseGamma: pdf exact values for simple cases" {
+    // InverseGamma(1, 1): PDF(x) = x^(-2) · exp(-1/x); PDF(1) = e^(-1)
+    const dist_1_1 = try InverseGamma(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(@exp(-1.0), dist_1_1.pdf(1.0), 1e-12);
+
+    // InverseGamma(3, 1): PDF(x) = (1/2) · x^(-4) · exp(-1/x); PDF(1) = e^(-1)/2
+    const dist_3_1 = try InverseGamma(f64).init(3.0, 1.0);
+    try expectApproxEqAbs(@exp(-1.0) / 2.0, dist_3_1.pdf(1.0), 1e-12);
+}
+
+test "InverseGamma: pdf positive on support" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 100.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "InverseGamma: pdf zero for non-positive x" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+}
+
+test "InverseGamma: pdf integrates to approximately 1" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    var sum: f64 = 0.0;
+    const dx = 0.001;
+    var x: f64 = 0.001;
+    while (x < 20.0) : (x += dx) {
+        sum += dist.pdf(x) * dx;
+    }
+    try expectApproxEqAbs(1.0, sum, 0.02);
+}
+
+test "InverseGamma: logpdf exact values" {
+    // InverseGamma(1, 1): logpdf(1) = -1
+    const dist_1_1 = try InverseGamma(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(-1.0, dist_1_1.logpdf(1.0), 1e-12);
+
+    // InverseGamma(3, 1): logpdf(1) = -1 - ln(2)
+    const dist_3_1 = try InverseGamma(f64).init(3.0, 1.0);
+    try expectApproxEqAbs(-1.0 - @log(2.0), dist_3_1.logpdf(1.0), 1e-12);
+}
+
+test "InverseGamma: logpdf minus inf for non-positive x" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "InverseGamma: logpdf equals log(pdf)" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-12);
+    }
+}
+
+test "InverseGamma: cdf monotone and bounded" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+    try testing.expect(dist.cdf(1e6) > 0.9999);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "InverseGamma: cdf exact value for InverseGamma(1,1)" {
+    // InverseGamma(1, 1): CDF(x) = e^(-1/x); CDF(1) = e^(-1)
+    const dist = try InverseGamma(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(@exp(-1.0), dist.cdf(1.0), 1e-10);
+}
+
+test "InverseGamma: cdf in [0, 1]" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e6 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "InverseGamma: sf = 1 - cdf" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "InverseGamma: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-8);
+    }
+}
+
+test "InverseGamma: quantile roundtrip quantile(cdf(x)) = x" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const q = try dist.quantile(dist.cdf(x));
+        try expectApproxEqAbs(x, q, 1e-7);
+    }
+}
+
+test "InverseGamma: quantile boundary cases" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try testing.expect((try dist.quantile(0.0)) == 0.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+    // Near-boundary: very small quantile should be positive and much less than mode
+    const q_small = try dist.quantile(0.0001);
+    try testing.expect(q_small > 0.0 and q_small < 0.2); // mode=0.25 for InverseGamma(3,1)
+    const q_large = try dist.quantile(0.9999);
+    try testing.expect(q_large > 10.0);
+}
+
+test "InverseGamma: quantile rejects invalid probabilities" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "InverseGamma: mode formula" {
+    // mode = β / (α + 1)
+    const dist_3_1 = try InverseGamma(f64).init(3.0, 1.0);
+    try expectApproxEqAbs(0.25, dist_3_1.mode(), 1e-12);
+
+    const dist_1_1 = try InverseGamma(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(0.5, dist_1_1.mode(), 1e-12);
+
+    const dist_5_2 = try InverseGamma(f64).init(5.0, 2.0);
+    try expectApproxEqAbs(1.0 / 3.0, dist_5_2.mode(), 1e-12);
+}
+
+test "InverseGamma: mode is PDF peak" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const m = dist.mode();
+    const dx = 0.001;
+    try testing.expect(dist.pdf(m) > dist.pdf(m - dx));
+    try testing.expect(dist.pdf(m) > dist.pdf(m + dx));
+}
+
+test "InverseGamma: mean defined only for alpha > 1" {
+    // mean = β / (α - 1)
+    const dist_3_1 = try InverseGamma(f64).init(3.0, 1.0);
+    try expectApproxEqAbs(0.5, dist_3_1.mean(), 1e-12);
+
+    const dist_5_2 = try InverseGamma(f64).init(5.0, 2.0);
+    try expectApproxEqAbs(0.5, dist_5_2.mean(), 1e-12);
+
+    const dist_1_1 = try InverseGamma(f64).init(1.0, 1.0);
+    try testing.expect(math.isNan(dist_1_1.mean()));
+
+    const dist_0_5 = try InverseGamma(f64).init(0.5, 2.0);
+    try testing.expect(math.isNan(dist_0_5.mean()));
+}
+
+test "InverseGamma: variance defined only for alpha > 2" {
+    // variance = β² / ((α-1)² · (α-2))
+    const dist_3_1 = try InverseGamma(f64).init(3.0, 1.0);
+    try expectApproxEqAbs(0.25, dist_3_1.variance(), 1e-12);
+
+    const dist_5_2 = try InverseGamma(f64).init(5.0, 2.0);
+    try expectApproxEqAbs(1.0 / 12.0, dist_5_2.variance(), 1e-12);
+
+    const dist_2_1 = try InverseGamma(f64).init(2.0, 1.0);
+    try testing.expect(math.isNan(dist_2_1.variance()));
+
+    const dist_1_5 = try InverseGamma(f64).init(1.5, 1.0);
+    try testing.expect(math.isNan(dist_1_5.variance()));
+}
+
+test "InverseGamma: right-skewed — mode < median < mean" {
+    const dist = try InverseGamma(f64).init(5.0, 2.0);
+    const m = dist.mode();
+    const med = try dist.median();
+    const mn = dist.mean();
+    try testing.expect(m < med);
+    try testing.expect(med < mn);
+}
+
+test "InverseGamma: entropy is finite and increases with beta" {
+    const dist_1 = try InverseGamma(f64).init(3.0, 1.0);
+    const dist_2 = try InverseGamma(f64).init(3.0, 2.0);
+    const dist_3 = try InverseGamma(f64).init(3.0, 3.0);
+    try testing.expect(math.isFinite(dist_1.entropy()));
+    try testing.expect(dist_2.entropy() > dist_1.entropy());
+    try testing.expect(dist_3.entropy() > dist_2.entropy());
+}
+
+test "InverseGamma: entropy formula spot check" {
+    // For InverseGamma(3, 1): entropy = 3 + ln(1) + ln(Γ(3)) - 4·ψ(3)
+    //   = 3 + 0 + ln(2) - 4·(1.5 - γ_E)  where γ_E ≈ 0.5772156649
+    //   ψ(3) = ψ(1) + 1 + 1/2 = -γ_E + 1 + 0.5 = 1.5 - γ_E ≈ 0.9227843
+    //   entropy ≈ 3 + 0.6931 - 4*0.9228 ≈ 3 + 0.6931 - 3.6911 ≈ 0.002
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const gamma_e = 0.5772156649015329;
+    const psi_3 = 1.5 - gamma_e;
+    const expected = 3.0 + 0.0 + @log(2.0) - 4.0 * psi_3;
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-7);
+}
+
+test "InverseGamma: sample is positive and finite" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "InverseGamma: empirical sample mean converges to theoretical" {
+    // InverseGamma(5, 2): mean = 2/4 = 0.5
+    const dist = try InverseGamma(f64).init(5.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(0.5, empirical, 0.05);
+}
+
+test "InverseGamma: sample also works for alpha < 1" {
+    const dist = try InverseGamma(f64).init(0.5, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "InverseGamma: validate passes for valid params" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try dist.validate();
+}
+
+test "InverseGamma: validateValue rejects non-positive and non-finite x" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(0.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-1.0));
+    try expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+    try expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+}
+
+test "InverseGamma: validateValue accepts positive finite x" {
+    const dist = try InverseGamma(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e6 };
+    for (x_vals) |x| {
+        try dist.validateValue(x);
+    }
+}
+
+test "InverseGamma: f32 support" {
+    const dist = try InverseGamma(f32).init(3.0, 1.0);
+    try expectApproxEqAbs(0.25, dist.mode(), 1e-5);
+    try expectApproxEqAbs(0.5, dist.mean(), 1e-5);
+    try expectApproxEqAbs(0.25, dist.variance(), 1e-5);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+test "InverseGamma: f32 quantile roundtrip" {
+    const dist = try InverseGamma(f32).init(5.0, 2.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-5);
+    }
+}
+
+test "InverseGamma: scaling beta scales mode and mean" {
+    const dist_1 = try InverseGamma(f64).init(3.0, 1.0);
+    const dist_2 = try InverseGamma(f64).init(3.0, 2.0);
+    // mode = β/(α+1): doubling β doubles mode
+    try expectApproxEqAbs(2.0 * dist_1.mode(), dist_2.mode(), 1e-12);
+    // mean = β/(α-1): doubling β doubles mean
+    try expectApproxEqAbs(2.0 * dist_1.mean(), dist_2.mean(), 1e-12);
+}
+
+test "InverseGamma: increasing alpha tightens distribution" {
+    const dist_small = try InverseGamma(f64).init(3.0, 1.0);
+    const dist_large = try InverseGamma(f64).init(100.0, 1.0);
+    // Variance decreases with alpha
+    try testing.expect(dist_small.variance() > dist_large.variance());
+    // mode = β/(α+1) decreases with alpha (for fixed β)
+    try testing.expect(dist_small.mode() > dist_large.mode());
+}
+
+test "InverseGamma: cdf(mode) < 0.5 (right-skewed distribution)" {
+    const dist = try InverseGamma(f64).init(5.0, 2.0);
+    try testing.expect(dist.cdf(dist.mode()) < 0.5);
+}
