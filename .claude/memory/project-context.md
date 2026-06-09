@@ -1,3 +1,25 @@
+**Session 653 Update (2026-06-10) — FEATURE MODE:**
+
+✅ **NoncentralChiSquared Distribution** — 63rd total, 48th continuous — commit dc5109f
+- **Mode**: FEATURE MODE (counter: 653)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: NoncentralChiSquared(T) — X = Σᵢ(Yᵢ+μᵢ)² where Yᵢ~N(0,1), λ=Σμᵢ²
+  * Parameters: k > 0 (degrees of freedom), lambda >= 0 (noncentrality); support: (0, ∞)
+  * Special case: lambda=0 → ChiSquared(k) (exact formulas used)
+  * PDF/CDF: Poisson-mixture series: Σ w_j · f_χ²_{k+2j}(x) where w_j = Poisson(λ/2) PMF
+  * CDF exact via regularizedGammaP(k/2+j, x/2) accumulation
+  * Smart j_start: series starts at floor(λ/2 - 6√(λ/2)) to avoid underflow for large λ
+  * Mean = k + λ; Variance = 2(k + 2λ); Mode ≈ max(0, k+λ-2)
+  * Entropy: approximate formula (no closed form) via 0.5·log(2πe(k+λ)) + ψ(k/2)
+  * Sample: M ~ Poisson(λ/2) via Knuth inter-arrival, then 2·Gamma(k/2+M) Marsaglia-Tsang
+  * Bug fixes applied: (1) lambda=0 → M=0 always (Poisson rate 0); (2) boost trick for alpha<1
+  * CDF exact test: NoncentralChiSquared(4,0).cdf(4) = 1-3e^{-2} ≈ 0.59399 (tolerance 1e-6)
+  * CDF exact test: NoncentralChiSquared(2,0).cdf(2) = 1-e^{-1} ≈ 0.63212 (tolerance 1e-6)
+- **Tests**: 37 tests all passing (exit code 0)
+- **Distribution count**: 63 total (48 continuous + 15 discrete)
+- **Next Priority**: NoncentralT or ReciprocalInverseGaussian or Topp-Leone
+
 **Session 652 Update (2026-06-09) — FEATURE MODE:**
 
 ✅ **Chi Distribution** — 62nd total, 47th continuous — commit acaecb6
