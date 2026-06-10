@@ -36237,3 +36237,729 @@ test "HalfLogistic: f32 quantile roundtrip" {
         try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-3);
     }
 }
+
+/// Irwin-Hall distribution: sum of n independent Uniform(0,1) random variables.
+///
+/// Parameters: n >= 1 (positive integer number of summands)
+/// Support: [0, n]
+/// Mean = n/2, Variance = n/12
+pub fn IrwinHall(comptime T: type) type {
+    return struct {
+        n: u32,
+
+        const Self = @This();
+
+        /// Compute binomial coefficient C(n, k) as floating point
+        fn binomCoeff(n: u32, k: u32) T {
+            if (k == 0 or k == n) return 1;
+            const m = @min(k, n - k);
+            var result: T = 1;
+            for (0..m) |i| {
+                result = result * @as(T, @floatFromInt(n - @as(u32, @intCast(i))));
+                result = result / @as(T, @floatFromInt(i + 1));
+            }
+            return result;
+        }
+
+        /// Compute n! as floating point
+        fn factorialF(n: u32) T {
+            var result: T = 1;
+            var i: u32 = 1;
+            while (i <= n) : (i += 1) {
+                result *= @as(T, @floatFromInt(i));
+            }
+            return result;
+        }
+
+        /// Create an Irwin-Hall distribution with n summands.
+        ///
+        /// Errors: n == 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(n: u32) DistributionError!Self {
+            if (n == 0) return error.InvalidParameter;
+            return Self{ .n = n };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; n) = (1/(n-1)!) * Σ_{k=0}^{min(⌊x⌋, n-1)} (-1)^k * C(n,k) * (x-k)^(n-1)
+        /// Returns 0 if x < 0 or x > n
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            if (x < 0.0 or x > n_f) return 0.0;
+
+            const floor_x = @as(u32, @intFromFloat(@floor(x)));
+            const upper = @min(floor_x, self.n - 1);
+            var sum: T = 0;
+            const fact_n_minus_1 = factorialF(self.n - 1);
+
+            for (0..@as(usize, upper + 1)) |ki| {
+                const k = @as(u32, @intCast(ki));
+                const binom = binomCoeff(self.n, k);
+                const exponent = @as(T, @floatFromInt(self.n - 1));
+                const term = binom * math.pow(T, x - @as(T, @floatFromInt(k)), exponent);
+                if (k % 2 == 0) {
+                    sum += term;
+                } else {
+                    sum -= term;
+                }
+            }
+            return sum / fact_n_minus_1;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; n) = log(pdf(x)), returns -∞ if pdf(x) = 0
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; n) = (1/n!) * Σ_{k=0}^{min(⌊x⌋, n-1)} (-1)^k * C(n,k) * (x-k)^n
+        /// Returns 0 if x <= 0, returns 1 if x >= n
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            if (x <= 0.0) return 0.0;
+            if (x >= n_f) return 1.0;
+
+            const floor_x = @as(u32, @intFromFloat(@floor(x)));
+            const upper = @min(floor_x, self.n - 1);
+            var sum: T = 0;
+            const fact_n = factorialF(self.n);
+
+            for (0..@as(usize, upper + 1)) |ki| {
+                const k = @as(u32, @intCast(ki));
+                const binom = binomCoeff(self.n, k);
+                const exponent = @as(T, @floatFromInt(self.n));
+                const term = binom * math.pow(T, x - @as(T, @floatFromInt(k)), exponent);
+                if (k % 2 == 0) {
+                    sum += term;
+                } else {
+                    sum -= term;
+                }
+            }
+            return sum / fact_n;
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) via bisection
+        ///
+        /// Returns x such that P(X ≤ x) = p
+        ///
+        /// Errors: p < 0, p > 1, or p is NaN
+        ///
+        /// Time: O(n * log(n/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidParameter;
+            if (p == 0.0) return 0.0;
+            const n_f = @as(T, @floatFromInt(self.n));
+            if (p == 1.0) return n_f;
+
+            var lo: T = 0.0;
+            var hi: T = n_f;
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = n/2 (distribution is symmetric)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) / 2.0;
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// Mean = n/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) / 2.0;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Variance = n/12
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) / 12.0;
+        }
+
+        /// Differential entropy (numerical integration via Simpson's rule)
+        ///
+        /// Time: O(n * steps) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            const steps: u32 = 1000;
+            const eps: T = 1e-9;
+            const a = eps;
+            const b = n_f - eps;
+            const h = (b - a) / @as(T, @floatFromInt(steps));
+
+            var sum: T = 0.0;
+            var i: u32 = 0;
+            while (i <= steps) : (i += 1) {
+                const x = a + @as(T, @floatFromInt(i)) * h;
+                const fx = self.pdf(x);
+                const term = if (fx > 0.0) -fx * @log(fx) else 0.0;
+                const weight: T = if (i == 0 or i == steps)
+                    1.0
+                else if (i % 2 == 1)
+                    4.0
+                else
+                    2.0;
+                sum += weight * term;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Samples the sum of n independent Uniform(0,1) random variables
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var sum: T = 0.0;
+            for (0..self.n) |_| {
+                sum += rng.float(T);
+            }
+            return sum;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.n == 0) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// IrwinHall Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "IrwinHall: init with n=1 succeeds" {
+    const dist = try IrwinHall(f64).init(1);
+    try testing.expect(dist.n == 1);
+}
+
+test "IrwinHall: init with n=2 succeeds" {
+    const dist = try IrwinHall(f64).init(2);
+    try testing.expect(dist.n == 2);
+}
+
+test "IrwinHall: init with n=5 succeeds" {
+    const dist = try IrwinHall(f64).init(5);
+    try testing.expect(dist.n == 5);
+}
+
+test "IrwinHall: init with n=10 succeeds" {
+    const dist = try IrwinHall(f64).init(10);
+    try testing.expect(dist.n == 10);
+}
+
+test "IrwinHall: init with n=100 succeeds" {
+    const dist = try IrwinHall(f64).init(100);
+    try testing.expect(dist.n == 100);
+}
+
+test "IrwinHall: init with n=0 returns InvalidParameter" {
+    const result = IrwinHall(f64).init(0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF Tests
+
+test "IrwinHall: pdf(0.5; n=1) = 1.0 exactly" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(-0.1; n=1) = 0.0" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = dist.pdf(-0.1);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(1.1; n=1) = 0.0" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = dist.pdf(1.1);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(0.0; n=1) = 1.0 at boundary" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(1.0; n=1) = 1.0 at boundary" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(0.5; n=2) = 0.5" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(0.5, p, 1e-12);
+}
+
+test "IrwinHall: pdf(1.0; n=2) = 1.0 at peak" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(1.5; n=2) = 0.5" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = dist.pdf(1.5);
+    try testing.expectApproxEqAbs(0.5, p, 1e-12);
+}
+
+test "IrwinHall: pdf(2.5; n=2) = 0.0 outside support" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = dist.pdf(2.5);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(0.0; n=2) = 0.0 at lower boundary" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf(2.0; n=2) = 0.0 at upper boundary" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "IrwinHall: pdf symmetry for n=2" {
+    const dist = try IrwinHall(f64).init(2);
+    const p1 = dist.pdf(0.3);
+    const p2 = dist.pdf(1.7);
+    try testing.expectApproxEqAbs(p1, p2, 1e-12);
+}
+
+test "IrwinHall: pdf symmetry for n=3" {
+    const dist = try IrwinHall(f64).init(3);
+    const p1 = dist.pdf(0.5);
+    const p2 = dist.pdf(2.5);
+    try testing.expectApproxEqAbs(p1, p2, 1e-12);
+}
+
+test "IrwinHall: pdf at center for n=3" {
+    const dist = try IrwinHall(f64).init(3);
+    const p = dist.pdf(1.5);
+    try testing.expect(p > 0.0 and math.isFinite(p));
+}
+
+// CDF Tests
+
+test "IrwinHall: cdf(0.0; n=1) = 0.0" {
+    const dist = try IrwinHall(f64).init(1);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-12);
+}
+
+test "IrwinHall: cdf(0.5; n=1) = 0.5" {
+    const dist = try IrwinHall(f64).init(1);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "IrwinHall: cdf(1.0; n=1) = 1.0" {
+    const dist = try IrwinHall(f64).init(1);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-12);
+}
+
+test "IrwinHall: cdf(0.5; n=2) = 0.125" {
+    const dist = try IrwinHall(f64).init(2);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.125, c, 1e-12);
+}
+
+test "IrwinHall: cdf(1.0; n=2) = 0.5" {
+    const dist = try IrwinHall(f64).init(2);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "IrwinHall: cdf(1.5; n=2) = 0.875" {
+    const dist = try IrwinHall(f64).init(2);
+    const c = dist.cdf(1.5);
+    try testing.expectApproxEqAbs(0.875, c, 1e-12);
+}
+
+test "IrwinHall: cdf(2.0; n=2) = 1.0" {
+    const dist = try IrwinHall(f64).init(2);
+    const c = dist.cdf(2.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-12);
+}
+
+test "IrwinHall: cdf symmetry for n=2" {
+    const dist = try IrwinHall(f64).init(2);
+    const cdf_half = dist.cdf(0.5);
+    const cdf_one_half = dist.cdf(1.5);
+    try testing.expectApproxEqAbs(cdf_half, 1.0 - cdf_one_half, 1e-12);
+}
+
+test "IrwinHall: cdf(1.5; n=3) approximately 0.5" {
+    const dist = try IrwinHall(f64).init(3);
+    const c = dist.cdf(1.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "IrwinHall: cdf negative x" {
+    const dist = try IrwinHall(f64).init(2);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-12);
+}
+
+test "IrwinHall: cdf large x beyond support" {
+    const dist = try IrwinHall(f64).init(2);
+    const c = dist.cdf(100.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-12);
+}
+
+test "IrwinHall: cdf monotonically increasing" {
+    const dist = try IrwinHall(f64).init(3);
+    var prev_cdf: f64 = 0.0;
+    var x: f64 = 0.0;
+    while (x <= 3.0) : (x += 0.1) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+// Mean and Variance Tests
+
+test "IrwinHall: mean(n=1) = 0.5" {
+    const dist = try IrwinHall(f64).init(1);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+test "IrwinHall: mean(n=2) = 1.0" {
+    const dist = try IrwinHall(f64).init(2);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.0, m, 1e-12);
+}
+
+test "IrwinHall: mean(n=3) = 1.5" {
+    const dist = try IrwinHall(f64).init(3);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.5, m, 1e-12);
+}
+
+test "IrwinHall: mean(n=4) = 2.0" {
+    const dist = try IrwinHall(f64).init(4);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(2.0, m, 1e-12);
+}
+
+test "IrwinHall: variance(n=1) = 1/12" {
+    const dist = try IrwinHall(f64).init(1);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 12.0, v, 1e-12);
+}
+
+test "IrwinHall: variance(n=2) = 2/12" {
+    const dist = try IrwinHall(f64).init(2);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.0 / 12.0, v, 1e-12);
+}
+
+test "IrwinHall: variance(n=3) = 3/12" {
+    const dist = try IrwinHall(f64).init(3);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(3.0 / 12.0, v, 1e-12);
+}
+
+test "IrwinHall: variance(n=4) = 4/12" {
+    const dist = try IrwinHall(f64).init(4);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(4.0 / 12.0, v, 1e-12);
+}
+
+// Quantile Tests
+
+test "IrwinHall: quantile(0.0; n=1) = 0.0" {
+    const dist = try IrwinHall(f64).init(1);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-6);
+}
+
+test "IrwinHall: quantile(0.5; n=1) = 0.5" {
+    const dist = try IrwinHall(f64).init(1);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.5, q, 1e-6);
+}
+
+test "IrwinHall: quantile(1.0; n=1) = 1.0" {
+    const dist = try IrwinHall(f64).init(1);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-6);
+}
+
+test "IrwinHall: quantile(0.5; n=2) = 1.0" {
+    const dist = try IrwinHall(f64).init(2);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(1.0, q, 1e-6);
+}
+
+test "IrwinHall: quantile(0.5; n=3) = 1.5" {
+    const dist = try IrwinHall(f64).init(3);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(1.5, q, 1e-6);
+}
+
+test "IrwinHall: quantile(0.5; n=4) = 2.0" {
+    const dist = try IrwinHall(f64).init(4);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(2.0, q, 1e-6);
+}
+
+test "IrwinHall: quantile(0.0; n=2) = 0.0" {
+    const dist = try IrwinHall(f64).init(2);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-6);
+}
+
+test "IrwinHall: quantile(1.0; n=2) = 2.0" {
+    const dist = try IrwinHall(f64).init(2);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(2.0, q, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=1 p=0.1" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=1 p=0.3" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=1 p=0.7" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=1 p=0.9" {
+    const dist = try IrwinHall(f64).init(1);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=2 p=0.1" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=2 p=0.5" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile roundtrip for n=2 p=0.9" {
+    const dist = try IrwinHall(f64).init(2);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "IrwinHall: quantile(-0.1) returns InvalidParameter" {
+    const dist = try IrwinHall(f64).init(1);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "IrwinHall: quantile(1.1) returns InvalidParameter" {
+    const dist = try IrwinHall(f64).init(1);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "IrwinHall: quantile(NaN) returns InvalidParameter" {
+    const dist = try IrwinHall(f64).init(1);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Sample Tests
+
+test "IrwinHall: sample returns value in support for n=1" {
+    const dist = try IrwinHall(f64).init(1);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "IrwinHall: sample returns value in support for n=2" {
+    const dist = try IrwinHall(f64).init(2);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 2.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "IrwinHall: sample returns value in support for n=4" {
+    const dist = try IrwinHall(f64).init(4);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 4.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "IrwinHall: sample returns value in support for n=10" {
+    const dist = try IrwinHall(f64).init(10);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 10.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "IrwinHall: empirical sample mean converges to analytical mean for n=1" {
+    const dist = try IrwinHall(f64).init(1);
+    const analytical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(analytical_mean, empirical_mean, 0.05);
+}
+
+test "IrwinHall: empirical sample mean converges to analytical mean for n=2" {
+    const dist = try IrwinHall(f64).init(2);
+    const analytical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(analytical_mean, empirical_mean, 0.05);
+}
+
+test "IrwinHall: empirical sample mean converges to analytical mean for n=4" {
+    const dist = try IrwinHall(f64).init(4);
+    const analytical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(analytical_mean, empirical_mean, 0.1);
+}
+
+// Validate Tests
+
+test "IrwinHall: validate on n=1" {
+    const dist = try IrwinHall(f64).init(1);
+    try dist.validate();
+}
+
+test "IrwinHall: validate on n=2" {
+    const dist = try IrwinHall(f64).init(2);
+    try dist.validate();
+}
+
+test "IrwinHall: validate on n=5" {
+    const dist = try IrwinHall(f64).init(5);
+    try dist.validate();
+}
+
+test "IrwinHall: validate on n=10" {
+    const dist = try IrwinHall(f64).init(10);
+    try dist.validate();
+}
+
+// f32 Tests
+
+test "IrwinHall: f32 support basic operations" {
+    const dist = try IrwinHall(f32).init(2);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0.0 and q <= 2.0);
+}
+
+test "IrwinHall: f32 quantile roundtrip" {
+    const dist = try IrwinHall(f32).init(2);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
