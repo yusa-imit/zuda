@@ -37060,3 +37060,1009 @@ test "IrwinHall: f32 quantile roundtrip" {
         try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-3);
     }
 }
+
+// ============================================================================
+// Bates Distribution
+// Bates(n): mean of n independent Uniform(0,1) random variables
+// Support: [0, 1]
+// ============================================================================
+
+pub fn Bates(comptime T: type) type {
+    return struct {
+        n: u32,
+
+        const Self = @This();
+
+        /// Compute binomial coefficient C(n, k) as floating point
+        fn binomCoeff(n: u32, k: u32) T {
+            if (k == 0 or k == n) return 1;
+            const m = @min(k, n - k);
+            var result: T = 1;
+            for (0..m) |i| {
+                result = result * @as(T, @floatFromInt(n - @as(u32, @intCast(i))));
+                result = result / @as(T, @floatFromInt(i + 1));
+            }
+            return result;
+        }
+
+        /// Compute n! as floating point
+        fn factorialF(n: u32) T {
+            var result: T = 1;
+            var i: u32 = 1;
+            while (i <= n) : (i += 1) {
+                result *= @as(T, @floatFromInt(i));
+            }
+            return result;
+        }
+
+        /// Create a Bates distribution with n summands.
+        /// X = (U₁ + U₂ + ... + Uₙ) / n, Uᵢ ~ Uniform(0,1)
+        ///
+        /// Errors: n == 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(n: u32) DistributionError!Self {
+            if (n == 0) return error.InvalidParameter;
+            return Self{ .n = n };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; n) = (n/(n-1)!) * Σ_{k=0}^{min(⌊nx⌋, n-1)} (-1)^k * C(n,k) * (nx-k)^(n-1)
+        /// Returns 0 outside [0, 1]
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return 0.0;
+
+            // Special case: n=1 is Uniform(0,1)
+            if (self.n == 1) return 1.0;
+
+            const nx = @as(T, @floatFromInt(self.n)) * x;
+            const floor_nx = @as(u32, @intFromFloat(@floor(nx)));
+            const upper = @min(floor_nx, self.n - 1);
+            var sum: T = 0;
+            const fact_n_minus_1 = factorialF(self.n - 1);
+            const n_f = @as(T, @floatFromInt(self.n));
+
+            for (0..@as(usize, upper + 1)) |ki| {
+                const k = @as(u32, @intCast(ki));
+                const binom = binomCoeff(self.n, k);
+                const exponent = @as(T, @floatFromInt(self.n - 1));
+                const term = binom * math.pow(T, nx - @as(T, @floatFromInt(k)), exponent);
+                if (k % 2 == 0) {
+                    sum += term;
+                } else {
+                    sum -= term;
+                }
+            }
+            return (n_f / fact_n_minus_1) * sum;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; n) = log(pdf(x)), returns -∞ if pdf(x) = 0
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; n) = (1/n!) * Σ_{k=0}^{min(⌊nx⌋, n-1)} (-1)^k * C(n,k) * (nx-k)^n
+        /// Returns 0 for x ≤ 0, 1 for x ≥ 1
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= 1.0) return 1.0;
+
+            const nx = @as(T, @floatFromInt(self.n)) * x;
+            const floor_nx = @as(u32, @intFromFloat(@floor(nx)));
+            const upper = @min(floor_nx, self.n - 1);
+            var sum: T = 0;
+            const fact_n = factorialF(self.n);
+
+            for (0..@as(usize, upper + 1)) |ki| {
+                const k = @as(u32, @intCast(ki));
+                const binom = binomCoeff(self.n, k);
+                const exponent = @as(T, @floatFromInt(self.n));
+                const term = binom * math.pow(T, nx - @as(T, @floatFromInt(k)), exponent);
+                if (k % 2 == 0) {
+                    sum += term;
+                } else {
+                    sum -= term;
+                }
+            }
+            return sum / fact_n;
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) via bisection on [0, 1]
+        ///
+        /// Returns x such that P(X ≤ x) = p
+        ///
+        /// Errors: p < 0, p > 1, or p is NaN
+        ///
+        /// Time: O(n * log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidParameter;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+
+            var lo: T = 0.0;
+            var hi: T = 1.0;
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = 1/2 for all n ≥ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.5;
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// Mean = 1/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0.5;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Variance = 1/(12n)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return 1.0 / (@as(T, @floatFromInt(self.n)) * 12.0);
+        }
+
+        /// Differential entropy (numerical integration via Simpson's rule)
+        ///
+        /// Time: O(n * steps) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const steps: u32 = 1000;
+            const eps: T = 1e-9;
+            const a = eps;
+            const b = 1.0 - eps;
+            const h = (b - a) / @as(T, @floatFromInt(steps));
+
+            var sum: T = 0.0;
+            var i: u32 = 0;
+            while (i <= steps) : (i += 1) {
+                const x = a + @as(T, @floatFromInt(i)) * h;
+                const fx = self.pdf(x);
+                const term = if (fx > 0.0) -fx * @log(fx) else 0.0;
+                const weight: T = if (i == 0 or i == steps)
+                    1.0
+                else if (i % 2 == 1)
+                    4.0
+                else
+                    2.0;
+                sum += weight * term;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Samples the mean of n independent Uniform(0,1) random variables
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var s: T = 0.0;
+            for (0..self.n) |_| {
+                s += rng.float(T);
+            }
+            return s / @as(T, @floatFromInt(self.n));
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.n == 0) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Bates Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "Bates: init with n=1 succeeds" {
+    const dist = try Bates(f64).init(1);
+    try testing.expect(dist.n == 1);
+}
+
+test "Bates: init with n=2 succeeds" {
+    const dist = try Bates(f64).init(2);
+    try testing.expect(dist.n == 2);
+}
+
+test "Bates: init with n=3 succeeds" {
+    const dist = try Bates(f64).init(3);
+    try testing.expect(dist.n == 3);
+}
+
+test "Bates: init with n=5 succeeds" {
+    const dist = try Bates(f64).init(5);
+    try testing.expect(dist.n == 5);
+}
+
+test "Bates: init with n=10 succeeds" {
+    const dist = try Bates(f64).init(10);
+    try testing.expect(dist.n == 10);
+}
+
+test "Bates: init with n=100 succeeds" {
+    const dist = try Bates(f64).init(100);
+    try testing.expect(dist.n == 100);
+}
+
+test "Bates: init with n=0 returns InvalidParameter" {
+    const result = Bates(f64).init(0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF Tests — Basic Values
+
+test "Bates: pdf(0.5; n=1) = 1.0 (Uniform(0,1))" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.0; n=1) = 1.0 at lower boundary" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(1.0; n=1) = 1.0 at upper boundary" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.25; n=1) = 1.0" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(0.25);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.75; n=1) = 1.0" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(0.75);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.5; n=2) = 2.0 (Triangular peak)" {
+    const dist = try Bates(f64).init(2);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(2.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.25; n=2) = 1.0" {
+    const dist = try Bates(f64).init(2);
+    const p = dist.pdf(0.25);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.75; n=2) = 1.0" {
+    const dist = try Bates(f64).init(2);
+    const p = dist.pdf(0.75);
+    try testing.expectApproxEqAbs(1.0, p, 1e-12);
+}
+
+test "Bates: pdf(0.5; n=3) = 2.25" {
+    const dist = try Bates(f64).init(3);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(2.25, p, 1e-9);
+}
+
+test "Bates: pdf 1/3 for n=3" {
+    const dist = try Bates(f64).init(3);
+    const p = dist.pdf(1.0 / 3.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(p < 2.25);
+}
+
+// PDF Tests — Boundary and Out-of-Support
+
+test "Bates: pdf(-0.1; n=1) = 0.0 outside support" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(-0.1);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "Bates: pdf(1.1; n=1) = 0.0 outside support" {
+    const dist = try Bates(f64).init(1);
+    const p = dist.pdf(1.1);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "Bates: pdf(-1.0; n=2) = 0.0" {
+    const dist = try Bates(f64).init(2);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "Bates: pdf(2.0; n=2) = 0.0" {
+    const dist = try Bates(f64).init(2);
+    const p = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+test "Bates: pdf(10.0; n=5) = 0.0 far outside support" {
+    const dist = try Bates(f64).init(5);
+    const p = dist.pdf(10.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-12);
+}
+
+// PDF Tests — Symmetry
+
+test "Bates: pdf symmetry around 0.5 for n=1" {
+    const dist = try Bates(f64).init(1);
+    const p1 = dist.pdf(0.3);
+    const p2 = dist.pdf(0.7);
+    try testing.expectApproxEqAbs(p1, p2, 1e-12);
+}
+
+test "Bates: pdf symmetry around 0.5 for n=2" {
+    const dist = try Bates(f64).init(2);
+    const p1 = dist.pdf(0.2);
+    const p2 = dist.pdf(0.8);
+    try testing.expectApproxEqAbs(p1, p2, 1e-12);
+}
+
+test "Bates: pdf symmetry around 0.5 for n=3" {
+    const dist = try Bates(f64).init(3);
+    const p1 = dist.pdf(0.3);
+    const p2 = dist.pdf(0.7);
+    try testing.expectApproxEqAbs(p1, p2, 1e-12);
+}
+
+test "Bates: pdf symmetry around 0.5 for n=5" {
+    const dist = try Bates(f64).init(5);
+    const p1 = dist.pdf(0.25);
+    const p2 = dist.pdf(0.75);
+    try testing.expectApproxEqAbs(p1, p2, 1e-12);
+}
+
+// CDF Tests — Boundary and Basic Values
+
+test "Bates: cdf(0.0; n=1) = 0.0" {
+    const dist = try Bates(f64).init(1);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-12);
+}
+
+test "Bates: cdf(0.25; n=1) = 0.25" {
+    const dist = try Bates(f64).init(1);
+    const c = dist.cdf(0.25);
+    try testing.expectApproxEqAbs(0.25, c, 1e-12);
+}
+
+test "Bates: cdf(0.5; n=1) = 0.5" {
+    const dist = try Bates(f64).init(1);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "Bates: cdf(0.75; n=1) = 0.75" {
+    const dist = try Bates(f64).init(1);
+    const c = dist.cdf(0.75);
+    try testing.expectApproxEqAbs(0.75, c, 1e-12);
+}
+
+test "Bates: cdf(1.0; n=1) = 1.0" {
+    const dist = try Bates(f64).init(1);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-12);
+}
+
+test "Bates: cdf(0.25; n=2) = 0.125" {
+    const dist = try Bates(f64).init(2);
+    const c = dist.cdf(0.25);
+    try testing.expectApproxEqAbs(0.125, c, 1e-12);
+}
+
+test "Bates: cdf(0.5; n=2) = 0.5" {
+    const dist = try Bates(f64).init(2);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "Bates: cdf(0.75; n=2) = 0.875" {
+    const dist = try Bates(f64).init(2);
+    const c = dist.cdf(0.75);
+    try testing.expectApproxEqAbs(0.875, c, 1e-12);
+}
+
+test "Bates: cdf(1.0; n=2) = 1.0" {
+    const dist = try Bates(f64).init(2);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-12);
+}
+
+test "Bates: cdf(1.0/3.0; n=3) = 1/6" {
+    const dist = try Bates(f64).init(3);
+    const c = dist.cdf(1.0 / 3.0);
+    try testing.expectApproxEqAbs(1.0 / 6.0, c, 1e-9);
+}
+
+test "Bates: cdf(0.5; n=3) = 0.5" {
+    const dist = try Bates(f64).init(3);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-9);
+}
+
+// CDF Tests — Boundary Behavior
+
+test "Bates: cdf negative x returns 0" {
+    const dist = try Bates(f64).init(2);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-12);
+}
+
+test "Bates: cdf large x beyond support returns 1" {
+    const dist = try Bates(f64).init(2);
+    const c = dist.cdf(100.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-12);
+}
+
+// CDF Tests — Monotonicity
+
+test "Bates: cdf monotonically increasing for n=1" {
+    const dist = try Bates(f64).init(1);
+    var prev_cdf: f64 = 0.0;
+    var x: f64 = 0.0;
+    while (x <= 1.0) : (x += 0.05) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "Bates: cdf monotonically increasing for n=2" {
+    const dist = try Bates(f64).init(2);
+    var prev_cdf: f64 = 0.0;
+    var x: f64 = 0.0;
+    while (x <= 1.0) : (x += 0.05) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "Bates: cdf monotonically increasing for n=5" {
+    const dist = try Bates(f64).init(5);
+    var prev_cdf: f64 = 0.0;
+    var x: f64 = 0.0;
+    while (x <= 1.0) : (x += 0.05) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+// CDF + SF Tests
+
+test "Bates: cdf + sf = 1 for n=1" {
+    const dist = try Bates(f64).init(1);
+    const x = 0.3;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-12);
+}
+
+test "Bates: cdf + sf = 1 for n=2" {
+    const dist = try Bates(f64).init(2);
+    const x = 0.7;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-12);
+}
+
+test "Bates: cdf + sf = 1 for n=3" {
+    const dist = try Bates(f64).init(3);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-12);
+}
+
+// Mean Tests
+
+test "Bates: mean(n=1) = 0.5" {
+    const dist = try Bates(f64).init(1);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+test "Bates: mean(n=2) = 0.5" {
+    const dist = try Bates(f64).init(2);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+test "Bates: mean(n=3) = 0.5" {
+    const dist = try Bates(f64).init(3);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+test "Bates: mean(n=5) = 0.5" {
+    const dist = try Bates(f64).init(5);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+test "Bates: mean(n=10) = 0.5" {
+    const dist = try Bates(f64).init(10);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+test "Bates: mean(n=100) = 0.5" {
+    const dist = try Bates(f64).init(100);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-12);
+}
+
+// Variance Tests
+
+test "Bates: variance(n=1) = 1/12" {
+    const dist = try Bates(f64).init(1);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 12.0, v, 1e-12);
+}
+
+test "Bates: variance(n=2) = 1/24" {
+    const dist = try Bates(f64).init(2);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 24.0, v, 1e-12);
+}
+
+test "Bates: variance(n=3) = 1/36" {
+    const dist = try Bates(f64).init(3);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 36.0, v, 1e-12);
+}
+
+test "Bates: variance(n=4) = 1/48" {
+    const dist = try Bates(f64).init(4);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 48.0, v, 1e-12);
+}
+
+test "Bates: variance(n=5) = 1/60" {
+    const dist = try Bates(f64).init(5);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 60.0, v, 1e-12);
+}
+
+test "Bates: variance(n=10) = 1/120" {
+    const dist = try Bates(f64).init(10);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 120.0, v, 1e-12);
+}
+
+// Mode Tests
+
+test "Bates: mode(n=1) = 0.5" {
+    const dist = try Bates(f64).init(1);
+    try testing.expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+}
+
+test "Bates: mode(n=2) = 0.5" {
+    const dist = try Bates(f64).init(2);
+    try testing.expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+}
+
+test "Bates: mode(n=3) = 0.5" {
+    const dist = try Bates(f64).init(3);
+    try testing.expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+}
+
+test "Bates: mode(n=5) = 0.5" {
+    const dist = try Bates(f64).init(5);
+    try testing.expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+}
+
+test "Bates: mode always equals 0.5 for n >= 1" {
+    const ns = [_]u32{ 1, 2, 3, 4, 5, 10, 20 };
+    for (ns) |n| {
+        const dist = try Bates(f64).init(n);
+        try testing.expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+    }
+}
+
+// Quantile Tests
+
+test "Bates: quantile(0.0; n=1) = 0.0" {
+    const dist = try Bates(f64).init(1);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "Bates: quantile(0.5; n=1) = 0.5" {
+    const dist = try Bates(f64).init(1);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.5, q, 1e-9);
+}
+
+test "Bates: quantile(1.0; n=1) = 1.0" {
+    const dist = try Bates(f64).init(1);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-9);
+}
+
+test "Bates: quantile(0.0; n=2) = 0.0" {
+    const dist = try Bates(f64).init(2);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "Bates: quantile(0.5; n=2) = 0.5" {
+    const dist = try Bates(f64).init(2);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.5, q, 1e-9);
+}
+
+test "Bates: quantile(1.0; n=2) = 1.0" {
+    const dist = try Bates(f64).init(2);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-9);
+}
+
+test "Bates: quantile(0.5; n=3) = 0.5" {
+    const dist = try Bates(f64).init(3);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.5, q, 1e-9);
+}
+
+test "Bates: quantile(0.25; n=1) = 0.25" {
+    const dist = try Bates(f64).init(1);
+    const q = try dist.quantile(0.25);
+    try testing.expectApproxEqAbs(0.25, q, 1e-9);
+}
+
+test "Bates: quantile(0.75; n=1) = 0.75" {
+    const dist = try Bates(f64).init(1);
+    const q = try dist.quantile(0.75);
+    try testing.expectApproxEqAbs(0.75, q, 1e-9);
+}
+
+// Quantile Error Tests
+
+test "Bates: quantile(-0.1) returns InvalidParameter" {
+    const dist = try Bates(f64).init(1);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Bates: quantile(1.1) returns InvalidParameter" {
+    const dist = try Bates(f64).init(1);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Bates: quantile(NaN) returns InvalidParameter" {
+    const dist = try Bates(f64).init(1);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Quantile Roundtrip Tests
+
+test "Bates: quantile roundtrip for n=1 p=0.1" {
+    const dist = try Bates(f64).init(1);
+    const p: f64 = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
+}
+
+test "Bates: quantile roundtrip for n=1 p=0.5" {
+    const dist = try Bates(f64).init(1);
+    const p: f64 = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
+}
+
+test "Bates: quantile roundtrip for n=1 p=0.9" {
+    const dist = try Bates(f64).init(1);
+    const p: f64 = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
+}
+
+test "Bates: quantile roundtrip for n=2 p=0.1" {
+    const dist = try Bates(f64).init(2);
+    const p: f64 = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "Bates: quantile roundtrip for n=2 p=0.5" {
+    const dist = try Bates(f64).init(2);
+    const p: f64 = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "Bates: quantile roundtrip for n=2 p=0.9" {
+    const dist = try Bates(f64).init(2);
+    const p: f64 = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "Bates: quantile roundtrip for n=3 p=0.25" {
+    const dist = try Bates(f64).init(3);
+    const p: f64 = 0.25;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "Bates: quantile roundtrip for n=3 p=0.75" {
+    const dist = try Bates(f64).init(3);
+    const p: f64 = 0.75;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+// Logpdf Tests
+
+test "Bates: logpdf(0.5; n=1) = 0.0" {
+    const dist = try Bates(f64).init(1);
+    try testing.expectApproxEqAbs(0.0, dist.logpdf(0.5), 1e-12);
+}
+
+test "Bates: logpdf(0.0; n=1) = 0.0" {
+    const dist = try Bates(f64).init(1);
+    try testing.expectApproxEqAbs(0.0, dist.logpdf(0.0), 1e-12);
+}
+
+test "Bates: logpdf(1.0; n=1) = 0.0" {
+    const dist = try Bates(f64).init(1);
+    try testing.expectApproxEqAbs(0.0, dist.logpdf(1.0), 1e-12);
+}
+
+test "Bates: logpdf equals log(pdf) for n=2" {
+    const dist = try Bates(f64).init(2);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        try testing.expectApproxEqAbs(@log(p), lp, 1e-12);
+    }
+}
+
+test "Bates: logpdf equals log(pdf) for n=3" {
+    const dist = try Bates(f64).init(3);
+    const x_vals = [_]f64{ 0.2, 0.5, 0.8 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        try testing.expectApproxEqAbs(@log(p), lp, 1e-12);
+    }
+}
+
+test "Bates: logpdf outside support is -inf (below)" {
+    const dist = try Bates(f64).init(2);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-0.5)));
+}
+
+test "Bates: logpdf outside support is -inf (above)" {
+    const dist = try Bates(f64).init(2);
+    try testing.expect(math.isNegativeInf(dist.logpdf(1.5)));
+}
+
+// Sample Tests
+
+test "Bates: sample returns value in support for n=1" {
+    const dist = try Bates(f64).init(1);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Bates: sample returns value in support for n=2" {
+    const dist = try Bates(f64).init(2);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Bates: sample returns value in support for n=3" {
+    const dist = try Bates(f64).init(3);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Bates: sample returns value in support for n=10" {
+    const dist = try Bates(f64).init(10);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Bates: empirical sample mean converges to 0.5 for n=1" {
+    const dist = try Bates(f64).init(1);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.5, empirical_mean, 0.05);
+}
+
+test "Bates: empirical sample mean converges to 0.5 for n=2" {
+    const dist = try Bates(f64).init(2);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.5, empirical_mean, 0.05);
+}
+
+test "Bates: empirical sample mean converges to 0.5 for n=5" {
+    const dist = try Bates(f64).init(5);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.5, empirical_mean, 0.05);
+}
+
+// Entropy Tests
+
+test "Bates: entropy(n=1) = 0.0 (Uniform on [0,1])" {
+    const dist = try Bates(f64).init(1);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.0, h, 1e-3);
+}
+
+test "Bates: entropy(n=2) ≈ -0.193147 (0.5 - ln(2))" {
+    const dist = try Bates(f64).init(2);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.5 - @log(2.0), h, 1e-4);
+}
+
+test "Bates: entropy is finite for all n" {
+    const ns = [_]u32{ 1, 2, 3, 5, 10, 20 };
+    for (ns) |n| {
+        const dist = try Bates(f64).init(n);
+        const h = dist.entropy();
+        try testing.expect(math.isFinite(h));
+        try testing.expect(h < 10.0);
+    }
+}
+
+test "Bates: entropy decreases with n (distribution concentrates toward 0.5)" {
+    // Larger n → more concentrated → lower entropy
+    var prev_h: f64 = math.inf(f64);
+    for ([_]u32{ 1, 2, 3, 4, 5 }) |n| {
+        const dist = try Bates(f64).init(n);
+        const h = dist.entropy();
+        try testing.expect(h < prev_h or @abs(h - prev_h) < 1e-3);
+        prev_h = h;
+    }
+}
+
+// Validate Tests
+
+test "Bates: validate on n=1" {
+    const dist = try Bates(f64).init(1);
+    try dist.validate();
+}
+
+test "Bates: validate on n=2" {
+    const dist = try Bates(f64).init(2);
+    try dist.validate();
+}
+
+test "Bates: validate on n=3" {
+    const dist = try Bates(f64).init(3);
+    try dist.validate();
+}
+
+test "Bates: validate on n=5" {
+    const dist = try Bates(f64).init(5);
+    try dist.validate();
+}
+
+test "Bates: validate on n=10" {
+    const dist = try Bates(f64).init(10);
+    try dist.validate();
+}
+
+test "Bates: validate on n=100" {
+    const dist = try Bates(f64).init(100);
+    try dist.validate();
+}
+
+// f32 Support Tests
+
+test "Bates: f32 support basic operations" {
+    const dist = try Bates(f32).init(2);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0 and q < 1.0);
+}
+
+test "Bates: f32 quantile roundtrip" {
+    const dist = try Bates(f32).init(2);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
+
+test "Bates: f32 variance matches formula" {
+    const dist = try Bates(f32).init(4);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0 / 48.0, v, 1e-5);
+}
