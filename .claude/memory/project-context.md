@@ -1,3 +1,19 @@
+**Session 659 Update (2026-06-11) — FEATURE MODE:**
+
+✅ **IrwinHall Distribution** — 68th total, 53rd continuous — commit 9236d2e
+- **Mode**: FEATURE MODE (counter: 659)
+- **CI Status**: GREEN (3 recent runs SUCCESS); 0 open issues
+- **Implementation**: IrwinHall(T) — sum of n i.i.d. Uniform(0,1) RVs
+  * Parameter: n >= 1 (u32); support: [0, n]
+  * PDF: (1/(n-1)!) * Σ_{k=0}^{floor(x)} (-1)^k·C(n,k)·(x-k)^(n-1) — O(n)
+  * CDF: (1/n!) * Σ_{k=0}^{floor(x)} (-1)^k·C(n,k)·(x-k)^n — O(n)
+  * n=1 → Uniform(0,1); n=2 → Triangular on [0,2]
+  * Mean = n/2; Variance = n/12; Mode = n/2
+  * Entropy: numerical Simpson's rule; Quantile: bisection; Sample: sum of n uniforms
+- **Tests**: 71 tests all passing (3006 total test blocks, exit code 0)
+- **Distribution count**: 68 total (53 continuous + 15 discrete)
+- **Next Priority**: Benford (discrete), Johnson SU, or Bates distribution
+
 **Session 656 Update (2026-06-10) — FEATURE MODE:**
 
 ✅ **WignerSemicircle Distribution** — 65th total, 50th continuous — commit bdfdd96
