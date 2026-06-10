@@ -34965,3 +34965,627 @@ test "WignerSemicircle: f32 quantile roundtrip" {
         try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
     }
 }
+
+// ============================================================================
+// Lindley Distribution
+// ============================================================================
+
+/// Lindley distribution Lindley(θ)
+///
+/// A continuous distribution on [0, ∞) with parameter θ > 0.
+/// Mixture: p·Exp(θ) + (1-p)·Gamma(2,θ) where p = θ/(θ+1)
+///
+/// Probability density function (PDF):
+///   f(x; θ) = (θ²/(1+θ)) × (1+x) × exp(-θx)
+///
+/// Cumulative distribution function (CDF):
+///   F(x; θ) = 1 - (1 + θx/(1+θ)) × exp(-θx)
+///
+/// Parameters:
+///   - theta (θ): Shape parameter (θ > 0)
+///
+/// Time: O(1) for pdf/cdf/mean/variance/mode; O(log(1/ε)) for quantile; O(n) for entropy (numerical)
+pub fn Lindley(comptime T: type) type {
+    return struct {
+        theta: T,
+
+        const Self = @This();
+
+        /// Create a Lindley distribution with given shape parameter θ.
+        ///
+        /// Errors: θ ≤ 0, NaN, or infinite values.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta: T) DistributionError!Self {
+            if (!(theta > 0.0) or !math.isFinite(theta)) return error.InvalidParameter;
+            return Self{ .theta = theta };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; θ) = (θ²/(1+θ)) × (1+x) × exp(-θx)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const theta = self.theta;
+            const scale = (theta * theta) / (1.0 + theta);
+            return scale * (1.0 + x) * @exp(-theta * x);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; θ) = 2·log(θ) - log(1+θ) + log(1+x) - θ·x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const theta = self.theta;
+            return 2.0 * @log(theta) - @log(1.0 + theta) + @log(1.0 + x) - theta * x;
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; θ) = 1 - (1 + θx/(1+θ)) × exp(-θx)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const theta = self.theta;
+            const term = 1.0 + (theta * x) / (1.0 + theta);
+            return 1.0 - term * @exp(-theta * x);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; θ) = (1 + θx/(1+θ)) × exp(-θx)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            const theta = self.theta;
+            const term = 1.0 + (theta * x) / (1.0 + theta);
+            return term * @exp(-theta * x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection: find upper bound by doubling from 1.0, then 64-iteration bisection.
+        ///
+        /// Errors: p < 0 or p > 1 or NaN
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidParameter;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Find upper bound by doubling from 1.0
+            var upper: T = 1.0;
+            while (self.cdf(upper) < p) {
+                upper *= 2.0;
+            }
+
+            // Bisection over [0, upper]
+            var lo: T = 0.0;
+            var hi: T = upper;
+            var i: usize = 0;
+            while (i < 64) : (i += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = (θ+2) / (θ(θ+1))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const theta = self.theta;
+            return (theta + 2.0) / (theta * (theta + 1.0));
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = (θ²+4θ+2) / (θ²(θ+1)²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const theta = self.theta;
+            const denom = theta * theta * (theta + 1.0) * (theta + 1.0);
+            return (theta * theta + 4.0 * theta + 2.0) / denom;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = max(0, (1-θ)/θ) = 0 if θ ≥ 1, else (1-θ)/θ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const theta = self.theta;
+            if (theta >= 1.0) return 0.0;
+            return (1.0 - theta) / theta;
+        }
+
+        /// Differential entropy (in nats)
+        ///
+        /// H = -∫₀^∞ f(x)·log f(x) dx
+        ///
+        /// Uses composite Simpson's rule (2000 panels) over [ε, 100/θ] where ε = 1e-10.
+        /// Returns absolute value to ensure non-negative entropy.
+        ///
+        /// Time: O(n) where n ≈ 2000 | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const theta = self.theta;
+            const eps = 1e-10;
+            const upper = 100.0 / theta;
+            const n: usize = 2000;
+            const h = (upper - eps) / @as(T, @floatFromInt(n));
+
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const x = eps + h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+                if (f <= 0.0) continue;
+                const contrib = -f * @log(f);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            const result = sum * h / 3.0;
+            return @abs(result);
+        }
+
+        /// Draw one sample via mixture of Exponential and Gamma(2, θ)
+        ///
+        /// With probability p = θ/(θ+1): sample ~ Exp(θ) = -log(1-u)/θ
+        /// Otherwise: sample ~ Gamma(2,θ) = -(log(1-u1) + log(1-u2))/θ
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const theta = self.theta;
+            const p_exp = theta / (theta + 1.0);
+            const u = rng.float(T);
+
+            if (u < p_exp) {
+                // Exponential(θ)
+                const v = rng.float(T);
+                return -math.log1p(-v) / theta;
+            } else {
+                // Gamma(2, θ) = sum of 2 Exponential(θ)
+                const v1 = rng.float(T);
+                const v2 = rng.float(T);
+                return -(math.log1p(-v1) + math.log1p(-v2)) / theta;
+            }
+        }
+
+        /// Validate that the distribution parameters are internally consistent.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.theta > 0.0) or !math.isFinite(self.theta))
+                return error.InvalidParameter;
+        }
+    };
+}
+
+// Lindley(θ) distribution tests
+// PDF: θ²/(1+θ) · (1+x) · exp(-θx)
+// CDF: 1 - (1 + θx/(1+θ)) · exp(-θx)
+// Mean: (θ+2)/(θ(θ+1))
+// Variance: (θ²+4θ+2)/(θ²(θ+1)²)
+// Mode: max(0, (1-θ)/θ)
+
+test "Lindley: init with valid θ" {
+    const dist_1 = try Lindley(f64).init(1.0);
+    try testing.expect(dist_1.theta == 1.0);
+
+    const dist_2 = try Lindley(f64).init(0.5);
+    try testing.expect(dist_2.theta == 0.5);
+
+    const dist_3 = try Lindley(f64).init(2.0);
+    try testing.expect(dist_3.theta == 2.0);
+}
+
+test "Lindley: init rejects θ <= 0" {
+    try expectError(error.InvalidParameter, Lindley(f64).init(0.0));
+    try expectError(error.InvalidParameter, Lindley(f64).init(-1.0));
+}
+
+test "Lindley: init rejects θ = NaN" {
+    try expectError(error.InvalidParameter, Lindley(f64).init(math.nan(f64)));
+}
+
+test "Lindley: init rejects θ = inf" {
+    try expectError(error.InvalidParameter, Lindley(f64).init(math.inf(f64)));
+}
+
+test "Lindley: pdf exact at x=0, θ=1" {
+    const dist = try Lindley(f64).init(1.0);
+    // pdf(0; θ=1) = (1/2) · (1) · exp(0) = 1/2 = 0.5
+    const expected = 0.5;
+    try expectApproxEqAbs(expected, dist.pdf(0.0), 1e-12);
+}
+
+test "Lindley: pdf exact at x=1, θ=1" {
+    const dist = try Lindley(f64).init(1.0);
+    // pdf(1; θ=1) = (1/2) · 2 · exp(-1) = exp(-1) ≈ 0.367879
+    const expected = @exp(-1.0);
+    try expectApproxEqAbs(expected, dist.pdf(1.0), 1e-12);
+}
+
+test "Lindley: pdf exact at x=0, θ=2" {
+    const dist = try Lindley(f64).init(2.0);
+    // pdf(0; θ=2) = (4/3) · 1 · exp(0) = 4/3 ≈ 1.33333
+    const expected = 4.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.pdf(0.0), 1e-12);
+}
+
+test "Lindley: pdf zero for x < 0" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.pdf(-0.5), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(-10.0), 1e-12);
+}
+
+test "Lindley: pdf is non-negative for x >= 0" {
+    const dist = try Lindley(f64).init(1.5);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "Lindley: pdf decreases monotonically for x >= 0" {
+    const dist = try Lindley(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0 };
+    var prev = dist.pdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const pdf_val = dist.pdf(x);
+        try testing.expect(pdf_val <= prev);
+        prev = pdf_val;
+    }
+}
+
+test "Lindley: pdf integrates to approximately 1" {
+    const dist = try Lindley(f64).init(1.0);
+    // Numerical integration via Simpson's rule
+    var sum: f64 = 0.0;
+    const n = 1000;
+    const h = 20.0 / @as(f64, @floatFromInt(n)); // integrating [0, 20]
+    for (0..n + 1) |i| {
+        const x = @as(f64, @floatFromInt(i)) * h;
+        const w: f64 = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+        sum += w * dist.pdf(x);
+    }
+    const integral = (h / 3.0) * sum;
+    try expectApproxEqAbs(1.0, integral, 0.01);
+}
+
+test "Lindley: logpdf exact at x=0, θ=1" {
+    const dist = try Lindley(f64).init(1.0);
+    // logpdf(0; θ=1) = 2·log(1) - log(2) + log(1) - 0 = -log(2) ≈ -0.693147
+    const expected = @log(0.5);
+    try expectApproxEqAbs(expected, dist.logpdf(0.0), 1e-12);
+}
+
+test "Lindley: logpdf equals log(pdf) for x > 0" {
+    const dist = try Lindley(f64).init(1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        try expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+    }
+}
+
+test "Lindley: logpdf is -inf for x < 0" {
+    const dist = try Lindley(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-0.5)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-10.0)));
+}
+
+test "Lindley: cdf at x=0 is 0" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-12);
+}
+
+test "Lindley: cdf exact at x=1, θ=1" {
+    const dist = try Lindley(f64).init(1.0);
+    // cdf(1; θ=1) = 1 - (1 + 1/2)·exp(-1) = 1 - (3/2)·exp(-1)
+    const expected = 1.0 - 1.5 * @exp(-1.0);
+    try expectApproxEqAbs(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "Lindley: cdf exact at x=1, θ=2" {
+    const dist = try Lindley(f64).init(2.0);
+    // cdf(1; θ=2) = 1 - (1 + 2·1/3)·exp(-2) = 1 - (5/3)·exp(-2)
+    const expected = 1.0 - (5.0 / 3.0) * @exp(-2.0);
+    try expectApproxEqAbs(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "Lindley: cdf is monotonically increasing" {
+    const dist = try Lindley(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "Lindley: cdf in [0, 1] for all x >= 0" {
+    const dist = try Lindley(f64).init(1.5);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 100.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "Lindley: cdf approaches 1 as x increases" {
+    const dist = try Lindley(f64).init(1.0);
+    try testing.expect(dist.cdf(10.0) > 0.99);
+    try testing.expect(dist.cdf(50.0) > 0.9999);
+}
+
+test "Lindley: sf equals 1 minus cdf" {
+    const dist = try Lindley(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try expectApproxEqAbs(1.0, c + s, 1e-12);
+    }
+}
+
+test "Lindley: sf at x=0 equals 1" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectApproxEqAbs(1.0, dist.sf(0.0), 1e-12);
+}
+
+test "Lindley: quantile rejects p < 0" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectError(error.InvalidParameter, dist.quantile(-0.1));
+    try expectError(error.InvalidParameter, dist.quantile(-1.0));
+}
+
+test "Lindley: quantile rejects p > 1" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectError(error.InvalidParameter, dist.quantile(1.1));
+    try expectError(error.InvalidParameter, dist.quantile(2.0));
+}
+
+test "Lindley: quantile rejects p = NaN" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectError(error.InvalidParameter, dist.quantile(math.nan(f64)));
+}
+
+test "Lindley: quantile at p=0 equals 0" {
+    const dist = try Lindley(f64).init(1.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "Lindley: quantile is non-negative for 0 <= p <= 1" {
+    const dist = try Lindley(f64).init(1.0);
+    const probs = [_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try testing.expect(q >= 0.0);
+    }
+}
+
+test "Lindley: quantile roundtrip cdf(quantile(p)) ≈ p" {
+    const dist = try Lindley(f64).init(1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try expectApproxEqAbs(p, c, 1e-6);
+    }
+}
+
+test "Lindley: quantile is increasing in p" {
+    const dist = try Lindley(f64).init(1.0);
+    const probs = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var prev = try dist.quantile(probs[0]);
+    for (probs[1..]) |p| {
+        const q = try dist.quantile(p);
+        try testing.expect(q >= prev);
+        prev = q;
+    }
+}
+
+test "Lindley: mean exact at θ=1" {
+    const dist = try Lindley(f64).init(1.0);
+    // mean(θ=1) = (1+2)/(1·2) = 3/2 = 1.5
+    const expected = 1.5;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-12);
+}
+
+test "Lindley: mean exact at θ=2" {
+    const dist = try Lindley(f64).init(2.0);
+    // mean(θ=2) = (2+2)/(2·3) = 4/6 = 2/3 ≈ 0.66667
+    const expected = 2.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-12);
+}
+
+test "Lindley: mean exact at θ=0.5" {
+    const dist = try Lindley(f64).init(0.5);
+    // mean(θ=0.5) = (0.5+2)/(0.5·1.5) = 2.5/0.75 = 10/3 ≈ 3.33333
+    const expected = 10.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-12);
+}
+
+test "Lindley: mean is positive for all θ > 0" {
+    const thetas = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (thetas) |theta| {
+        const dist = try Lindley(f64).init(theta);
+        try testing.expect(dist.mean() > 0.0);
+    }
+}
+
+test "Lindley: mean decreases as θ increases" {
+    const theta_1 = try Lindley(f64).init(1.0);
+    const theta_2 = try Lindley(f64).init(2.0);
+    const theta_5 = try Lindley(f64).init(5.0);
+    const m1 = theta_1.mean();
+    const m2 = theta_2.mean();
+    const m5 = theta_5.mean();
+    try testing.expect(m1 > m2);
+    try testing.expect(m2 > m5);
+}
+
+test "Lindley: variance exact at θ=1" {
+    const dist = try Lindley(f64).init(1.0);
+    // variance(θ=1) = (1+4+2)/(1·4) = 7/4 = 1.75
+    const expected = 1.75;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-12);
+}
+
+test "Lindley: variance exact at θ=2" {
+    const dist = try Lindley(f64).init(2.0);
+    // variance(θ=2) = (4+8+2)/(4·9) = 14/36 = 7/18 ≈ 0.38889
+    const expected = 7.0 / 18.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-12);
+}
+
+test "Lindley: variance is positive for all θ > 0" {
+    const thetas = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (thetas) |theta| {
+        const dist = try Lindley(f64).init(theta);
+        try testing.expect(dist.variance() > 0.0);
+    }
+}
+
+test "Lindley: variance is finite for all θ > 0" {
+    const thetas = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (thetas) |theta| {
+        const dist = try Lindley(f64).init(theta);
+        try testing.expect(math.isFinite(dist.variance()));
+    }
+}
+
+test "Lindley: mode exact at θ=1 (mode=0)" {
+    const dist = try Lindley(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "Lindley: mode exact at θ=2 (mode=0)" {
+    const dist = try Lindley(f64).init(2.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "Lindley: mode exact at θ=0.5 (mode=1)" {
+    const dist = try Lindley(f64).init(0.5);
+    // mode = (1-0.5)/0.5 = 0.5/0.5 = 1.0
+    try expectApproxEqAbs(1.0, dist.mode(), 1e-12);
+}
+
+test "Lindley: mode is 0 for θ >= 1" {
+    const thetas = [_]f64{ 1.0, 1.5, 2.0, 5.0 };
+    for (thetas) |theta| {
+        const dist = try Lindley(f64).init(theta);
+        try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+    }
+}
+
+test "Lindley: mode is positive for θ < 1" {
+    const thetas = [_]f64{ 0.1, 0.25, 0.5, 0.75 };
+    for (thetas) |theta| {
+        const dist = try Lindley(f64).init(theta);
+        const m = dist.mode();
+        try testing.expect(m > 0.0);
+        // Expected: (1-θ)/θ
+        const expected = (1.0 - theta) / theta;
+        try expectApproxEqAbs(expected, m, 1e-12);
+    }
+}
+
+test "Lindley: entropy is positive and finite" {
+    const thetas = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (thetas) |theta| {
+        const dist = try Lindley(f64).init(theta);
+        const h = dist.entropy();
+        try testing.expect(h > 0.0);
+        try testing.expect(math.isFinite(h));
+    }
+}
+
+test "Lindley: entropy decreases as θ increases" {
+    const dist_1 = try Lindley(f64).init(0.5);
+    const dist_2 = try Lindley(f64).init(1.0);
+    const dist_5 = try Lindley(f64).init(5.0);
+    const h1 = dist_1.entropy();
+    const h2 = dist_2.entropy();
+    const h5 = dist_5.entropy();
+    try testing.expect(h1 > h2);
+    try testing.expect(h2 > h5);
+}
+
+test "Lindley: sample returns non-negative value" {
+    const dist = try Lindley(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Lindley: empirical sample mean converges to analytical mean" {
+    const dist = try Lindley(f64).init(1.0);
+    const analytical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(analytical_mean, empirical_mean, 0.1);
+}
+
+test "Lindley: empirical sample variance converges to analytical variance" {
+    const dist = try Lindley(f64).init(1.0);
+    const analytical_var = dist.variance();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    const empirical_var = sum_sq / @as(f64, @floatFromInt(n)) - mean * mean;
+    try expectApproxEqAbs(analytical_var, empirical_var, 0.2);
+}
+
+test "Lindley: f32 support basic operations" {
+    const dist = try Lindley(f32).init(1.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0.0);
+}
+
+test "Lindley: f32 quantile roundtrip" {
+    const dist = try Lindley(f32).init(1.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
