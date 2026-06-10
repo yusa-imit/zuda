@@ -35589,3 +35589,651 @@ test "Lindley: f32 quantile roundtrip" {
         try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
     }
 }
+
+/// HalfLogistic Distribution HalfLogistic(σ)
+///
+/// The HalfLogistic distribution is the absolute value of a Logistic(0, σ) distribution.
+/// It models positive continuous data with a mode at 0 and decreasing density.
+/// The median is σ·ln(3), and the mean is 2·σ·ln(2).
+///
+/// Parameters:
+///   - sigma (σ): Scale parameter (σ > 0)
+///
+/// Support: [0, ∞)
+///
+/// PDF: f(x; σ) = 2·exp(-x/σ) / (σ·(1 + exp(-x/σ))²) for x ≥ 0, = 0 for x < 0
+/// CDF: F(x; σ) = tanh(x/(2σ)) for x ≥ 0, = 0 for x < 0
+pub fn HalfLogistic(comptime T: type) type {
+    return struct {
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a HalfLogistic distribution with scale parameter sigma.
+        ///
+        /// Errors: sigma ≤ 0 or sigma is not finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(sigma: T) DistributionError!Self {
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; σ) = 2·exp(-x/σ) / (σ·(1 + exp(-x/σ))²) for x ≥ 0, = 0 for x < 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const neg_z = -x / self.sigma;
+            const exp_neg_z = @exp(neg_z);
+            const denom = 1.0 + exp_neg_z;
+            return 2.0 * exp_neg_z / (self.sigma * denom * denom);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; σ) = log(2) - x/σ - log(σ) - 2·log(1 + exp(-x/σ)) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const neg_z = -x / self.sigma;
+            const log1p_exp_neg_z = math.log1p(@exp(neg_z));
+            return @log(2.0) - x / self.sigma - @log(self.sigma) - 2.0 * log1p_exp_neg_z;
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; σ) = tanh(x/(2σ)) for x ≥ 0, = 0 for x < 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return math.tanh(x / (2.0 * self.sigma));
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// S(x) = 1 - tanh(x/(2σ)) = 2·exp(-x/σ) / (1 + exp(-x/σ)) for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            return 1.0 - math.tanh(x / (2.0 * self.sigma));
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; σ) = σ·log((1+p)/(1-p)), with Q(0)=0 and Q(1)=+∞
+        ///
+        /// Errors: p < 0, p > 1, or p is NaN
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            return self.sigma * @log((1.0 + p) / (1.0 - p));
+        }
+
+        /// Mode of the distribution (always 0)
+        ///
+        /// The PDF is monotonically decreasing from x=0, so mode is always at x=0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = σ·log(3) (since Q(0.5) = σ·log(2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.sigma * @log(3.0);
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// Mean = 2·σ·ln(2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return 2.0 * self.sigma * @log(2.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Variance = σ²·(π²/3 - 4·(ln(2))²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ln2 = @log(2.0);
+            const coeff = math.pi * math.pi / 3.0 - 4.0 * ln2 * ln2;
+            return self.sigma * self.sigma * coeff;
+        }
+
+        /// Differential entropy of the distribution
+        ///
+        /// H(X) = |2 - ln(2) + ln(σ)| (always non-negative)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const h = 2.0 - @log(2.0) + @log(self.sigma);
+            return if (h >= 0.0) h else -h;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform: X = σ·log((1+U)/(1-U)) where U ~ Uniform(0,1)
+        /// Since U ∈ [0,1), we have 1-U ∈ (0,1], so log result is always real and finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.sigma * @log((1.0 + u) / (1.0 - u));
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// HalfLogistic Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "HalfLogistic: init with sigma=1 succeeds" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    try testing.expect(dist.sigma == 1.0);
+}
+
+test "HalfLogistic: init with sigma=2 succeeds" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    try testing.expect(dist.sigma == 2.0);
+}
+
+test "HalfLogistic: init with sigma=0.5 succeeds" {
+    const dist = try HalfLogistic(f64).init(0.5);
+    try testing.expect(dist.sigma == 0.5);
+}
+
+test "HalfLogistic: init with sigma=0 returns InvalidParameter" {
+    const result = HalfLogistic(f64).init(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HalfLogistic: init with negative sigma returns InvalidParameter" {
+    const result = HalfLogistic(f64).init(-1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HalfLogistic: init with very small sigma succeeds" {
+    const dist = try HalfLogistic(f64).init(1e-10);
+    try testing.expect(dist.sigma == 1e-10);
+}
+
+test "HalfLogistic: init with very large sigma succeeds" {
+    const dist = try HalfLogistic(f64).init(1e10);
+    try testing.expect(dist.sigma == 1e10);
+}
+
+test "HalfLogistic: init with NaN returns InvalidParameter" {
+    const result = HalfLogistic(f64).init(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HalfLogistic: init with positive infinity returns InvalidParameter" {
+    const result = HalfLogistic(f64).init(math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HalfLogistic: init with negative infinity returns InvalidParameter" {
+    const result = HalfLogistic(f64).init(-math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF Tests
+
+test "HalfLogistic: pdf(0; sigma=1) = 0.5 exactly" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.5, p, 1e-10);
+}
+
+test "HalfLogistic: pdf(0; sigma=2) = 0.25" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.25, p, 1e-10);
+}
+
+test "HalfLogistic: pdf(negative) = 0" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "HalfLogistic: pdf(negative large) = 0" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = dist.pdf(-100.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "HalfLogistic: pdf decreases monotonically for x >= 0" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p0 = dist.pdf(0.0);
+    const p05 = dist.pdf(0.5);
+    const p1 = dist.pdf(1.0);
+    const p2 = dist.pdf(2.0);
+    const p5 = dist.pdf(5.0);
+    try testing.expect(p0 > p05);
+    try testing.expect(p05 > p1);
+    try testing.expect(p1 > p2);
+    try testing.expect(p2 > p5);
+}
+
+test "HalfLogistic: pdf(large x) approaches 0" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = dist.pdf(1e6);
+    try testing.expect(p < 1e-12);
+}
+
+test "HalfLogistic: pdf(1; sigma=1) is correct" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = dist.pdf(1.0);
+    // f(1;1) = 2*exp(-1) / (1+exp(-1))^2 ≈ 2*0.36787944117 / (1.36787944117)^2 ≈ 0.39322...
+    const exp_neg1 = @exp(-1.0);
+    const expected = 2.0 * exp_neg1 / math.pow(f64, 1.0 + exp_neg1, 2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-9);
+}
+
+test "HalfLogistic: logpdf(0; sigma=1) = log(0.5)" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.5);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "HalfLogistic: logpdf agrees with log(pdf) for various x" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        const expected_lp = @log(p);
+        try testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "HalfLogistic: logpdf(negative) is very negative" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const lp = dist.logpdf(-1.0);
+    try testing.expect(lp < -50.0);
+}
+
+test "HalfLogistic: logpdf(0; sigma=2) = log(0.25)" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.25);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+// CDF Tests
+
+test "HalfLogistic: cdf(0) = 0" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const c = dist.cdf(0.0);
+        try testing.expectApproxEqAbs(0.0, c, 1e-15);
+    }
+}
+
+test "HalfLogistic: cdf(sigma*ln(3); sigma) = 0.5 for various sigma" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const median_x = sigma * @log(3.0);
+        const c = dist.cdf(median_x);
+        try testing.expectApproxEqAbs(0.5, c, 1e-10);
+    }
+}
+
+test "HalfLogistic: cdf monotonically increasing" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const c0 = dist.cdf(0.0);
+    const c05 = dist.cdf(0.5);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(2.0);
+    const c5 = dist.cdf(5.0);
+    try testing.expect(c0 <= c05);
+    try testing.expect(c05 <= c1);
+    try testing.expect(c1 <= c2);
+    try testing.expect(c2 <= c5);
+}
+
+test "HalfLogistic: cdf(negative) = 0" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const c = dist.cdf(-5.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "HalfLogistic: cdf(large x) approaches 1" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const c = dist.cdf(1e6);
+    try testing.expect(c > 0.99999);
+}
+
+test "HalfLogistic: cdf(1; sigma=1) is correct" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const c = dist.cdf(1.0);
+    // tanh(1/2) ≈ 0.46211715726...
+    const expected = math.tanh(@as(f64, 0.5));
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "HalfLogistic: sf = 1 - cdf" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try testing.expectApproxEqAbs(1.0 - c, s, 1e-10);
+    }
+}
+
+// Quantile Tests
+
+test "HalfLogistic: quantile(0) = 0" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const q = try dist.quantile(0.0);
+        try testing.expectApproxEqAbs(0.0, q, 1e-15);
+    }
+}
+
+test "HalfLogistic: quantile(1) = +inf" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0);
+}
+
+test "HalfLogistic: quantile(0.5; sigma) = sigma*ln(3)" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const q = try dist.quantile(0.5);
+        const expected = sigma * @log(3.0);
+        try testing.expectApproxEqAbs(expected, q, 1e-10);
+    }
+}
+
+test "HalfLogistic: cdf(quantile(p)) ≈ p roundtrip p=0.1" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "HalfLogistic: cdf(quantile(p)) ≈ p roundtrip p=0.3" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "HalfLogistic: cdf(quantile(p)) ≈ p roundtrip p=0.7" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "HalfLogistic: cdf(quantile(p)) ≈ p roundtrip p=0.9" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "HalfLogistic: quantile(NaN) returns InvalidProbability" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HalfLogistic: quantile(-0.1) returns InvalidProbability" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HalfLogistic: quantile(1.1) returns InvalidProbability" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HalfLogistic: quantile(0.25; sigma=2) is correct" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    const q = try dist.quantile(0.25);
+    // quantile formula: sigma * log((1+p)/(1-p)) = 2*log(1.25/0.75) = 2*log(5/3)
+    const expected = 2.0 * @log(5.0 / 3.0);
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+// Mode and Median Tests
+
+test "HalfLogistic: mode(sigma) = 0 for all sigma" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        try testing.expectApproxEqAbs(0.0, dist.mode(), 1e-15);
+    }
+}
+
+test "HalfLogistic: median(sigma) = sigma*ln(3)" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const med = dist.median();
+        const expected = sigma * @log(3.0);
+        try testing.expectApproxEqAbs(expected, med, 1e-10);
+    }
+}
+
+// Mean Tests
+
+test "HalfLogistic: mean(sigma=1) ≈ 2*ln(2) ≈ 1.38629436" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const m = dist.mean();
+    const expected = 2.0 * @log(2.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "HalfLogistic: mean(sigma=2) ≈ 4*ln(2)" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    const m = dist.mean();
+    const expected = 4.0 * @log(2.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "HalfLogistic: mean(sigma=0.5) ≈ ln(2)" {
+    const dist = try HalfLogistic(f64).init(0.5);
+    const m = dist.mean();
+    const expected = @log(2.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "HalfLogistic: mean scales linearly with sigma" {
+    const dist1 = try HalfLogistic(f64).init(1.0);
+    const dist2 = try HalfLogistic(f64).init(2.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try testing.expectApproxEqAbs(2.0 * m1, m2, 1e-10);
+}
+
+// Variance Tests
+
+test "HalfLogistic: variance(sigma=1) ≈ pi²/3 - 4*(ln2)² ≈ 1.36790" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const v = dist.variance();
+    const pi = math.pi;
+    const ln2 = @log(2.0);
+    const expected = pi * pi / 3.0 - 4.0 * ln2 * ln2;
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "HalfLogistic: variance(sigma=2) = 4*variance(sigma=1)" {
+    const dist1 = try HalfLogistic(f64).init(1.0);
+    const dist2 = try HalfLogistic(f64).init(2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * v1, v2, 1e-9);
+}
+
+test "HalfLogistic: variance(sigma) = sigma²*variance(sigma=1)" {
+    const dist1 = try HalfLogistic(f64).init(1.0);
+    const dist3 = try HalfLogistic(f64).init(3.0);
+    const v1 = dist1.variance();
+    const v3 = dist3.variance();
+    try testing.expectApproxEqAbs(9.0 * v1, v3, 1e-8);
+}
+
+// Entropy Tests
+
+test "HalfLogistic: entropy(sigma=1) ≈ 2 - ln(2) ≈ 1.30685" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const h = dist.entropy();
+    const expected = 2.0 - @log(2.0);
+    try testing.expectApproxEqAbs(expected, h, 1e-6);
+}
+
+test "HalfLogistic: entropy(sigma=2) ≈ 2 - ln(2) + ln(2) = 2" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    const h = dist.entropy();
+    const expected = 2.0 - @log(2.0) + @log(2.0);
+    try testing.expectApproxEqAbs(expected, h, 1e-6);
+}
+
+test "HalfLogistic: entropy(sigma) = 2 - ln(2) + ln(sigma)" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const h = dist.entropy();
+        const expected = 2.0 - @log(2.0) + @log(sigma);
+        try testing.expectApproxEqAbs(expected, h, 1e-6);
+    }
+}
+
+test "HalfLogistic: entropy is positive" {
+    const sigmas = [_]f64{ 0.1, 0.5, 1.0, 2.0, 10.0 };
+    for (sigmas) |sigma| {
+        const dist = try HalfLogistic(f64).init(sigma);
+        const h = dist.entropy();
+        try testing.expect(h > 0.0);
+        try testing.expect(math.isFinite(h));
+    }
+}
+
+// Sample Tests
+
+test "HalfLogistic: sample returns non-negative value" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "HalfLogistic: sample with sigma=2" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "HalfLogistic: empirical sample mean converges to analytical mean" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    const analytical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(analytical_mean, empirical_mean, 0.05);
+}
+
+test "HalfLogistic: empirical sample mean for sigma=2" {
+    const dist = try HalfLogistic(f64).init(2.0);
+    const analytical_mean = dist.mean();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(analytical_mean, empirical_mean, 0.05);
+}
+
+// Validate Tests
+
+test "HalfLogistic: validate on valid distribution" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    try dist.validate();
+}
+
+test "HalfLogistic: validate on sigma=0.5" {
+    const dist = try HalfLogistic(f64).init(0.5);
+    try dist.validate();
+}
+
+test "HalfLogistic: validate on sigma=10" {
+    const dist = try HalfLogistic(f64).init(10.0);
+    try dist.validate();
+}
+
+// f32 Tests
+
+test "HalfLogistic: f32 support basic operations" {
+    const dist = try HalfLogistic(f32).init(1.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0.0);
+}
+
+test "HalfLogistic: f32 quantile roundtrip" {
+    const dist = try HalfLogistic(f32).init(1.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
