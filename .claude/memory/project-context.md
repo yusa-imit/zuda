@@ -1,3 +1,24 @@
+**Session 656 Update (2026-06-10) — FEATURE MODE:**
+
+✅ **WignerSemicircle Distribution** — 65th total, 50th continuous — commit bdfdd96
+- **Mode**: FEATURE MODE (counter: 656)
+- **CI Status**: push triggered new run
+- **Open Issues**: 0 bugs, 0 feature requests
+- **Implementation**: WignerSemicircle(T) — semicircle law of random matrix theory
+  * Parameter: R > 0 (radius/half-width); support: [-R, R]
+  * PDF: (2/(πR²))·√(R²-x²) — semicircular shape
+  * CDF: 1/2 + x·√(R²-x²)/(πR²) + arcsin(x/R)/π — exact closed form
+  * Quantile: 64-step bisection (no closed form)
+  * Mean: 0 (symmetric); Variance: R²/4; Mode: 0; Median: 0
+  * Entropy: ln(πR) - 1/2
+  * Sample: rejection sampling on unit disk — (U,V) ~ Uniform([-R,R]²), accept if U²+V²≤R², return U
+  * Acceptance rate: π/4 ≈ 78.5%
+  * Key values: pdf(0;R=1)=2/π; pdf(0;R=2)=1/π; cdf(0;R)=0.5
+  * Test fix: test-writer wrote pdf(0;R=2)=1/(2π) but correct is 1/π (formula: (2/(πR²))·R = 2/(πR))
+- **Tests**: 43 tests all passing (exit code 0)
+- **Distribution count**: 65 total (50 continuous + 15 discrete)
+- **Next Priority**: NoncentralT, ReciprocalInverseGaussian, or IrwinHall distribution
+
 **Session 654 Update (2026-06-10) — FEATURE MODE:**
 
 ✅ **ToppLeone Distribution** — 64th total, 49th continuous — commit 204aa23
