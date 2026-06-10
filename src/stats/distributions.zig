@@ -34456,3 +34456,512 @@ test "ToppLeone: quantile(0.5) gives median with cdf(median) ≈ 0.5" {
     const median = try dist.quantile(0.5);
     try expectApproxEqAbs(0.5, dist.cdf(median), 1e-10);
 }
+
+// ============================================================================
+// WignerSemicircle(R) — Semicircle law / semicircular distribution
+// ============================================================================
+
+/// Wigner semicircle distribution supported on [-R, R].
+///
+/// Arises as the limiting eigenvalue distribution of large random symmetric
+/// matrices (Wigner's semicircle law). The density traces a semicircle of
+/// radius R centered at the origin.
+///
+/// PDF: f(x; R) = (2/(πR²)) · √(R² - x²)  for x ∈ [-R, R]
+/// CDF: F(x; R) = 1/2 + x·√(R²-x²)/(πR²) + arcsin(x/R)/π
+pub fn WignerSemicircle(comptime T: type) type {
+    return struct {
+        radius: T, // R > 0
+
+        const Self = @This();
+
+        /// Create a Wigner semicircle distribution with half-width R.
+        ///
+        /// Errors: R ≤ 0, NaN, or infinite values.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(R: T) DistributionError!Self {
+            if (!(R > 0.0) or !math.isFinite(R)) return error.InvalidParameter;
+            return Self{ .radius = R };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; R) = (2/(πR²)) · √(R² - x²)  for x ∈ [-R, R]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const R = self.radius;
+            if (x < -R or x > R) return 0.0;
+            const r2 = R * R;
+            const inner = r2 - x * x;
+            if (inner <= 0.0) return 0.0;
+            return (2.0 / (math.pi * r2)) * @sqrt(inner);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const R = self.radius;
+            if (x < -R or x > R) return -math.inf(T);
+            const r2 = R * R;
+            const inner = r2 - x * x;
+            if (inner <= 0.0) return -math.inf(T);
+            return @log(2.0) - @log(math.pi) - 2.0 * @log(R) + 0.5 * @log(inner);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; R) = 1/2 + x·√(R²-x²)/(πR²) + arcsin(x/R)/π
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const R = self.radius;
+            if (x <= -R) return 0.0;
+            if (x >= R) return 1.0;
+            const r2 = R * R;
+            const inner = r2 - x * x;
+            const sqrt_term = if (inner > 0.0) @sqrt(inner) else 0.0;
+            return 0.5 + x * sqrt_term / (math.pi * r2) + math.asin(x / R) / math.pi;
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection over [-R, R] since no closed form exists.
+        ///
+        /// Errors: p < 0 or p > 1 or NaN
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            const R = self.radius;
+            if (p == 0.0) return -R;
+            if (p == 1.0) return R;
+            // Bisection over [-R, R]
+            var lo: T = -R;
+            var hi: T = R;
+            var i: usize = 0;
+            while (i < 64) : (i += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// Mean = 0  (symmetric about origin)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var = R²/4
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.radius * self.radius / 4.0;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = 0  (PDF is maximized at x = 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Differential entropy (in nats)
+        ///
+        /// H = ln(πR) - 1/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(math.pi * self.radius) - 0.5;
+        }
+
+        /// Draw one sample via rejection sampling on the unit disk.
+        ///
+        /// Generates (U, V) ~ Uniform([-R,R]²), accepts if U²+V²≤R², returns U.
+        /// Expected acceptance rate: π/4 ≈ 78.5%.
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const R = self.radius;
+            while (true) {
+                const u = (rng.float(T) * 2.0 - 1.0) * R;
+                const v = (rng.float(T) * 2.0 - 1.0) * R;
+                if (u * u + v * v <= R * R) return u;
+            }
+        }
+
+        /// Validate that the distribution parameters are internally consistent.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.radius > 0.0) or !math.isFinite(self.radius))
+                return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support [-R, R].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            if (!math.isFinite(x) or x < -self.radius or x > self.radius)
+                return error.OutOfSupport;
+        }
+    };
+}
+
+test "WignerSemicircle: init with valid radius" {
+    const radii = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (radii) |R| {
+        const dist = try WignerSemicircle(f64).init(R);
+        _ = dist;
+    }
+}
+
+test "WignerSemicircle: init rejects R <= 0" {
+    try expectError(error.InvalidParameter, WignerSemicircle(f64).init(0.0));
+    try expectError(error.InvalidParameter, WignerSemicircle(f64).init(-1.0));
+}
+
+test "WignerSemicircle: init rejects NaN radius" {
+    try expectError(error.InvalidParameter, WignerSemicircle(f64).init(math.nan(f64)));
+}
+
+test "WignerSemicircle: init rejects infinite radius" {
+    try expectError(error.InvalidParameter, WignerSemicircle(f64).init(math.inf(f64)));
+}
+
+test "WignerSemicircle: validate passes for valid parameters" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+    try dist.validate();
+}
+
+test "WignerSemicircle: validateValue accepts values in support [-R, R]" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try dist.validateValue(-1.0);
+    try dist.validateValue(-0.5);
+    try dist.validateValue(0.0);
+    try dist.validateValue(0.5);
+    try dist.validateValue(1.0);
+}
+
+test "WignerSemicircle: validateValue rejects x < -R" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectError(error.OutOfSupport, dist.validateValue(-1.1));
+}
+
+test "WignerSemicircle: validateValue rejects x > R" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectError(error.OutOfSupport, dist.validateValue(1.1));
+}
+
+test "WignerSemicircle: validateValue rejects NaN" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectError(error.OutOfSupport, dist.validateValue(math.nan(f64)));
+}
+
+test "WignerSemicircle: pdf exact at x=0, R=1" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // pdf(0; R=1) = 2/π
+    const expected = 2.0 / math.pi;
+    try expectApproxEqAbs(expected, dist.pdf(0.0), 1e-12);
+}
+
+test "WignerSemicircle: pdf exact at x=0, R=2" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+    // pdf(0; R=2) = (2/(π·4))·√4 = (2/(4π))·2 = 4/(4π) = 1/π
+    const expected = 1.0 / math.pi;
+    try expectApproxEqAbs(expected, dist.pdf(0.0), 1e-12);
+}
+
+test "WignerSemicircle: pdf zero at boundaries" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.pdf(1.0), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(-1.0), 1e-12);
+}
+
+test "WignerSemicircle: pdf zero outside support" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.pdf(1.1), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(-1.1), 1e-12);
+}
+
+test "WignerSemicircle: pdf is symmetric around 0" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(dist.pdf(x), dist.pdf(-x), 1e-12);
+    }
+}
+
+test "WignerSemicircle: pdf is non-negative on support" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+    const x_vals = [_]f64{ -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "WignerSemicircle: pdf integrates to approximately 1" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // Numerical integration via Simpson's rule
+    var sum: f64 = 0.0;
+    const n = 1000;
+    const h = 2.0 / @as(f64, @floatFromInt(n)); // integrating [-1, 1]
+    for (0..n + 1) |i| {
+        const x = -1.0 + @as(f64, @floatFromInt(i)) * h;
+        const w: f64 = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+        sum += w * dist.pdf(x);
+    }
+    const integral = (h / 3.0) * sum;
+    try expectApproxEqAbs(1.0, integral, 0.01);
+}
+
+test "WignerSemicircle: logpdf exact at x=0, R=1" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // logpdf(0; R=1) = log(2/π)
+    const expected = @log(2.0 / math.pi);
+    try expectApproxEqAbs(expected, dist.logpdf(0.0), 1e-10);
+}
+
+test "WignerSemicircle: logpdf equals log(pdf) in interior" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.1, 0.5, 0.9 };
+    for (x_vals) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        try expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+    }
+}
+
+test "WignerSemicircle: logpdf is -inf outside support" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(1.1)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.1)));
+}
+
+test "WignerSemicircle: cdf exact at x=0" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // cdf(0; R) = 0.5 (symmetric)
+    try expectApproxEqAbs(0.5, dist.cdf(0.0), 1e-12);
+}
+
+test "WignerSemicircle: cdf exact at boundaries" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.cdf(-1.0), 1e-12);
+    try expectApproxEqAbs(1.0, dist.cdf(1.0), 1e-12);
+}
+
+test "WignerSemicircle: cdf exact at x=0.5, R=1" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // cdf(0.5; R=1) = 0.5 + 0.5*√0.75/π + arcsin(0.5)/π
+    // = 0.5 + 0.5*0.8660254.../π + (π/6)/π
+    // ≈ 0.5 + 0.1378330 + 0.1666667 = 0.8044997
+    const sqrt_075 = @sqrt(0.75);
+    const arcsin_half = math.asin(@as(f64, 0.5));
+    const expected = 0.5 + 0.5 * sqrt_075 / math.pi + arcsin_half / math.pi;
+    try expectApproxEqAbs(expected, dist.cdf(0.5), 1e-9);
+}
+
+test "WignerSemicircle: cdf symmetric around 0.5" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const x_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (x_vals) |x| {
+        const cdf_pos = dist.cdf(x);
+        const cdf_neg = dist.cdf(-x);
+        try expectApproxEqAbs(1.0, cdf_pos + cdf_neg, 1e-12);
+    }
+}
+
+test "WignerSemicircle: cdf is monotonically increasing" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const x_vals = [_]f64{ -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "WignerSemicircle: cdf in [0, 1] for all x in support" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+    const x_vals = [_]f64{ -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "WignerSemicircle: sf equals 1 minus cdf" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.5, 0.9 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "WignerSemicircle: quantile exact at p=0.5" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // Median at 0 (symmetric)
+    try expectApproxEqAbs(0.0, try dist.quantile(0.5), 1e-8);
+}
+
+test "WignerSemicircle: quantile exact at boundaries" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectApproxEqAbs(-1.0, try dist.quantile(0.0), 1e-8);
+    try expectApproxEqAbs(1.0, try dist.quantile(1.0), 1e-8);
+}
+
+test "WignerSemicircle: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-8);
+    }
+}
+
+test "WignerSemicircle: quantile rejects invalid probabilities" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "WignerSemicircle: mean exact at 0" {
+    const dist_1 = try WignerSemicircle(f64).init(1.0);
+    const dist_2 = try WignerSemicircle(f64).init(2.0);
+    try expectApproxEqAbs(0.0, dist_1.mean(), 1e-12);
+    try expectApproxEqAbs(0.0, dist_2.mean(), 1e-12);
+}
+
+test "WignerSemicircle: variance exact R²/4" {
+    const dist_1 = try WignerSemicircle(f64).init(1.0);
+    // variance = R²/4 = 0.25
+    try expectApproxEqAbs(0.25, dist_1.variance(), 1e-12);
+}
+
+test "WignerSemicircle: variance scales with R²" {
+    const dist_2 = try WignerSemicircle(f64).init(2.0);
+    // variance = 4/4 = 1.0
+    try expectApproxEqAbs(1.0, dist_2.variance(), 1e-12);
+}
+
+test "WignerSemicircle: variance R=3 is 2.25" {
+    const dist = try WignerSemicircle(f64).init(3.0);
+    // variance = 9/4 = 2.25
+    try expectApproxEqAbs(2.25, dist.variance(), 1e-12);
+}
+
+test "WignerSemicircle: mode exact at 0" {
+    const dist_1 = try WignerSemicircle(f64).init(1.0);
+    const dist_2 = try WignerSemicircle(f64).init(2.0);
+    try expectApproxEqAbs(0.0, dist_1.mode(), 1e-12);
+    try expectApproxEqAbs(0.0, dist_2.mode(), 1e-12);
+}
+
+test "WignerSemicircle: entropy exact R=1" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    // entropy = ln(π) - 1/2
+    const expected = @log(math.pi) - 0.5;
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-10);
+}
+
+test "WignerSemicircle: entropy exact R=2" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+    // entropy = ln(2π) - 1/2
+    const expected = @log(2.0 * math.pi) - 0.5;
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-10);
+}
+
+test "WignerSemicircle: entropy increases with R" {
+    const dist_1 = try WignerSemicircle(f64).init(1.0);
+    const dist_2 = try WignerSemicircle(f64).init(2.0);
+    const dist_3 = try WignerSemicircle(f64).init(3.0);
+    const h1 = dist_1.entropy();
+    const h2 = dist_2.entropy();
+    const h3 = dist_3.entropy();
+    try testing.expect(h1 < h2);
+    try testing.expect(h2 < h3);
+}
+
+test "WignerSemicircle: sample is within [-R, R]" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= -2.0 and s <= 2.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "WignerSemicircle: empirical sample mean converges to 0" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(0.0, empirical, 0.05);
+}
+
+test "WignerSemicircle: empirical variance converges to R²/4" {
+    const dist = try WignerSemicircle(f64).init(1.0);
+    const expected_var = 0.25;
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    const var_empirical = sum_sq / @as(f64, @floatFromInt(n)) - mean * mean;
+    try expectApproxEqAbs(expected_var, var_empirical, 0.05);
+}
+
+test "WignerSemicircle: f32 support basic operations" {
+    const dist = try WignerSemicircle(f32).init(1.0);
+    try testing.expect(dist.mean() == 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    const c = dist.cdf(0.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= -1.0 and q <= 1.0);
+}
+
+test "WignerSemicircle: f32 quantile roundtrip" {
+    const dist = try WignerSemicircle(f32).init(1.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
