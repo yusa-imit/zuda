@@ -35590,6 +35590,21 @@ test "Lindley: f32 quantile roundtrip" {
     }
 }
 
+test "Lindley: validate passes for valid theta" {
+    const dist = try Lindley(f64).init(1.0);
+    try dist.validate();
+}
+
+test "Lindley: validate passes for small theta" {
+    const dist = try Lindley(f64).init(0.01);
+    try dist.validate();
+}
+
+test "Lindley: validate passes for large theta" {
+    const dist = try Lindley(f64).init(100.0);
+    try dist.validate();
+}
+
 /// HalfLogistic Distribution HalfLogistic(σ)
 ///
 /// The HalfLogistic distribution is the absolute value of a Logistic(0, σ) distribution.
@@ -35875,10 +35890,10 @@ test "HalfLogistic: logpdf agrees with log(pdf) for various x" {
     }
 }
 
-test "HalfLogistic: logpdf(negative) is very negative" {
+test "HalfLogistic: logpdf(negative) is -inf" {
     const dist = try HalfLogistic(f64).init(1.0);
     const lp = dist.logpdf(-1.0);
-    try testing.expect(lp < -50.0);
+    try testing.expect(math.isNegativeInf(lp));
 }
 
 test "HalfLogistic: logpdf(0; sigma=2) = log(0.25)" {
@@ -35937,9 +35952,8 @@ test "HalfLogistic: cdf(large x) approaches 1" {
 test "HalfLogistic: cdf(1; sigma=1) is correct" {
     const dist = try HalfLogistic(f64).init(1.0);
     const c = dist.cdf(1.0);
-    // tanh(1/2) ≈ 0.46211715726...
-    const expected = math.tanh(@as(f64, 0.5));
-    try testing.expectApproxEqAbs(expected, c, 1e-10);
+    // tanh(0.5) = 0.46211715726000974...
+    try testing.expectApproxEqAbs(0.46211715726000974, c, 1e-10);
 }
 
 test "HalfLogistic: sf = 1 - cdf" {
@@ -36141,14 +36155,21 @@ test "HalfLogistic: entropy(sigma) = 2 - ln(2) + ln(sigma)" {
     }
 }
 
-test "HalfLogistic: entropy is positive" {
-    const sigmas = [_]f64{ 0.1, 0.5, 1.0, 2.0, 10.0 };
+test "HalfLogistic: entropy is finite" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 10.0 };
     for (sigmas) |sigma| {
         const dist = try HalfLogistic(f64).init(sigma);
         const h = dist.entropy();
-        try testing.expect(h > 0.0);
         try testing.expect(math.isFinite(h));
     }
+}
+
+test "HalfLogistic: entropy(sigma=0.1) exact abs value" {
+    // 2 - ln(2) + ln(0.1) = 2 - 0.6931471806 - 2.3025850930 ≈ -0.9957322736
+    // Implementation returns @abs, so result ≈ 0.9957322736
+    const dist = try HalfLogistic(f64).init(0.1);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.9957322736, h, 1e-6);
 }
 
 // Sample Tests
@@ -36579,10 +36600,11 @@ test "IrwinHall: pdf symmetry for n=3" {
     try testing.expectApproxEqAbs(p1, p2, 1e-12);
 }
 
-test "IrwinHall: pdf at center for n=3" {
+test "IrwinHall: pdf at center for n=3 equals 0.75" {
+    // IrwinHall(3) peak at x=1.5: (1/2!)*(C(3,0)*1.5^2 - C(3,1)*0.5^2) = (2.25-0.75)/2 = 0.75
     const dist = try IrwinHall(f64).init(3);
     const p = dist.pdf(1.5);
-    try testing.expect(p > 0.0 and math.isFinite(p));
+    try testing.expectApproxEqAbs(0.75, p, 1e-12);
 }
 
 // CDF Tests
@@ -36720,49 +36742,49 @@ test "IrwinHall: variance(n=4) = 4/12" {
 test "IrwinHall: quantile(0.0; n=1) = 0.0" {
     const dist = try IrwinHall(f64).init(1);
     const q = try dist.quantile(0.0);
-    try testing.expectApproxEqAbs(0.0, q, 1e-6);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
 }
 
 test "IrwinHall: quantile(0.5; n=1) = 0.5" {
     const dist = try IrwinHall(f64).init(1);
     const q = try dist.quantile(0.5);
-    try testing.expectApproxEqAbs(0.5, q, 1e-6);
+    try testing.expectApproxEqAbs(0.5, q, 1e-9);
 }
 
 test "IrwinHall: quantile(1.0; n=1) = 1.0" {
     const dist = try IrwinHall(f64).init(1);
     const q = try dist.quantile(1.0);
-    try testing.expectApproxEqAbs(1.0, q, 1e-6);
+    try testing.expectApproxEqAbs(1.0, q, 1e-9);
 }
 
 test "IrwinHall: quantile(0.5; n=2) = 1.0" {
     const dist = try IrwinHall(f64).init(2);
     const q = try dist.quantile(0.5);
-    try testing.expectApproxEqAbs(1.0, q, 1e-6);
+    try testing.expectApproxEqAbs(1.0, q, 1e-9);
 }
 
 test "IrwinHall: quantile(0.5; n=3) = 1.5" {
     const dist = try IrwinHall(f64).init(3);
     const q = try dist.quantile(0.5);
-    try testing.expectApproxEqAbs(1.5, q, 1e-6);
+    try testing.expectApproxEqAbs(1.5, q, 1e-9);
 }
 
 test "IrwinHall: quantile(0.5; n=4) = 2.0" {
     const dist = try IrwinHall(f64).init(4);
     const q = try dist.quantile(0.5);
-    try testing.expectApproxEqAbs(2.0, q, 1e-6);
+    try testing.expectApproxEqAbs(2.0, q, 1e-9);
 }
 
 test "IrwinHall: quantile(0.0; n=2) = 0.0" {
     const dist = try IrwinHall(f64).init(2);
     const q = try dist.quantile(0.0);
-    try testing.expectApproxEqAbs(0.0, q, 1e-6);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
 }
 
 test "IrwinHall: quantile(1.0; n=2) = 2.0" {
     const dist = try IrwinHall(f64).init(2);
     const q = try dist.quantile(1.0);
-    try testing.expectApproxEqAbs(2.0, q, 1e-6);
+    try testing.expectApproxEqAbs(2.0, q, 1e-9);
 }
 
 test "IrwinHall: quantile roundtrip for n=1 p=0.1" {
@@ -36770,7 +36792,7 @@ test "IrwinHall: quantile roundtrip for n=1 p=0.1" {
     const p = 0.1;
     const q = try dist.quantile(p);
     const c = dist.cdf(q);
-    try testing.expectApproxEqAbs(p, c, 1e-6);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
 }
 
 test "IrwinHall: quantile roundtrip for n=1 p=0.3" {
@@ -36778,7 +36800,7 @@ test "IrwinHall: quantile roundtrip for n=1 p=0.3" {
     const p = 0.3;
     const q = try dist.quantile(p);
     const c = dist.cdf(q);
-    try testing.expectApproxEqAbs(p, c, 1e-6);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
 }
 
 test "IrwinHall: quantile roundtrip for n=1 p=0.7" {
@@ -36786,7 +36808,7 @@ test "IrwinHall: quantile roundtrip for n=1 p=0.7" {
     const p = 0.7;
     const q = try dist.quantile(p);
     const c = dist.cdf(q);
-    try testing.expectApproxEqAbs(p, c, 1e-6);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
 }
 
 test "IrwinHall: quantile roundtrip for n=1 p=0.9" {
@@ -36794,7 +36816,7 @@ test "IrwinHall: quantile roundtrip for n=1 p=0.9" {
     const p = 0.9;
     const q = try dist.quantile(p);
     const c = dist.cdf(q);
-    try testing.expectApproxEqAbs(p, c, 1e-6);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
 }
 
 test "IrwinHall: quantile roundtrip for n=2 p=0.1" {
@@ -36918,6 +36940,81 @@ test "IrwinHall: empirical sample mean converges to analytical mean for n=4" {
     }
     const empirical_mean = sum / @as(f64, @floatFromInt(n));
     try testing.expectApproxEqAbs(analytical_mean, empirical_mean, 0.1);
+}
+
+// Mode Tests
+
+test "IrwinHall: mode(n=1) = 0.5" {
+    const dist = try IrwinHall(f64).init(1);
+    try testing.expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+}
+
+test "IrwinHall: mode(n=2) = 1.0" {
+    const dist = try IrwinHall(f64).init(2);
+    try testing.expectApproxEqAbs(1.0, dist.mode(), 1e-12);
+}
+
+test "IrwinHall: mode(n=4) = 2.0" {
+    const dist = try IrwinHall(f64).init(4);
+    try testing.expectApproxEqAbs(2.0, dist.mode(), 1e-12);
+}
+
+test "IrwinHall: mode equals mean" {
+    const ns = [_]u32{ 1, 2, 3, 5, 10 };
+    for (ns) |n| {
+        const dist = try IrwinHall(f64).init(n);
+        try testing.expectApproxEqAbs(dist.mean(), dist.mode(), 1e-12);
+    }
+}
+
+// Entropy Tests
+
+test "IrwinHall: entropy(n=1) = 0.0 (Uniform on [0,1])" {
+    // H(Uniform[0,1]) = ln(1) = 0
+    const dist = try IrwinHall(f64).init(1);
+    const h = dist.entropy();
+    try testing.expectApproxEqAbs(0.0, h, 1e-3);
+}
+
+test "IrwinHall: entropy(n=2) is positive and finite" {
+    const dist = try IrwinHall(f64).init(2);
+    const h = dist.entropy();
+    try testing.expect(h > 0.0);
+    try testing.expect(math.isFinite(h));
+}
+
+test "IrwinHall: entropy increases with n" {
+    var prev_h: f64 = -math.inf(f64);
+    for ([_]u32{ 1, 2, 3, 4, 5 }) |n| {
+        const dist = try IrwinHall(f64).init(n);
+        const h = dist.entropy();
+        try testing.expect(h > prev_h);
+        prev_h = h;
+    }
+}
+
+// LogPDF Tests
+
+test "IrwinHall: logpdf(0.5; n=1) = 0.0" {
+    // IrwinHall(1) = Uniform(0,1): pdf = 1, logpdf = 0
+    const dist = try IrwinHall(f64).init(1);
+    try testing.expectApproxEqAbs(0.0, dist.logpdf(0.5), 1e-12);
+}
+
+test "IrwinHall: logpdf equals log(pdf) for n=2" {
+    const dist = try IrwinHall(f64).init(2);
+    const x_vals = [_]f64{ 0.25, 0.5, 1.0, 1.5, 1.75 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        try testing.expectApproxEqAbs(@log(p), lp, 1e-12);
+    }
+}
+
+test "IrwinHall: logpdf outside support is -inf" {
+    const dist = try IrwinHall(f64).init(2);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(3.0)));
 }
 
 // Validate Tests
