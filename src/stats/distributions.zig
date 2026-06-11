@@ -40453,3 +40453,624 @@ test "Benford: quantile boundary exclusive (just above boundary returns next dig
         try testing.expect(q >= 1);
     }
 }
+
+// ============================================================================
+// LogLaplace Distribution
+// ============================================================================
+
+/// LogLaplace(μ, b) distribution: The logarithm of a Laplace random variable.
+///
+/// This is the distribution of X = exp(Y) where Y ~ Laplace(μ, b).
+/// Support: (0, ∞)
+///
+/// Parameters:
+///   - μ: location parameter (any real value)
+///   - b: scale parameter (must be > 0)
+pub fn LogLaplace(comptime T: type) type {
+    return struct {
+        mu: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Create a LogLaplace distribution with given parameters.
+        ///
+        /// Parameters:
+        ///   - mu: Location parameter (any real value)
+        ///   - b: Scale parameter (must be > 0)
+        ///
+        /// Errors: b ≤ 0 or non-finite parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, b: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (b <= 0.0 or !math.isFinite(b)) return error.InvalidParameter;
+            return Self{ .mu = mu, .b = b };
+        }
+
+        /// Probability density function: f(x) = 1/(2bx) · exp(−|ln(x)−μ|/b) for x > 0, 0 otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            const lnx = @log(x);
+            const z = lnx - self.mu;
+
+            if (z <= 0.0) {
+                return @exp(z / self.b) / (2.0 * self.b * x);
+            } else {
+                return @exp(-z / self.b) / (2.0 * self.b * x);
+            }
+        }
+
+        /// Log probability density function: ln(f(x)) = −ln(2) − ln(b) − ln(x) − |ln(x)−μ|/b.
+        ///
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+
+            const lnx = @log(x);
+            const z = lnx - self.mu;
+            return -@log(2.0) - @log(self.b) - lnx - @abs(z) / self.b;
+        }
+
+        /// Cumulative distribution function F(x).
+        ///
+        /// Returns 0 for x ≤ 0.
+        /// For x > 0:
+        ///   - If z = ln(x)−μ ≤ 0: F(x) = 0.5 · exp(z/b)
+        ///   - If z > 0: F(x) = 1 − 0.5 · exp(−z/b)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+
+            const lnx = @log(x);
+            const z = lnx - self.mu;
+
+            if (z <= 0.0) {
+                return 0.5 * @exp(z / self.b);
+            } else {
+                return 1.0 - 0.5 * @exp(-z / self.b);
+            }
+        }
+
+        /// Survival function S(x) = 1 − F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF).
+        ///
+        /// For p ≤ 0.5: Q(p) = exp(μ + b · ln(2p))
+        /// For p > 0.5: Q(p) = exp(μ − b · ln(2(1−p)))
+        ///
+        /// Errors: p < 0 or p > 1 or non-finite p → InvalidProbability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            if (p <= 0.5) {
+                return @exp(self.mu + self.b * @log(2.0 * p));
+            } else {
+                return @exp(self.mu - self.b * @log(2.0 * (1.0 - p)));
+            }
+        }
+
+        /// Mean of the distribution: E[X] = exp(μ) / (1 − b²) for b < 1, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.b >= 1.0) return math.inf(T);
+            const b2 = self.b * self.b;
+            return @exp(self.mu) / (1.0 - b2);
+        }
+
+        /// Variance of the distribution: Var(X) = exp(2μ) · [1/(1−4b²) − 1/(1−b²)²] for b < 0.5, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.b >= 0.5) return math.inf(T);
+            const b2 = self.b * self.b;
+            const e2mu = @exp(2.0 * self.mu);
+            const term1 = 1.0 / (1.0 - 4.0 * b2);
+            const term2 = 1.0 / ((1.0 - b2) * (1.0 - b2));
+            return e2mu * (term1 - term2);
+        }
+
+        /// Mode of the distribution: always exp(μ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return @exp(self.mu);
+        }
+
+        /// Shannon entropy in nats: H = 1 + μ + ln(2b).
+        ///
+        /// Note: Can be negative for small b (when b < 1/(2e) ≈ 0.1839).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 1.0 + self.mu + @log(2.0 * self.b);
+        }
+
+        /// Generate a random sample using the inverse CDF method.
+        ///
+        /// For u ~ Uniform(0,1):
+        ///   - If u < 0.5: X = exp(μ + b · ln(2u))
+        ///   - Otherwise: X = exp(μ − b · ln(2(1−u)))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+
+            if (u < 0.5) {
+                return @exp(self.mu + self.b * @log(2.0 * u));
+            } else {
+                return @exp(self.mu - self.b * @log(2.0 * (1.0 - u)));
+            }
+        }
+
+        /// Assert that distribution parameters are valid: b > 0, all parameters finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.b <= 0.0 or !math.isFinite(self.b)) return error.InvalidParameter;
+        }
+    };
+}
+
+// === LogLaplace Distribution Tests ===
+
+test "LogLaplace: init succeeds with valid parameters (0, 0.5)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.b == 0.5);
+}
+
+test "LogLaplace: init succeeds with valid parameters (1, 0.5)" {
+    const dist = try LogLaplace(f64).init(1.0, 0.5);
+    try testing.expect(dist.mu == 1.0);
+    try testing.expect(dist.b == 0.5);
+}
+
+test "LogLaplace: init fails for b <= 0" {
+    const result = LogLaplace(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogLaplace: init fails for negative b" {
+    const result = LogLaplace(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogLaplace: init fails for non-finite mu (infinity)" {
+    const result = LogLaplace(f64).init(math.inf(f64), 0.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogLaplace: init fails for non-finite mu (negative infinity)" {
+    const result = LogLaplace(f64).init(-math.inf(f64), 0.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogLaplace: init fails for non-finite mu (NaN)" {
+    const result = LogLaplace(f64).init(math.nan(f64), 0.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogLaplace: init fails for non-finite b (NaN)" {
+    const result = LogLaplace(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogLaplace: init fails for non-finite b (infinity)" {
+    const result = LogLaplace(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "LogLaplace: validate() succeeds for valid distribution (0, 0.5)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    try dist.validate();
+}
+
+test "LogLaplace: validate() succeeds for valid distribution (1, 0.25)" {
+    const dist = try LogLaplace(f64).init(1.0, 0.25);
+    try dist.validate();
+}
+
+test "LogLaplace: validate() fails for b <= 0" {
+    const result = LogLaplace(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// PDF Tests
+
+test "LogLaplace: pdf(1.0; 0, 0.5) = 1.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-10);
+}
+
+test "LogLaplace: pdf(0.5; 0, 0.5) = 0.5" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(0.5, p, 1e-10);
+}
+
+test "LogLaplace: pdf(2.0; 0, 0.5) = 0.125" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const p = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(0.125, p, 1e-10);
+}
+
+test "LogLaplace: pdf is positive across positive support" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const test_points = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 10.0, 100.0 };
+    for (test_points) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p > 0.0);
+    }
+}
+
+test "LogLaplace: pdf is non-negative across range [0.01, 100]" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    var x: f64 = 0.01;
+    while (x <= 100.0) : (x *= 1.5) {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+// LogPDF Tests
+
+test "LogLaplace: logpdf(1.0; 0, 0.5) = 0.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const lp = dist.logpdf(1.0);
+    try testing.expectApproxEqAbs(0.0, lp, 1e-10);
+}
+
+test "LogLaplace: logpdf(0.5; 0, 0.5) = log(0.5)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const lp = dist.logpdf(0.5);
+    const expected = @log(0.5);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "LogLaplace: logpdf(x) = log(pdf(x)) identity" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (test_points) |x| {
+        const p = dist.pdf(x);
+        const lp = dist.logpdf(x);
+        const expected = @log(p);
+        try testing.expectApproxEqAbs(expected, lp, 1e-10);
+    }
+}
+
+// CDF Tests
+
+test "LogLaplace: cdf(1.0; 0, 0.5) = 0.5" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "LogLaplace: cdf(0.5; 0, 0.5) = 0.125" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.125, c, 1e-10);
+}
+
+test "LogLaplace: cdf(2.0; 0, 0.5) = 0.875" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const c = dist.cdf(2.0);
+    try testing.expectApproxEqAbs(0.875, c, 1e-10);
+}
+
+test "LogLaplace: cdf is monotonically increasing" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    var x: f64 = 0.01;
+    var prev_cdf = dist.cdf(x);
+    while (x <= 100.0) : (x *= 1.2) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "LogLaplace: cdf approaches 0 for very small x" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const c = dist.cdf(0.001);
+    try testing.expect(c < 0.01);
+}
+
+test "LogLaplace: cdf approaches 1 for very large x" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const c = dist.cdf(1000.0);
+    try testing.expect(c > 0.99);
+}
+
+test "LogLaplace: sf(x) + cdf(x) = 1.0 identity across range" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try testing.expectApproxEqAbs(1.0, c + s, 1e-10);
+    }
+}
+
+// Quantile Tests
+
+test "LogLaplace: quantile(0.5; 0, 0.5) = 1.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "LogLaplace: quantile(0.125; 0, 0.5) = 0.5" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const q = try dist.quantile(0.125);
+    try testing.expectApproxEqAbs(0.5, q, 1e-10);
+}
+
+test "LogLaplace: quantile(0.875; 0, 0.5) = 2.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const q = try dist.quantile(0.875);
+    try testing.expectApproxEqAbs(2.0, q, 1e-10);
+}
+
+test "LogLaplace: quantile(0.0) returns 0.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "LogLaplace: quantile(1.0) returns +infinity" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "LogLaplace: quantile(p < 0) returns error" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogLaplace: quantile(p > 1) returns error" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogLaplace: quantile(NaN) returns error" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogLaplace: quantile(p) < quantile(q) for p < q" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+}
+
+test "LogLaplace: quantile(cdf(x)) ≈ x roundtrip for x=0.5" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-9);
+}
+
+test "LogLaplace: quantile(cdf(x)) ≈ x roundtrip for x=1.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 1.0;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-9);
+}
+
+test "LogLaplace: quantile(cdf(x)) ≈ x roundtrip for x=2.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 2.0;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-9);
+}
+
+test "LogLaplace: quantile(cdf(x)) ≈ x roundtrip for x=4.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 4.0;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-9);
+}
+
+// Mean Tests
+
+test "LogLaplace: mean(0, 0.5) = 4/3 ≈ 1.333333" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const m = dist.mean();
+    const expected = 4.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+test "LogLaplace: mean(1, 0.5) = e/0.75 ≈ 3.6191" {
+    const dist = try LogLaplace(f64).init(1.0, 0.5);
+    const m = dist.mean();
+    const expected = std.math.exp(1.0) / 0.75;
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+test "LogLaplace: mean(0, 0.5) finite for b < 1" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+}
+
+test "LogLaplace: mean(0, 1.0) returns +infinity for b >= 1" {
+    const dist = try LogLaplace(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isPositiveInf(m));
+}
+
+test "LogLaplace: mean(0, 1.5) returns +infinity for b > 1" {
+    const dist = try LogLaplace(f64).init(0.0, 1.5);
+    const m = dist.mean();
+    try testing.expect(math.isPositiveInf(m));
+}
+
+// Variance Tests
+
+test "LogLaplace: variance(0, 0.25) = 44/225 ≈ 0.195556" {
+    const dist = try LogLaplace(f64).init(0.0, 0.25);
+    const v = dist.variance();
+    const expected = 44.0 / 225.0;
+    try testing.expectApproxEqAbs(expected, v, 1e-10);
+}
+
+test "LogLaplace: variance(0, 0.5) infinite (b >= 0.5)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "LogLaplace: variance(0, 1.0) infinite (b >= 1)" {
+    const dist = try LogLaplace(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+// Mode Tests
+
+test "LogLaplace: mode(0, 0.5) = exp(0) = 1.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(1.0, m, 1e-10);
+}
+
+test "LogLaplace: mode(1, 0.5) = exp(1) ≈ 2.71828" {
+    const dist = try LogLaplace(f64).init(1.0, 0.5);
+    const m = dist.mode();
+    const expected = std.math.exp(1.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+test "LogLaplace: mode always equals exp(mu)" {
+    const dist = try LogLaplace(f64).init(2.0, 0.3);
+    const m = dist.mode();
+    const expected = std.math.exp(2.0);
+    try testing.expectApproxEqAbs(expected, m, 1e-10);
+}
+
+// Entropy Tests
+
+test "LogLaplace: entropy(0, 0.5) = 1.0" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(1.0, e, 1e-10);
+}
+
+test "LogLaplace: entropy(1, 0.5) = 2.0" {
+    const dist = try LogLaplace(f64).init(1.0, 0.5);
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(2.0, e, 1e-10);
+}
+
+test "LogLaplace: entropy(0, 1.0) = 1 + ln(2)" {
+    const dist = try LogLaplace(f64).init(0.0, 1.0);
+    const e = dist.entropy();
+    const expected = 1.0 + @log(2.0);
+    try testing.expectApproxEqAbs(expected, e, 1e-10);
+}
+
+test "LogLaplace: entropy is finite" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+// Sample Tests
+
+test "LogLaplace: sample produces positive values" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+    }
+}
+
+test "LogLaplace: sample produces finite values" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "LogLaplace: sample empirical mean converges to theoretical (n=10000, tolerance=0.1)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, empirical_mean, 0.1);
+}
+
+// Numerical Tests
+
+test "LogLaplace: cdf derivative ≈ pdf (finite difference at x=0.5, tolerance 1e-3)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 0.5;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "LogLaplace: cdf derivative ≈ pdf (finite difference at x=1.0, tolerance 1e-3)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 1.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "LogLaplace: cdf derivative ≈ pdf (finite difference at x=2.0, tolerance 1e-3)" {
+    const dist = try LogLaplace(f64).init(0.0, 0.5);
+    const x = 2.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
