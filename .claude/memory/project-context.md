@@ -1,3 +1,24 @@
+**Session 663 Update (2026-06-11) — FEATURE MODE:**
+
+✅ **AsymmetricLaplace Distribution** — 71st total, 56th continuous — commits 8485c97, 0db7663
+- **Mode**: FEATURE MODE (counter: 663)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: AsymmetricLaplace(T) — two-sided exponential with different tail rates
+  * Parameters: mu (location), sigma (scale, σ>0), kappa (asymmetry, κ>0)
+  * κ=1 → symmetric Laplace; Support: (-∞, +∞)
+  * PDF: κ/(σ(1+κ²)) · exp((x-μ)/(σκ)) for x<μ; · exp(-(x-μ)κ/σ) for x≥μ
+  * CDF: κ²/(1+κ²) · exp((x-μ)/(σκ)) for x<μ; 1 - 1/(1+κ²) · exp(-(x-μ)κ/σ) for x≥μ
+  * Quantile: closed-form; p_boundary = κ²/(1+κ²); p=0→-∞, p=1→+∞
+  * Mean: μ + σ(1-κ²)/κ; Variance: σ²(1+κ⁴)/κ²
+  * Mode: μ (always); Entropy: 1 + ln(σ(1+κ²)/κ) — closed form
+  * Sample: mixture representation — left side X=μ-σκ·Exp(1) with prob κ²/(1+κ²); else X=μ+(σ/κ)·Exp(1)
+  * ALD(0,1,1): pdf(0)=0.5, cdf(0)=0.5, mean=0, var=2, entropy=1+ln(2)
+  * ALD(0,1,2): pdf(0)=0.4, cdf(0)=0.8, mean=-1.5, var=4.25, entropy=1+ln(2.5)
+  * ALD(0,1,0.5): pdf(0)=0.4, cdf(0)=0.2, mean=1.5, var=4.25
+- **Tests**: 69 tests all passing (exit code 0)
+- **Distribution count**: 71 total (56 continuous + 15 discrete)
+- **Next Priority**: Benford (discrete) or GompertzMakeham or NoncentralT
+
 **Session 662 Update (2026-06-11) — FEATURE MODE:**
 
 ✅ **JohnsonSU Distribution** — 70th total, 55th continuous — commit f192783
