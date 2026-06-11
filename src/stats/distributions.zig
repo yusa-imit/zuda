@@ -39547,3 +39547,702 @@ test "AsymmetricLaplace: f32 variance(0,1,1) = 2" {
     const v = dist.variance();
     try testing.expectApproxEqAbs(2.0, v, 1e-4);
 }
+
+/// Benford distribution (First-Digit Law) — Benford()
+///
+/// Describes the probability distribution of leading digits in naturally occurring datasets.
+/// P(X = d) = log₁₀(1 + 1/d) for d ∈ {1, 2, ..., 9}.
+///
+/// This is a parameter-free distribution.
+pub fn Benford(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        /// Create a Benford distribution instance.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init() Self {
+            return .{};
+        }
+
+        /// Probability mass function P(X = d) = log₁₀(1 + 1/d).
+        ///
+        /// Returns 0.0 for d outside {1,...,9}.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, d: u8) T {
+            _ = self;
+            if (d < 1 or d > 9) return 0.0;
+            return @log10(1.0 + 1.0 / @as(T, @floatFromInt(d)));
+        }
+
+        /// Log probability mass function: ln(P(X = d)).
+        ///
+        /// Returns -∞ for d outside {1,...,9}.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, d: u8) T {
+            _ = self;
+            if (d < 1 or d > 9) return -math.inf(T);
+            return @log(@log10(1.0 + 1.0 / @as(T, @floatFromInt(d))));
+        }
+
+        /// Cumulative distribution function F(d) = log₁₀(d + 1).
+        ///
+        /// Returns 0.0 for d < 1, 1.0 for d > 9.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, d: u8) T {
+            _ = self;
+            if (d < 1) return 0.0;
+            if (d > 9) return 1.0;
+            return @log10(@as(T, @floatFromInt(d)) + 1.0);
+        }
+
+        /// Survival function: P(X > d) = 1 − CDF(d).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, d: u8) T {
+            return 1.0 - self.cdf(d);
+        }
+
+        /// Quantile function: smallest d ∈ {1,...,9} such that CDF(d) ≥ p.
+        ///
+        /// Returns error.InvalidParameter for p < 0, p > 1, or non-finite p.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u8 {
+            if (!(p >= 0.0 and p <= 1.0) or !math.isFinite(p)) return error.InvalidParameter;
+            var d: u8 = 1;
+            while (d <= 9) : (d += 1) {
+                if (p <= self.cdf(d)) return d;
+            }
+            return 9;
+        }
+
+        /// Mean: Σ d·log₁₀(1 + 1/d) ≈ 3.44024.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            var m: T = 0.0;
+            var d: u8 = 1;
+            while (d <= 9) : (d += 1) {
+                const df: T = @floatFromInt(d);
+                m += df * @log10(1.0 + 1.0 / df);
+            }
+            return m;
+        }
+
+        /// Variance: E[X²] − (E[X])² ≈ 6.05653.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            var ex: T = 0.0;
+            var ex2: T = 0.0;
+            var d: u8 = 1;
+            while (d <= 9) : (d += 1) {
+                const df: T = @floatFromInt(d);
+                const p = @log10(1.0 + 1.0 / df);
+                ex += df * p;
+                ex2 += df * df * p;
+            }
+            return ex2 - ex * ex;
+        }
+
+        /// Shannon entropy in nats: −Σ p(d)·ln(p(d)) ≈ 2.19322.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            _ = self;
+            var h: T = 0.0;
+            var d: u8 = 1;
+            while (d <= 9) : (d += 1) {
+                const df: T = @floatFromInt(d);
+                const p = @log10(1.0 + 1.0 / df);
+                h -= p * @log(p);
+            }
+            return h;
+        }
+
+        /// Mode of the distribution: 1 (highest probability digit).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u8 {
+            _ = self;
+            return 1;
+        }
+
+        /// Generate a random sample using inverse CDF method.
+        ///
+        /// Returns a digit d ∈ {1,...,9} according to Benford's law.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) u8 {
+            const u = rng.float(T);
+            var d: u8 = 1;
+            while (d <= 9) : (d += 1) {
+                if (u < self.cdf(d)) return d;
+            }
+            return 9;
+        }
+
+        /// Validate distribution invariants (always passes — no parameters to validate).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            _ = self;
+        }
+    };
+}
+
+// ============================================================================
+// Benford Distribution Tests
+// ============================================================================
+
+// Initialization Tests
+
+test "Benford: init creates usable instance" {
+    const dist = Benford(f64).init();
+    try testing.expect(dist.pmf(1) > 0.0);
+    try testing.expect(dist.pmf(9) > 0.0);
+}
+
+test "Benford: pmf(1) = log10(2)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(1);
+    const expected = @log10(2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(2) = log10(3/2)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(2);
+    const expected = @log10(3.0 / 2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(3) = log10(4/3)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(3);
+    const expected = @log10(4.0 / 3.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(4) = log10(5/4)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(4);
+    const expected = @log10(5.0 / 4.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(5) = log10(6/5)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(5);
+    const expected = @log10(6.0 / 5.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(6) = log10(7/6)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(6);
+    const expected = @log10(7.0 / 6.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(7) = log10(8/7)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(7);
+    const expected = @log10(8.0 / 7.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(8) = log10(9/8)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(8);
+    const expected = @log10(9.0 / 8.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(9) = log10(10/9)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(9);
+    const expected = @log10(10.0 / 9.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Benford: pmf(0) = 0.0 (outside support)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(0);
+    try testing.expectEqual(0.0, p);
+}
+
+test "Benford: pmf(10) = 0.0 (outside support)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(10);
+    try testing.expectEqual(0.0, p);
+}
+
+test "Benford: pmf(255) = 0.0 (far outside support)" {
+    const dist = Benford(f64).init();
+    const p = dist.pmf(255);
+    try testing.expectEqual(0.0, p);
+}
+
+test "Benford: all pmf values are positive for d in {1..9}" {
+    const dist = Benford(f64).init();
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        try testing.expect(dist.pmf(d) > 0.0);
+    }
+}
+
+test "Benford: pmf sums to 1.0" {
+    const dist = Benford(f64).init();
+    var sum: f64 = 0.0;
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        sum += dist.pmf(d);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-10);
+}
+
+// Logpmf Tests
+
+test "Benford: logpmf(1) = log(log10(2))" {
+    const dist = Benford(f64).init();
+    const lp = dist.logpmf(1);
+    const expected = @log(@log10(2.0));
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "Benford: logpmf(9) = log(log10(10/9))" {
+    const dist = Benford(f64).init();
+    const lp = dist.logpmf(9);
+    const expected = @log(@log10(10.0 / 9.0));
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "Benford: logpmf(0) = -infinity" {
+    const dist = Benford(f64).init();
+    const lp = dist.logpmf(0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "Benford: logpmf(10) = -infinity (outside support)" {
+    const dist = Benford(f64).init();
+    const lp = dist.logpmf(10);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "Benford: exp(logpmf(d)) = pmf(d) for all d in support" {
+    const dist = Benford(f64).init();
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const pmf_val = dist.pmf(d);
+        const logpmf_val = dist.logpmf(d);
+        const exp_logpmf = @exp(logpmf_val);
+        try testing.expectApproxEqAbs(pmf_val, exp_logpmf, 1e-10);
+    }
+}
+
+// CDF Tests
+
+test "Benford: cdf(0) = 0.0 (below support)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(0);
+    try testing.expectEqual(0.0, c);
+}
+
+test "Benford: cdf(1) = log10(2)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(1);
+    const expected = @log10(2.0);
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "Benford: cdf(2) = log10(3)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(2);
+    const expected = @log10(3.0);
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "Benford: cdf(3) = log10(4)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(3);
+    const expected = @log10(4.0);
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "Benford: cdf(5) = log10(6)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(5);
+    const expected = @log10(6.0);
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "Benford: cdf(9) = 1.0 (end of support)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(9);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Benford: cdf(10) = 1.0 (above support)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(10);
+    try testing.expectEqual(1.0, c);
+}
+
+test "Benford: cdf(100) = 1.0 (far above support)" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(100);
+    try testing.expectEqual(1.0, c);
+}
+
+test "Benford: CDF is monotonically non-decreasing" {
+    const dist = Benford(f64).init();
+    var prev_cdf: f64 = dist.cdf(0);
+    var d: u8 = 1;
+    while (d <= 10) : (d += 1) {
+        const curr_cdf = dist.cdf(d);
+        try testing.expect(prev_cdf <= curr_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "Benford: cdf(d) - cdf(d-1) = pmf(d) for d in {1..9}" {
+    const dist = Benford(f64).init();
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const cdf_d = dist.cdf(d);
+        const cdf_d_minus_1 = dist.cdf(d - 1);
+        const pmf_d = dist.pmf(d);
+        const diff = cdf_d - cdf_d_minus_1;
+        try testing.expectApproxEqAbs(pmf_d, diff, 1e-10);
+    }
+}
+
+// SF (Survival Function) Tests
+
+test "Benford: sf(0) = 1.0 (below support)" {
+    const dist = Benford(f64).init();
+    const s = dist.sf(0);
+    try testing.expectEqual(1.0, s);
+}
+
+test "Benford: sf(9) = 0.0 (end of support)" {
+    const dist = Benford(f64).init();
+    const s = dist.sf(9);
+    try testing.expectApproxEqAbs(0.0, s, 1e-10);
+}
+
+test "Benford: sf(10) = 0.0 (above support)" {
+    const dist = Benford(f64).init();
+    const s = dist.sf(10);
+    try testing.expectEqual(0.0, s);
+}
+
+test "Benford: sf(d) = 1 - cdf(d) for all d" {
+    const dist = Benford(f64).init();
+    var d: u8 = 0;
+    while (d <= 15) : (d += 1) {
+        const cdf_d = dist.cdf(d);
+        const sf_d = dist.sf(d);
+        const sum = cdf_d + sf_d;
+        try testing.expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+// Quantile Tests
+
+test "Benford: quantile(0.0) = 1" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(1, q);
+}
+
+test "Benford: quantile(0.3) = 1" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(0.3);
+    try testing.expectEqual(1, q);
+}
+
+test "Benford: quantile(0.31) = 2" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(0.31);
+    try testing.expectEqual(2, q);
+}
+
+test "Benford: quantile(0.5) = 3" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(0.5);
+    try testing.expectEqual(3, q);
+}
+
+test "Benford: quantile(0.78) = 6" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(0.78);
+    try testing.expectEqual(6, q);
+}
+
+test "Benford: quantile(0.9) = 7" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(0.9);
+    try testing.expectEqual(7, q);
+}
+
+test "Benford: quantile(1.0) = 9" {
+    const dist = Benford(f64).init();
+    const q = try dist.quantile(1.0);
+    try testing.expectEqual(9, q);
+}
+
+test "Benford: quantile(-0.1) returns error" {
+    const dist = Benford(f64).init();
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Benford: quantile(1.1) returns error" {
+    const dist = Benford(f64).init();
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Benford: quantile(NaN) returns error" {
+    const dist = Benford(f64).init();
+    const nan = math.nan(f64);
+    const result = dist.quantile(nan);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Benford: quantile(infinity) returns error" {
+    const dist = Benford(f64).init();
+    const inf = std.math.inf(f64);
+    const result = dist.quantile(inf);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Benford: quantile increases monotonically" {
+    const dist = Benford(f64).init();
+    var prev_q: u8 = 0;
+    var p: f64 = 0.0;
+    while (p <= 1.0) : (p += 0.1) {
+        const q = try dist.quantile(p);
+        try testing.expect(prev_q <= q);
+        prev_q = q;
+    }
+}
+
+test "Benford: cdf(quantile(p)) >= p for all p" {
+    const dist = Benford(f64).init();
+    var p: f64 = 0.0;
+    while (p <= 1.0) : (p += 0.05) {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try testing.expect(cdf_q >= p - 1e-10);
+    }
+}
+
+// Mean, Variance, Mode Tests
+
+test "Benford: mean is approximately 3.44024" {
+    const dist = Benford(f64).init();
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(3.44024, m, 1e-5);
+}
+
+test "Benford: variance is approximately 6.05651" {
+    const dist = Benford(f64).init();
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(6.056512631, v, 1e-8);
+}
+
+test "Benford: mode = 1 (most likely digit)" {
+    const dist = Benford(f64).init();
+    const mo = dist.mode();
+    try testing.expectEqual(1, mo);
+}
+
+test "Benford: pmf(mode) >= pmf(d) for all d in support" {
+    const dist = Benford(f64).init();
+    const mo = dist.mode();
+    const pmf_mode = dist.pmf(mo);
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const pmf_d = dist.pmf(d);
+        try testing.expect(pmf_mode >= pmf_d - 1e-10);
+    }
+}
+
+test "Benford: mean can be computed as sum of d*pmf(d)" {
+    const dist = Benford(f64).init();
+    var sum: f64 = 0.0;
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        sum += @as(f64, @floatFromInt(d)) * dist.pmf(d);
+    }
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(m, sum, 1e-10);
+}
+
+// Entropy Tests
+
+test "Benford: entropy is approximately 1.9934 nats" {
+    const dist = Benford(f64).init();
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(1.9934331507912046, e, 1e-8);
+}
+
+test "Benford: entropy is finite" {
+    const dist = Benford(f64).init();
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "Benford: entropy is positive" {
+    const dist = Benford(f64).init();
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "Benford: entropy = -sum(pmf(d) * log(pmf(d)))" {
+    const dist = Benford(f64).init();
+    var sum: f64 = 0.0;
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const pmf_d = dist.pmf(d);
+        sum -= pmf_d * @log(pmf_d);
+    }
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(e, sum, 1e-10);
+}
+
+// Sample Tests
+
+test "Benford: sample produces values in {1..9}" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 1);
+        try testing.expect(s <= 9);
+    }
+}
+
+test "Benford: sample never produces 0" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s != 0);
+    }
+}
+
+test "Benford: sample never produces values > 9" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s <= 9);
+    }
+}
+
+test "Benford: empirical sample frequency converges to pmf" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    var counts: [10]u32 = [_]u32{0} ** 10;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        counts[s] += 1;
+    }
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const empirical = @as(f64, @floatFromInt(counts[d])) / @as(f64, @floatFromInt(n));
+        const theoretical = dist.pmf(d);
+        try testing.expectApproxEqAbs(theoretical, empirical, 0.01);
+    }
+}
+
+test "Benford: sample distribution is non-uniform (digit 1 more frequent than 9)" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    var count1: u32 = 0;
+    var count9: u32 = 0;
+    for (0..10000) |_| {
+        const s = dist.sample(rng.random());
+        if (s == 1) count1 += 1;
+        if (s == 9) count9 += 1;
+    }
+    try testing.expect(count1 > count9);
+}
+
+// Validate Tests
+
+test "Benford: validate always succeeds" {
+    const dist = Benford(f64).init();
+    try dist.validate();
+}
+
+// f32 Support Tests
+
+test "Benford: f32 init works" {
+    const dist = Benford(f32).init();
+    try testing.expect(dist.pmf(1) > 0.0);
+}
+
+test "Benford: f32 pmf(1) = log10(2)" {
+    const dist = Benford(f32).init();
+    const p = dist.pmf(1);
+    const expected = @log10(@as(f32, 2.0));
+    try testing.expectApproxEqAbs(expected, p, 1e-6);
+}
+
+test "Benford: f32 pmf sums to 1.0" {
+    const dist = Benford(f32).init();
+    var sum: f32 = 0.0;
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        sum += dist.pmf(d);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "Benford: f32 cdf(9) = 1.0" {
+    const dist = Benford(f32).init();
+    const c = dist.cdf(9);
+    try testing.expectApproxEqAbs(1.0, c, 1e-6);
+}
+
+test "Benford: f32 mean is approximately 3.44024" {
+    const dist = Benford(f32).init();
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(3.44024, m, 1e-4);
+}
+
+test "Benford: f32 variance is approximately 6.05653" {
+    const dist = Benford(f32).init();
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(6.05653, v, 1e-4);
+}
+
+test "Benford: f32 entropy is approximately 1.9934" {
+    const dist = Benford(f32).init();
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(1.9934335, e, 1e-6);
+}
+
+test "Benford: f32 mode = 1" {
+    const dist = Benford(f32).init();
+    const mo = dist.mode();
+    try testing.expectEqual(1, mo);
+}
+
+test "Benford: f32 quantile(0.5) = 3" {
+    const dist = Benford(f32).init();
+    const q = try dist.quantile(0.5);
+    try testing.expectEqual(3, q);
+}
