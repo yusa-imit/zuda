@@ -1,3 +1,27 @@
+**Session 662 Update (2026-06-11) — FEATURE MODE:**
+
+✅ **JohnsonSU Distribution** — 70th total, 55th continuous — commit f192783
+- **Mode**: FEATURE MODE (counter: 662)
+- **CI Status**: GREEN (latest run SUCCESS); 0 open issues
+- **Implementation**: JohnsonSU(T) — 4-parameter sinh-normal transformation family
+  * Parameters: xi (location), lambda (scale, >0), gamma (shape), delta (shape, >0)
+  * Support: (-∞, +∞)
+  * Transformation: Z = γ + δ·arcsinh((X-ξ)/λ) ~ N(0,1); X = ξ + λ·sinh((Z-γ)/δ)
+  * PDF: (δ/(λ√(2π))) · exp(-½z²) / √(1+u²) where u=(x-ξ)/λ, z=γ+δ·arcsinh(u)
+  * CDF: Φ(z) = 0.5*(1+erf(z/√2)) — exact O(1)
+  * Quantile: ξ + λ·sinh((Φ⁻¹(p)-γ)/δ) — exact O(1) via erfInv
+  * Mean: ξ - λ·exp(1/(2δ²))·sinh(γ/δ)
+  * Variance: (λ²/2)·(exp(1/δ²)-1)·(exp(1/δ²)·cosh(2γ/δ)+1)
+  * Mode: bisection on d/dx log f = 0 (CRITICAL: use > 0 not < 0 for same-sign check)
+  * Entropy: log(λ/δ) + ½log(2πe) + E_Z[log(cosh((Z-γ)/δ))] — numerical Simpson
+  * Sample: Box-Muller → Z ~ N(0,1) → X = ξ + λ·sinh((Z-γ)/δ) — exact O(1)
+  * Special case γ=0: symmetric, mean=ξ, mode=ξ; variance=(λ²/2)·(w²-1) where w=exp(1/δ²)
+- **Bug fixed in bisection**: Using `> 0` (same-sign check) instead of `< 0` prevents mode from converging to boundary when d_mid=0 (d_lo*d_mid=0, which is not > 0 so hi=mid keeps mode bracket tight)
+- **Test fix**: cdf boundaries require x=±1000, not x=±100 (arcsinh(100)≈5.3, Φ(-5.3)≈6e-8 > 1e-10; need arcsinh(1000)≈7.6, Φ(-7.6)≈1.5e-14 < 1e-10)
+- **Tests**: 69 tests all passing (exit code 0)
+- **Distribution count**: 70 total (55 continuous + 15 discrete)
+- **Next Priority**: Benford (discrete) or Asymmetric Laplace or GompertzMakeham
+
 **Session 659 Update (2026-06-11) — FEATURE MODE:**
 
 ✅ **IrwinHall Distribution** — 68th total, 53rd continuous — commit 9236d2e
