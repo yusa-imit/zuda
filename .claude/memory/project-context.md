@@ -1,3 +1,22 @@
+**Session 664 Update (2026-06-11) — FEATURE MODE:**
+
+✅ **Benford Distribution** — 72nd total, 16th discrete — commit 813b3ac
+- **Mode**: FEATURE MODE (counter: 664)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Benford(T) — first-digit law, parameter-free distribution
+  * Support: {1, 2, ..., 9}; no parameters
+  * PMF: P(X=d) = log₁₀(1 + 1/d) for d∈{1..9}
+  * CDF: F(d) = log₁₀(d+1); 0 for d<1; 1 for d>9
+  * Mean ≈ 3.44024; Variance ≈ 6.05653; Mode = 1
+  * Entropy ≈ 1.9934 nats (NOT 2.19322 — critical: my scratchpad was wrong due to arithmetic error; correct value is ~1.993)
+  * Quantile: smallest d s.t. CDF(d)≥p; error.InvalidParameter for p<0, p>1, !isFinite
+  * Sample: inverse CDF with uniform random variable
+  * validate(): always passes (no parameters)
+- **Note**: Entropy = -Σ log₁₀(1+1/d)·ln(log₁₀(1+1/d)) ≈ 1.9934 nats (verified algebraically and numerically)
+- **Tests**: 71 tests all passing (exit code 0)
+- **Distribution count**: 72 total (56 continuous + 16 discrete)
+- **Next Priority**: GompertzMakeham or NoncentralT or Lindley extension
+
 **Session 663 Update (2026-06-11) — FEATURE MODE:**
 
 ✅ **AsymmetricLaplace Distribution** — 71st total, 56th continuous — commits 8485c97, 0db7663
