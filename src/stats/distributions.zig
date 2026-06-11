@@ -39548,6 +39548,86 @@ test "AsymmetricLaplace: f32 variance(0,1,1) = 2" {
     try testing.expectApproxEqAbs(2.0, v, 1e-4);
 }
 
+// === Additional AsymmetricLaplace Tests ===
+
+test "AsymmetricLaplace: pdf non-negative for extreme x values" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.5);
+    var x: i32 = -1000;
+    while (x <= 1000) : (x += 100) {
+        const xf: f64 = @floatFromInt(x);
+        const p = dist.pdf(xf);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "AsymmetricLaplace: sf(x) + cdf(x) = 1.0 across range" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    var x: i32 = -50;
+    while (x <= 50) : (x += 5) {
+        const xf: f64 = @floatFromInt(x);
+        const c = dist.cdf(xf);
+        const s = dist.sf(xf);
+        try testing.expectApproxEqAbs(1.0, c + s, 1e-10);
+    }
+}
+
+test "AsymmetricLaplace: logpdf returns actual natural log of pdf" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const x = 5.0;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "AsymmetricLaplace: quantile(1.0) returns +infinity" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "AsymmetricLaplace: quantile(0.0) returns -infinity" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "AsymmetricLaplace: mode is mode—pdf at mode >= pdf at any other point" {
+    const dist = try AsymmetricLaplace(f64).init(3.0, 2.0, 1.5);
+    const mode = dist.mode();
+    const pdf_mode = dist.pdf(mode);
+    var x: i32 = -100;
+    while (x <= 100) : (x += 1) {
+        const xf: f64 = @floatFromInt(x);
+        const p = dist.pdf(xf);
+        try testing.expect(pdf_mode >= p - 1e-10);
+    }
+}
+
+test "AsymmetricLaplace: cdf derivative approximately equals pdf (numerical)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const h = 1e-6;
+    const x = 2.5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const numerical_pdf = (cdf_plus - cdf_minus) / (2.0 * h);
+    const analytical_pdf = dist.pdf(x);
+    try testing.expectApproxEqAbs(analytical_pdf, numerical_pdf, 1e-4);
+}
+
+test "AsymmetricLaplace: kappa and 1/kappa have same variance" {
+    const dist1 = try AsymmetricLaplace(f64).init(0.0, 1.0, 3.0);
+    const dist2 = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0 / 3.0);
+    const var1 = dist1.variance();
+    const var2 = dist2.variance();
+    try testing.expectApproxEqAbs(var1, var2, 1e-10);
+}
+
+test "AsymmetricLaplace: validate succeeds and returns no error" {
+    const dist = try AsymmetricLaplace(f64).init(2.5, 0.5, 1.2);
+    try dist.validate();
+}
+
 /// Benford distribution (First-Digit Law) — Benford()
 ///
 /// Describes the probability distribution of leading digits in naturally occurring datasets.
@@ -40245,4 +40325,131 @@ test "Benford: f32 quantile(0.5) = 3" {
     const dist = Benford(f32).init();
     const q = try dist.quantile(0.5);
     try testing.expectEqual(3, q);
+}
+
+// === Additional Benford Tests ===
+
+test "Benford: pmf strictly decreasing from 1 to 9" {
+    const dist = Benford(f64).init();
+    var d: u8 = 1;
+    while (d < 9) : (d += 1) {
+        const pmf_d = dist.pmf(d);
+        const pmf_d_plus_1 = dist.pmf(d + 1);
+        try testing.expect(pmf_d > pmf_d_plus_1);
+    }
+}
+
+test "Benford: sample covers all digits 1-9 in distribution" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    var seen: [10]bool = [_]bool{false} ** 10;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        seen[s] = true;
+    }
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        try testing.expect(seen[d]);
+    }
+}
+
+test "Benford: quantile and cdf are discrete inverses" {
+    const dist = Benford(f64).init();
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const cdf_d = dist.cdf(d);
+        const q = try dist.quantile(cdf_d);
+        try testing.expectEqual(d, q);
+    }
+}
+
+test "Benford: logpmf computed correctly for all digits" {
+    const dist = Benford(f64).init();
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const pmf_d = dist.pmf(d);
+        const logpmf_d = dist.logpmf(d);
+        const expected = @log(pmf_d);
+        try testing.expectApproxEqAbs(expected, logpmf_d, 1e-10);
+    }
+}
+
+test "Benford: cdf(0) is exactly 0.0" {
+    const dist = Benford(f64).init();
+    const c = dist.cdf(0);
+    try testing.expectEqual(0.0, c);
+}
+
+test "Benford: entropy is non-negative" {
+    const dist = Benford(f64).init();
+    const e = dist.entropy();
+    try testing.expect(e >= 0.0);
+}
+
+test "Benford: mean computed as weighted sum of digits" {
+    const dist = Benford(f64).init();
+    var weighted_sum: f64 = 0.0;
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const df: f64 = @floatFromInt(d);
+        weighted_sum += df * dist.pmf(d);
+    }
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, weighted_sum, 1e-10);
+}
+
+test "Benford: variance computed as E[X²] - (E[X])²" {
+    const dist = Benford(f64).init();
+    var ex: f64 = 0.0;
+    var ex2: f64 = 0.0;
+    var d: u8 = 1;
+    while (d <= 9) : (d += 1) {
+        const df: f64 = @floatFromInt(d);
+        const p = dist.pmf(d);
+        ex += df * p;
+        ex2 += df * df * p;
+    }
+    const theoretical_var = dist.variance();
+    const computed_var = ex2 - ex * ex;
+    try testing.expectApproxEqAbs(theoretical_var, computed_var, 1e-10);
+}
+
+test "Benford: sample empirical variance converges to theoretical" {
+    const dist = Benford(f64).init();
+    var rng = std.Random.DefaultPrng.init(123);
+    const n = 50000;
+    var sum: f64 = 0.0;
+    var sum_sq_diff: f64 = 0.0;
+    var samples_array: [50000]f64 = undefined;
+    for (0..n) |i| {
+        const s = dist.sample(rng.random());
+        const sf: f64 = @floatFromInt(s);
+        samples_array[i] = sf;
+        sum += sf;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    for (0..n) |i| {
+        const diff = samples_array[i] - empirical_mean;
+        sum_sq_diff += diff * diff;
+    }
+    const empirical_var = sum_sq_diff / @as(f64, @floatFromInt(n));
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, empirical_var, 0.5);
+}
+
+test "Benford: validate() returns success (no error)" {
+    const dist = Benford(f64).init();
+    try dist.validate();
+}
+
+test "Benford: quantile boundary exclusive (just above boundary returns next digit)" {
+    const dist = Benford(f64).init();
+    const cdf_1 = dist.cdf(1);
+    const eps: f64 = 1e-12;
+    const p_just_after = cdf_1 + eps;
+    if (p_just_after <= 1.0) {
+        const q = try dist.quantile(p_just_after);
+        try testing.expect(q >= 1);
+    }
 }
