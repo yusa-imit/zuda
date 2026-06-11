@@ -1,3 +1,37 @@
+**Session 667 Update (2026-06-12) — FEATURE MODE:**
+
+✅ **RaisedCosine Distribution** — 74th total, 58th continuous — commit a8e0715
+- **Mode**: FEATURE MODE (counter: 667)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: RaisedCosine(μ, s) — symmetric bounded distribution
+  * Parameters: mu (location, any real), s (scale, s > 0)
+  * Support: [μ−s, μ+s] — bounded, symmetric around μ
+  * PDF: (1/(2s))·(1 + cos(π(x−μ)/s)); peaks at μ (pdf(μ) = 1/s), 0 at boundaries
+  * logPDF: −ln(2s) + ln(1+cos(π(x−μ)/s)); −∞ for x outside support (including boundaries)
+  * CDF: (1/2)·(1 + (x−μ)/s + sin(π(x−μ)/s)/π) — closed form O(1)
+  * Quantile: bisection (64 steps); p=0→μ−s, p=1→μ+s; error.InvalidProbability for !(p>=0&&p<=1)
+  * Mean: μ (exact, by symmetry); Variance: s²(1/3 − 2/π²); Mode: μ; Median: μ
+  * Entropy: ln(4s) − 1 (exact closed form; can be negative for s < 1/4)
+  * Sample: inverse CDF via bisection using rng.float(T)
+  * CRITICAL: pdf(μ) = 1/s (not 1/(2s)!) because (1+cos(0)) = 2 cancels denominator factor
+  * CRITICAL: logpdf(μ; s=1) = 0 (not -ln(2)) because -ln(2) + ln(2) = 0
+  * Key values (μ=0, s=1): pdf(0)=1.0; pdf(0.5)=0.5; pdf(±1)=0; cdf(0)=0.5; var≈0.13069; entropy≈0.38629
+  * Key values (μ=2, s=3): pdf(2)=1/3; cdf(2)=0.5; var≈1.17623; entropy≈1.48491
+  * Symmetry: cdf(μ−d) + cdf(μ+d) = 1 (exact); pdf(μ−d) = pdf(μ+d) (exact)
+- **Tests**: 63 tests all passing (exit code 0)
+- **Distribution count**: 74 total (58 continuous + 16 discrete)
+- **Next Priority**: GompertzMakeham, NoncentralT, or PowerFunction distribution
+
+**Session 666 Update (2026-06-12) — FEATURE MODE:**
+
+✅ **LogLaplace Distribution** — 73rd total, 57th continuous — commit 180fa3e
+- **Mode**: FEATURE MODE (counter: 666)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: LogLaplace(μ, b) — X = exp(Y) where Y ~ Laplace(μ, b); support (0, ∞)
+  * PDF: 1/(2bx)·exp(−|ln(x)−μ|/b); CDF split at x=exp(μ)
+  * Quantile closed form; Mean: exp(μ)/(1−b²) for b<1; Entropy: 1+μ+ln(2b)
+  * 61 tests passing
+
 **Session 664 Update (2026-06-11) — FEATURE MODE:**
 
 ✅ **Benford Distribution** — 72nd total, 16th discrete — commit 813b3ac
