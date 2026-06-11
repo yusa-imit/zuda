@@ -41074,3 +41074,628 @@ test "LogLaplace: cdf derivative ≈ pdf (finite difference at x=2.0, tolerance 
     const pdf_actual = dist.pdf(x);
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
+
+// ============================================================================
+// RaisedCosine Distribution
+// ============================================================================
+
+/// RaisedCosine(μ, s) distribution: A symmetric distribution on [μ−s, μ+s].
+///
+/// The PDF is proportional to (1 + cos(π(x−μ)/s)).
+/// Support: [μ−s, μ+s]
+///
+/// Parameters:
+///   - μ: location parameter (any real value)
+///   - s: scale parameter (must be > 0)
+pub fn RaisedCosine(comptime T: type) type {
+    return struct {
+        mu: T,
+        s: T,
+
+        const Self = @This();
+
+        /// Create a RaisedCosine distribution with given parameters.
+        ///
+        /// Parameters:
+        ///   - mu: Location parameter (any real value)
+        ///   - s: Scale parameter (must be > 0)
+        ///
+        /// Errors: s ≤ 0 or non-finite parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, s: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (s <= 0.0 or !math.isFinite(s)) return error.InvalidParameter;
+            return Self{ .mu = mu, .s = s };
+        }
+
+        /// Probability density function: f(x) = (1/(2s)) · (1 + cos(π(x−μ)/s))
+        /// for x ∈ [μ−s, μ+s], else 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = x - self.mu;
+            if (z < -self.s or z > self.s) return 0.0;
+
+            const arg = math.pi * z / self.s;
+            return (1.0 / (2.0 * self.s)) * (1.0 + @cos(arg));
+        }
+
+        /// Log probability density function: ln(f(x)) = −ln(2s) + ln(1 + cos(π(x−μ)/s))
+        /// for x ∈ [μ−s, μ+s].
+        ///
+        /// Returns −∞ for x outside [μ−s, μ+s].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = x - self.mu;
+            if (z < -self.s or z > self.s) return -math.inf(T);
+
+            const arg = math.pi * z / self.s;
+            const cos_val = @cos(arg);
+            if (cos_val <= -1.0) return -math.inf(T);
+
+            return -@log(2.0 * self.s) + @log(1.0 + cos_val);
+        }
+
+        /// Cumulative distribution function F(x).
+        ///
+        /// F(x) = (1/2) · (1 + (x−μ)/s + sin(π(x−μ)/s)/π)
+        /// for x ∈ [μ−s, μ+s].
+        /// F(x) = 0 for x < μ−s; F(x) = 1 for x > μ+s.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = x - self.mu;
+            if (z <= -self.s) return 0.0;
+            if (z >= self.s) return 1.0;
+
+            const u = z / self.s;
+            const arg = math.pi * u;
+            return 0.5 * (1.0 + u + @sin(arg) / math.pi);
+        }
+
+        /// Survival function S(x) = 1 − F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) using bisection.
+        ///
+        /// Errors: p < 0 or p > 1 or non-finite p → InvalidProbability
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+
+            if (p == 0.0) return self.mu - self.s;
+            if (p == 1.0) return self.mu + self.s;
+
+            var low = self.mu - self.s;
+            var high = self.mu + self.s;
+            var mid: T = undefined;
+
+            for (0..100) |_| {
+                mid = 0.5 * (low + high);
+                const cdf_mid = self.cdf(mid);
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+
+            return 0.5 * (low + high);
+        }
+
+        /// Mean of the distribution: E[X] = μ (by symmetry).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance of the distribution: Var(X) = s² · (1/3 − 2/π²).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.s * self.s * (1.0 / 3.0 - 2.0 / (math.pi * math.pi));
+        }
+
+        /// Mode of the distribution: μ (PDF peaks at the center).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Median of the distribution: μ (by symmetry).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.mu;
+        }
+
+        /// Shannon entropy in nats: H = ln(4s) − 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(4.0 * self.s) - 1.0;
+        }
+
+        /// Generate a random sample using the inverse CDF method.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable;
+        }
+
+        /// Assert that distribution parameters are valid: s > 0, all parameters finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.s <= 0.0 or !math.isFinite(self.s)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the domain [μ−s, μ+s].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            if (x < self.mu - self.s or x > self.mu + self.s) return error.OutOfSupport;
+        }
+    };
+}
+
+// === RaisedCosine Distribution Tests ===
+
+test "RaisedCosine: init succeeds with valid parameters (0, 1)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.s == 1.0);
+}
+
+test "RaisedCosine: init succeeds with valid parameters (2, 3)" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    try testing.expect(dist.mu == 2.0);
+    try testing.expect(dist.s == 3.0);
+}
+
+test "RaisedCosine: init fails for s <= 0" {
+    const result = RaisedCosine(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "RaisedCosine: init fails for negative s" {
+    const result = RaisedCosine(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "RaisedCosine: init fails for non-finite mu (infinity)" {
+    const result = RaisedCosine(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "RaisedCosine: init fails for non-finite mu (negative infinity)" {
+    const result = RaisedCosine(f64).init(-math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "RaisedCosine: init fails for non-finite mu (NaN)" {
+    const result = RaisedCosine(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "RaisedCosine: init fails for non-finite s (NaN)" {
+    const result = RaisedCosine(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "RaisedCosine: init fails for non-finite s (infinity)" {
+    const result = RaisedCosine(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "RaisedCosine: validate() succeeds for valid distribution (0, 1)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "RaisedCosine: validate() succeeds for valid distribution (2, 3)" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+// PDF Tests at Key Values (μ=0, s=1)
+
+test "RaisedCosine: pdf(0; 0, 1) = 1.0 (peak at center)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(1.0, p, 1e-10);
+}
+
+test "RaisedCosine: pdf(0.5; 0, 1) = 0.5" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(0.5, p, 1e-10);
+}
+
+test "RaisedCosine: pdf(-0.5; 0, 1) = 0.5 (symmetry)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(-0.5);
+    try testing.expectApproxEqAbs(0.5, p, 1e-10);
+}
+
+test "RaisedCosine: pdf(1.0; 0, 1) = 0.0 (right boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "RaisedCosine: pdf(-1.0; 0, 1) = 0.0 (left boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "RaisedCosine: pdf(2.0; 0, 1) = 0.0 (outside support)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "RaisedCosine: pdf(-2.0; 0, 1) = 0.0 (outside support)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const p = dist.pdf(-2.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "RaisedCosine: pdf is non-negative across support" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const test_points = [_]f64{ -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0 };
+    for (test_points) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "RaisedCosine: pdf(2; 2, 3) = 1/3 at center with offset" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const p = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(1.0 / 3.0, p, 1e-10);
+}
+
+// LogPDF Tests
+
+test "RaisedCosine: logpdf(0; 0, 1) = 0 (ln(2) - ln(2))" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = 0.0;
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "RaisedCosine: logpdf(0.5; 0, 1) = ln(0.5)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.5);
+    const expected = @log(0.5);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "RaisedCosine: logpdf(1.0; 0, 1) = -inf (boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "RaisedCosine: logpdf(2.0; 0, 1) = -inf (outside support)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(2.0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+// CDF Tests
+
+test "RaisedCosine: cdf(-1.0; 0, 1) = 0.0 (left boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "RaisedCosine: cdf(0.0; 0, 1) = 0.5 (median)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "RaisedCosine: cdf(1.0; 0, 1) = 1.0 (right boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "RaisedCosine: cdf(-0.5; 0, 1) = (0.5 - 1/π)/2 ≈ 0.090845" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const c = dist.cdf(-0.5);
+    const expected = (0.5 - 1.0 / math.pi) / 2.0;
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "RaisedCosine: cdf(0.5; 0, 1) ≈ 0.909155 (symmetry)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    const expected = 0.5 * (1.5 + 1.0 / math.pi);
+    try testing.expectApproxEqAbs(expected, c, 1e-10);
+}
+
+test "RaisedCosine: cdf is monotonically increasing across support" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    var x: f64 = -1.0;
+    var prev_cdf = dist.cdf(x);
+    while (x <= 1.0) : (x += 0.1) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "RaisedCosine: cdf(2; 2, 3) = 0.5 (center)" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const c = dist.cdf(2.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+// SF Tests
+
+test "RaisedCosine: sf(0.0; 0, 1) = 0.5 (median)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "RaisedCosine: sf(1.0; 0, 1) = 0.0 (right boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const s = dist.sf(1.0);
+    try testing.expectApproxEqAbs(0.0, s, 1e-10);
+}
+
+test "RaisedCosine: sf(-1.0; 0, 1) = 1.0 (left boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const s = dist.sf(-1.0);
+    try testing.expectApproxEqAbs(1.0, s, 1e-10);
+}
+
+// Quantile Tests
+
+test "RaisedCosine: quantile(0.5; 0, 1) = 0.0 (median)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-6);
+}
+
+test "RaisedCosine: quantile(0.0; 0, 1) = -1.0 (left boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(-1.0, q, 1e-6);
+}
+
+test "RaisedCosine: quantile(1.0; 0, 1) = 1.0 (right boundary)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-6);
+}
+
+test "RaisedCosine: quantile(0.25; 0, 1) is less than quantile(0.75)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+}
+
+test "RaisedCosine: quantile(p < 0) returns error" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "RaisedCosine: quantile(p > 1) returns error" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "RaisedCosine: quantile(NaN) returns error" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+// Roundtrip Tests
+
+test "RaisedCosine: quantile(cdf(x)) ≈ x roundtrip for x=0" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const x = 0.0;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-6);
+}
+
+test "RaisedCosine: quantile(cdf(x)) ≈ x roundtrip for x=0.5" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(x, q, 1e-6);
+}
+
+// Mean Tests
+
+test "RaisedCosine: mean(0, 1) = 0.0" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "RaisedCosine: mean(2, 3) = 2.0" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "RaisedCosine: mean equals location parameter" {
+    const dist = try RaisedCosine(f64).init(5.5, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(5.5, m, 1e-10);
+}
+
+// Variance Tests
+
+test "RaisedCosine: variance(0, 1) = 1/3 - 2/π² ≈ 0.130696" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    const expected = 1.0 / 3.0 - 2.0 / (math.pi * math.pi);
+    try testing.expectApproxEqAbs(expected, v, 1e-10);
+}
+
+test "RaisedCosine: variance(2, 3) = 9·(1/3 - 2/π²) ≈ 1.176267" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const v = dist.variance();
+    const expected = 9.0 * (1.0 / 3.0 - 2.0 / (math.pi * math.pi));
+    try testing.expectApproxEqAbs(expected, v, 1e-10);
+}
+
+test "RaisedCosine: variance is always finite and positive" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v) and v > 0.0);
+}
+
+// Mode Tests
+
+test "RaisedCosine: mode(0, 1) = 0.0 (center)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "RaisedCosine: mode(2, 3) = 2.0" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "RaisedCosine: mode equals location parameter" {
+    const dist = try RaisedCosine(f64).init(3.0, 1.5);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(3.0, m, 1e-10);
+}
+
+// Median Tests
+
+test "RaisedCosine: median(0, 1) = 0.0" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(0.0, med, 1e-10);
+}
+
+test "RaisedCosine: median(2, 3) = 2.0" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(2.0, med, 1e-10);
+}
+
+// Entropy Tests
+
+test "RaisedCosine: entropy(0, 1) = ln(4) - 1 ≈ 0.386294" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const e = dist.entropy();
+    const expected = @log(4.0) - 1.0;
+    try testing.expectApproxEqAbs(expected, e, 1e-10);
+}
+
+test "RaisedCosine: entropy(2, 3) = ln(12) - 1 ≈ 1.484907" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    const e = dist.entropy();
+    const expected = @log(12.0) - 1.0;
+    try testing.expectApproxEqAbs(expected, e, 1e-10);
+}
+
+test "RaisedCosine: entropy is finite" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+// Sample Tests
+
+test "RaisedCosine: sample produces values in support [μ−s, μ+s]" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= -1.0 and s <= 1.0);
+    }
+}
+
+test "RaisedCosine: sample produces finite values" {
+    const dist = try RaisedCosine(f64).init(2.0, 3.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+// f32 Tests
+
+test "RaisedCosine(f32): init and pdf with f32" {
+    const dist = try RaisedCosine(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), p, 1e-5);
+}
+
+// Symmetry Tests
+
+test "RaisedCosine: pdf symmetry: pdf(μ−d) = pdf(μ+d)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const d = 0.3;
+    const p_left = dist.pdf(0.0 - d);
+    const p_right = dist.pdf(0.0 + d);
+    try testing.expectApproxEqAbs(p_left, p_right, 1e-10);
+}
+
+test "RaisedCosine: cdf symmetry: cdf(μ−d) + cdf(μ+d) ≈ 1.0" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const d = 0.4;
+    const c_left = dist.cdf(0.0 - d);
+    const c_right = dist.cdf(0.0 + d);
+    try testing.expectApproxEqAbs(1.0, c_left + c_right, 1e-10);
+}
+
+// Numerical Tests
+
+test "RaisedCosine: cdf derivative ≈ pdf (finite difference at x=0, tolerance 1e-3)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const x = 0.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "RaisedCosine: cdf derivative ≈ pdf (finite difference at x=0.5, tolerance 1e-3)" {
+    const dist = try RaisedCosine(f64).init(0.0, 1.0);
+    const x = 0.5;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
