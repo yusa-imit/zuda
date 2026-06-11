@@ -38826,3 +38826,724 @@ test "JohnsonSU: f32 variance(0,1,0,1)" {
     const expected = 0.5 * (@exp(2.0) - 1.0);
     try testing.expectApproxEqAbs(expected, v, 1e-4);
 }
+
+/// Asymmetric Laplace distribution — two-sided exponential with different tail rates
+///
+/// The Asymmetric Laplace distribution (ALD) generalizes the Laplace distribution
+/// by allowing different exponential decay rates on either side of the location parameter.
+/// It is widely used in quantile regression, finance, and signal processing.
+///
+/// Parameters:
+///   - mu (μ): Location parameter (any real value)
+///   - sigma (σ): Scale parameter (σ > 0)
+///   - kappa (κ): Asymmetry parameter (κ > 0); κ=1 recovers symmetric Laplace
+///
+/// Support: (-∞, +∞)
+/// Mean: μ + σ(1-κ²)/κ
+/// Variance: σ²(1+κ⁴)/κ²
+///
+/// Time: O(1) for all operations
+pub fn AsymmetricLaplace(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        kappa: T,
+
+        const Self = @This();
+
+        /// Create an Asymmetric Laplace distribution
+        ///
+        /// Parameters:
+        ///   - mu: Location parameter (any real value)
+        ///   - sigma: Scale parameter (must be > 0)
+        ///   - kappa: Asymmetry parameter (must be > 0); kappa=1 gives symmetric Laplace
+        ///
+        /// Errors: sigma <= 0 or kappa <= 0 or non-finite parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, kappa: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            if (kappa <= 0.0 or !math.isFinite(kappa)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .kappa = kappa };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = κ/(σ(1+κ²)) · exp((x-μ)/(σκ))  for x < μ
+        /// f(x) = κ/(σ(1+κ²)) · exp(-(x-μ)κ/σ)   for x ≥ μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const kappa2 = self.kappa * self.kappa;
+            const norm = self.kappa / (self.sigma * (1.0 + kappa2));
+
+            if (x < self.mu) {
+                return norm * @exp((x - self.mu) / (self.sigma * self.kappa));
+            } else {
+                return norm * @exp(-(x - self.mu) * self.kappa / self.sigma);
+            }
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Numerically stable form avoids computing exp then log.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const kappa2 = self.kappa * self.kappa;
+            const log_norm = @log(self.kappa) - @log(self.sigma) - @log(1.0 + kappa2);
+
+            if (x < self.mu) {
+                return log_norm + (x - self.mu) / (self.sigma * self.kappa);
+            } else {
+                return log_norm - (x - self.mu) * self.kappa / self.sigma;
+            }
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = κ²/(1+κ²) · exp((x-μ)/(σκ))         for x < μ
+        /// F(x) = 1 - 1/(1+κ²) · exp(-(x-μ)κ/σ)       for x ≥ μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const kappa2 = self.kappa * self.kappa;
+            const denom = 1.0 + kappa2;
+
+            if (x < self.mu) {
+                return (kappa2 / denom) * @exp((x - self.mu) / (self.sigma * self.kappa));
+            } else {
+                return 1.0 - (1.0 / denom) * @exp(-(x - self.mu) * self.kappa / self.sigma);
+            }
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// p_boundary = κ²/(1+κ²) is the CDF at x=μ
+        /// For p ≤ p_boundary: x = μ + σκ · ln(p(1+κ²)/κ²)
+        /// For p > p_boundary: x = μ - (σ/κ) · ln((1-p)(1+κ²))
+        ///
+        /// Errors: p < 0 or p > 1 → InvalidProbability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            const kappa2 = self.kappa * self.kappa;
+            const denom = 1.0 + kappa2;
+            const p_boundary = kappa2 / denom;
+
+            if (p <= p_boundary) {
+                // Left branch: x = μ + σκ · ln(p(1+κ²)/κ²)
+                return self.mu + self.sigma * self.kappa * @log(p * denom / kappa2);
+            } else {
+                // Right branch: x = μ - (σ/κ) · ln((1-p)(1+κ²))
+                return self.mu - (self.sigma / self.kappa) * @log((1.0 - p) * denom);
+            }
+        }
+
+        /// Generate a random sample using the mixture representation
+        ///
+        /// With prob κ²/(1+κ²): X = μ - σκ · Exp(1) (left side)
+        /// With prob 1/(1+κ²): X = μ + (σ/κ) · Exp(1) (right side)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const branch_u = rng.float(T);
+            const exp_u = rng.float(T);
+
+            const kappa2 = self.kappa * self.kappa;
+            const p_boundary = kappa2 / (1.0 + kappa2);
+            const exp_sample = -@log(exp_u);
+
+            if (branch_u < p_boundary) {
+                // Left side: X = μ - σκ · Exp(1)
+                return self.mu - self.sigma * self.kappa * exp_sample;
+            } else {
+                // Right side: X = μ + (σ/κ) · Exp(1)
+                return self.mu + (self.sigma / self.kappa) * exp_sample;
+            }
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = μ + σ(1-κ²)/κ = μ + σ/κ - σκ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const kappa2 = self.kappa * self.kappa;
+            return self.mu + self.sigma * (1.0 - kappa2) / self.kappa;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = σ²(1+κ⁴)/κ²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const sigma2 = self.sigma * self.sigma;
+            const kappa2 = self.kappa * self.kappa;
+            const kappa4 = kappa2 * kappa2;
+            return sigma2 * (1.0 + kappa4) / kappa2;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = μ (the peak is always at the location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// H = 1 + ln(σ(1+κ²)/κ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const kappa2 = self.kappa * self.kappa;
+            const denom = 1.0 + kappa2;
+            return 1.0 + @log(self.sigma * denom / self.kappa);
+        }
+
+        /// Survival function S(x) = 1 - F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Assert that parameters are valid: sigma > 0, kappa > 0, all finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (self.kappa <= 0.0 or !math.isFinite(self.kappa)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// AsymmetricLaplace Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "AsymmetricLaplace: init(0, 1, 1) succeeds" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.sigma == 1.0);
+    try testing.expect(dist.kappa == 1.0);
+}
+
+test "AsymmetricLaplace: init(0, 1, 2) succeeds" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.sigma == 1.0);
+    try testing.expect(dist.kappa == 2.0);
+}
+
+test "AsymmetricLaplace: init with negative sigma fails" {
+    const result = AsymmetricLaplace(f64).init(0.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "AsymmetricLaplace: init with zero sigma fails" {
+    const result = AsymmetricLaplace(f64).init(0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "AsymmetricLaplace: init with negative kappa fails" {
+    const result = AsymmetricLaplace(f64).init(0.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "AsymmetricLaplace: init with zero kappa fails" {
+    const result = AsymmetricLaplace(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "AsymmetricLaplace: init with non-finite mu fails" {
+    const result = AsymmetricLaplace(f64).init(math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "AsymmetricLaplace: init with non-finite sigma fails" {
+    const result = AsymmetricLaplace(f64).init(0.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "AsymmetricLaplace: init with non-finite kappa fails" {
+    const result = AsymmetricLaplace(f64).init(0.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "AsymmetricLaplace: validate passes for valid distribution" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "AsymmetricLaplace: validate passes for kappa=2" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    try dist.validate();
+}
+
+// PDF Tests
+
+test "AsymmetricLaplace: pdf(0; 0,1,1) = 0.5" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.5, p, 1e-10);
+}
+
+test "AsymmetricLaplace: pdf(0; 0,1,2) = 0.4" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.4, p, 1e-10);
+}
+
+test "AsymmetricLaplace: pdf(0; 0,1,0.5) = 0.4" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.4, p, 1e-10);
+}
+
+test "AsymmetricLaplace: pdf(-1; 0,1,2) left side calculation" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const p = dist.pdf(-1.0);
+    // x < mu: f(x) = kappa/(sigma*(1+kappa^2)) * exp((x-mu)/(sigma*kappa))
+    // = 2/(1*5) * exp(-1/2) = 0.4 * 0.60653...
+    const expected = 0.4 * @exp(-0.5);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "AsymmetricLaplace: pdf(1; 0,1,2) right side calculation" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const p = dist.pdf(1.0);
+    // x >= mu: f(x) = kappa/(sigma*(1+kappa^2)) * exp(-(x-mu)*kappa/sigma)
+    // = 2/5 * exp(-2)
+    const expected = 0.4 * @exp(-2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "AsymmetricLaplace: pdf always positive" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    for (0..200) |i| {
+        const xi: i32 = @as(i32, @intCast(i)) - 100;
+        const x: f64 = @floatFromInt(xi);
+        const p = dist.pdf(x);
+        try testing.expect(p > 0.0);
+    }
+}
+
+test "AsymmetricLaplace: pdf(mu) is maximum for kappa=1" {
+    const dist = try AsymmetricLaplace(f64).init(5.0, 1.0, 1.0);
+    const p_center = dist.pdf(5.0);
+    const p_left = dist.pdf(4.9);
+    const p_right = dist.pdf(5.1);
+    try testing.expect(p_center >= p_left);
+    try testing.expect(p_center >= p_right);
+}
+
+// LogPDF Tests
+
+test "AsymmetricLaplace: logpdf(0; 0,1,1) = log(0.5)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.5);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "AsymmetricLaplace: logpdf(0; 0,1,2) = log(0.4)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.4);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "AsymmetricLaplace: logpdf(-1; 0,1,2) left side" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const lp = dist.logpdf(-1.0);
+    const p = dist.pdf(-1.0);
+    const expected = @log(p);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "AsymmetricLaplace: logpdf approximately log(pdf)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const x = 3.5;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    const expected = @log(p);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+// CDF Tests
+
+test "AsymmetricLaplace: cdf(0; 0,1,1) = 0.5" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "AsymmetricLaplace: cdf(0; 0,1,2) = 0.8" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.8, c, 1e-10);
+}
+
+test "AsymmetricLaplace: cdf(0; 0,1,0.5) = 0.2" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.2, c, 1e-10);
+}
+
+test "AsymmetricLaplace: cdf is monotonically increasing" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    var prev_cdf = dist.cdf(-100.0);
+    for (0..199) |i| {
+        const xi: i32 = @as(i32, @intCast(i)) - 99;
+        const x: f64 = @floatFromInt(xi);
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "AsymmetricLaplace: cdf approaches 0 for x << mu" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-100.0);
+    try testing.expect(c < 1e-10);
+}
+
+test "AsymmetricLaplace: cdf approaches 1 for x >> mu" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(100.0);
+    try testing.expect(c > 1.0 - 1e-10);
+}
+
+// Quantile Tests
+
+test "AsymmetricLaplace: quantile(0.5; 0,1,1) = 0" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "AsymmetricLaplace: quantile(0.8; 0,1,2) = 0" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const q = try dist.quantile(0.8);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "AsymmetricLaplace: quantile(0.2; 0,1,0.5) = 0" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const q = try dist.quantile(0.2);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "AsymmetricLaplace: quantile(0.1; 0,1,2) left side formula" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const q = try dist.quantile(0.1);
+    // p_boundary = 0.8, p=0.1 < 0.8
+    // q = mu + sigma*kappa*ln(p*(1+kappa^2)/kappa^2)
+    // q = 0 + 1*2*ln(0.1*5/4) = 2*ln(0.125)
+    const expected = 2.0 * @log(0.125);
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "AsymmetricLaplace: quantile(0.9; 0,1,2) right side formula" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const q = try dist.quantile(0.9);
+    // p_boundary = 0.8, p=0.9 > 0.8
+    // q = mu - (sigma/kappa)*ln((1-p)*(1+kappa^2))
+    // q = 0 - (1/2)*ln(0.1*5) = -(1/2)*ln(0.5)
+    const expected = -(1.0 / 2.0) * @log(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "AsymmetricLaplace: quantile(p) < quantile(q) for p < q" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+}
+
+test "AsymmetricLaplace: quantile(0) returns -infinity" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "AsymmetricLaplace: quantile(1) returns +infinity" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "AsymmetricLaplace: quantile(p < 0) returns error" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "AsymmetricLaplace: quantile(p > 1) returns error" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "AsymmetricLaplace: quantile(NaN) returns error" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "AsymmetricLaplace: cdf(quantile(p)) ≈ p roundtrip" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const probs = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-8);
+    }
+}
+
+// Mean Tests
+
+test "AsymmetricLaplace: mean(0, 1, 1) = 0" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mean(0, 1, 2) = -1.5" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(-1.5, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mean(0, 1, 0.5) = 1.5" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.5, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mean(5, 2, 1) = 5" {
+    const dist = try AsymmetricLaplace(f64).init(5.0, 2.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(5.0, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mean location-scale invariance" {
+    const dist1 = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const dist2 = try AsymmetricLaplace(f64).init(3.0, 2.0, 2.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    const expected = 3.0 + 2.0 * m1;
+    try testing.expectApproxEqAbs(expected, m2, 1e-10);
+}
+
+// Variance Tests
+
+test "AsymmetricLaplace: variance(0, 1, 1) = 2" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.0, v, 1e-10);
+}
+
+test "AsymmetricLaplace: variance(0, 1, 2) = 4.25" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(4.25, v, 1e-10);
+}
+
+test "AsymmetricLaplace: variance(0, 1, 0.5) = 4.25" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(4.25, v, 1e-10);
+}
+
+test "AsymmetricLaplace: variance is symmetric for kappa and 1/kappa" {
+    const dist1 = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const dist2 = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(v1, v2, 1e-10);
+}
+
+test "AsymmetricLaplace: variance(0, 2, 2) = 4 * variance(0, 1, 2)" {
+    const dist1 = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const dist2 = try AsymmetricLaplace(f64).init(0.0, 2.0, 2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * v1, v2, 1e-10);
+}
+
+// Mode Tests
+
+test "AsymmetricLaplace: mode(0, 1, 1) = 0" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mode(0, 1, 2) = 0" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mode always equals mu" {
+    const dist = try AsymmetricLaplace(f64).init(5.0, 2.0, 3.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(5.0, m, 1e-10);
+}
+
+test "AsymmetricLaplace: mode is maximum of pdf" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const m = dist.mode();
+    const p_mode = dist.pdf(m);
+    const p_left = dist.pdf(m - 0.5);
+    const p_right = dist.pdf(m + 0.5);
+    try testing.expect(p_mode >= p_left);
+    try testing.expect(p_mode >= p_right);
+}
+
+// Entropy Tests
+
+test "AsymmetricLaplace: entropy(0, 1, 1) = 1 + ln(2)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const e = dist.entropy();
+    const expected = 1.0 + @log(2.0);
+    try testing.expectApproxEqAbs(expected, e, 1e-10);
+}
+
+test "AsymmetricLaplace: entropy(0, 1, 2) = 1 + ln(2.5)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const e = dist.entropy();
+    const expected = 1.0 + @log(2.5);
+    try testing.expectApproxEqAbs(expected, e, 1e-10);
+}
+
+test "AsymmetricLaplace: entropy(0, 1, 0.5) = 1 + ln(2.5)" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 0.5);
+    const e = dist.entropy();
+    const expected = 1.0 + @log(2.5);
+    try testing.expectApproxEqAbs(expected, e, 1e-10);
+}
+
+test "AsymmetricLaplace: entropy is positive" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "AsymmetricLaplace: entropy finite" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "AsymmetricLaplace: entropy scales with ln(sigma)" {
+    const dist1 = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    const dist2 = try AsymmetricLaplace(f64).init(0.0, 2.0, 1.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    const log_ratio = @log(2.0);
+    try testing.expectApproxEqAbs(e1 + log_ratio, e2, 1e-10);
+}
+
+// Sample Tests
+
+test "AsymmetricLaplace: sample produces finite values" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "AsymmetricLaplace: sample produces values in support" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "AsymmetricLaplace: sample mean converges empirically" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, empirical_mean, 0.1);
+}
+
+test "AsymmetricLaplace: sample variance converges empirically" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    const n = 10000;
+    var samples: [10000]f64 = undefined;
+    var sum: f64 = 0.0;
+    for (0..n) |i| {
+        const s = dist.sample(rng.random());
+        samples[i] = s;
+        sum += s;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    var sum_sq_diff: f64 = 0.0;
+    for (0..n) |i| {
+        const diff = samples[i] - mean;
+        sum_sq_diff += diff * diff;
+    }
+    const empirical_var = sum_sq_diff / @as(f64, @floatFromInt(n - 1));
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, empirical_var, 0.5);
+}
+
+// f32 Support Tests
+
+test "AsymmetricLaplace: f32 init with valid parameters succeeds" {
+    const dist = try AsymmetricLaplace(f32).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+}
+
+test "AsymmetricLaplace: f32 pdf(0; 0,1,1) = 0.5" {
+    const dist = try AsymmetricLaplace(f32).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.5, p, 1e-5);
+}
+
+test "AsymmetricLaplace: f32 cdf(0; 0,1,1) = 0.5" {
+    const dist = try AsymmetricLaplace(f32).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-5);
+}
+
+test "AsymmetricLaplace: f32 mean(0,1,1) = 0" {
+    const dist = try AsymmetricLaplace(f32).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-5);
+}
+
+test "AsymmetricLaplace: f32 variance(0,1,1) = 2" {
+    const dist = try AsymmetricLaplace(f32).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.0, v, 1e-4);
+}
