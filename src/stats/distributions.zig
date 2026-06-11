@@ -39651,7 +39651,7 @@ pub fn Benford(comptime T: type) type {
             return ex2 - ex * ex;
         }
 
-        /// Shannon entropy in nats: −Σ p(d)·ln(p(d)) ≈ 2.19322.
+        /// Shannon entropy in nats: −Σ p(d)·ln(p(d)) ≈ 1.9934.
         ///
         /// Time: O(1) | Space: O(1)
         pub fn entropy(self: Self) T {
