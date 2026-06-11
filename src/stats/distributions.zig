@@ -38066,3 +38066,763 @@ test "Bates: f32 variance matches formula" {
     const v = dist.variance();
     try testing.expectApproxEqAbs(1.0 / 48.0, v, 1e-5);
 }
+
+// ============================================================================
+// Johnson SU Distribution
+// ============================================================================
+
+/// Johnson SU distribution (System Unbounded variant)
+///
+/// A 4-parameter family of distributions derived from the standard normal
+/// via the sinh transformation: Z = γ + δ·arcsinh((X-ξ)/λ) ~ N(0,1)
+///
+/// Parameters:
+///   - xi (ξ): Location parameter (-∞ to +∞)
+///   - lambda (λ): Scale parameter (λ > 0)
+///   - gamma (γ): Shape parameter (-∞ to +∞)
+///   - delta (δ): Shape parameter (δ > 0)
+///
+/// Support: (-∞, +∞)
+/// Mean: ξ - λ·exp(1/(2δ²))·sinh(γ/δ)
+/// Variance: (λ²/2)·(exp(1/δ²)-1)·(exp(1/δ²)·cosh(2γ/δ)+1)
+///
+/// Time: O(1) for pdf/cdf/quantile/mean/variance/sample
+pub fn JohnsonSU(comptime T: type) type {
+    return struct {
+        xi: T,
+        lambda: T,
+        gamma: T,
+        delta: T,
+
+        const Self = @This();
+
+        /// Create a Johnson SU distribution
+        ///
+        /// Parameters:
+        ///   - xi: Location parameter (any real value)
+        ///   - lambda: Scale parameter (must be > 0)
+        ///   - gamma: Shape parameter (any real value)
+        ///   - delta: Shape parameter (must be > 0)
+        ///
+        /// Errors: lambda <= 0 or delta <= 0 or non-finite parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, lambda: T, gamma: T, delta: T) DistributionError!Self {
+            if (!math.isFinite(xi) or !math.isFinite(gamma)) return error.InvalidParameter;
+            if (lambda <= 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            if (delta <= 0.0 or !math.isFinite(delta)) return error.InvalidParameter;
+            return Self{ .xi = xi, .lambda = lambda, .gamma = gamma, .delta = delta };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (δ/(λ√(2π))) · exp(-½z²) / √(1+u²)
+        /// where u = (x-ξ)/λ, z = γ + δ·arcsinh(u)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const u = (x - self.xi) / self.lambda;
+            const u2p1 = 1.0 + u * u;
+            const z = self.gamma + self.delta * math.asinh(u);
+            const sqrt_2pi = @sqrt(2.0 * math.pi);
+            return (self.delta / (self.lambda * sqrt_2pi)) * @exp(-0.5 * z * z) / @sqrt(u2p1);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(δ/(λ√(2π))) - ½z² - ½log(1+u²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const u = (x - self.xi) / self.lambda;
+            const u2p1 = 1.0 + u * u;
+            const z = self.gamma + self.delta * math.asinh(u);
+            const sqrt_2pi = @sqrt(2.0 * math.pi);
+            const log_coeff = @log(self.delta / (self.lambda * sqrt_2pi));
+            return log_coeff - 0.5 * z * z - 0.5 * @log(u2p1);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// CDF(x) = Φ(γ + δ·arcsinh((x-ξ)/λ)) = 0.5·(1 + erf(z/√2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const u = (x - self.xi) / self.lambda;
+            const z = self.gamma + self.delta * math.asinh(u);
+            const sqrt_2 = @sqrt(2.0);
+            return 0.5 * (1.0 + erf(z / sqrt_2));
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) at probability p
+        ///
+        /// Q(p) = ξ + λ·sinh((Φ⁻¹(p) - γ)/δ)
+        /// where Φ⁻¹(p) = erfInv(2p-1)·√2
+        ///
+        /// Errors: p < 0 or p > 1 or p is NaN
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            const inv_p = erfInv(2.0 * p - 1.0) * @sqrt(2.0);
+            const z = inv_p - self.gamma;
+            return self.xi + self.lambda * math.sinh(z / self.delta);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// Mean = ξ - λ·exp(1/(2δ²))·sinh(γ/δ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const exp_arg = 1.0 / (2.0 * self.delta * self.delta);
+            const sinh_arg = self.gamma / self.delta;
+            return self.xi - self.lambda * @exp(exp_arg) * math.sinh(sinh_arg);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = (λ²/2)·(w-1)·(w·cosh(2γ/δ)+1), where w = exp(1/δ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const delta2 = self.delta * self.delta;
+            const w = @exp(1.0 / delta2);
+            const arg = 2.0 * self.gamma / self.delta;
+            const cosh_val = math.cosh(arg);
+            const lambda2 = self.lambda * self.lambda;
+            return 0.5 * lambda2 * (w - 1.0) * (w * cosh_val + 1.0);
+        }
+
+        /// Helper: compute derivative of log-PDF with respect to u = (x-xi)/lambda
+        fn derivLogPdfU(self: Self, u: T) T {
+            const z = self.gamma + self.delta * math.asinh(u);
+            const u2p1 = 1.0 + u * u;
+            return -self.delta * z / @sqrt(u2p1) - u / u2p1;
+        }
+
+        /// Mode of the distribution (numerical bisection)
+        ///
+        /// The mode is found by bisecting on the zero of the log-PDF derivative.
+        /// Falls back to mean if sign check fails.
+        ///
+        /// Time: O(log precision) ≈ O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            var lo: T = -50.0;
+            var hi: T = 50.0;
+            const d_lo = self.derivLogPdfU(lo);
+            const d_hi = self.derivLogPdfU(hi);
+
+            // Fallback if sign check fails (should not happen for valid params)
+            if (d_lo * d_hi > 0.0) return self.mean();
+
+            for (0..64) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.derivLogPdfU(lo) * self.derivLogPdfU(mid) > 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return self.xi + self.lambda * (lo + hi) / 2.0;
+        }
+
+        /// Differential entropy (numerical Simpson's rule)
+        ///
+        /// H = log(λ/δ) + ½log(2πe) + E_Z[log(cosh((Z-γ)/δ))]
+        /// where the expectation is over Z ~ N(0,1) on [-8, 8]
+        ///
+        /// Time: O(n) where n=1000 Simpson steps | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n: usize = 1000;
+            const lo: T = -8.0;
+            const hi: T = 8.0;
+            const h = (hi - lo) / @as(T, @floatFromInt(n));
+
+            var sum: T = 0.0;
+            const inv_sqrt_2pi = 1.0 / @sqrt(2.0 * math.pi);
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const z = lo + @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n)
+                    1.0
+                else if (i % 2 == 1)
+                    4.0
+                else
+                    2.0;
+
+                const arg = (z - self.gamma) / self.delta;
+                const log_cosh_val: T = if (@abs(arg) > 20.0)
+                    @abs(arg) - @log(2.0)
+                else
+                    @log(math.cosh(arg));
+
+                const normal_density = inv_sqrt_2pi * @exp(-0.5 * z * z);
+                sum += w * log_cosh_val * normal_density;
+            }
+            const e_log_cosh = sum * h / 3.0;
+            return @log(self.lambda / self.delta) + 0.5 * @log(2.0 * math.pi * math.e) + e_log_cosh;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses Box-Muller method to generate Z ~ N(0,1),
+        /// then applies inverse transform: X = ξ + λ·sinh((Z-γ)/δ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const ur1 = rng.float(T);
+            const ur2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
+            return self.xi + self.lambda * math.sinh((z - self.gamma) / self.delta);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Checks that all parameters are finite and λ > 0, δ > 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.xi) or !math.isFinite(self.gamma)) return error.InvalidParameter;
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (self.delta <= 0.0 or !math.isFinite(self.delta)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Johnson SU Distribution Tests
+// ============================================================================
+
+// Init Tests
+
+test "JohnsonSU: init with valid parameters (0,1,0,1) succeeds" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.xi == 0.0);
+    try testing.expect(dist.lambda == 1.0);
+    try testing.expect(dist.gamma == 0.0);
+    try testing.expect(dist.delta == 1.0);
+}
+
+test "JohnsonSU: init with valid parameters (1,2,0,1) succeeds" {
+    const dist = try JohnsonSU(f64).init(1.0, 2.0, 0.0, 1.0);
+    try testing.expect(dist.xi == 1.0);
+    try testing.expect(dist.lambda == 2.0);
+}
+
+test "JohnsonSU: init with valid parameters (0,1,1,2) succeeds" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 1.0, 2.0);
+    try testing.expect(dist.gamma == 1.0);
+    try testing.expect(dist.delta == 2.0);
+}
+
+test "JohnsonSU: init with valid parameters (5,3,-1.5,0.5) succeeds" {
+    const dist = try JohnsonSU(f64).init(5.0, 3.0, -1.5, 0.5);
+    try testing.expect(dist.xi == 5.0);
+    try testing.expect(dist.lambda == 3.0);
+    try testing.expect(dist.gamma == -1.5);
+    try testing.expect(dist.delta == 0.5);
+}
+
+test "JohnsonSU: init with lambda=0 returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, 0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with lambda<0 returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, -1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with delta=0 returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, 1.0, 0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with delta<0 returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, 1.0, 0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with lambda=nan returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, math.nan(f64), 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with delta=nan returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, 1.0, 0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with lambda=+inf returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, math.inf(f64), 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSU: init with delta=+inf returns InvalidParameter" {
+    const result = JohnsonSU(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// Validate Tests
+
+test "JohnsonSU: validate passes for standard parameters" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "JohnsonSU: validate passes for various parameters" {
+    const dist = try JohnsonSU(f64).init(2.0, 1.5, -1.0, 0.8);
+    try dist.validate();
+}
+
+// PDF Tests — Basic Values
+
+test "JohnsonSU: pdf(0; xi=0,lambda=1,gamma=0,delta=1) = 1/sqrt(2π)" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-12);
+}
+
+test "JohnsonSU: pdf is always positive" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.pdf(-100.0) > 0.0);
+    try testing.expect(dist.pdf(-1.0) > 0.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.pdf(100.0) > 0.0);
+}
+
+test "JohnsonSU: pdf(0; gamma=0,delta=1) symmetric about mode for xi=location" {
+    const dist = try JohnsonSU(f64).init(1.0, 1.0, 0.0, 1.0);
+    const p1 = dist.pdf(0.5);
+    const p2 = dist.pdf(1.5);
+    try testing.expectApproxEqAbs(p1, p2, 1e-9);
+}
+
+test "JohnsonSU: pdf scales with lambda^(-1)" {
+    const dist1 = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const dist2 = try JohnsonSU(f64).init(0.0, 2.0, 0.0, 1.0);
+    const p1 = dist1.pdf(0.5);
+    const p2 = dist2.pdf(1.0);
+    try testing.expectApproxEqAbs(p1, 2.0 * p2, 1e-9);
+}
+
+test "JohnsonSU: pdf(x) decreases as |x| -> infinity" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const p0 = dist.pdf(0.0);
+    const p10 = dist.pdf(10.0);
+    const p100 = dist.pdf(100.0);
+    try testing.expect(p0 > p10);
+    try testing.expect(p10 > p100);
+}
+
+// LogPDF Tests
+
+test "JohnsonSU: logpdf(0; xi=0,lambda=1,gamma=0,delta=1) = log(1/sqrt(2π))" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(1.0 / @sqrt(2.0 * math.pi));
+    try testing.expectApproxEqAbs(expected, lp, 1e-12);
+}
+
+test "JohnsonSU: logpdf(x) = log(pdf(x))" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const lp = dist.logpdf(0.5);
+    const p = dist.pdf(0.5);
+    const expected = @log(p);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "JohnsonSU: logpdf(x) agrees with log(pdf) for various x" {
+    const dist = try JohnsonSU(f64).init(1.0, 2.0, -1.0, 0.5);
+    for ([_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 }) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        const expected = @log(p);
+        try testing.expectApproxEqAbs(expected, lp, 1e-9);
+    }
+}
+
+// CDF Tests — Exact Values
+
+test "JohnsonSU: cdf(xi; gamma=0,delta=1) = 0.5" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "JohnsonSU: cdf(xi; gamma=0,delta=1) = 0.5 for shifted location" {
+    const dist = try JohnsonSU(f64).init(2.5, 1.0, 0.0, 1.0);
+    const c = dist.cdf(2.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "JohnsonSU: cdf(xi; gamma=0,delta=2) = 0.5" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 2.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-12);
+}
+
+test "JohnsonSU: cdf is monotonically increasing" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const c1 = dist.cdf(-5.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(5.0);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+}
+
+test "JohnsonSU: cdf approaches 0 as x -> -infinity" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    // x=-1000 → z=arcsinh(-1000)≈-7.6 → Φ(-7.6)≈1.5e-14 < 1e-10
+    const c = dist.cdf(-1000.0);
+    try testing.expect(c < 1e-10);
+}
+
+test "JohnsonSU: cdf approaches 1 as x -> +infinity" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    // x=1000 → z=arcsinh(1000)≈7.6 → Φ(7.6)>1-1e-10
+    const c = dist.cdf(1000.0);
+    try testing.expect(c > 1.0 - 1e-10);
+}
+
+test "JohnsonSU: cdf(0; gamma=1,delta=1) ≈ 0.8413 [Φ(1)]" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    // z = 1 + arcsinh(0) = 1, Φ(1) ≈ 0.8413447
+    try testing.expectApproxEqAbs(0.8413447, c, 1e-4);
+}
+
+test "JohnsonSU: cdf is valid probability [0,1]" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    for ([_]f64{ -1000.0, -100.0, -1.0, 0.0, 1.0, 100.0, 1000.0 }) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+// Quantile Tests
+
+test "JohnsonSU: quantile(0.5; gamma=0,delta=1,xi=0,lambda=1) = 0" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-12);
+}
+
+test "JohnsonSU: quantile(0.5; xi=2,lambda=1) = 2" {
+    const dist = try JohnsonSU(f64).init(2.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(2.0, q, 1e-12);
+}
+
+test "JohnsonSU: quantile(0.5; gamma=1,delta=1) = sinh(-1) ≈ -1.17520" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    const expected: f64 = math.sinh(@as(f64, -1.0));
+    try testing.expectApproxEqAbs(expected, q, 1e-9);
+}
+
+test "JohnsonSU: quantile(0.0) = -inf" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "JohnsonSU: quantile(1.0) = +inf" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "JohnsonSU: quantile is monotonically increasing" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "JohnsonSU: quantile(p<0) returns InvalidProbability" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "JohnsonSU: quantile(p>1) returns InvalidProbability" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "JohnsonSU: quantile(NaN) returns InvalidProbability" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+// Round-trip Tests
+
+test "JohnsonSU: cdf(quantile(p)) ≈ p for p=0.25" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
+}
+
+test "JohnsonSU: cdf(quantile(p)) ≈ p for p=0.5" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
+}
+
+test "JohnsonSU: cdf(quantile(p)) ≈ p for p=0.75" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-9);
+}
+
+test "JohnsonSU: cdf(quantile(p)) ≈ p for skewed distribution" {
+    const dist = try JohnsonSU(f64).init(1.0, 2.0, -1.5, 0.5);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-7);
+    }
+}
+
+// Mean Tests
+
+test "JohnsonSU: mean(0,1,0,1) = 0" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-12);
+}
+
+test "JohnsonSU: mean(xi=3,lambda=1,gamma=0,delta=1) = 3" {
+    const dist = try JohnsonSU(f64).init(3.0, 1.0, 0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(3.0, m, 1e-12);
+}
+
+test "JohnsonSU: mean(0,2,0,1) = 0 (scale-independent for gamma=0)" {
+    const dist = try JohnsonSU(f64).init(0.0, 2.0, 0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-12);
+}
+
+test "JohnsonSU: mean(0,1,1,1) ≈ -exp(0.5)*sinh(1) ≈ -1.9376" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 1.0, 1.0);
+    const m = dist.mean();
+    const expected: f64 = -@exp(@as(f64, 0.5)) * math.sinh(@as(f64, 1.0));
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "JohnsonSU: mean(0,1,-1,1) ≈ +exp(0.5)*sinh(1) ≈ +1.9376 (opposite sign)" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, -1.0, 1.0);
+    const m = dist.mean();
+    const expected: f64 = @exp(@as(f64, 0.5)) * math.sinh(@as(f64, 1.0));
+    try testing.expectApproxEqAbs(expected, m, 1e-9);
+}
+
+test "JohnsonSU: mean scales linearly with lambda" {
+    const dist1 = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const dist2 = try JohnsonSU(f64).init(0.0, 2.0, 0.0, 1.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try testing.expectApproxEqAbs(m1, m2, 1e-12);
+}
+
+// Variance Tests
+
+test "JohnsonSU: variance(0,1,0,1) ≈ 0.5*(e²-1) ≈ 3.19453" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const v = dist.variance();
+    const expected = 0.5 * (@exp(2.0) - 1.0);
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "JohnsonSU: variance(0,1,0,2) ≈ 0.5*(exp(0.5)-1) ≈ 0.32436" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 2.0);
+    const v = dist.variance();
+    const expected = 0.5 * (@exp(0.5) - 1.0);
+    try testing.expectApproxEqAbs(expected, v, 1e-9);
+}
+
+test "JohnsonSU: variance scales with lambda²" {
+    const dist1 = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const dist2 = try JohnsonSU(f64).init(0.0, 2.0, 0.0, 1.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * v1, v2, 1e-9);
+}
+
+test "JohnsonSU: variance is always positive" {
+    const dist = try JohnsonSU(f64).init(5.0, 3.0, -2.0, 1.5);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+// Mode Tests
+
+test "JohnsonSU: mode(0,1,0,1) ≈ 0 within tolerance" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-4);
+}
+
+test "JohnsonSU: mode(1,1,0,1) ≈ 1 within tolerance" {
+    const dist = try JohnsonSU(f64).init(1.0, 1.0, 0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(1.0, m, 1e-4);
+}
+
+test "JohnsonSU: mode(0,1,0,1) is local maximum of pdf" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mode();
+    const p_mode = dist.pdf(m);
+    const p_left = dist.pdf(m - 0.1);
+    const p_right = dist.pdf(m + 0.1);
+    try testing.expect(p_mode >= p_left);
+    try testing.expect(p_mode >= p_right);
+}
+
+// Entropy Tests
+
+test "JohnsonSU: entropy(0,1,0,1) is positive and finite" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+test "JohnsonSU: entropy(0,1,0,2) is positive and finite" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+test "JohnsonSU: entropy(1,2,-1,0.5) is positive and finite" {
+    const dist = try JohnsonSU(f64).init(1.0, 2.0, -1.0, 0.5);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+test "JohnsonSU: entropy scales with log(lambda)" {
+    const dist1 = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    const dist2 = try JohnsonSU(f64).init(0.0, 2.0, 0.0, 1.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    const log_ratio = @log(2.0);
+    try testing.expectApproxEqAbs(e1 + log_ratio, e2, 1e-6);
+}
+
+// Sample Tests
+
+test "JohnsonSU: sample produces finite values" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "JohnsonSU: sample produces values in support" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "JohnsonSU: sample mean converges empirically" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, empirical_mean, 0.1);
+}
+
+test "JohnsonSU: sample variance converges empirically" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    const n = 10000;
+    var samples: [10000]f64 = undefined;
+    var sum: f64 = 0.0;
+    for (0..n) |i| {
+        const s = dist.sample(rng.random());
+        samples[i] = s;
+        sum += s;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    var sum_sq_diff: f64 = 0.0;
+    for (0..n) |i| {
+        const diff = samples[i] - mean;
+        sum_sq_diff += diff * diff;
+    }
+    const empirical_var = sum_sq_diff / @as(f64, @floatFromInt(n - 1));
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, empirical_var, 0.5);
+}
+
+// f32 Support Tests
+
+test "JohnsonSU: f32 init with valid parameters succeeds" {
+    const dist = try JohnsonSU(f32).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.xi == 0.0);
+}
+
+test "JohnsonSU: f32 pdf(0; 0,1,0,1) ≈ 1/sqrt(2π)" {
+    const dist = try JohnsonSU(f32).init(0.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-5);
+}
+
+test "JohnsonSU: f32 cdf(0; 0,1,0,1) = 0.5" {
+    const dist = try JohnsonSU(f32).init(0.0, 1.0, 0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-5);
+}
+
+test "JohnsonSU: f32 mean(0,1,0,1) = 0" {
+    const dist = try JohnsonSU(f32).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-5);
+}
+
+test "JohnsonSU: f32 variance(0,1,0,1)" {
+    const dist = try JohnsonSU(f32).init(0.0, 1.0, 0.0, 1.0);
+    const v = dist.variance();
+    const expected = 0.5 * (@exp(2.0) - 1.0);
+    try testing.expectApproxEqAbs(expected, v, 1e-4);
+}

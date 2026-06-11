@@ -535,3 +535,5 @@
 {"timestamp":"2026-06-11T00:00:00Z","action":"subagent","agent_type":"code-reviewer","task":"Test quality audit for IrwinHall, HalfLogistic, Lindley distributions","project":"zuda"}
 {"timestamp":"2026-06-11T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for Bates distribution (distribution #69)","project":"zuda"}
 {"timestamp":"2026-06-11T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Bates distribution (distribution #69) in distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-11T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for JohnsonSU distribution in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-11T00:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement JohnsonSU distribution in src/stats/distributions.zig to pass 53 written tests","project":"zuda"}
