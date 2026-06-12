@@ -548,3 +548,4 @@
 {"timestamp":"2026-06-11T23:35:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement RaisedCosine distribution to pass 63 tests","project":"zuda"}
 {"timestamp":"2026-06-12T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 67 failing tests for Muth distribution (76th total, 60th continuous)","project":"zuda"}
 {"timestamp":"2026-06-12T00:00:01Z","action":"subagent","agent_type":"zig-developer","task":"Implement Muth(κ) distribution to pass 67 tests in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-12T11:37:58Z","action":"subagent","agent_type":"test-writer","task":"Strengthen GompertzMakeham tests: add NaN quantile guard, mean convergence, mean monotonicity, and sf boundary tests","project":"zuda"}

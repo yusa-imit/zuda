@@ -42362,6 +42362,49 @@ test "GompertzMakeham: cdf derivative ≈ pdf (finite difference at x=1.0, c>0)"
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
 
+test "GompertzMakeham: quantile fails for p=nan" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const nan_val = std.math.nan(f64);
+    const result = dist.quantile(nan_val);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GompertzMakeham: sample mean converges toward distribution mean (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const theoretical_mean = dist.mean();
+
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const num_samples = 500;
+    for (0..num_samples) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(num_samples));
+
+    // Check within 20% of theoretical mean
+    const tolerance = 0.2 * theoretical_mean;
+    try testing.expectApproxEqAbs(theoretical_mean, empirical_mean, tolerance);
+}
+
+test "GompertzMakeham: mean decreases as c increases (larger Makeham constant → shorter lifetime)" {
+    const dist_c0 = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const dist_c1 = try GompertzMakeham(f64).init(1.0, 1.0, 1.0);
+
+    const mean_c0 = dist_c0.mean();
+    const mean_c1 = dist_c1.mean();
+
+    // Larger Makeham constant (c) should reduce mean (shorter lifetime)
+    try testing.expect(mean_c1 < mean_c0);
+}
+
+test "GompertzMakeham: sf at negative x is 1.0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(-1.0), 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(-10.0), 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(-0.001), 1e-10);
+}
+
 // ============================================================================
 // Muth Distribution
 // ============================================================================
