@@ -1,3 +1,30 @@
+**Session 672 Update (2026-06-13) — FEATURE MODE:**
+
+✅ **GeneralizedGamma Distribution** — 78th total, 62nd continuous — commit acf055b
+- **Mode**: FEATURE MODE (counter: 672)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: GeneralizedGamma(a, d, p) — Stacy's generalized gamma family
+  * Parameters: a > 0 (scale), d > 0 (shape/index), p > 0 (power/shape)
+  * Support: (0, ∞)
+  * PDF: (p / (a^d · Γ(d/p))) · x^(d-1) · exp(-(x/a)^p)
+  * CDF: regularizedGammaP(d/p, (x/a)^p) — exact O(1) via series/CF
+  * Quantile: bisection; p=0→0, p=1→+∞; adaptive upper bound expansion
+  * Mean: a · exp(logΓ((d+1)/p) - logΓ(d/p))
+  * Variance: a²·exp(logΓ((d+2)/p)-logΓ(d/p)) - mean²
+  * Mode: a·((d-1)/p)^{1/p} for d>1; 0.0 for d≤1
+  * Entropy: log(a/p) + logΓ(d/p) + d/p - ((d-1)/p)·ψ(d/p)
+  * Sample: a · Gamma(d/p, rate=1)^{1/p} via Marsaglia-Tsang with boost trick
+  * Special cases:
+    - p=1 → Gamma(scale=a, shape=d): pdf(1;1,2,1)=e^{-1}≈0.36788
+    - d=p → Weibull(scale=a, shape=p): pdf(1;2,2,2)=0.5·exp(-0.25)≈0.38941
+    - d=1,p=2 → HalfNormal-like: pdf(1;1,1,2)=(2/√π)·e^{-1}≈0.41511
+    - (a=1,d=1,p=1)=Exponential: mean=1, var=1, entropy=1
+  * CRITICAL: GGamma(1,1,2) pdf(1) = (2/√π)·exp(-1)≈0.41511 NOT 0.73576
+    (test-writer erroneously computed as Rayleigh; actual is HalfNormal with x^0 term)
+- **Tests**: 77 tests passing
+- **Distribution count**: 78 total (62 continuous + 16 discrete)
+- **Next Priority**: NoncentralF or ReciprocalInverseGaussian or GeneralizedExtremumValue
+
 **Session 671 Update (2026-06-13) — FEATURE MODE:**
 
 ✅ **NoncentralT Distribution** — 77th total, 61st continuous — commit 4689411
