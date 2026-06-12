@@ -1,3 +1,26 @@
+**Session 669 Update (2026-06-12) — FEATURE MODE:**
+
+✅ **Muth Distribution** — 76th total, 60th continuous — commit 43d8508
+- **Mode**: FEATURE MODE (counter: 669)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Muth(κ) — survival model with unusual property E[X]=1 for all κ
+  * Parameter: κ ∈ (0, 1] (rejects κ≤0, κ>1, NaN)
+  * Support: [0, ∞)
+  * Hazard: h(x) = exp(κx) − κ
+  * logSf: κx − (exp(κx) − 1)/κ
+  * PDF: (exp(κx) − κ) · exp(κx − (exp(κx)−1)/κ)
+  * CDF: 1 − exp(κx − (exp(κx)−1)/κ)
+  * Mean: 1 (closed form — proven via substitution u=exp(κx)/κ: ∫S dx = e^(1/κ) · e^(-1/κ) = 1)
+  * Mode: κ > (3−√5)/2 ≈ 0.382 → ln(κ(3+√5)/2)/κ; else 0
+    (derived from critical point u²−3κu+κ²=0 → u=κ(3±√5)/2)
+  * Variance/Entropy: numerical Simpson 1000 pts
+  * Key values: pdf(0;κ=0.5)=0.5; pdf(1;κ=0.5)≈0.5177; cdf(1;κ=0.5)≈0.5493
+  * mode(κ=0.5)≈0.5389; mode(κ=1)≈0.9624; mode(κ=0.3)=0
+  * pdf(0;κ=1)=0 (hazard=0 at origin); logpdf(0;κ=1)=−∞
+- **Tests**: 67 tests all passing (exit code 0)
+- **Distribution count**: 76 total (60 continuous + 16 discrete)
+- **Next Priority**: NoncentralT or GeneralizedGamma
+
 **Session 668 Update (2026-06-12) — FEATURE MODE:**
 
 ✅ **GompertzMakeham Distribution** — 75th total, 59th continuous — commit 4213bb0
