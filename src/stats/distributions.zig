@@ -42361,3 +42361,634 @@ test "GompertzMakeham: cdf derivative ≈ pdf (finite difference at x=1.0, c>0)"
     const pdf_actual = dist.pdf(x);
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
+
+// ============================================================================
+// Muth Distribution
+// ============================================================================
+
+/// Muth distribution with parameter κ ∈ (0, 1].
+///
+/// Hazard h(x) = exp(κ·x) − κ; mean = 1 exactly for all κ.
+/// Support: x ≥ 0.
+pub fn Muth(comptime T: type) type {
+    return struct {
+        kappa: T,
+
+        const Self = @This();
+
+        /// Create a Muth distribution.
+        ///
+        /// Errors: κ ≤ 0, κ > 1, or non-finite κ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(kappa: T) DistributionError!Self {
+            if (!(kappa > 0.0 and kappa <= 1.0)) return error.InvalidParameter;
+            return Self{ .kappa = kappa };
+        }
+
+        /// ln(S(x)) = κ·x − (exp(κ·x) − 1)/κ for x ≥ 0. Used internally.
+        fn logSf(self: Self, x: T) T {
+            const ekx = math.exp(self.kappa * x);
+            return self.kappa * x - (ekx - 1.0) / self.kappa;
+        }
+
+        /// Probability density function: f(x) = (exp(κ·x) − κ)·S(x) for x ≥ 0, else 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const ekx = math.exp(self.kappa * x);
+            const hazard = ekx - self.kappa;
+            return hazard * math.exp(self.logSf(x));
+        }
+
+        /// Log probability density: ln(f(x)) for x ≥ 0, else −∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const ekx = math.exp(self.kappa * x);
+            const hazard = ekx - self.kappa;
+            if (hazard <= 0.0) return -math.inf(T);
+            return @log(hazard) + self.logSf(x);
+        }
+
+        /// Cumulative distribution function F(x) = 1 − S(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return 1.0 - math.exp(self.logSf(x));
+        }
+
+        /// Survival function S(x) = exp(ln S(x)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return math.exp(self.logSf(x));
+        }
+
+        /// Upper bound x_u such that S(x_u) < tol. Used internally.
+        fn upperBound(self: Self, tol: T) T {
+            var u: T = 1.0;
+            var i: usize = 0;
+            while (self.sf(u) > tol and i < 200) : (i += 1) {
+                u *= 2.0;
+            }
+            return u;
+        }
+
+        /// Quantile function via bisection on [0, upper_bound].
+        ///
+        /// Errors: !(0 ≤ p ≤ 1) → InvalidProbability.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p >= 1.0) return math.inf(T);
+
+            var lo: T = 0.0;
+            var hi: T = self.upperBound(1e-12);
+            for (0..100) |_| {
+                const mid = 0.5 * (lo + hi);
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        /// Mode: ln(κ·(3+√5)/2)/κ if κ > (3−√5)/2 ≈ 0.382, else 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const sqrt5 = @sqrt(@as(T, 5.0));
+            const u = self.kappa * (3.0 + sqrt5) / 2.0;
+            if (u <= 1.0) return 0.0;
+            return @log(u) / self.kappa;
+        }
+
+        /// Mean = 1 exactly for all κ ∈ (0, 1] (proven via substitution u = exp(κx)/κ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 1.0;
+        }
+
+        /// Variance via E[X²] = 2·∫₀^∞ x·S(x) dx, then Var = E[X²] − 1.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            return 2.0 * self.simpsonXSf(ub, 1000) - 1.0;
+        }
+
+        /// Shannon entropy H = −∫₀^∞ f(x)·ln f(x) dx via numerical integration.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const n: usize = 1000;
+            const h = ub / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const f = self.pdf(x);
+                const contrib: T = if (f > 0.0) -f * @log(f) else 0.0;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Assert distribution parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.kappa > 0.0 and self.kappa <= 1.0)) return error.InvalidParameter;
+        }
+
+        /// Simpson's rule: ∫₀^upper x·S(x) dx with n (even) subintervals.
+        fn simpsonXSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * (x * self.sf(x));
+            }
+            return sum * h / 3.0;
+        }
+    };
+}
+
+// ============================================================================
+// Muth Tests
+// ============================================================================
+
+// Init Tests
+
+test "Muth: init succeeds with valid param kappa=0.5" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectEqual(@as(f64, 0.5), dist.kappa);
+}
+
+test "Muth: init succeeds with valid param kappa=1.0" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.kappa);
+}
+
+test "Muth: init succeeds with valid param kappa=0.1" {
+    const dist = try Muth(f64).init(0.1);
+    try testing.expectEqual(@as(f64, 0.1), dist.kappa);
+}
+
+test "Muth: init fails for kappa <= 0" {
+    try testing.expectError(error.InvalidParameter, Muth(f64).init(0.0));
+}
+
+test "Muth: init fails for kappa < 0" {
+    try testing.expectError(error.InvalidParameter, Muth(f64).init(-0.5));
+}
+
+test "Muth: init fails for kappa > 1" {
+    try testing.expectError(error.InvalidParameter, Muth(f64).init(1.1));
+}
+
+test "Muth: init fails for kappa = inf" {
+    try testing.expectError(error.InvalidParameter, Muth(f64).init(math.inf(f64)));
+}
+
+test "Muth: init fails for kappa = nan" {
+    try testing.expectError(error.InvalidParameter, Muth(f64).init(math.nan(f64)));
+}
+
+// Validate Tests
+
+test "Muth: validate succeeds for valid kappa=0.5" {
+    const dist = try Muth(f64).init(0.5);
+    try dist.validate();
+}
+
+test "Muth: validate succeeds for valid kappa=1.0" {
+    const dist = try Muth(f64).init(1.0);
+    try dist.validate();
+}
+
+// PDF Tests
+
+test "Muth: pdf at x<0 returns 0" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+}
+
+test "Muth: pdf at x=0 with kappa=0.5 is 0.5" {
+    const dist = try Muth(f64).init(0.5);
+    const expected = 0.5;
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "Muth: pdf at x=0 with kappa=1.0 is 0" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "Muth: pdf at x=1 with kappa=0.5 is approximately 0.5177" {
+    const dist = try Muth(f64).init(0.5);
+    const expected = 0.5177;
+    try testing.expectApproxEqAbs(expected, dist.pdf(1.0), 1e-3);
+}
+
+test "Muth: pdf at x=1 with kappa=1.0 is approximately 0.8381" {
+    const dist = try Muth(f64).init(1.0);
+    const expected = 0.8381;
+    try testing.expectApproxEqAbs(expected, dist.pdf(1.0), 1e-3);
+}
+
+test "Muth: pdf is positive for x>0 (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expect(dist.pdf(2.0) > 0.0);
+}
+
+test "Muth: pdf is positive for x>0 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expect(dist.pdf(0.1) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+}
+
+test "Muth: pdf decreases for large x" {
+    const dist = try Muth(f64).init(0.5);
+    const pdf_1 = dist.pdf(1.0);
+    const pdf_5 = dist.pdf(5.0);
+    const pdf_10 = dist.pdf(10.0);
+    try testing.expect(pdf_1 >= pdf_5);
+    try testing.expect(pdf_5 >= pdf_10);
+}
+
+// LogPDF Tests
+
+test "Muth: logpdf at x<0 returns -inf" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expect(math.isInf(dist.logpdf(-0.5)));
+}
+
+test "Muth: logpdf at x=0 with kappa=0.5 is approximately -0.6931" {
+    const dist = try Muth(f64).init(0.5);
+    const expected = @log(0.5);
+    try testing.expectApproxEqAbs(expected, dist.logpdf(0.0), 1e-9);
+}
+
+test "Muth: logpdf at x=0 with kappa=1.0 is -inf" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expect(math.isInf(dist.logpdf(0.0)));
+}
+
+test "Muth: logpdf equals log of pdf at x=0.5 (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const x = 0.5;
+    const logpdf_val = dist.logpdf(x);
+    const pdf_val = dist.pdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-9);
+}
+
+// CDF Tests
+
+test "Muth: cdf at x=0 is 0" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Muth: cdf at x=0 is 0 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Muth: cdf at x<0 is 0" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "Muth: cdf at x=1 with kappa=1.0 is approximately 0.5124" {
+    const dist = try Muth(f64).init(1.0);
+    const expected = 0.5124;
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-3);
+}
+
+test "Muth: cdf increases monotonically" {
+    const dist = try Muth(f64).init(0.5);
+    const cdf0 = dist.cdf(0.0);
+    const cdf1 = dist.cdf(1.0);
+    const cdf2 = dist.cdf(2.0);
+    try testing.expect(cdf0 <= cdf1);
+    try testing.expect(cdf1 <= cdf2);
+}
+
+test "Muth: cdf approaches 1 for large x" {
+    const dist = try Muth(f64).init(0.5);
+    const result = dist.cdf(10.0);
+    try testing.expect(result > 0.99);
+}
+
+test "Muth: cdf is bounded in [0,1]" {
+    const dist = try Muth(f64).init(1.0);
+    for (0..20) |i| {
+        const x = @as(f64, @floatFromInt(i)) / 2.0;
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+// SF Tests
+
+test "Muth: sf at x=0 is 1" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "Muth: sf at x=0 is 1 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "Muth: sf decreases monotonically" {
+    const dist = try Muth(f64).init(0.5);
+    const sf0 = dist.sf(0.0);
+    const sf1 = dist.sf(1.0);
+    const sf2 = dist.sf(2.0);
+    try testing.expect(sf0 >= sf1);
+    try testing.expect(sf1 >= sf2);
+}
+
+test "Muth: cdf + sf = 1 at x=0.5" {
+    const dist = try Muth(f64).init(0.5);
+    const x = 0.5;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "Muth: cdf + sf = 1 at x=1.0 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    const x = 1.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+// Quantile Tests
+
+test "Muth: quantile at p=0 is 0" {
+    const dist = try Muth(f64).init(0.5);
+    const result = try dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "Muth: quantile at p=0 is 0 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    const result = try dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "Muth: quantile inverts cdf at p=0.3 (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "Muth: quantile inverts cdf at p=0.5 (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "Muth: quantile inverts cdf at p=0.9 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-5);
+}
+
+test "Muth: quantile fails for p<0" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Muth: quantile fails for p>1" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Muth: quantile fails for p=nan" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Muth: quantile increases with p" {
+    const dist = try Muth(f64).init(0.5);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+// Mean Tests
+
+test "Muth: mean is exactly 1.0 (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
+}
+
+test "Muth: mean is exactly 1.0 (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
+}
+
+test "Muth: mean is exactly 1.0 (kappa=0.3)" {
+    const dist = try Muth(f64).init(0.3);
+    try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
+}
+
+test "Muth: mean is finite and positive" {
+    const dist = try Muth(f64).init(0.1);
+    const m = dist.mean();
+    try testing.expect(m > 0.0);
+    try testing.expect(math.isFinite(m));
+}
+
+// Mode Tests
+
+test "Muth: mode with kappa=0.5 is approximately 0.5389" {
+    const dist = try Muth(f64).init(0.5);
+    const expected = 0.5389;
+    try testing.expectApproxEqAbs(expected, dist.mode(), 1e-3);
+}
+
+test "Muth: mode with kappa=1.0 is approximately 0.9624" {
+    const dist = try Muth(f64).init(1.0);
+    const expected = 0.9624;
+    try testing.expectApproxEqAbs(expected, dist.mode(), 1e-3);
+}
+
+test "Muth: mode with kappa=0.3 (below threshold) is 0" {
+    const dist = try Muth(f64).init(0.3);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "Muth: mode is non-negative" {
+    const dist = try Muth(f64).init(0.7);
+    const m = dist.mode();
+    try testing.expect(m >= 0.0);
+}
+
+test "Muth: mode is finite" {
+    const dist = try Muth(f64).init(0.6);
+    const m = dist.mode();
+    try testing.expect(math.isFinite(m));
+}
+
+// Variance Tests
+
+test "Muth: variance is positive (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "Muth: variance is positive (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "Muth: variance is finite" {
+    const dist = try Muth(f64).init(0.4);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+}
+
+// Entropy Tests
+
+test "Muth: entropy is positive (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "Muth: entropy is positive (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "Muth: entropy is finite" {
+    const dist = try Muth(f64).init(0.6);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+// Sample Tests
+
+test "Muth: sample produces non-negative values (kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+    }
+}
+
+test "Muth: sample produces finite values (kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Muth: sample produces values >=0 across multiple kappas" {
+    for (1..10) |i| {
+        const kappa = @as(f64, @floatFromInt(i)) / 20.0;
+        const dist = try Muth(f64).init(kappa);
+        var rng = std.Random.DefaultPrng.init(42 + @as(u64, i));
+        for (0..50) |_| {
+            const s = dist.sample(rng.random());
+            try testing.expect(s >= 0.0);
+        }
+    }
+}
+
+// f32 Tests
+
+test "Muth(f32): init and pdf with f32" {
+    const dist = try Muth(f32).init(0.5);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), p, 1e-5);
+}
+
+test "Muth(f32): cdf with f32" {
+    const dist = try Muth(f32).init(0.5);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "Muth(f32): quantile with f32" {
+    const dist = try Muth(f32).init(0.5);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0.0);
+}
+
+// Numerical Tests
+
+test "Muth: cdf derivative ≈ pdf (finite difference at x=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const x = 0.5;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "Muth: cdf derivative ≈ pdf (finite difference at x=1.0, kappa=0.5)" {
+    const dist = try Muth(f64).init(0.5);
+    const x = 1.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "Muth: cdf derivative ≈ pdf (finite difference at x=0.3, kappa=1.0)" {
+    const dist = try Muth(f64).init(1.0);
+    const x = 0.3;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
