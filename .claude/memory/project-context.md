@@ -1,3 +1,26 @@
+**Session 668 Update (2026-06-12) — FEATURE MODE:**
+
+✅ **GompertzMakeham Distribution** — 75th total, 59th continuous — commit 4213bb0
+- **Mode**: FEATURE MODE (counter: 668)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: GompertzMakeham(c, eta, b) — survival/mortality model with Makeham term
+  * Parameters: c ≥ 0 (background hazard), eta > 0 (scale), b > 0 (growth rate)
+  * Support: [0, ∞); c=0 reduces to Gompertz(eta, b)
+  * Hazard: h(x) = c + eta·exp(b·x)
+  * PDF: (c + eta·exp(b·x)) · exp(−c·x − (eta/b)·(exp(b·x)−1))
+  * CDF: 1 − exp(−c·x − (eta/b)·(exp(b·x)−1)); = 0 for x < 0
+  * Quantile: bisection with adaptive upper bound (doubles until sf < 1e-12, max 200 iters)
+  * Mode: c=0,η≤1: −ln(η)/b; c=0,η>1: 0; c>0,b≥4c: max(0,ln(u/η)/b) where u=(b−2c−√(b²−4bc))/2; c>0,b<4c: 0
+  * Mean: E[X] = ∫S(x)dx numerical (Simpson 1000 pts, adaptive upper)
+  * Variance: 2∫x·S(x)dx − mean² (Simpson)
+  * Entropy: −∫f·ln(f)dx (Simpson, guard f≤0 → contrib=0)
+  * CRITICAL: centered finite difference at x=0 (boundary) gives pdf/2, not pdf — use interior points
+  * Key values: pdf(0;c=0,η=1,b=1)=1.0; pdf(0;c=0.5,η=1,b=1)=1.5; cdf(1;c=0,η=1,b=1)=1−exp(−(e−1))≈0.82079
+  * mode(c=0,η=0.5,b=1)=ln(2)≈0.6931; mode(c=0,η=1,b=1)=0.0; mode(c=0,η=2,b=1)=0.0
+- **Tests**: 67 tests all passing (exit code 0)
+- **Distribution count**: 75 total (59 continuous + 16 discrete)
+- **Next Priority**: NoncentralT, Muth, or GeneralizedGamma
+
 **Session 667 Update (2026-06-12) — FEATURE MODE:**
 
 ✅ **RaisedCosine Distribution** — 74th total, 58th continuous — commit a8e0715
