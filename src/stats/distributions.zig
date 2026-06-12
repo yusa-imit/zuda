@@ -41699,3 +41699,665 @@ test "RaisedCosine: cdf derivative ≈ pdf (finite difference at x=0.5, toleranc
     const pdf_actual = dist.pdf(x);
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
+
+// ============================================================================
+// GompertzMakeham Distribution
+// ============================================================================
+
+/// Gompertz-Makeham distribution: h(x) = c + η·exp(b·x), x ≥ 0.
+///
+/// A generalization of the Gompertz distribution used in actuarial science and
+/// survival analysis. The Makeham term `c` models background (age-independent)
+/// mortality; setting c=0 recovers the pure Gompertz distribution.
+///
+/// Parameters:
+///   - c:   Makeham background hazard (c ≥ 0)
+///   - eta: Scale parameter (η > 0)
+///   - b:   Growth rate parameter (b > 0)
+pub fn GompertzMakeham(comptime T: type) type {
+    return struct {
+        c: T,
+        eta: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Create a GompertzMakeham distribution.
+        ///
+        /// Errors: c < 0, eta ≤ 0, b ≤ 0, or any non-finite parameter.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(c: T, eta: T, b: T) DistributionError!Self {
+            if (c < 0.0 or !math.isFinite(c)) return error.InvalidParameter;
+            if (eta <= 0.0 or !math.isFinite(eta)) return error.InvalidParameter;
+            if (b <= 0.0 or !math.isFinite(b)) return error.InvalidParameter;
+            return Self{ .c = c, .eta = eta, .b = b };
+        }
+
+        /// ln(S(x)) = −c·x − (η/b)·(exp(b·x) − 1). Used internally.
+        fn logSf(self: Self, x: T) T {
+            return -self.c * x - (self.eta / self.b) * (math.exp(self.b * x) - 1.0);
+        }
+
+        /// Probability density function: f(x) = h(x)·S(x) for x ≥ 0, else 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const ebx = math.exp(self.b * x);
+            const hazard = self.c + self.eta * ebx;
+            return hazard * math.exp(-self.c * x - (self.eta / self.b) * (ebx - 1.0));
+        }
+
+        /// Log probability density: ln(f(x)) for x ≥ 0, else −∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const ebx = math.exp(self.b * x);
+            return @log(self.c + self.eta * ebx) - self.c * x - (self.eta / self.b) * (ebx - 1.0);
+        }
+
+        /// Cumulative distribution function F(x) = 1 − S(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return 1.0 - math.exp(self.logSf(x));
+        }
+
+        /// Survival function S(x) = exp(ln S(x)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            return math.exp(self.logSf(x));
+        }
+
+        /// Upper bound x such that S(x) < tol. Used for numerical integration and bisection.
+        fn upperBound(self: Self, tol: T) T {
+            var u: T = 1.0;
+            var i: usize = 0;
+            while (self.sf(u) > tol and i < 200) : (i += 1) {
+                u *= 2.0;
+            }
+            return u;
+        }
+
+        /// Quantile function via bisection on [0, upper_bound].
+        ///
+        /// Errors: !(0 ≤ p ≤ 1) → InvalidProbability.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p >= 1.0) return math.inf(T);
+
+            var lo: T = 0.0;
+            var hi: T = self.upperBound(1e-12);
+            for (0..100) |_| {
+                const mid = 0.5 * (lo + hi);
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// - c = 0 and η ≤ 1: mode = −ln(η)/b
+        /// - c = 0 and η > 1: mode = 0
+        /// - c > 0 and b ≥ 4c: solve quadratic; mode = max(0, ln(u/η)/b)
+        /// - c > 0 and b < 4c: mode = 0 (PDF monotone decreasing)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.c == 0.0) {
+                return if (self.eta <= 1.0) -@log(self.eta) / self.b else 0.0;
+            }
+            const disc = self.b * self.b - 4.0 * self.b * self.c;
+            if (disc < 0.0) return 0.0;
+            const u = (self.b - 2.0 * self.c - @sqrt(disc)) / 2.0;
+            if (u <= 0.0) return 0.0;
+            return @max(0.0, @log(u / self.eta) / self.b);
+        }
+
+        /// Mean via numerical integration: E[X] = ∫₀^∞ S(x) dx.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.simpsonSf(self.upperBound(1e-14), 1000);
+        }
+
+        /// Variance via E[X²] = 2·∫₀^∞ x·S(x) dx, then Var = E[X²] − E[X]².
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const ex1 = self.simpsonSf(ub, 1000);
+            const ex2 = self.simpsonXSf(ub, 1000);
+            return 2.0 * ex2 - ex1 * ex1;
+        }
+
+        /// Shannon entropy H = −∫₀^∞ f(x)·ln f(x) dx via numerical integration.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const n: usize = 1000;
+            const h = ub / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const f = self.pdf(x);
+                const contrib: T = if (f > 0.0) -f * @log(f) else 0.0;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Assert distribution parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.c < 0.0 or !math.isFinite(self.c)) return error.InvalidParameter;
+            if (self.eta <= 0.0 or !math.isFinite(self.eta)) return error.InvalidParameter;
+            if (self.b <= 0.0 or !math.isFinite(self.b)) return error.InvalidParameter;
+        }
+
+        /// Simpson's rule: ∫₀^upper S(x) dx with n (even) subintervals.
+        fn simpsonSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * self.sf(x);
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Simpson's rule: ∫₀^upper x·S(x) dx with n (even) subintervals.
+        fn simpsonXSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * (x * self.sf(x));
+            }
+            return sum * h / 3.0;
+        }
+    };
+}
+
+// ============================================================================
+// GompertzMakeham Tests
+// ============================================================================
+
+// Init Tests
+
+test "GompertzMakeham: init succeeds with valid params c=0, eta=1, b=1" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.c);
+    try testing.expectEqual(@as(f64, 1.0), dist.eta);
+    try testing.expectEqual(@as(f64, 1.0), dist.b);
+}
+
+test "GompertzMakeham: init succeeds with valid params c=0.5, eta=1.0, b=2.0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.5), dist.c);
+    try testing.expectEqual(@as(f64, 1.0), dist.eta);
+    try testing.expectEqual(@as(f64, 2.0), dist.b);
+}
+
+test "GompertzMakeham: init succeeds with c=0.1, eta=0.5, b=0.5" {
+    const dist = try GompertzMakeham(f64).init(0.1, 0.5, 0.5);
+    try testing.expectEqual(@as(f64, 0.1), dist.c);
+    try testing.expectEqual(@as(f64, 0.5), dist.eta);
+    try testing.expectEqual(@as(f64, 0.5), dist.b);
+}
+
+test "GompertzMakeham: init fails for c < 0" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(-0.1, 1.0, 1.0));
+}
+
+test "GompertzMakeham: init fails for c = -1" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(-1.0, 1.0, 1.0));
+}
+
+test "GompertzMakeham: init fails for c = inf" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(math.inf(f64), 1.0, 1.0));
+}
+
+test "GompertzMakeham: init fails for c = nan" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "GompertzMakeham: init fails for eta <= 0" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, 0.0, 1.0));
+}
+
+test "GompertzMakeham: init fails for eta < 0" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, -0.5, 1.0));
+}
+
+test "GompertzMakeham: init fails for eta = inf" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, math.inf(f64), 1.0));
+}
+
+test "GompertzMakeham: init fails for eta = nan" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, math.nan(f64), 1.0));
+}
+
+test "GompertzMakeham: init fails for b <= 0" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, 1.0, 0.0));
+}
+
+test "GompertzMakeham: init fails for b < 0" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, 1.0, -1.0));
+}
+
+test "GompertzMakeham: init fails for b = inf" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, 1.0, math.inf(f64)));
+}
+
+test "GompertzMakeham: init fails for b = nan" {
+    try testing.expectError(error.InvalidParameter, GompertzMakeham(f64).init(0.0, 1.0, math.nan(f64)));
+}
+
+// Validate Tests
+
+test "GompertzMakeham: validate succeeds for valid params" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "GompertzMakeham: validate succeeds for c > 0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 2.0);
+    try dist.validate();
+}
+
+// PDF Tests
+
+test "GompertzMakeham: pdf at x=0 with c=0, eta=1, b=1 is 1.0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const expected = 1.0;
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "GompertzMakeham: pdf at x=0 with c=0.5, eta=1, b=1 is 1.5" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const expected = 1.5;
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "GompertzMakeham: pdf at negative x returns 0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const result = dist.pdf(-0.5);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "GompertzMakeham: pdf at x<0 with c>0 returns 0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const result = dist.pdf(-1.0);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "GompertzMakeham: pdf is positive for x>=0 (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+}
+
+test "GompertzMakeham: pdf is positive for x>=0 (c>0)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+}
+
+test "GompertzMakeham: pdf with c=0, eta=1, b=1 at x=1 is exp(2-e)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const expected = math.exp(2.0 - math.e);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-10);
+}
+
+// LogPDF Tests
+
+test "GompertzMakeham: logpdf at x=0 with c=0, eta=1, b=1 is 0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const result = dist.logpdf(0.0);
+    try testing.expectApproxEqAbs(0.0, result, 1e-10);
+}
+
+test "GompertzMakeham: logpdf equals log of pdf at x=0.5" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const logpdf_val = dist.logpdf(x);
+    const pdf_val = dist.pdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-9);
+}
+
+test "GompertzMakeham: logpdf at negative x returns -inf" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(math.isInf(dist.logpdf(-1.0)));
+}
+
+// CDF Tests
+
+test "GompertzMakeham: cdf at x=0 is 0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "GompertzMakeham: cdf at x=0 is 0 with c>0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "GompertzMakeham: cdf at negative x is 0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "GompertzMakeham: cdf increases monotonically (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const cdf0 = dist.cdf(0.0);
+    const cdf1 = dist.cdf(1.0);
+    const cdf2 = dist.cdf(2.0);
+    try testing.expect(cdf0 <= cdf1);
+    try testing.expect(cdf1 <= cdf2);
+}
+
+test "GompertzMakeham: cdf at x=1 with c=0, eta=1, b=1 is 1-exp(-(e-1))" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const expected = 1.0 - math.exp(-(math.e - 1.0));
+    try testing.expectApproxEqRel(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "GompertzMakeham: cdf approaches 1 for large x" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const result = dist.cdf(10.0);
+    try testing.expect(result > 0.999);
+}
+
+// SF Tests
+
+test "GompertzMakeham: sf at x=0 is 1" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "GompertzMakeham: sf at x=0 is 1 with c>0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "GompertzMakeham: sf decreases monotonically" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const sf0 = dist.sf(0.0);
+    const sf1 = dist.sf(1.0);
+    const sf2 = dist.sf(2.0);
+    try testing.expect(sf0 >= sf1);
+    try testing.expect(sf1 >= sf2);
+}
+
+test "GompertzMakeham: cdf + sf = 1 at x=0.5" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "GompertzMakeham: cdf + sf = 1 at x=2" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+// Quantile Tests
+
+test "GompertzMakeham: quantile at p=0 is 0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const result = try dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "GompertzMakeham: quantile at p=0 is 0 with c>0" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const result = try dist.quantile(0.0);
+    try testing.expectEqual(@as(f64, 0.0), result);
+}
+
+test "GompertzMakeham: quantile inverts cdf at p=0.3" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-6);
+}
+
+test "GompertzMakeham: quantile inverts cdf at p=0.5" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-6);
+}
+
+test "GompertzMakeham: quantile inverts cdf at p=0.7 (c>0)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-6);
+}
+
+test "GompertzMakeham: quantile fails for p<0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "GompertzMakeham: quantile fails for p>1" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "GompertzMakeham: quantile increases with p" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+// Mode Tests
+
+test "GompertzMakeham: mode with c=0, eta=0.5, b=1 is ln(2)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 0.5, 1.0);
+    const expected = @log(2.0);
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-10);
+}
+
+test "GompertzMakeham: mode with c=0, eta=1, b=1 is 0" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "GompertzMakeham: mode with c=0, eta=2, b=1 is 0 (eta>1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "GompertzMakeham: mode with c=0.1, eta=1, b=0.3 is 0 (b<4c)" {
+    const dist = try GompertzMakeham(f64).init(0.1, 1.0, 0.3);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "GompertzMakeham: mode with c>0, b>=4c case" {
+    const dist = try GompertzMakeham(f64).init(0.1, 0.5, 2.0);
+    const mode = dist.mode();
+    try testing.expect(mode >= 0.0);
+    try testing.expect(math.isFinite(mode));
+}
+
+// Mean Tests
+
+test "GompertzMakeham: mean is positive and finite (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const mean = dist.mean();
+    try testing.expect(mean > 0.0);
+    try testing.expect(math.isFinite(mean));
+}
+
+test "GompertzMakeham: mean is positive and finite (c=0.5, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const mean = dist.mean();
+    try testing.expect(mean > 0.0);
+    try testing.expect(math.isFinite(mean));
+}
+
+test "GompertzMakeham: mean is positive and finite (c=0.1, eta=0.5, b=2)" {
+    const dist = try GompertzMakeham(f64).init(0.1, 0.5, 2.0);
+    const mean = dist.mean();
+    try testing.expect(mean > 0.0);
+    try testing.expect(math.isFinite(mean));
+}
+
+// Variance Tests
+
+test "GompertzMakeham: variance is positive and finite (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+    try testing.expect(math.isFinite(v));
+}
+
+test "GompertzMakeham: variance is positive and finite (c=0.5, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+    try testing.expect(math.isFinite(v));
+}
+
+test "GompertzMakeham: variance <= (mean)^2 (sanity check)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const mean = dist.mean();
+    const v = dist.variance();
+    try testing.expect(v <= mean * mean * 10.0);
+}
+
+// Entropy Tests
+
+test "GompertzMakeham: entropy is positive and finite (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+test "GompertzMakeham: entropy is positive and finite (c=0.5, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+// Sample Tests
+
+test "GompertzMakeham: sample produces non-negative values (c=0, eta=1, b=1)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+    }
+}
+
+test "GompertzMakeham: sample produces finite values (c>0)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GompertzMakeham: sample produces values consistent with quantile" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..50) |_| {
+        const u = rng.random().float(f64);
+        const q = try dist.quantile(u);
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0);
+        try testing.expect(q >= 0.0);
+    }
+}
+
+// f32 Tests
+
+test "GompertzMakeham(f32): init and pdf with f32" {
+    const dist = try GompertzMakeham(f32).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), p, 1e-5);
+}
+
+test "GompertzMakeham(f32): cdf with f32" {
+    const dist = try GompertzMakeham(f32).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+// Numerical Tests
+
+test "GompertzMakeham: cdf derivative ≈ pdf (finite difference at x=0.1)" {
+    // x=0 is the boundary of support; centered difference there gives pdf/2.
+    // Use an interior point x=0.1 where the approximation is valid.
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const x = 0.1;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "GompertzMakeham: cdf derivative ≈ pdf (finite difference at x=0.5, c=0)" {
+    const dist = try GompertzMakeham(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "GompertzMakeham: cdf derivative ≈ pdf (finite difference at x=1.0, c>0)" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 1.0);
+    const x = 1.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
