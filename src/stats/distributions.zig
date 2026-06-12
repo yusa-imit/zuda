@@ -43035,3 +43035,28 @@ test "Muth: cdf derivative ≈ pdf (finite difference at x=0.3, kappa=1.0)" {
     const pdf_actual = dist.pdf(x);
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
+
+test "Muth: sample mean converges to 1.0 (exact for all kappa)" {
+    const dist = try Muth(f64).init(0.5);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    for (0..500) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / 500.0;
+    try testing.expectApproxEqAbs(1.0, empirical_mean, 0.15);
+}
+
+test "Muth: sf at negative x is 1.0" {
+    const dist = try Muth(f64).init(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(-1.0), 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(-5.0), 1e-10);
+}
+
+test "Muth: mean is exactly 1.0 for various kappas (canonical property)" {
+    const kappas = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9, 1.0 };
+    for (kappas) |kappa| {
+        const dist = try Muth(f64).init(kappa);
+        try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
+    }
+}
