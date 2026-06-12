@@ -43873,3 +43873,781 @@ test "NoncentralT(f32): cdf with f32 is in [0, 1]" {
     const c = dist.cdf(1.0);
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
+
+// ============================================================================
+// Generalized Gamma Distribution
+// ============================================================================
+
+/// Generalized Gamma distribution — unifying family containing Gamma, Weibull,
+/// Exponential, Nakagami, Rayleigh, and Maxwell-Boltzmann as special cases.
+///
+/// Parameters:
+///   a > 0  — scale
+///   d > 0  — shape/index
+///   p > 0  — power/shape
+///
+/// Support: (0, ∞)
+///
+/// PDF:  f(x; a, d, p) = (p / (a^d · Γ(d/p))) · x^(d-1) · exp(−(x/a)^p)
+///
+/// Special cases:
+///   p=1          → Gamma(scale=a, shape=d)
+///   d=p          → Weibull(scale=a, shape=p)
+///   d=p=2        → Rayleigh (up to scale)
+///   d=1, p=2     → Half-Normal (up to scale)
+pub fn GeneralizedGamma(comptime T: type) type {
+    return struct {
+        a: T, // scale > 0
+        d: T, // shape/index > 0
+        p: T, // power/shape > 0
+
+        const Self = @This();
+
+        /// Create a generalized gamma distribution.
+        ///
+        /// Errors: a ≤ 0, d ≤ 0, p ≤ 0, or any non-finite parameter.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, d: T, p: T) DistributionError!Self {
+            if (!(a > 0.0) or !math.isFinite(a)) return error.InvalidParameter;
+            if (!(d > 0.0) or !math.isFinite(d)) return error.InvalidParameter;
+            if (!(p > 0.0) or !math.isFinite(p)) return error.InvalidParameter;
+            return Self{ .a = a, .d = d, .p = p };
+        }
+
+        /// Probability density function at x.
+        ///
+        /// f(x) = exp(logpdf(x)); returns 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log probability density function at x.
+        ///
+        /// log f(x) = log(p) − d·log(a) − logΓ(d/p) + (d−1)·log(x) − (x/a)^p
+        ///
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const k = self.d / self.p;
+            return @log(self.p) - self.d * @log(self.a) - logGamma(k) +
+                (self.d - 1.0) * @log(x) - math.pow(T, x / self.a, self.p);
+        }
+
+        /// Cumulative distribution function at x.
+        ///
+        /// F(x) = regularizedGammaP(d/p, (x/a)^p)
+        ///
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return regularizedGammaP(self.d / self.p, math.pow(T, x / self.a, self.p));
+        }
+
+        /// Survival function P(X > x) = 1 − F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function: smallest x such that F(x) ≥ prob.
+        ///
+        /// prob=0 → 0, prob=1 → +∞. Uses bisection on CDF.
+        ///
+        /// Errors: prob < 0 or prob > 1 (including NaN)
+        ///
+        /// Time: O(100) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            if (prob == 0.0) return 0.0;
+            if (prob == 1.0) return math.inf(T);
+
+            const m = self.mean();
+            var lo: T = 0.0;
+            var hi: T = @max(m * 4.0, 4.0);
+
+            // Expand upper bound until CDF brackets prob
+            var expand_iter: usize = 0;
+            while (self.cdf(hi) < prob and expand_iter < 64) : (expand_iter += 1) {
+                hi *= 2.0;
+            }
+
+            const tol: T = 1e-9;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < tol) return mid;
+                if (self.cdf(mid) < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Generate a random sample: a · Gamma(d/p, rate=1)^(1/p).
+        ///
+        /// Uses Marsaglia-Tsang for Gamma sampling with boost for shape < 1.
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const k = self.d / self.p;
+            const g = gammaSampleMT(k, rng);
+            return self.a * math.pow(T, g, 1.0 / self.p);
+        }
+
+        /// Mean E[X] = a · Γ((d+1)/p) / Γ(d/p).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.a * @exp(logGamma((self.d + 1.0) / self.p) - logGamma(self.d / self.p));
+        }
+
+        /// Variance Var[X] = a²·Γ((d+2)/p)/Γ(d/p) − E[X]².
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const k = self.d / self.p;
+            const e2 = self.a * self.a * @exp(logGamma((self.d + 2.0) / self.p) - logGamma(k));
+            const m = self.mean();
+            return e2 - m * m;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// For d > 1: a · ((d−1)/p)^(1/p). For d ≤ 1: 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.d <= 1.0) return 0.0;
+            return self.a * math.pow(T, (self.d - 1.0) / self.p, 1.0 / self.p);
+        }
+
+        /// Differential entropy H[X].
+        ///
+        /// H = log(a/p) + logΓ(d/p) + d/p − ((d−1)/p) · ψ(d/p)
+        ///
+        /// where ψ is the digamma function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const k = self.d / self.p;
+            return @log(self.a / self.p) + logGamma(k) + k - ((self.d - 1.0) / self.p) * digamma(T, k);
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.a > 0.0) or !math.isFinite(self.a)) return error.InvalidParameter;
+            if (!(self.d > 0.0) or !math.isFinite(self.d)) return error.InvalidParameter;
+            if (!(self.p > 0.0) or !math.isFinite(self.p)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (0, ∞).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(_: Self, x: T) DistributionError!void {
+            if (!math.isFinite(x) or x <= 0.0) return error.OutOfDomain;
+        }
+
+        // ── Private helper ─────────────────────────────────────────────────
+
+        /// Marsaglia-Tsang Gamma(alpha, rate=1) sampler with boost trick for alpha < 1.
+        fn gammaSampleMT(alpha: T, rng: std.Random) T {
+            const alpha_mt = if (alpha >= 1.0) alpha else alpha + 1.0;
+            const d = alpha_mt - 1.0 / 3.0;
+            const c = 1.0 / @sqrt(9.0 * d);
+            var result: T = undefined;
+            while (true) {
+                var z: T = undefined;
+                var v: T = undefined;
+                while (true) {
+                    const r1 = rng.float(T);
+                    const r2 = rng.float(T);
+                    z = @sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+                    v = 1.0 + c * z;
+                    if (v > 0.0) break;
+                }
+                v = v * v * v;
+                const u = rng.float(T);
+                if (u < 1.0 - 0.0331 * z * z * z * z) {
+                    result = d * v;
+                    break;
+                }
+                if (@log(u) < 0.5 * z * z + d * (1.0 - v + @log(v))) {
+                    result = d * v;
+                    break;
+                }
+            }
+            if (alpha < 1.0) {
+                const u = rng.float(T);
+                result *= math.pow(T, u, 1.0 / alpha);
+            }
+            return result;
+        }
+    };
+}
+
+// ============================================================================
+// GENERALIZED GAMMA DISTRIBUTION TESTS
+// ============================================================================
+
+// Init Valid Parameters Tests
+
+test "GeneralizedGamma: init succeeds with a=1, d=1, p=1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.a);
+    try testing.expectEqual(@as(f64, 1.0), dist.d);
+    try testing.expectEqual(@as(f64, 1.0), dist.p);
+}
+
+test "GeneralizedGamma: init succeeds with a=2, d=3, p=2" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 3.0, 2.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.a);
+    try testing.expectEqual(@as(f64, 3.0), dist.d);
+    try testing.expectEqual(@as(f64, 2.0), dist.p);
+}
+
+test "GeneralizedGamma: init succeeds with a=0.5, d=0.5, p=0.5" {
+    const dist = try GeneralizedGamma(f64).init(0.5, 0.5, 0.5);
+    try testing.expectEqual(@as(f64, 0.5), dist.a);
+    try testing.expectEqual(@as(f64, 0.5), dist.d);
+    try testing.expectEqual(@as(f64, 0.5), dist.p);
+}
+
+test "GeneralizedGamma: init succeeds with a=5, d=2, p=1 (Gamma case)" {
+    const dist = try GeneralizedGamma(f64).init(5.0, 2.0, 1.0);
+    try testing.expectEqual(@as(f64, 5.0), dist.a);
+    try testing.expectEqual(@as(f64, 2.0), dist.d);
+    try testing.expectEqual(@as(f64, 1.0), dist.p);
+}
+
+test "GeneralizedGamma: init succeeds with a=2, d=2, p=2 (Weibull case)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.a);
+    try testing.expectEqual(@as(f64, 2.0), dist.d);
+    try testing.expectEqual(@as(f64, 2.0), dist.p);
+}
+
+test "GeneralizedGamma: init succeeds with large parameters a=100, d=50, p=3" {
+    const dist = try GeneralizedGamma(f64).init(100.0, 50.0, 3.0);
+    try testing.expectEqual(@as(f64, 100.0), dist.a);
+    try testing.expectEqual(@as(f64, 50.0), dist.d);
+    try testing.expectEqual(@as(f64, 3.0), dist.p);
+}
+
+// Init Invalid Parameters Tests
+
+test "GeneralizedGamma: init fails for a=0" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(0.0, 1.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for a=-1" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(-1.0, 1.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for d=0" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, 0.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for d=-2" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, -2.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for p=0" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, 1.0, 0.0));
+}
+
+test "GeneralizedGamma: init fails for p=-0.5" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, 1.0, -0.5));
+}
+
+test "GeneralizedGamma: init fails for a=inf" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(math.inf(f64), 1.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for a=-inf" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(-math.inf(f64), 1.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for a=nan" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "GeneralizedGamma: init fails for d=inf" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, math.inf(f64), 1.0));
+}
+
+test "GeneralizedGamma: init fails for d=nan" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, math.nan(f64), 1.0));
+}
+
+test "GeneralizedGamma: init fails for p=inf" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, 1.0, math.inf(f64)));
+}
+
+test "GeneralizedGamma: init fails for p=nan" {
+    try testing.expectError(error.InvalidParameter, GeneralizedGamma(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+// Validate Tests
+
+test "GeneralizedGamma: validate succeeds for valid params (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "GeneralizedGamma: validate succeeds for valid params (a=2, d=3, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 3.0, 2.0);
+    try dist.validate();
+}
+
+test "GeneralizedGamma: validateValue succeeds for x=1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try dist.validateValue(1.0);
+}
+
+test "GeneralizedGamma: validateValue succeeds for large x=100" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    try dist.validateValue(100.0);
+}
+
+test "GeneralizedGamma: validateValue fails for x=0" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(0.0));
+}
+
+test "GeneralizedGamma: validateValue fails for x=-1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(-1.0));
+}
+
+test "GeneralizedGamma: validateValue fails for x=inf" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+}
+
+test "GeneralizedGamma: validateValue fails for x=nan" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+}
+
+// PDF Tests - Support Boundary
+
+test "GeneralizedGamma: pdf(x=0.0) returns 0 for a=1, d=2, p=1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "GeneralizedGamma: pdf(x=-1) returns 0 for a=1, d=1, p=1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "GeneralizedGamma: pdf is non-negative for all valid x (a=2, d=2, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const xs = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (xs) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+// PDF Special Case Tests
+
+test "GeneralizedGamma: pdf matches Exponential(rate=1) at (1,1,1): pdf(1)≈0.36788" {
+    // GGamma(1,1,1) = Exponential(rate=1)
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.36788, p, 1e-5);
+}
+
+test "GeneralizedGamma: pdf matches Gamma case at (1,2,1): pdf(1)≈0.36788" {
+    // GGamma(1,2,1) = Gamma(scale=1, shape=2)
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.36788, p, 1e-5);
+}
+
+test "GeneralizedGamma: pdf matches half-normal case at (1,1,2): pdf(1)≈(2/√π)·exp(-1)" {
+    // GGamma(1,1,2): d=1,p=2 → PDF = (2/Γ(0.5))·exp(-x²) = (2/√π)·exp(-x²)
+    // At x=1: (2/√π)·exp(-1) ≈ 0.41511
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 2.0);
+    const p = dist.pdf(1.0);
+    const expected = 2.0 / @sqrt(math.pi) * @exp(-1.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-6);
+}
+
+test "GeneralizedGamma: pdf matches Weibull case at (2,2,2): pdf(1)≈0.38941" {
+    // GGamma(2,2,2) = Weibull(scale=2, shape=2); pdf(1) = 0.5*exp(-0.25)
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.38941, p, 1e-5);
+}
+
+// LogPDF Tests
+
+test "GeneralizedGamma: logpdf(x≤0) returns -inf for a=1, d=1, p=1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "GeneralizedGamma: logpdf equals log(pdf) for valid x (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const x = 1.0;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-8);
+}
+
+test "GeneralizedGamma: logpdf equals log(pdf) for x=0.5 (a=2, d=2, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const x = 0.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-8);
+}
+
+// CDF Tests - Support Boundary
+
+test "GeneralizedGamma: cdf(x≤0) returns 0 for a=1, d=1, p=1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "GeneralizedGamma: cdf(x=-1) returns 0 for a=2, d=2, p=2" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+// CDF Special Case Tests
+
+test "GeneralizedGamma: cdf matches Exponential at (1,1,1): cdf(1)≈0.63212" {
+    // GGamma(1,1,1) = Exponential(rate=1); CDF(1) = 1 - exp(-1)
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.63212, c, 1e-5);
+}
+
+test "GeneralizedGamma: cdf matches Gamma at (1,2,1): cdf(1)≈0.26424" {
+    // GGamma(1,2,1) = Gamma(1,2); CDF(1) = P(2, 1) = 1 - 2*exp(-1)
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.26424, c, 1e-5);
+}
+
+test "GeneralizedGamma: cdf is monotonically increasing (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const c0 = dist.cdf(0.5);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(2.0);
+    const c3 = dist.cdf(5.0);
+    try testing.expect(c0 < c1);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+}
+
+test "GeneralizedGamma: cdf approaches 1 for large x (a=2, d=2, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const c = dist.cdf(100.0);
+    try testing.expect(c > 0.999);
+}
+
+test "GeneralizedGamma: cdf is in [0,1] for all x (a=1, d=3, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 3.0, 2.0);
+    const xs = [_]f64{ 0.001, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (xs) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+// SF Tests
+
+test "GeneralizedGamma: sf(x) = 1 - cdf(x) (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const x = 1.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "GeneralizedGamma: sf(x) = 1 - cdf(x) (a=2, d=2, p=2, x=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+// Quantile Tests
+
+test "GeneralizedGamma: quantile(0) returns 0 (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "GeneralizedGamma: quantile(1) returns +inf (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "GeneralizedGamma: quantile fails for p<0" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "GeneralizedGamma: quantile fails for p>1" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "GeneralizedGamma: quantile fails for p=nan (NaN-safe guard)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "GeneralizedGamma: quantile is monotonically increasing (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "GeneralizedGamma: quantile inverts cdf (a=1, d=1, p=1, p_prob=0.5)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const p_prob = 0.5;
+    const q = try dist.quantile(p_prob);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p_prob, cdf_q, 1e-5);
+}
+
+test "GeneralizedGamma: quantile inverts cdf (a=2, d=2, p=2, p_prob=0.9)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const p_prob = 0.9;
+    const q = try dist.quantile(p_prob);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p_prob, cdf_q, 1e-5);
+}
+
+test "GeneralizedGamma: quantile(0.5) increases with a (shape fixed, scale varies)" {
+    const d = 2.0;
+    const p = 1.0;
+    const dist1 = try GeneralizedGamma(f64).init(1.0, d, p);
+    const dist2 = try GeneralizedGamma(f64).init(2.0, d, p);
+    const q1 = try dist1.quantile(0.5);
+    const q2 = try dist2.quantile(0.5);
+    try testing.expect(q1 < q2);
+}
+
+// Mean Tests
+
+test "GeneralizedGamma: mean = 1.0 for (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.0, m, 1e-6);
+}
+
+test "GeneralizedGamma: mean = 2.0 for (a=1, d=2, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(2.0, m, 1e-6);
+}
+
+test "GeneralizedGamma: mean ≈ 1.77245 for (a=2, d=2, p=2)" {
+    // mean = 2 * Γ(3/2) / Γ(1) = 2 * (√π/2) / 1 = √π
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.77245, m, 1e-5);
+}
+
+test "GeneralizedGamma: mean is positive for all valid parameters" {
+    const dist = try GeneralizedGamma(f64).init(3.0, 2.0, 1.5);
+    const m = dist.mean();
+    try testing.expect(m > 0.0);
+    try testing.expect(math.isFinite(m));
+}
+
+// Variance Tests
+
+test "GeneralizedGamma: variance = 1.0 for (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 1e-6);
+}
+
+test "GeneralizedGamma: variance = 2.0 for (a=1, d=2, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.0, v, 1e-6);
+}
+
+test "GeneralizedGamma: variance is positive for valid parameters (a=2, d=2, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+    try testing.expect(math.isFinite(v));
+}
+
+test "GeneralizedGamma: variance increases with scale a (shape fixed)" {
+    const d = 2.0;
+    const p = 1.0;
+    const dist1 = try GeneralizedGamma(f64).init(1.0, d, p);
+    const dist2 = try GeneralizedGamma(f64).init(2.0, d, p);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expect(v1 < v2);
+}
+
+// Mode Tests
+
+test "GeneralizedGamma: mode = 0 for (a=1, d=1, p=1)" {
+    // d=1 → mode = 0
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "GeneralizedGamma: mode = 1.0 for (a=1, d=2, p=1)" {
+    // mode = 1 * ((2-1)/1)^(1/1) = 1
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(1.0, m, 1e-5);
+}
+
+test "GeneralizedGamma: mode = 1.0 for (a=1, d=3, p=2)" {
+    // mode = 1 * ((3-1)/2)^(1/2) = sqrt(1) = 1.0
+    const dist = try GeneralizedGamma(f64).init(1.0, 3.0, 2.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(1.0, m, 1e-5);
+}
+
+test "GeneralizedGamma: mode ≈ 1.41421 for (a=2, d=2, p=2)" {
+    // mode = 2 * ((2-1)/2)^(1/2) = 2 * sqrt(0.5) = sqrt(2)
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(1.41421, m, 1e-5);
+}
+
+// Entropy Tests
+
+test "GeneralizedGamma: entropy = 1.0 for (a=1, d=1, p=1)" {
+    // Exponential(rate=1) entropy = 1.0
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(1.0, e, 1e-5);
+}
+
+test "GeneralizedGamma: entropy is positive and finite (a=2, d=2, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+// Sample Tests
+
+test "GeneralizedGamma: sample returns positive finite values (a=1, d=1, p=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GeneralizedGamma: sample returns positive finite values (a=2, d=2, p=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(99);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GeneralizedGamma: empirical mean converges to theoretical mean (a=1, d=1, p=1, 50000 samples)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    const n_samples = 50000;
+    for (0..n_samples) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqRel(theoretical_mean, empirical_mean, 0.05);
+}
+
+test "GeneralizedGamma: empirical mean converges to theoretical mean (a=2, d=2, p=2, 50000 samples)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    const n_samples = 50000;
+    for (0..n_samples) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqRel(theoretical_mean, empirical_mean, 0.05);
+}
+
+// CDF Derivative Tests
+
+test "GeneralizedGamma: cdf derivative ≈ pdf via finite difference (a=1, d=1, p=1, x=1)" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 1.0, 1.0);
+    const x = 1.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-4);
+}
+
+test "GeneralizedGamma: cdf derivative ≈ pdf via finite difference (a=2, d=2, p=2, x=2)" {
+    const dist = try GeneralizedGamma(f64).init(2.0, 2.0, 2.0);
+    const x = 2.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-4);
+}
+
+// f32 Support Tests
+
+test "GeneralizedGamma(f32): init and pdf with f32" {
+    const dist = try GeneralizedGamma(f32).init(1.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "GeneralizedGamma(f32): cdf with f32 is in [0, 1]" {
+    const dist = try GeneralizedGamma(f32).init(2.0, 2.0, 2.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
