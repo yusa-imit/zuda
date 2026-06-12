@@ -1,3 +1,24 @@
+**Session 671 Update (2026-06-13) — FEATURE MODE:**
+
+✅ **NoncentralT Distribution** — 77th total, 61st continuous — commit 4689411
+- **Mode**: FEATURE MODE (counter: 671)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: NoncentralT(ν, δ) — T = (Z+δ)/√(V/ν) where Z~N(0,1), V~χ²(ν)
+  * Parameters: ν > 0 (degrees of freedom), δ ∈ ℝ (noncentrality)
+  * Support: (−∞, +∞)
+  * PDF/CDF: 300-point composite Simpson over ∫₀^∞ φ/Φ(t√(v/ν)−δ)·f_{χ²(ν)}(v) dv
+  * CRITICAL insight: F(0;ν,δ) = Φ(−δ) exactly (t=0 → phi_arg = −δ, independent of v)
+  * Mean: δ√(ν/2)·Γ((ν-1)/2)/Γ(ν/2) for ν>1, NaN for ν≤1
+  * Variance: ν(1+δ²)/(ν-2) − mean² for ν>2, Inf for 1<ν≤2, NaN for ν≤1
+  * Sample: Box-Muller Z + Marsaglia-Tsang Gamma(ν/2) for V; T=(Z+δ)/√(V/ν)
+  * Symmetry: F(t;ν,δ)+F(−t;ν,−δ)=1 (exact math, ~1e-3 numerical tolerance)
+  * quantile(p=0)=−∞, quantile(p=1)=+∞; bisection 100 iter, adaptive bound
+  * Private gammaSample helper in struct (avoids module-level collision)
+  * Zig gotcha: for-loop ranges require usize (non-negative) — use array literals for negative ranges
+- **Tests**: 69 tests all passing (exit code 0)
+- **Distribution count**: 77 total (61 continuous + 16 discrete)
+- **Next Priority**: GeneralizedGamma or NoncentralF
+
 **Session 670 Update (2026-06-12) — STABILIZATION MODE:**
 
 ✅ **All Systems Green** — commits 90252b7, 7fdfa0f
