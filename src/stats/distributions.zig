@@ -43060,3 +43060,811 @@ test "Muth: mean is exactly 1.0 for various kappas (canonical property)" {
         try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
     }
 }
+
+// ============================================================================
+// Noncentral t-Distribution
+// ============================================================================
+
+/// Noncentral t-distribution NCT(ν, δ)
+///
+/// Defined as T = (Z + δ) / √(V/ν), where Z ~ N(0,1) and V ~ χ²(ν) are independent.
+/// When δ = 0, reduces to the standard Student's t-distribution.
+///
+/// Parameters:
+///   - nu  (ν): degrees of freedom, ν > 0
+///   - delta (δ): noncentrality parameter, any finite real
+///
+/// Support: t ∈ (-∞, +∞)
+///
+/// PDF and CDF are computed via numerical integration of the conditional representation:
+///   f(t; ν, δ) = ∫₀^∞ φ(t·√(v/ν) − δ) · √(v/ν) · f_{χ²(ν)}(v) dv
+///   F(t; ν, δ) = ∫₀^∞ Φ(t·√(v/ν) − δ) · f_{χ²(ν)}(v) dv
+///
+/// Symmetry: f(t; ν, δ) = f(−t; ν, −δ), so F(t; ν, δ) + F(−t; ν, −δ) = 1
+///
+/// Time: O(n) for pdf/cdf (n=300 quadrature points) | Space: O(1)
+pub fn NoncentralT(comptime T: type) type {
+    return struct {
+        nu: T,    // degrees of freedom ν > 0
+        delta: T, // noncentrality parameter δ ∈ ℝ
+
+        const Self = @This();
+
+        /// Create a noncentral t-distribution.
+        ///
+        /// Errors: nu ≤ 0, non-finite nu, or non-finite delta.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(nu: T, delta: T) DistributionError!Self {
+            if (nu <= 0.0 or !math.isFinite(nu)) return error.InvalidParameter;
+            if (!math.isFinite(delta)) return error.InvalidParameter;
+            return Self{ .nu = nu, .delta = delta };
+        }
+
+        /// Probability density function at t.
+        ///
+        /// f(t; ν, δ) = ∫₀^∞ φ(t·√(v/ν) − δ) · √(v/ν) · f_{χ²(ν)}(v) dv
+        ///
+        /// Computed via 300-point composite Simpson quadrature.
+        ///
+        /// Time: O(300) | Space: O(1)
+        pub fn pdf(self: Self, t: T) T {
+            return @exp(self.logpdf(t));
+        }
+
+        /// Log probability density function at t.
+        ///
+        /// More numerically stable for extreme t values.
+        ///
+        /// Time: O(300) | Space: O(1)
+        pub fn logpdf(self: Self, t: T) T {
+            const val = self.numericalPdf(t);
+            if (val <= 0.0) return -math.inf(T);
+            return @log(val);
+        }
+
+        /// Cumulative distribution function at t.
+        ///
+        /// F(t; ν, δ) = ∫₀^∞ Φ(t·√(v/ν) − δ) · f_{χ²(ν)}(v) dv
+        ///
+        /// Result is clamped to [0, 1].
+        ///
+        /// Time: O(300) | Space: O(1)
+        pub fn cdf(self: Self, t: T) T {
+            return self.numericalCdf(t);
+        }
+
+        /// Survival function P(X > t) = 1 − F(t).
+        ///
+        /// Time: O(300) | Space: O(1)
+        pub fn sf(self: Self, t: T) T {
+            return 1.0 - self.cdf(t);
+        }
+
+        /// Quantile function (inverse CDF): smallest t such that F(t) ≥ p.
+        ///
+        /// Uses bisection search on cdf(). p=0 → −∞, p=1 → +∞.
+        ///
+        /// Errors: p < 0 or p > 1 (including NaN)
+        ///
+        /// Time: O(100 × 300) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            // Initial bracket around the distribution center
+            var lo: T = self.delta - 50.0;
+            var hi: T = self.delta + 50.0;
+
+            // Expand bounds until CDF brackets p
+            var expand_iter: usize = 0;
+            while (self.cdf(lo) > p and expand_iter < 50) : (expand_iter += 1) {
+                lo -= 20.0;
+            }
+            expand_iter = 0;
+            while (self.cdf(hi) < p and expand_iter < 50) : (expand_iter += 1) {
+                hi += 20.0;
+            }
+
+            // Bisection
+            const tol: T = 1e-9;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < tol) return mid;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Generate a random sample: T = (Z + δ) / √(V/ν) where Z ~ N(0,1), V ~ χ²(ν).
+        ///
+        /// Uses Box-Muller for Z and Marsaglia-Tsang for V.
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Z ~ N(0, 1) via Box-Muller
+            const r1 = rng.float(T);
+            const r2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+
+            // V ~ χ²(ν) = 2·Gamma(ν/2) via Marsaglia-Tsang
+            const alpha = self.nu / 2.0;
+            const v = 2.0 * self.gammaSample(alpha, rng);
+
+            return (z + self.delta) / @sqrt(v / self.nu);
+        }
+
+        /// Mean E[T] = δ·√(ν/2)·Γ((ν−1)/2)/Γ(ν/2) for ν > 1.
+        ///
+        /// Returns NaN for ν ≤ 1 (mean undefined).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.nu <= 1.0) return math.nan(T);
+            if (self.delta == 0.0) return 0.0;
+            // E[T] = δ · exp(0.5·ln(ν/2) + logΓ((ν−1)/2) − logΓ(ν/2))
+            const log_mean = 0.5 * @log(self.nu / 2.0) +
+                logGamma((self.nu - 1.0) / 2.0) -
+                logGamma(self.nu / 2.0);
+            return self.delta * @exp(log_mean);
+        }
+
+        /// Variance Var[T] = ν(1+δ²)/(ν−2) − E[T]² for ν > 2.
+        ///
+        /// Returns Inf for 1 < ν ≤ 2, NaN for ν ≤ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.nu <= 1.0) return math.nan(T);
+            if (self.nu <= 2.0) return math.inf(T);
+            const m = self.mean();
+            return self.nu * (1.0 + self.delta * self.delta) / (self.nu - 2.0) - m * m;
+        }
+
+        /// Differential entropy computed numerically via H = −∫ f(t)·ln(f(t)) dt.
+        ///
+        /// Integration range: [δ−15·σ, δ+15·σ] where σ = √variance (or 15 if undefined).
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const var_val = self.variance();
+            const spread: T = if (math.isFinite(var_val) and var_val > 0.0)
+                @sqrt(var_val)
+            else
+                15.0;
+            const lo = self.delta - 15.0 * spread;
+            const hi = self.delta + 15.0 * spread;
+            const n: usize = 500;
+            const h = (hi - lo) / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const t = lo + @as(T, @floatFromInt(i)) * h;
+                const weight: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const p = self.pdf(t);
+                if (p > 1e-300) {
+                    sum += weight * p * (-@log(p));
+                }
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.nu <= 0.0 or !math.isFinite(self.nu)) return error.InvalidParameter;
+            if (!math.isFinite(self.delta)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (any finite real).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(_: Self, t: T) DistributionError!void {
+            if (!math.isFinite(t)) return error.OutOfDomain;
+        }
+
+        // ── Private helpers ────────────────────────────────────────────────
+
+        /// Composite Simpson quadrature for the CDF integral.
+        fn numericalCdf(self: Self, t: T) T {
+            const log_chi2_norm = -(self.nu / 2.0) * @log(2.0) - logGamma(self.nu / 2.0);
+            const n: usize = 300;
+            const upper = @max(self.nu + 14.0 * @sqrt(2.0 * self.nu) + 60.0, 100.0);
+            const h = upper / @as(T, @floatFromInt(n));
+            const sqrt2: T = @sqrt(2.0);
+
+            var sum: T = 0.0;
+            // Start from i=1 to avoid singularity at v=0 for small nu.
+            // (i=0 gives v=0 → log(0)=-inf; contributes 0 to sum.)
+            var i: usize = 1;
+            while (i <= n) : (i += 1) {
+                const v = @as(T, @floatFromInt(i)) * h;
+                // Simpson weight: alternates 4, 2, 4, 2, ..., 4, 1 (last)
+                const weight: T = if (i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+
+                // φ argument: t·√(v/ν) − δ
+                const phi_arg = t * @sqrt(v / self.nu) - self.delta;
+
+                // Φ(phi_arg) = 0.5·(1 + erf(phi_arg/√2))
+                const phi_cdf = 0.5 * (1.0 + erf(phi_arg / sqrt2));
+
+                // log f_{χ²(ν)}(v) = (ν/2−1)·ln(v) − v/2 + log_chi2_norm
+                const log_chi2 = (self.nu / 2.0 - 1.0) * @log(v) - v / 2.0 + log_chi2_norm;
+                const chi2_pdf = @exp(log_chi2);
+
+                sum += weight * phi_cdf * chi2_pdf;
+            }
+            return @min(1.0, @max(0.0, sum * h / 3.0));
+        }
+
+        /// Composite Simpson quadrature for the PDF integral.
+        fn numericalPdf(self: Self, t: T) T {
+            const log_chi2_norm = -(self.nu / 2.0) * @log(2.0) - logGamma(self.nu / 2.0);
+            const n: usize = 300;
+            const upper = @max(self.nu + 14.0 * @sqrt(2.0 * self.nu) + 60.0, 100.0);
+            const h = upper / @as(T, @floatFromInt(n));
+            const sqrt_2pi: T = @sqrt(2.0 * math.pi);
+
+            var sum: T = 0.0;
+            var i: usize = 1;
+            while (i <= n) : (i += 1) {
+                const v = @as(T, @floatFromInt(i)) * h;
+                const weight: T = if (i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+
+                const sqrt_v_over_nu = @sqrt(v / self.nu);
+
+                // φ(t·√(v/ν) − δ) — standard normal PDF
+                const phi_arg = t * sqrt_v_over_nu - self.delta;
+                const phi_pdf = @exp(-0.5 * phi_arg * phi_arg) / sqrt_2pi;
+
+                // log f_{χ²(ν)}(v)
+                const log_chi2 = (self.nu / 2.0 - 1.0) * @log(v) - v / 2.0 + log_chi2_norm;
+                const chi2_pdf = @exp(log_chi2);
+
+                // Integrand: φ(...) · √(v/ν) · f_{χ²(ν)}(v)
+                sum += weight * phi_pdf * sqrt_v_over_nu * chi2_pdf;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Marsaglia-Tsang gamma sampler for Gamma(alpha, rate=1).
+        fn gammaSample(self: Self, alpha: T, rng: std.Random) T {
+            _ = self; // unused, but keep for method signature
+            const alpha_mt = if (alpha >= 1.0) alpha else alpha + 1.0;
+            const d = alpha_mt - 1.0 / 3.0;
+            const c = 1.0 / @sqrt(9.0 * d);
+            var result: T = undefined;
+            while (true) {
+                var z: T = undefined;
+                var vv: T = undefined;
+                while (true) {
+                    const r1 = rng.float(T);
+                    const r2 = rng.float(T);
+                    z = @sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+                    vv = 1.0 + c * z;
+                    if (vv > 0.0) break;
+                }
+                vv = vv * vv * vv;
+                const u = rng.float(T);
+                if (u < 1.0 - 0.0331 * z * z * z * z) {
+                    result = d * vv;
+                    break;
+                }
+                if (@log(u) < 0.5 * z * z + d * (1.0 - vv + @log(vv))) {
+                    result = d * vv;
+                    break;
+                }
+            }
+            // Boost trick for alpha < 1
+            if (alpha < 1.0) {
+                const u = rng.float(T);
+                result *= math.pow(T, u, 1.0 / alpha);
+            }
+            return result;
+        }
+    };
+}
+
+// ============================================================================
+// NONCENTRAL T DISTRIBUTION TESTS
+// ============================================================================
+
+// Init Valid Parameters Tests
+
+test "NoncentralT: init succeeds with nu=5, delta=0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectEqual(@as(f64, 5.0), dist.nu);
+    try testing.expectEqual(@as(f64, 0.0), dist.delta);
+}
+
+test "NoncentralT: init succeeds with nu=5, delta=2" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    try testing.expectEqual(@as(f64, 5.0), dist.nu);
+    try testing.expectEqual(@as(f64, 2.0), dist.delta);
+}
+
+test "NoncentralT: init succeeds with nu=1, delta=0" {
+    const dist = try NoncentralT(f64).init(1.0, 0.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.nu);
+}
+
+test "NoncentralT: init succeeds with nu=0.5, delta=-1.5" {
+    const dist = try NoncentralT(f64).init(0.5, -1.5);
+    try testing.expectEqual(@as(f64, 0.5), dist.nu);
+    try testing.expectEqual(@as(f64, -1.5), dist.delta);
+}
+
+test "NoncentralT: init succeeds with large nu=100, delta=3" {
+    const dist = try NoncentralT(f64).init(100.0, 3.0);
+    try testing.expectEqual(@as(f64, 100.0), dist.nu);
+}
+
+test "NoncentralT: init succeeds with nu=3, delta=-5" {
+    const dist = try NoncentralT(f64).init(3.0, -5.0);
+    try testing.expectEqual(@as(f64, 3.0), dist.nu);
+    try testing.expectEqual(@as(f64, -5.0), dist.delta);
+}
+
+test "NoncentralT: init succeeds with nu=10, delta=0.01" {
+    const dist = try NoncentralT(f64).init(10.0, 0.01);
+    try testing.expectEqual(@as(f64, 10.0), dist.nu);
+}
+
+test "NoncentralT: init succeeds with small nu=0.1, delta=0" {
+    const dist = try NoncentralT(f64).init(0.1, 0.0);
+    try testing.expectEqual(@as(f64, 0.1), dist.nu);
+}
+
+// Init Invalid Parameters Tests
+
+test "NoncentralT: init fails for nu=0" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(0.0, 0.0));
+}
+
+test "NoncentralT: init fails for nu=-1" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(-1.0, 0.0));
+}
+
+test "NoncentralT: init fails for nu=inf" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(math.inf(f64), 0.0));
+}
+
+test "NoncentralT: init fails for nu=-inf" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(-math.inf(f64), 0.0));
+}
+
+test "NoncentralT: init fails for nu=nan" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(math.nan(f64), 0.0));
+}
+
+test "NoncentralT: init fails for delta=inf" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(5.0, math.inf(f64)));
+}
+
+test "NoncentralT: init fails for delta=-inf" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(5.0, -math.inf(f64)));
+}
+
+test "NoncentralT: init fails for delta=nan" {
+    try testing.expectError(error.InvalidParameter, NoncentralT(f64).init(5.0, math.nan(f64)));
+}
+
+// Validate Tests
+
+test "NoncentralT: validate succeeds for valid params (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try dist.validate();
+}
+
+test "NoncentralT: validate succeeds for valid params (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    try dist.validate();
+}
+
+test "NoncentralT: validate succeeds for valid params (nu=0.5, delta=-10)" {
+    const dist = try NoncentralT(f64).init(0.5, -10.0);
+    try dist.validate();
+}
+
+test "NoncentralT: validateValue succeeds for finite real t=0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try dist.validateValue(0.0);
+}
+
+test "NoncentralT: validateValue succeeds for finite real t=3.5" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    try dist.validateValue(3.5);
+}
+
+test "NoncentralT: validateValue succeeds for negative t=-10" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try dist.validateValue(-10.0);
+}
+
+test "NoncentralT: validateValue fails for t=inf" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+}
+
+test "NoncentralT: validateValue fails for t=-inf" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(-math.inf(f64)));
+}
+
+test "NoncentralT: validateValue fails for t=nan" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+}
+
+// CDF Tests - delta=0 matches StudentT
+
+test "NoncentralT: cdf at t=0 is 0.5 when delta=0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const cdf_val = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, cdf_val, 1e-9);
+}
+
+test "NoncentralT: cdf at t=2 with delta=0 matches StudentT(5)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const cdf_val = dist.cdf(2.0);
+    // StudentT(5).cdf(2) ≈ 0.94905
+    try testing.expectApproxEqAbs(0.94905, cdf_val, 1e-3);
+}
+
+// CDF Basic Properties
+
+test "NoncentralT: cdf is monotonically increasing (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const cdf_minus1 = dist.cdf(-1.0);
+    const cdf_0 = dist.cdf(0.0);
+    const cdf_1 = dist.cdf(1.0);
+    const cdf_3 = dist.cdf(3.0);
+    try testing.expect(cdf_minus1 < cdf_0);
+    try testing.expect(cdf_0 < cdf_1);
+    try testing.expect(cdf_1 < cdf_3);
+}
+
+test "NoncentralT: cdf is in [0, 1] (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    for (-3..4) |i| {
+        const x = @as(f64, @floatFromInt(i));
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "NoncentralT: cdf at t=0 is small when delta=2 (distribution shifted right)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const cdf_val = dist.cdf(0.0);
+    // Expected: ≈ 0.0464
+    try testing.expectApproxEqAbs(0.0464, cdf_val, 0.01);
+}
+
+test "NoncentralT: cdf increases with t (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const cdf_0 = dist.cdf(0.0);
+    const cdf_1 = dist.cdf(1.0);
+    const cdf_3 = dist.cdf(3.0);
+    const cdf_5 = dist.cdf(5.0);
+    try testing.expect(cdf_0 < cdf_1);
+    try testing.expect(cdf_1 < cdf_3);
+    try testing.expect(cdf_3 < cdf_5);
+}
+
+test "NoncentralT: cdf approaches 1 for large t (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const cdf_large = dist.cdf(100.0);
+    try testing.expect(cdf_large > 0.999);
+}
+
+// PDF Tests
+
+test "NoncentralT: pdf at t=0 is positive when delta=0 (nu=5)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const pdf_val = dist.pdf(0.0);
+    try testing.expect(pdf_val > 0.0);
+    // StudentT(5).pdf(0) ≈ 0.37960
+    try testing.expectApproxEqAbs(0.37960, pdf_val, 1e-3);
+}
+
+test "NoncentralT: pdf is non-negative for all t (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    for (-5..6) |i| {
+        const x = @as(f64, @floatFromInt(i));
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "NoncentralT: logpdf equals log(pdf) when pdf > 0 (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const x = 1.0;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqRel(expected_logpdf, logpdf_val, 1e-8);
+}
+
+test "NoncentralT: pdf integrates to approximately 1.0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    // Numerical integration via trapezoid rule over [-10, 10]
+    var sum: f64 = 0.0;
+    const h = 0.1;
+    var x: f64 = -10.0;
+    while (x <= 10.0) : (x += h) {
+        sum += dist.pdf(x);
+    }
+    const integral = sum * h;
+    try testing.expectApproxEqAbs(1.0, integral, 0.05);
+}
+
+// SF Tests
+
+test "NoncentralT: sf(t) + cdf(t) = 1 (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const x = 0.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "NoncentralT: sf(t) + cdf(t) = 1 (nu=5, delta=2, t=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+// Symmetry Tests
+
+test "NoncentralT: symmetry property cdf(t; nu, delta) + cdf(-t; nu, -delta) = 1" {
+    const t = 1.5;
+    const nu = 5.0;
+    const delta = 2.0;
+    const dist1 = try NoncentralT(f64).init(nu, delta);
+    const dist2 = try NoncentralT(f64).init(nu, -delta);
+    const cdf_right = dist1.cdf(t);
+    const cdf_left = dist2.cdf(-t);
+    const sum = cdf_right + cdf_left;
+    try testing.expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+test "NoncentralT: pdf symmetry property pdf(t; nu, delta) = pdf(-t; nu, -delta)" {
+    const t = 2.0;
+    const nu = 5.0;
+    const delta = 2.5;
+    const dist1 = try NoncentralT(f64).init(nu, delta);
+    const dist2 = try NoncentralT(f64).init(nu, -delta);
+    const pdf_right = dist1.pdf(t);
+    const pdf_left = dist2.pdf(-t);
+    try testing.expectApproxEqAbs(pdf_left, pdf_right, 1e-9);
+}
+
+test "NoncentralT: symmetry cdf(t; nu, 0) + cdf(-t; nu, 0) = 1 (self-symmetry)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const t = 1.5;
+    const cdf_plus = dist.cdf(t);
+    const cdf_minus = dist.cdf(-t);
+    const sum = cdf_plus + cdf_minus;
+    try testing.expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+// Quantile Tests
+
+test "NoncentralT: quantile inverts cdf at p=0.3 (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-5);
+}
+
+test "NoncentralT: quantile inverts cdf at p=0.5 (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-5);
+}
+
+test "NoncentralT: quantile inverts cdf at p=0.9 (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_q, 1e-5);
+}
+
+test "NoncentralT: quantile at p=0 returns -inf" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "NoncentralT: quantile at p=1 returns +inf" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "NoncentralT: quantile fails for p<0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "NoncentralT: quantile fails for p>1" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "NoncentralT: quantile fails for p=nan" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "NoncentralT: quantile increases with p (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "NoncentralT: quantile is positive for p=0.5 when delta=2 (shifted right)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+// Mean Tests
+
+test "NoncentralT: mean exists and is finite for nu=5, delta=0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+    // delta=0, so mean should be 0
+    try testing.expectApproxEqAbs(0.0, m, 1e-9);
+}
+
+test "NoncentralT: mean is approximately 2.379 for nu=5, delta=2" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(2.379, m, 0.05);
+}
+
+test "NoncentralT: mean is approximately -2.379 for nu=5, delta=-2" {
+    const dist = try NoncentralT(f64).init(5.0, -2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(-2.379, m, 0.05);
+}
+
+test "NoncentralT: mean returns NaN for nu=1 (undefined)" {
+    const dist = try NoncentralT(f64).init(1.0, 2.0);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "NoncentralT: mean returns NaN for nu=0.5 (undefined)" {
+    const dist = try NoncentralT(f64).init(0.5, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+// Variance Tests
+
+test "NoncentralT: variance is finite and positive for nu=5, delta=0" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+    try testing.expect(math.isFinite(v));
+}
+
+test "NoncentralT: variance is approximately 2.674 for nu=5, delta=2" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.674, v, 0.2);
+}
+
+test "NoncentralT: variance returns Inf for nu=2 (1 < nu <= 2)" {
+    const dist = try NoncentralT(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "NoncentralT: variance returns Inf for nu=1.5 (1 < nu <= 2)" {
+    const dist = try NoncentralT(f64).init(1.5, 2.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "NoncentralT: variance returns NaN for nu=1 (nu <= 1)" {
+    const dist = try NoncentralT(f64).init(1.0, 0.0);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+test "NoncentralT: variance returns NaN for nu=0.5 (nu <= 1)" {
+    const dist = try NoncentralT(f64).init(0.5, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+// Sample Tests
+
+test "NoncentralT: sample returns finite values (nu=5, delta=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralT: sample returns finite values (nu=5, delta=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(99);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralT: empirical mean converges to theoretical mean (nu=5, delta=2, 50000 samples)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    const n_samples = 50000;
+    for (0..n_samples) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqRel(theoretical_mean, empirical_mean, 0.1);
+}
+
+// CDF Derivative Tests
+
+test "NoncentralT: cdf derivative ≈ pdf via finite difference (nu=5, delta=0, t=0)" {
+    const dist = try NoncentralT(f64).init(5.0, 0.0);
+    const x = 0.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+test "NoncentralT: cdf derivative ≈ pdf via finite difference (nu=5, delta=2, t=2)" {
+    const dist = try NoncentralT(f64).init(5.0, 2.0);
+    const x = 2.0;
+    const h = 1e-5;
+    const cdf_plus = dist.cdf(x + h);
+    const cdf_minus = dist.cdf(x - h);
+    const pdf_approx = (cdf_plus - cdf_minus) / (2.0 * h);
+    const pdf_actual = dist.pdf(x);
+    try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
+}
+
+// f32 Support Tests
+
+test "NoncentralT(f32): init and pdf with f32" {
+    const dist = try NoncentralT(f32).init(5.0, 0.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "NoncentralT(f32): cdf with f32 is in [0, 1]" {
+    const dist = try NoncentralT(f32).init(5.0, 2.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
