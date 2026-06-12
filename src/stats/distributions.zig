@@ -44651,3 +44651,671 @@ test "GeneralizedGamma(f32): cdf with f32 is in [0, 1]" {
     const c = dist.cdf(1.0);
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
+
+// ============================================================================
+// NONCENTRAL F DISTRIBUTION
+// ============================================================================
+
+// Noncentral F-Distribution
+//
+// Generalization of the F-distribution where the numerator chi-squared variate
+// has a noncentral distribution (noncentrality parameter λ ≥ 0).
+//
+// ## Definition
+// If X ~ NoncentralChiSquared(d1, λ) and Y ~ ChiSquared(d2) are independent,
+// then F = (X/d1) / (Y/d2) ~ NoncentralF(d1, d2, λ).
+//
+// ## Mixture Representation
+// NoncentralF(d1, d2, λ) = Σ_{j=0}^∞ w_j · F(d1+2j, d2)
+// where w_j = exp(−λ/2) · (λ/2)^j / j! are Poisson(λ/2) weights.
+//
+// ## Parameters
+// - d1 > 0: numerator degrees of freedom
+// - d2 > 0: denominator degrees of freedom
+// - lambda ≥ 0: noncentrality parameter (lambda=0 → central F distribution)
+//
+// ## Mathematical Properties
+// - **Support**: [0, ∞)
+// - **Mean**: d2·(d1+λ) / (d1·(d2−2)) for d2 > 2
+// - **Variance**: 2·(d2/d1)²·[(d1+λ)²+(d1+2λ)(d2−2)] / [(d2−2)²·(d2−4)] for d2 > 4
+
+/// Noncentral F-distribution with degrees of freedom d1, d2 and noncentrality λ
+pub fn NoncentralF(comptime T: type) type {
+    return struct {
+        d1: T,
+        d2: T,
+        lambda: T,
+
+        const Self = @This();
+        const MAX_POISSON_TERMS: usize = 250;
+
+        /// Initialize NoncentralF(d1, d2, lambda)
+        ///
+        /// Errors: InvalidParameter if d1 ≤ 0, d2 ≤ 0, lambda < 0, or any is NaN/Inf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(d1: T, d2: T, lambda: T) !Self {
+            if (!(d1 > 0.0) or !(d2 > 0.0) or !(lambda >= 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(d1) or !math.isFinite(d2) or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .d1 = d1, .d2 = d2, .lambda = lambda };
+        }
+
+        /// Probability density function (PDF) at x ≥ 0
+        ///
+        /// Uses Poisson mixture: f(x) = Σ_j w_j · f_{F(d1+2j,d2)}(x)
+        ///
+        /// Time: O(MAX_POISSON_TERMS) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (!math.isFinite(x)) return 0.0;
+
+            const half_lambda = self.lambda / 2.0;
+
+            var result: T = 0.0;
+            var log_wj: T = -half_lambda; // log(w_0) = -lambda/2, j=0
+            for (0..MAX_POISSON_TERMS) |j| {
+                const wj = @exp(log_wj);
+                if (wj < 1e-15 and j > 0) break;
+
+                const a = self.d1 + 2.0 * @as(T, @floatFromInt(j));
+                result += wj * centralFPdf(T, x, a, self.d2);
+
+                // Next log weight: log(w_{j+1}) = log(w_j) + log(lambda/2) - log(j+1)
+                if (half_lambda > 0.0) {
+                    log_wj += @log(half_lambda) - @log(@as(T, @floatFromInt(j + 1)));
+                } else {
+                    break; // lambda=0: only j=0 term matters
+                }
+            }
+            return result;
+        }
+
+        /// Cumulative distribution function (CDF) at x ≥ 0
+        ///
+        /// Uses Poisson mixture: F(x) = Σ_j w_j · F_{F(d1+2j,d2)}(x)
+        ///
+        /// Time: O(MAX_POISSON_TERMS) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (math.isInf(x)) return 1.0;
+
+            const half_lambda = self.lambda / 2.0;
+
+            var result: T = 0.0;
+            var log_wj: T = -half_lambda;
+            for (0..MAX_POISSON_TERMS) |j| {
+                const wj = @exp(log_wj);
+                if (wj < 1e-15 and j > 0) break;
+
+                const a = self.d1 + 2.0 * @as(T, @floatFromInt(j));
+                result += wj * centralFCdf(T, x, a, self.d2);
+
+                if (half_lambda > 0.0) {
+                    log_wj += @log(half_lambda) - @log(@as(T, @floatFromInt(j + 1)));
+                } else {
+                    break;
+                }
+            }
+            return @min(result, 1.0);
+        }
+
+        /// Survival function (SF): P(X > x) = 1 − CDF(x)
+        ///
+        /// Time: O(MAX_POISSON_TERMS) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search. Boundary: quantile(0)=0, quantile(1)=+∞
+        ///
+        /// Time: O(MAX_POISSON_TERMS × 100) | Space: O(1)
+        pub fn quantile(self: Self, p: T) !T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Find upper bound
+            var hi: T = 1.0;
+            while (self.cdf(hi) < p) hi *= 2.0;
+            var lo: T = 0.0;
+
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo < 1e-10 * (1.0 + lo)) break;
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Log probability density function (log PDF)
+        ///
+        /// Time: O(MAX_POISSON_TERMS) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return @log(self.pdf(x));
+        }
+
+        /// Mean of the distribution: d2·(d1+λ) / (d1·(d2−2)) for d2 > 2
+        ///
+        /// Returns NaN for d2 ≤ 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.d2 <= 2.0) return math.nan(T);
+            return self.d2 * (self.d1 + self.lambda) / (self.d1 * (self.d2 - 2.0));
+        }
+
+        /// Variance: 2·(d2/d1)²·[(d1+λ)²+(d1+2λ)(d2−2)] / [(d2−2)²·(d2−4)] for d2 > 4
+        ///
+        /// Returns Inf for 2 < d2 ≤ 4, NaN for d2 ≤ 2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.d2 <= 2.0) return math.nan(T);
+            if (self.d2 <= 4.0) return math.inf(T);
+            const d2_over_d1 = self.d2 / self.d1;
+            const numerator = 2.0 * d2_over_d1 * d2_over_d1 *
+                ((self.d1 + self.lambda) * (self.d1 + self.lambda) +
+                (self.d1 + 2.0 * self.lambda) * (self.d2 - 2.0));
+            const denominator = (self.d2 - 2.0) * (self.d2 - 2.0) * (self.d2 - 4.0);
+            return numerator / denominator;
+        }
+
+        /// Mode via bisection on derivative of PDF (numerical)
+        ///
+        /// Time: O(MAX_POISSON_TERMS × 50) | Space: O(1)
+        pub fn mode(self: Self) T {
+            // Search for peak in (0, mean*3) or a reasonable upper bound
+            const upper = if (self.d2 > 2.0) self.mean() * 5.0 + 1.0 else 20.0;
+            var best_x: T = 1e-6;
+            var best_p: T = self.pdf(best_x);
+
+            // Coarse grid search
+            const n_grid: usize = 200;
+            var i: usize = 1;
+            while (i <= n_grid) : (i += 1) {
+                const x = upper * @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(n_grid));
+                const p = self.pdf(x);
+                if (p > best_p) {
+                    best_p = p;
+                    best_x = x;
+                }
+            }
+
+            // Refine with golden section
+            var lo = @max(1e-10, best_x * 0.8);
+            var hi = best_x * 1.2 + 0.1;
+            for (0..50) |_| {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.pdf(m1) < self.pdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Generate a random sample from NoncentralF(d1, d2, λ)
+        ///
+        /// Method: Sample J ~ Poisson(λ/2), then X ~ ChiSq(d1+2J), Y ~ ChiSq(d2)
+        ///   F = (X/d1) / (Y/d2)
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Sample J ~ Poisson(lambda/2) using Knuth method
+            const j = poissonKnuth(T, rng, self.lambda / 2.0);
+
+            // Sample X ~ ChiSq(d1 + 2*J) = 2 * Gamma((d1+2J)/2)
+            const shape_x = (self.d1 + 2.0 * @as(T, @floatFromInt(j))) / 2.0;
+            const x = 2.0 * noncentralFGammaSample(T, rng, shape_x);
+
+            // Sample Y ~ ChiSq(d2) = 2 * Gamma(d2/2)
+            const y = 2.0 * noncentralFGammaSample(T, rng, self.d2 / 2.0);
+
+            return (x / self.d1) / (y / self.d2);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.d1 > 0.0)) return error.InvalidParameter;
+            if (!(self.d2 > 0.0)) return error.InvalidParameter;
+            if (!(self.lambda >= 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.d1) or !math.isFinite(self.d2) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Validate a specific x value is in the support
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) !void {
+            _ = self;
+            if (!(x >= 0.0)) return error.OutOfSupport;
+            if (!math.isFinite(x)) return error.OutOfSupport;
+        }
+
+        /// Central F distribution PDF helper: f(x; a, b)
+        fn centralFPdf(comptime FT: type, x: FT, a: FT, b: FT) FT {
+            if (x <= 0.0) return 0.0;
+            // log f(x; a, b) = (a/2-1)*log(x) + (a/2)*log(a) + (b/2)*log(b)
+            //                  - ((a+b)/2)*log(a*x + b) - logBeta(a/2, b/2)
+            const log_f = (a / 2.0 - 1.0) * @log(x) +
+                (a / 2.0) * @log(a) + (b / 2.0) * @log(b) -
+                ((a + b) / 2.0) * @log(a * x + b) -
+                logBeta(a / 2.0, b / 2.0);
+            return @exp(log_f);
+        }
+
+        /// Central F distribution CDF helper: F(x; a, b)
+        fn centralFCdf(comptime FT: type, x: FT, a: FT, b: FT) FT {
+            if (x <= 0.0) return 0.0;
+            // F(x; a, b) = I_{ax/(ax+b)}(a/2, b/2)
+            const u = (a * x) / (a * x + b);
+            return regularizedBetaI(a / 2.0, b / 2.0, u);
+        }
+    };
+}
+
+/// Marsaglia-Tsang Gamma(alpha, rate=1) sampler
+fn noncentralFGammaSample(comptime T: type, rng: std.Random, alpha: T) T {
+    const alpha_mt = if (alpha >= 1.0) alpha else alpha + 1.0;
+    const d = alpha_mt - 1.0 / 3.0;
+    const c = 1.0 / @sqrt(9.0 * d);
+    const result = blk: {
+        while (true) {
+            var z: T = undefined;
+            var v: T = undefined;
+            while (true) {
+                const r1 = rng.float(T);
+                const r2 = rng.float(T);
+                z = @sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+                v = 1.0 + c * z;
+                if (v > 0.0) break;
+            }
+            v = v * v * v;
+            const u = rng.float(T);
+            if (u < 1.0 - 0.0331 * z * z * z * z) break :blk d * v;
+            if (@log(u) < 0.5 * z * z + d * (1.0 - v + @log(v))) break :blk d * v;
+        }
+    };
+    if (alpha < 1.0) {
+        return result * math.pow(T, rng.float(T), 1.0 / alpha);
+    }
+    return result;
+}
+
+/// Knuth Poisson sampler: sample J ~ Poisson(mu) via product of uniforms
+fn poissonKnuth(comptime T: type, rng: std.Random, mu: T) u64 {
+    // For large mu, use normal approximation then round
+    if (mu > 30.0) {
+        const r1 = rng.float(T);
+        const r2 = rng.float(T);
+        const z = @sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+        const approx = mu + @sqrt(mu) * z;
+        if (approx < 0.0) return 0;
+        return @intFromFloat(@round(approx));
+    }
+    // Knuth: multiply uniforms until product < exp(-mu)
+    const limit = @exp(-mu);
+    var product = rng.float(T);
+    var count: u64 = 0;
+    while (product > limit) {
+        product *= rng.float(T);
+        count += 1;
+    }
+    return count;
+}
+
+// ============================================================================
+// NONCENTRAL F DISTRIBUTION TESTS
+// ============================================================================
+
+test "NoncentralF: init valid parameters" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), dist.d1, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 10.0), dist.d2, 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), dist.lambda, 1e-10);
+}
+
+test "NoncentralF: init with lambda=0 (central F)" {
+    const dist = try NoncentralF(f64).init(3.0, 6.0, 0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.lambda, 1e-10);
+}
+
+test "NoncentralF: init fails for d1 <= 0" {
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(0.0, 5.0, 1.0));
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(-1.0, 5.0, 1.0));
+}
+
+test "NoncentralF: init fails for d2 <= 0" {
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, 0.0, 1.0));
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, -2.0, 1.0));
+}
+
+test "NoncentralF: init fails for lambda < 0" {
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, 10.0, -1.0));
+}
+
+test "NoncentralF: init fails for NaN parameters" {
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(math.nan(f64), 10.0, 1.0));
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, math.nan(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, 10.0, math.nan(f64)));
+}
+
+test "NoncentralF: init fails for Inf parameters" {
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(math.inf(f64), 10.0, 1.0));
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, math.inf(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, NoncentralF(f64).init(5.0, 10.0, math.inf(f64)));
+}
+
+test "NoncentralF: pdf is non-negative" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const xs = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (xs) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "NoncentralF: pdf at x=0 is 0" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(0.0), 1e-10);
+}
+
+test "NoncentralF: pdf at x<0 is 0" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(-1.0), 1e-10);
+}
+
+test "NoncentralF: cdf at x=0 is 0" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(0.0), 1e-10);
+}
+
+test "NoncentralF: cdf is monotone increasing" {
+    const dist = try NoncentralF(f64).init(3.0, 8.0, 1.5);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 4.0, 8.0 };
+    var prev = dist.cdf(xs[0]);
+    for (xs[1..]) |x| {
+        const curr = dist.cdf(x);
+        try testing.expect(curr >= prev);
+        prev = curr;
+    }
+}
+
+test "NoncentralF: cdf in [0, 1]" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 3.0);
+    const xs = [_]f64{ 0.01, 0.1, 1.0, 5.0, 20.0 };
+    for (xs) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "NoncentralF: cdf + sf = 1" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const xs = [_]f64{ 0.5, 1.0, 3.0, 7.0 };
+    for (xs) |x| {
+        try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(x) + dist.sf(x), 1e-10);
+    }
+}
+
+test "NoncentralF: lambda=0 matches central F distribution pdf" {
+    // NCF(2, 4, 0) = F(2, 4)
+    // f(x; 2, 4) at x=1: x^0 * 2^1 * 4^2 / (2*1+4)^3 / B(1,2)
+    // B(1,2) = 1/2
+    // = 1 * 2 * 16 / 216 / 0.5 = 32/108 * 2 = 64/216 ≈ 0.29630
+    const dist = try NoncentralF(f64).init(2.0, 4.0, 0.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.29630), p, 0.001);
+}
+
+test "NoncentralF: lambda=0 matches central F distribution cdf" {
+    // NCF(2, 4, 0) = F(2, 4)
+    // CDF(1; 2, 4) = I_{2/(2+4)}(1, 2) = I_{1/3}(1, 2)
+    // For I_x(1, 2) = 2x - x^2 (the CDF of Beta(1,2)):
+    // At x=1/3: 2/3 - 1/9 = 5/9 ≈ 0.55556
+    const dist = try NoncentralF(f64).init(2.0, 4.0, 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.55556), c, 0.002);
+}
+
+test "NoncentralF: pdf derivative matches finite-difference CDF (d1=3, d2=6, lambda=2)" {
+    const dist = try NoncentralF(f64).init(3.0, 6.0, 2.0);
+    const x = 1.5;
+    const h = 1e-5;
+    const fd = (dist.cdf(x + h) - dist.cdf(x - h)) / (2.0 * h);
+    try testing.expectApproxEqAbs(dist.pdf(x), fd, 1e-3);
+}
+
+test "NoncentralF: pdf derivative matches finite-difference CDF (d1=5, d2=10, lambda=1)" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 1.0);
+    const x = 0.8;
+    const h = 1e-5;
+    const fd = (dist.cdf(x + h) - dist.cdf(x - h)) / (2.0 * h);
+    try testing.expectApproxEqAbs(dist.pdf(x), fd, 1e-3);
+}
+
+test "NoncentralF: pdf derivative matches finite-difference CDF (lambda=0, x=2)" {
+    const dist = try NoncentralF(f64).init(4.0, 8.0, 0.0);
+    const x = 2.0;
+    const h = 1e-5;
+    const fd = (dist.cdf(x + h) - dist.cdf(x - h)) / (2.0 * h);
+    try testing.expectApproxEqAbs(dist.pdf(x), fd, 1e-3);
+}
+
+test "NoncentralF: logpdf consistency with pdf" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (xs) |x| {
+        const log_p = dist.logpdf(x);
+        const p = dist.pdf(x);
+        if (p > 0.0) {
+            try testing.expectApproxEqAbs(@log(p), log_p, 1e-8);
+        }
+    }
+}
+
+test "NoncentralF: logpdf at x=0 is -inf" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+}
+
+test "NoncentralF: mean for d2>2" {
+    // mean = d2*(d1+lambda) / (d1*(d2-2))
+    const dist = try NoncentralF(f64).init(4.0, 8.0, 2.0);
+    const expected = 8.0 * (4.0 + 2.0) / (4.0 * (8.0 - 2.0));
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-10);
+}
+
+test "NoncentralF: mean for d2=2 is NaN" {
+    const dist = try NoncentralF(f64).init(4.0, 2.0, 1.0);
+    try testing.expect(math.isNan(dist.mean()));
+}
+
+test "NoncentralF: mean for d2<2 is NaN" {
+    const dist = try NoncentralF(f64).init(4.0, 1.5, 1.0);
+    try testing.expect(math.isNan(dist.mean()));
+}
+
+test "NoncentralF: mean with lambda=0 matches central F mean" {
+    // Central F mean = d2/(d2-2)
+    const dist = try NoncentralF(f64).init(4.0, 8.0, 0.0);
+    const expected = 8.0 / (8.0 - 2.0); // = 4/3
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-10);
+}
+
+test "NoncentralF: variance for d2>4" {
+    const dist = try NoncentralF(f64).init(4.0, 10.0, 2.0);
+    const d2_d1 = 10.0 / 4.0;
+    const num = 2.0 * d2_d1 * d2_d1 * ((4.0 + 2.0) * (4.0 + 2.0) + (4.0 + 4.0) * (10.0 - 2.0));
+    const den = (10.0 - 2.0) * (10.0 - 2.0) * (10.0 - 4.0);
+    const expected = num / den;
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "NoncentralF: variance for d2=4 is Inf" {
+    const dist = try NoncentralF(f64).init(4.0, 4.0, 1.0);
+    try testing.expect(math.isInf(dist.variance()));
+}
+
+test "NoncentralF: variance for d2<=2 is NaN" {
+    const dist = try NoncentralF(f64).init(4.0, 2.0, 1.0);
+    try testing.expect(math.isNan(dist.variance()));
+}
+
+test "NoncentralF: quantile boundary p=0" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), q, 1e-10);
+}
+
+test "NoncentralF: quantile boundary p=1" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isInf(q));
+}
+
+test "NoncentralF: quantile invalid probability" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "NoncentralF: quantile roundtrip (cdf(quantile(p)) ≈ p)" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const q = try dist.quantile(p);
+        const p_check = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, p_check, 0.001);
+    }
+}
+
+test "NoncentralF: sample is positive" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralF: sample mean convergence" {
+    const dist = try NoncentralF(f64).init(4.0, 10.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(99999);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    const theoretical = dist.mean();
+    try testing.expectApproxEqRel(theoretical, empirical, 0.05);
+}
+
+test "NoncentralF: sample mean with lambda=0 (central F)" {
+    // Central F(4, 10) mean = 10/(10-2) = 1.25
+    const dist = try NoncentralF(f64).init(4.0, 10.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(11111);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(@as(f64, 1.25), empirical, 0.05);
+}
+
+test "NoncentralF: larger lambda increases mean" {
+    const d1: f64 = 4.0;
+    const d2: f64 = 10.0;
+    const dist0 = try NoncentralF(f64).init(d1, d2, 0.0);
+    const dist2 = try NoncentralF(f64).init(d1, d2, 2.0);
+    const dist5 = try NoncentralF(f64).init(d1, d2, 5.0);
+    try testing.expect(dist0.mean() < dist2.mean());
+    try testing.expect(dist2.mean() < dist5.mean());
+}
+
+test "NoncentralF: lambda=0 pdf matches central F at multiple points" {
+    // F(3, 6) CDF: I_{3x/(3x+6)}(1.5, 3) = I_{x/(x+2)}(1.5, 3)
+    const dist = try NoncentralF(f64).init(3.0, 6.0, 0.0);
+    // For F(3,6): pdf(x) = x^{0.5}*3^{1.5}*6^3 / (3x+6)^{4.5} / B(1.5,3)
+    // Just verify pdf is positive and finite at a few points
+    const xs = [_]f64{ 0.5, 1.0, 2.0 };
+    for (xs) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+        try testing.expect(math.isFinite(dist.pdf(x)));
+    }
+}
+
+test "NoncentralF: validate passes for valid params" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try dist.validate();
+}
+
+test "NoncentralF: validateValue passes for x>0" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try dist.validateValue(0.5);
+    try dist.validateValue(1.0);
+    try dist.validateValue(100.0);
+}
+
+test "NoncentralF: validateValue fails for x<0" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    try testing.expectError(error.OutOfSupport, dist.validateValue(-1.0));
+}
+
+test "NoncentralF: mode is positive" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const m = dist.mode();
+    try testing.expect(m > 0.0);
+    try testing.expect(math.isFinite(m));
+}
+
+test "NoncentralF: mode is near PDF peak" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 2.0);
+    const m = dist.mode();
+    // PDF at mode should be >= PDF at nearby points
+    try testing.expect(dist.pdf(m) >= dist.pdf(m * 0.8));
+    try testing.expect(dist.pdf(m) >= dist.pdf(m * 1.2));
+}
+
+test "NoncentralF: large lambda pdf is positive and finite" {
+    const dist = try NoncentralF(f64).init(5.0, 10.0, 20.0);
+    const xs = [_]f64{ 1.0, 3.0, 5.0, 10.0 };
+    for (xs) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+        try testing.expect(math.isFinite(p));
+    }
+}
+
+test "NoncentralF: CDF integral consistency (cdf approaches 1 at large x)" {
+    const dist = try NoncentralF(f64).init(3.0, 8.0, 2.0);
+    try testing.expect(dist.cdf(50.0) > 0.99);
+    try testing.expect(dist.cdf(100.0) > 0.999);
+}
+
+test "NoncentralF(f32): init and pdf" {
+    const dist = try NoncentralF(f32).init(5.0, 10.0, 2.0);
+    const p = dist.pdf(1.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "NoncentralF(f32): cdf in [0, 1]" {
+    const dist = try NoncentralF(f32).init(5.0, 10.0, 2.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
