@@ -1,3 +1,25 @@
+**Session 673 Update (2026-06-13) — FEATURE MODE:**
+
+✅ **NoncentralF Distribution** — 79th total, 63rd continuous — commit 385d666
+- **Mode**: FEATURE MODE (counter: 673)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: NoncentralF(d1, d2, λ) — Poisson mixture of central F distributions
+  * Parameters: d1>0 (num df), d2>0 (denom df), λ≥0 (noncentrality; 0→central F)
+  * Support: [0, ∞)
+  * PDF/CDF: Σ_j w_j·F(d1+2j, d2) where w_j=exp(-λ/2)(λ/2)^j/j! (Poisson weights)
+  * Max 250 Poisson terms; break early when w_j < 1e-15
+  * Mean: d2·(d1+λ)/(d1·(d2-2)) for d2>2; NaN for d2≤2
+  * Variance: 2(d2/d1)²[(d1+λ)²+(d1+2λ)(d2-2)] / [(d2-2)²(d2-4)] for d2>4; Inf for 2<d2≤4
+  * Sample: J~Poisson(λ/2) via Knuth (normal approx for λ>60), then X~ChiSq(d1+2J)/Y~ChiSq(d2)
+  * λ=0 identity: NCF(2,4,0) CDF(1) = I_{1/3}(1,2) = 5/9 ≈ 0.55556 ✓
+  * λ=0 identity: NCF(2,4,0) PDF(1) = 64/216 ≈ 0.29630 ✓
+  * Finite-difference test: pdf ≈ d(cdf)/dx to 1e-3 tolerance ✓
+  * Helper naming: `noncentralFGammaSample` (avoids conflict with GeneralizedGamma's `gammaSampleMT`)
+  * Helper naming: `poissonKnuth` for Poisson sampling
+- **Tests**: 43 tests, all passing
+- **Distribution count**: 79 total (63 continuous + 16 discrete)
+- **Next Priority**: ReciprocalInverseGaussian or GeneralizedExtremeValue or BetaDistributionOfKind2
+
 **Session 672 Update (2026-06-13) — FEATURE MODE:**
 
 ✅ **GeneralizedGamma Distribution** — 78th total, 62nd continuous — commit acf055b
