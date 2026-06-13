@@ -45937,3 +45937,540 @@ test "ReciprocalInverseGaussian: variance decreases as lambda increases" {
     try testing.expectApproxEqRel(@as(f64, 1.0), d2.variance(), 1e-10);
 }
 
+// ============================================================================
+// Generalized Extreme Value Distribution
+// ============================================================================
+// GEV(μ, σ, ξ): Unified family for extreme value distributions
+// Parameters: μ ∈ ℝ (location), σ > 0 (scale), ξ ∈ ℝ (shape)
+// Special cases: ξ=0 → Gumbel; ξ>0 → Fréchet type; ξ<0 → Weibull type
+// Support: ξ=0: (−∞,+∞); ξ>0: (μ−σ/ξ,+∞); ξ<0: (−∞,μ−σ/ξ)
+// CDF: F(x) = exp(−[1+ξ(x−μ)/σ]^{−1/ξ}) for t(x)>0; exp(−exp(−(x−μ)/σ)) if ξ=0
+// PDF: f(x) = (1/σ)·t^{−1/ξ−1}·exp(−t^{−1/ξ}) where t=1+ξ(x−μ)/σ
+// Mean: ξ<1,ξ≠0: μ+σ(Γ(1−ξ)−1)/ξ; ξ=0: μ+σγ; ξ≥1: +∞
+// Variance: ξ<0.5,ξ≠0: σ²(Γ(1−2ξ)−Γ²(1−ξ))/ξ²; ξ=0: σ²π²/6; ξ∈[0.5,1): +∞; ξ≥1: NaN
+// Mode: ξ=0: μ; ξ≠0: μ+σ((1+ξ)^{−ξ}−1)/ξ
+// Entropy: ln(σ)+(1+ξ)γ+1
+
+pub fn GeneralizedExtremeValue(comptime T: type) type {
+    return struct {
+        mu: T,     // location
+        sigma: T,  // scale (σ > 0)
+        xi: T,     // shape (ξ)
+
+        const Self = @This();
+        const euler_mascheroni: T = 0.5772156649015328;
+        const xi_threshold: T = 1e-10; // treat |ξ| < threshold as Gumbel
+
+        /// Initialize GEV(μ, σ, ξ). Errors if σ ≤ 0 or non-finite parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, xi: T) DistributionError!Self {
+            if (!(sigma > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(sigma) or !math.isFinite(xi)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .xi = xi };
+        }
+
+        // z = (x − μ)/σ
+        fn standardized(self: Self, x: T) T {
+            return (x - self.mu) / self.sigma;
+        }
+
+        // t(x) = 1 + ξ·z; valid only when t > 0
+        fn t_val(self: Self, z: T) T {
+            return 1.0 + self.xi * z;
+        }
+
+        /// Cumulative distribution function F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = self.standardized(x);
+            if (@abs(self.xi) < xi_threshold) {
+                // Gumbel limit: F = exp(-exp(-z))
+                return @exp(-@exp(-z));
+            }
+            const tv = self.t_val(z);
+            if (tv <= 0.0) {
+                // Below lower bound (ξ>0) → F=0; above upper bound (ξ<0) → F=1
+                return if (self.xi > 0.0) 0.0 else 1.0;
+            }
+            return @exp(-math.pow(T, tv, -1.0 / self.xi));
+        }
+
+        /// Survival function S(x) = 1 − F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Probability density function f(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = self.standardized(x);
+            if (@abs(self.xi) < xi_threshold) {
+                // Gumbel limit
+                return (1.0 / self.sigma) * @exp(-z) * @exp(-@exp(-z));
+            }
+            const tv = self.t_val(z);
+            if (tv <= 0.0) return 0.0;
+            const neg_inv_xi = -1.0 / self.xi;
+            const t_power = math.pow(T, tv, neg_inv_xi - 1.0); // t^{-1/ξ - 1}
+            const exp_part = @exp(-math.pow(T, tv, neg_inv_xi));
+            return (1.0 / self.sigma) * t_power * exp_part;
+        }
+
+        /// Log probability density function ln f(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = self.standardized(x);
+            if (@abs(self.xi) < xi_threshold) {
+                return -@log(self.sigma) - z - @exp(-z);
+            }
+            const tv = self.t_val(z);
+            if (tv <= 0.0) return -math.inf(T);
+            const neg_inv_xi = -1.0 / self.xi;
+            return -@log(self.sigma) + (neg_inv_xi - 1.0) * @log(tv) - math.pow(T, tv, neg_inv_xi);
+        }
+
+        /// Quantile function Q(p) = inf{x : F(x) ≥ p}.
+        ///
+        /// Errors: p outside [0, 1] → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) {
+                return if (self.xi >= xi_threshold) self.mu - self.sigma / self.xi else -math.inf(T);
+            }
+            if (p == 1.0) {
+                return if (self.xi <= -xi_threshold) self.mu - self.sigma / self.xi else math.inf(T);
+            }
+            const neg_log_p = -@log(p);
+            if (@abs(self.xi) < xi_threshold) {
+                return self.mu - self.sigma * @log(neg_log_p);
+            }
+            return self.mu + self.sigma / self.xi * (math.pow(T, neg_log_p, -self.xi) - 1.0);
+        }
+
+        /// Mean E[X].
+        ///   ξ = 0: μ + σ·γ
+        ///   ξ < 1, ξ ≠ 0: μ + σ·(Γ(1−ξ)−1)/ξ
+        ///   ξ ≥ 1: +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.xi >= 1.0 - xi_threshold) return math.inf(T);
+            if (@abs(self.xi) < xi_threshold) return self.mu + self.sigma * euler_mascheroni;
+            const g1 = @exp(logGamma(1.0 - self.xi)); // Γ(1−ξ)
+            return self.mu + self.sigma * (g1 - 1.0) / self.xi;
+        }
+
+        /// Variance Var[X].
+        ///   ξ = 0: σ²·π²/6
+        ///   ξ < 0.5, ξ ≠ 0: σ²·(Γ(1−2ξ)−Γ²(1−ξ))/ξ²
+        ///   ξ ∈ [0.5, 1): +∞
+        ///   ξ ≥ 1: NaN
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.xi >= 1.0 - xi_threshold) return math.nan(T);
+            if (self.xi >= 0.5 - xi_threshold) return math.inf(T);
+            if (@abs(self.xi) < xi_threshold) return self.sigma * self.sigma * math.pi * math.pi / 6.0;
+            const g1 = @exp(logGamma(1.0 - self.xi));
+            const g2 = @exp(logGamma(1.0 - 2.0 * self.xi));
+            return self.sigma * self.sigma * (g2 - g1 * g1) / (self.xi * self.xi);
+        }
+
+        /// Mode (x that maximizes f(x)).
+        ///   ξ = 0: μ
+        ///   ξ ≠ 0: μ + σ·((1+ξ)^{−ξ}−1)/ξ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (@abs(self.xi) < xi_threshold) return self.mu;
+            return self.mu + self.sigma * (math.pow(T, 1.0 + self.xi, -self.xi) - 1.0) / self.xi;
+        }
+
+        /// Shannon entropy H = ln(σ) + (1+ξ)·γ + 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.sigma) + (1.0 + self.xi) * euler_mascheroni + 1.0;
+        }
+
+        /// Generate a random sample via inverse CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            // Clamp to avoid log(0) edge cases
+            const p = @max(@as(T, 1e-15), @min(@as(T, 1.0 - 1e-15), u));
+            return self.quantile(p) catch unreachable;
+        }
+
+        /// Validate that parameters are still well-formed.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.sigma > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.mu) or !math.isFinite(self.sigma) or !math.isFinite(self.xi)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// GeneralizedExtremeValue Tests
+// ============================================================================
+
+test "GeneralizedExtremeValue: init with valid parameters Gumbel type (ξ=0)" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+    try testing.expectEqual(0.0, dist.xi);
+}
+
+test "GeneralizedExtremeValue: init with valid parameters Fréchet type (ξ=1)" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+    try testing.expectEqual(1.0, dist.xi);
+}
+
+test "GeneralizedExtremeValue: init with valid parameters Weibull type (ξ=-0.5)" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+    try testing.expectEqual(-0.5, dist.xi);
+}
+
+test "GeneralizedExtremeValue: init with σ=2" {
+    const dist = try GeneralizedExtremeValue(f64).init(5.0, 2.0, 0.5);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.sigma);
+    try testing.expectEqual(0.5, dist.xi);
+}
+
+test "GeneralizedExtremeValue: init rejects σ≤0" {
+    try testing.expectError(error.InvalidParameter, GeneralizedExtremeValue(f64).init(0.0, -1.0, 0.0));
+    try testing.expectError(error.InvalidParameter, GeneralizedExtremeValue(f64).init(0.0, 0.0, 0.0));
+}
+
+test "GeneralizedExtremeValue: init rejects non-finite σ or μ" {
+    try testing.expectError(error.InvalidParameter, GeneralizedExtremeValue(f64).init(math.inf(f64), 1.0, 0.0));
+    try testing.expectError(error.InvalidParameter, GeneralizedExtremeValue(f64).init(0.0, math.inf(f64), 0.0));
+    try testing.expectError(error.InvalidParameter, GeneralizedExtremeValue(f64).init(math.nan(f64), 1.0, 0.0));
+    try testing.expectError(error.InvalidParameter, GeneralizedExtremeValue(f64).init(0.0, math.nan(f64), 0.0));
+}
+
+test "GeneralizedExtremeValue: CDF Gumbel (ξ=0) at x=0 ≈ 0.36788" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const expected = @exp(-1.0); // ≈ 0.36787944117144233
+    try testing.expectApproxEqAbs(expected, dist.cdf(0.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: CDF Gumbel (ξ=0) at x=1 ≈ 0.69220" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const expected = @exp(-@exp(-1.0)); // ≈ 0.6922006275553463
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: CDF Fréchet (ξ=1) at x=0 ≈ 0.36788" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    const expected = @exp(-1.0); // t(0)=1, t^(-1)=1, exp(-1)≈0.36788
+    try testing.expectApproxEqAbs(expected, dist.cdf(0.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: CDF Fréchet (ξ=1) at x=1 ≈ 0.60653" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    const expected = @exp(-0.5); // t(1)=2, t^(-1)=0.5, exp(-0.5)≈0.60653
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: CDF Weibull (ξ=-0.5) at x=0 ≈ 0.36788" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    const expected = @exp(-1.0); // t(0)=1, t^2=1, exp(-1)≈0.36788
+    try testing.expectApproxEqAbs(expected, dist.cdf(0.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: CDF Weibull (ξ=-0.5) at x=1 ≈ 0.77880" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    const expected = @exp(-0.25); // t(1)=0.5, t^2=0.25, exp(-0.25)≈0.77880
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: CDF Weibull bounded above at x=2 equals 1" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    // Upper bound: x < μ + σ/|ξ| = 0 + 1/0.5 = 2
+    const c = dist.cdf(2.0);
+    try testing.expect(c >= 0.9999); // Should be 1.0 or very close
+}
+
+test "GeneralizedExtremeValue: CDF is monotone increasing Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const c0 = dist.cdf(0.0);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(2.0);
+    try testing.expect(c0 < c1);
+    try testing.expect(c1 < c2);
+}
+
+test "GeneralizedExtremeValue: PDF Gumbel (ξ=0) at x=0 ≈ 0.36788" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const expected = @exp(-1.0); // (1/1)·exp(-0)·exp(-exp(-0)) = exp(-1)
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: PDF Fréchet (ξ=1) at x=1 ≈ 0.15163" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    // f(1) = (1/1)·t(1)^(-2)·exp(-0.5) = (1/4)·exp(-0.5) ≈ 0.15163
+    const expected = 0.25 * @exp(-0.5);
+    try testing.expectApproxEqAbs(expected, dist.pdf(1.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: PDF Weibull (ξ=-0.5) at x=1 ≈ 0.38940" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    // t(1)=0.5; -1/ξ-1 = 2-1 = 1; f(1) = 1·(0.5)^1·exp(-0.25) = 0.5·exp(-0.25)
+    const expected = 0.5 * @exp(-0.25);
+    try testing.expectApproxEqAbs(expected, dist.pdf(1.0), 1e-10);
+}
+
+test "GeneralizedExtremeValue: PDF Weibull bounded above at x=2 equals 0" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    const p = dist.pdf(2.0);
+    try testing.expect(p == 0.0 or p < 1e-10);
+}
+
+test "GeneralizedExtremeValue: PDF is non-negative at multiple points" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const xs = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0, 5.0 };
+    for (xs) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "GeneralizedExtremeValue: PDF finite-difference matches CDF derivative Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const y = 1.0;
+    const h = 1e-5;
+    const fd = (dist.cdf(y + h) - dist.cdf(y - h)) / (2.0 * h);
+    try testing.expectApproxEqAbs(dist.pdf(y), fd, 1e-3);
+}
+
+test "GeneralizedExtremeValue: Quantile Gumbel (ξ=0) at p=0.5 ≈ 0.36651" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const expected = -@log(@log(2.0)); // -ln(ln(2)) ≈ 0.36651292592892825
+    try testing.expectApproxEqAbs(expected, try dist.quantile(0.5), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Quantile Fréchet (ξ=1) at p=0.5 ≈ 0.44269" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    // q(p) = 0 + (1/1)·((ln(2))^(-1) - 1) = 1/ln(2) - 1 ≈ 0.44269504716
+    const expected = (1.0 / @log(2.0)) - 1.0;
+    try testing.expectApproxEqAbs(expected, try dist.quantile(0.5), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Quantile Weibull (ξ=-0.5) at p=0.5 ≈ 0.33490" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    // q(p) = 0 + (1/(-0.5))·((ln(2))^(-(-0.5)) - 1) = -2·((ln2)^0.5 - 1)
+    const expected = -2.0 * (@sqrt(@log(2.0)) - 1.0);
+    try testing.expectApproxEqAbs(expected, try dist.quantile(0.5), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Quantile Gumbel (ξ=0) at p=0.0 returns -∞" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(q == -math.inf(f64));
+}
+
+test "GeneralizedExtremeValue: Quantile Gumbel (ξ=0) at p=1.0 returns +∞" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(q == math.inf(f64));
+}
+
+test "GeneralizedExtremeValue: Quantile Weibull (ξ=-0.5) at p=1.0 returns upper bound 2" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    const q = try dist.quantile(1.0);
+    // Upper bound: μ + σ/|ξ| = 0 + 1/0.5 = 2
+    try testing.expectApproxEqAbs(2.0, q, 1e-10);
+}
+
+test "GeneralizedExtremeValue: Quantile rejects invalid p<0" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "GeneralizedExtremeValue: Quantile rejects invalid p>1" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "GeneralizedExtremeValue: Quantile roundtrip cdf(quantile(p))≈p for p=0.1 Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const p = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "GeneralizedExtremeValue: Quantile roundtrip cdf(quantile(p))≈p for p=0.5 Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "GeneralizedExtremeValue: Quantile roundtrip cdf(quantile(p))≈p for p=0.9 Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-10);
+}
+
+test "GeneralizedExtremeValue: Mean Gumbel (ξ=0) ≈ 0.57722" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const expected = 0.5772156649015329; // Euler-Mascheroni γ
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Variance Gumbel (ξ=0) ≈ 1.64493" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const expected = (math.pi * math.pi) / 6.0; // π²/6 ≈ 1.644934066848226
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Mode Gumbel (ξ=0) equals 0" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(0.0, dist.mode());
+}
+
+test "GeneralizedExtremeValue: Mean Fréchet (ξ=1) is +∞" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(m == math.inf(f64));
+}
+
+test "GeneralizedExtremeValue: Mean Weibull (ξ=-0.5) ≈ 0.22754" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    // Mean = σ(Γ(1.5)-1)/ξ = (√π/2 - 1)/(-0.5) ≈ 0.227544
+    const gamma_1_5 = @sqrt(math.pi) / 2.0;
+    const expected = (gamma_1_5 - 1.0) / (-0.5);
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Variance Weibull (ξ=-0.5) ≈ 0.85840" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    // Var = σ²(Γ(2)-Γ²(1.5))/ξ² = (1 - π/4)/0.25 ≈ 0.858398
+    const gamma_1_5 = @sqrt(math.pi) / 2.0;
+    const expected = (1.0 - gamma_1_5 * gamma_1_5) / 0.25;
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Mode Weibull (ξ=-0.5) ≈ 0.58579" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    // Mode = σ((1+ξ)^(-ξ) - 1)/ξ = ((0.5)^0.5 - 1)/(-0.5) ≈ 0.585786438
+    const expected = (@sqrt(0.5) - 1.0) / (-0.5);
+    try testing.expectApproxEqAbs(expected, dist.mode(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Mean location shift GEV(2,3,0)" {
+    const dist = try GeneralizedExtremeValue(f64).init(2.0, 3.0, 0.0);
+    const gamma = 0.5772156649015329;
+    const expected = 2.0 + 3.0 * gamma;
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Entropy Gumbel (ξ=0) ≈ 1.57722" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    // Entropy = ln(σ) + (1+ξ)·γ + 1 = 0 + 1·γ + 1 ≈ 1.57722
+    const gamma = 0.5772156649015329;
+    const expected = gamma + 1.0;
+    try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Entropy Fréchet (ξ=1) ≈ 2.15443" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    // Entropy = ln(1) + 2·γ + 1 ≈ 2·0.57722 + 1 ≈ 2.15443
+    const gamma = 0.5772156649015329;
+    const expected = 2.0 * gamma + 1.0;
+    try testing.expectApproxEqAbs(expected, dist.entropy(), 1e-10);
+}
+
+test "GeneralizedExtremeValue: Entropy is finite and positive Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+test "GeneralizedExtremeValue: Sample Gumbel all finite" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GeneralizedExtremeValue: Sample Fréchet all > lower bound -1" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(23456);
+    const lower_bound = 0.0 - 1.0 / 1.0; // μ - σ/ξ = -1
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > lower_bound - 1e-6); // small tolerance for numerical errors
+    }
+}
+
+test "GeneralizedExtremeValue: Sample Weibull all < upper bound 2" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, -0.5);
+    var rng = std.Random.DefaultPrng.init(34567);
+    const upper_bound = 0.0 + 1.0 / 0.5; // μ + σ/|ξ| = 2
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s < upper_bound + 1e-6); // small tolerance for numerical errors
+    }
+}
+
+test "GeneralizedExtremeValue: Sample mean convergence Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    const gamma = 0.5772156649015329;
+    try testing.expectApproxEqRel(gamma, empirical, 0.05);
+}
+
+test "GeneralizedExtremeValue: Survival function sf = 1 - cdf Gumbel" {
+    const dist = try GeneralizedExtremeValue(f64).init(0.0, 1.0, 0.0);
+    const xs = [_]f64{ -1.0, 0.0, 1.0, 2.0 };
+    for (xs) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try testing.expectApproxEqAbs(sf_val, 1.0 - cdf_val, 1e-10);
+    }
+}
+
+test "GeneralizedExtremeValue(f32): init and pdf" {
+    const dist = try GeneralizedExtremeValue(f32).init(0.0, 1.0, 0.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "GeneralizedExtremeValue(f32): cdf in [0, 1]" {
+    const dist = try GeneralizedExtremeValue(f32).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(0.0);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
