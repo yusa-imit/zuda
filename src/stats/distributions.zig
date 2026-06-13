@@ -47732,3 +47732,645 @@ test "GeneralizedNormal(f32): sample produces finite values" {
         try testing.expect(math.isFinite(s));
     }
 }
+
+/// PowerNormal distribution: f(x) = (c/σ) · Φ((x−μ)/σ)^{c−1} · φ((x−μ)/σ)
+///
+/// Parameters:
+///   μ: location (ℝ)
+///   σ: scale (> 0)
+///   c: shape/power (> 0)
+///
+/// Support: ℝ (−∞, +∞)
+///
+/// Special case: c=1 → Normal(μ, σ)
+/// When c=n, CDF = Φ^n, the CDF of max of n iid Normal(μ,σ)
+///
+/// Time: O(1) for pdf/cdf/logpdf/sf/quantile; O(N) for mean/variance/entropy/mode
+pub fn PowerNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        c: T,
+
+        const Self = @This();
+
+        fn normalPdf(z: T) T {
+            return @exp(-0.5 * z * z) / @sqrt(2.0 * math.pi);
+        }
+
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(2.0)));
+        }
+
+        fn normalQuantile(p: T) T {
+            if (p <= 0.0) return -math.inf(T);
+            if (p >= 1.0) return math.inf(T);
+            return @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+        }
+
+        /// Create a PowerNormal distribution.
+        ///
+        /// Errors: sigma ≤ 0, c ≤ 0, or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, c: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(sigma > 0.0)) return error.InvalidParameter;
+            if (!(c > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            if (!math.isFinite(c)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .c = c };
+        }
+
+        /// Probability density function f(x) = (c/σ) · Φ(z)^{c−1} · φ(z)
+        /// where z = (x−μ)/σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const phi_z = normalPdf(z);
+            const Phi_z = normalCdf(z);
+            const Phi_power = math.pow(T, Phi_z, self.c - 1.0);
+            return (self.c / self.sigma) * Phi_power * phi_z;
+        }
+
+        /// Log probability density function ln(f(x))
+        /// ln(f(x)) = ln(c) − ln(σ) + (c−1)·ln(Φ(z)) − 0.5·ln(2π) − 0.5·z²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const Phi_z = normalCdf(z);
+            const ln_Phi = @log(Phi_z);
+            const ln_phi = -0.5 * z * z - 0.5 * @log(2.0 * math.pi);
+            return @log(self.c) - @log(self.sigma) + (self.c - 1.0) * ln_Phi + ln_phi;
+        }
+
+        /// Cumulative distribution function F(x) = Φ((x−μ)/σ)^c
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const Phi_z = normalCdf(z);
+            return math.pow(T, Phi_z, self.c);
+        }
+
+        /// Survival function S(x) = 1 − F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): Q(p) = μ + σ·Φ⁻¹(p^{1/c})
+        ///
+        /// This is an exact closed form (no bisection needed).
+        ///
+        /// Errors: p < 0, p > 1, or NaN → InvalidProbability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            const p_power = math.pow(T, p, 1.0 / self.c);
+            const z = normalQuantile(p_power);
+            return self.mu + self.sigma * z;
+        }
+
+        /// Mean E[X] = μ + σ·E[Z]
+        /// where E[Z] = c·∫_0^1 Φ⁻¹(u)·u^{c−1} du
+        ///
+        /// Computed via 200-point Simpson's rule on [ε, 1−ε] with ε=1e-10
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.c == 1.0) return self.mu; // Special case: c=1 → Normal, mean offset = 0
+
+            const N: usize = 200;
+            const eps: T = 1e-10;
+            const lo: T = eps;
+            const hi: T = 1.0 - eps;
+            const h: T = (hi - lo) / @as(T, @floatFromInt(N));
+
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= N) : (i += 1) {
+                const u: T = lo + h * @as(T, @floatFromInt(i));
+                const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const z: T = normalQuantile(u);
+                const integrand: T = z * math.pow(T, u, self.c - 1.0);
+                sum += w * integrand;
+            }
+
+            const integral: T = sum * h / 3.0;
+            const mean_z: T = self.c * integral;
+            return self.mu + self.sigma * mean_z;
+        }
+
+        /// Variance Var[X] = σ²·(E[Z²] − E[Z]²)
+        /// where E[Z²] = c·∫_0^1 (Φ⁻¹(u))²·u^{c−1} du
+        ///
+        /// Computed via 200-point Simpson's rule
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.c == 1.0) return self.sigma * self.sigma; // Special case: Normal variance = σ²
+
+            const N: usize = 200;
+            const eps: T = 1e-10;
+            const lo: T = eps;
+            const hi: T = 1.0 - eps;
+            const h: T = (hi - lo) / @as(T, @floatFromInt(N));
+
+            var sum1: T = 0.0;
+            var sum2: T = 0.0;
+            var i: usize = 0;
+            while (i <= N) : (i += 1) {
+                const u: T = lo + h * @as(T, @floatFromInt(i));
+                const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const z: T = normalQuantile(u);
+                const u_power: T = math.pow(T, u, self.c - 1.0);
+                sum1 += w * z * u_power;
+                sum2 += w * z * z * u_power;
+            }
+
+            const integral1: T = sum1 * h / 3.0;
+            const integral2: T = sum2 * h / 3.0;
+            const mean_z: T = self.c * integral1;
+            const mean_z2: T = self.c * integral2;
+            const var_z: T = mean_z2 - mean_z * mean_z;
+            return self.sigma * self.sigma * var_z;
+        }
+
+        /// Mode of the distribution
+        /// For c=1: mode = μ
+        /// For c≠1: mode = μ + σ·z* where z* solves (c−1)·φ(z*) = z*·Φ(z*)
+        ///
+        /// Uses bisection on [-10, 10] with 100 iterations, tolerance 1e-12
+        ///
+        /// Time: O(100) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.c == 1.0) return self.mu; // Normal case
+
+            // Define g(z) = (c-1)·φ(z) - z·Φ(z)
+            const g = struct {
+                fn eval(z: T, c_val: T) T {
+                    const phi = normalPdf(z);
+                    const Phi = normalCdf(z);
+                    return (c_val - 1.0) * phi - z * Phi;
+                }
+            }.eval;
+
+            // Determine bracket
+            const bracket_lo: T = -10.0;
+            const bracket_hi: T = 10.0;
+
+            // Bisection
+            var lo: T = bracket_lo;
+            var hi: T = bracket_hi;
+            const max_iter: usize = 100;
+            const tolerance: T = 1e-12;
+
+            var iter: usize = 0;
+            while (iter < max_iter) : (iter += 1) {
+                const mid: T = (lo + hi) / 2.0;
+                const g_mid: T = g(mid, self.c);
+                const diff: T = @abs(g_mid);
+
+                if (diff < tolerance) {
+                    return self.mu + self.sigma * mid;
+                }
+
+                const g_lo: T = g(lo, self.c);
+                if (g_lo * g_mid < 0.0) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+
+                if (hi - lo < tolerance) {
+                    return self.mu + self.sigma * (lo + hi) / 2.0;
+                }
+            }
+
+            return self.mu + self.sigma * (lo + hi) / 2.0;
+        }
+
+        /// Entropy H[X] = ln(σ) − ln(c) + 0.5·ln(2π) + 0.5·E[Z²] + (c−1)/c
+        /// where E[Z²] = c·∫_0^1 (Φ⁻¹(u))²·u^{c−1} du
+        ///
+        /// Semi-closed form using 200-point Simpson's rule
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 200;
+            const eps: T = 1e-10;
+            const lo: T = eps;
+            const hi: T = 1.0 - eps;
+            const h: T = (hi - lo) / @as(T, @floatFromInt(N));
+
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= N) : (i += 1) {
+                const u: T = lo + h * @as(T, @floatFromInt(i));
+                const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const z: T = normalQuantile(u);
+                const u_power: T = math.pow(T, u, self.c - 1.0);
+                sum += w * z * z * u_power;
+            }
+
+            const integral: T = sum * h / 3.0;
+            const mean_z2: T = self.c * integral;
+            const term1: T = @log(self.sigma) - @log(self.c) + 0.5 * @log(2.0 * math.pi);
+            const term2: T = 0.5 * mean_z2 + (self.c - 1.0) / self.c;
+            return term1 + term2;
+        }
+
+        /// Generate a random sample: X = μ + σ·Φ⁻¹(U^{1/c}) where U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u: T = rng.float(T);
+            const u_power: T = math.pow(T, u, 1.0 / self.c);
+            const z: T = normalQuantile(u_power);
+            return self.mu + self.sigma * z;
+        }
+
+        /// Validate that parameters are valid
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.sigma > 0.0)) return error.InvalidParameter;
+            if (!(self.c > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// PowerNormal Distribution Tests
+// ============================================================================
+
+test "PowerNormal: init with valid parameters mu=0 sigma=1 c=1" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+    try testing.expectEqual(1.0, dist.c);
+}
+
+test "PowerNormal: init with nonzero mu" {
+    const dist = try PowerNormal(f64).init(5.0, 2.0, 1.5);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.sigma);
+    try testing.expectEqual(1.5, dist.c);
+}
+
+test "PowerNormal: init with sigma=0 returns error" {
+    const result = PowerNormal(f64).init(0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with negative sigma returns error" {
+    const result = PowerNormal(f64).init(0.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with c=0 returns error" {
+    const result = PowerNormal(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with negative c returns error" {
+    const result = PowerNormal(f64).init(0.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with infinite mu returns error" {
+    const result = PowerNormal(f64).init(math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with infinite sigma returns error" {
+    const result = PowerNormal(f64).init(0.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with infinite c returns error" {
+    const result = PowerNormal(f64).init(0.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with NaN mu returns error" {
+    const result = PowerNormal(f64).init(math.nan(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with NaN sigma returns error" {
+    const result = PowerNormal(f64).init(0.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: init with NaN c returns error" {
+    const result = PowerNormal(f64).init(0.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: pdf at mu (c=1) matches Normal" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const pdf_at_mu = dist.pdf(0.0);
+    // For c=1: f(0) = 1*Φ(0)^0*φ(0) = φ(0) = 1/√(2π) ≈ 0.39894228
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, pdf_at_mu, 1e-10);
+}
+
+test "PowerNormal: pdf at mu (c=2)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const pdf_at_mu = dist.pdf(0.0);
+    // For c=2: f(0) = 2*Φ(0)^1*φ(0) = 2*0.5*φ(0) = φ(0)
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, pdf_at_mu, 1e-10);
+}
+
+test "PowerNormal: pdf is positive for all x" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    try testing.expect(dist.pdf(-0.5) > 0.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+}
+
+test "PowerNormal: pdf is symmetric around mu" {
+    const dist = try PowerNormal(f64).init(2.0, 1.5, 2.0);
+    const pdf_left = dist.pdf(2.0 - 0.5);
+    const pdf_right = dist.pdf(2.0 + 0.5);
+    try testing.expectApproxEqAbs(pdf_left, pdf_right, 1e-10);
+}
+
+test "PowerNormal: logpdf consistent with pdf (c=1)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "PowerNormal: logpdf consistent with pdf (c=2)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const x = 0.3;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "PowerNormal: cdf at mu (c=1) is 0.5" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const cdf_at_mu = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, cdf_at_mu, 1e-10);
+}
+
+test "PowerNormal: cdf at mu (c=2) is 0.25" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const cdf_at_mu = dist.cdf(0.0);
+    // F(0) = Φ(0)^2 = 0.5^2 = 0.25
+    try testing.expectApproxEqAbs(0.25, cdf_at_mu, 1e-10);
+}
+
+test "PowerNormal: cdf at mu (c=0.5)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 0.5);
+    const cdf_at_mu = dist.cdf(0.0);
+    // F(0) = Φ(0)^0.5 = 0.5^0.5 ≈ 0.70711
+    try testing.expectApproxEqAbs(0.70710678, cdf_at_mu, 1e-7);
+}
+
+test "PowerNormal: cdf is monotone increasing" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    const cdf1 = dist.cdf(-1.0);
+    const cdf2 = dist.cdf(0.0);
+    const cdf3 = dist.cdf(1.0);
+    const cdf4 = dist.cdf(2.0);
+    try testing.expect(cdf1 < cdf2);
+    try testing.expect(cdf2 < cdf3);
+    try testing.expect(cdf3 < cdf4);
+}
+
+test "PowerNormal: cdf approaches 0 as x -> -inf" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    const cdf_very_neg = dist.cdf(-100.0);
+    try testing.expect(cdf_very_neg < 1e-10);
+}
+
+test "PowerNormal: cdf approaches 1 as x -> +inf" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    const cdf_very_pos = dist.cdf(100.0);
+    try testing.expect(cdf_very_pos > 1.0 - 1e-10);
+}
+
+test "PowerNormal: quantile(0.5) for c=1 returns mu" {
+    const dist = try PowerNormal(f64).init(3.5, 1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(3.5, q, 1e-10);
+}
+
+test "PowerNormal: quantile(0.25) for c=2 returns mu" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const q = try dist.quantile(0.25);
+    // F^{-1}(0.25) = μ + σ·Φ⁻¹(0.25^{1/2}) = μ + σ·Φ⁻¹(0.5) = μ + σ·0 = μ
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "PowerNormal: quantile(0.5) for c=2" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const q = try dist.quantile(0.5);
+    // F^{-1}(0.5) = μ + σ·Φ⁻¹(0.5^{1/2}) = σ·Φ⁻¹(0.70711)
+    // Φ⁻¹(0.70711) ≈ 0.53731
+    try testing.expectApproxEqAbs(0.53731, q, 0.01);
+}
+
+test "PowerNormal: quantile(0.5) for c=0.5" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 0.5);
+    const q = try dist.quantile(0.5);
+    // F^{-1}(0.5) = μ + σ·Φ⁻¹(0.5^{1/0.5}) = σ·Φ⁻¹(0.25)
+    // Φ⁻¹(0.25) ≈ -0.67449
+    try testing.expectApproxEqAbs(-0.67449, q, 0.01);
+}
+
+test "PowerNormal: quantile with p<0 returns error" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "PowerNormal: quantile with p>1 returns error" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "PowerNormal: quantile-cdf roundtrip for various probabilities" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const ps: [5]f64 = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const x = try dist.quantile(p);
+        const cdf_x = dist.cdf(x);
+        try testing.expectApproxEqAbs(p, cdf_x, 1e-8);
+    }
+}
+
+test "PowerNormal: quantile is monotone increasing" {
+    const dist = try PowerNormal(f64).init(1.0, 1.0, 2.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.3);
+    const q3 = try dist.quantile(0.7);
+    const q4 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+    try testing.expect(q3 < q4);
+}
+
+test "PowerNormal: mean(0,1,1) equals 0 (Normal case)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "PowerNormal: mean(0,1,2) approximates 1/sqrt(pi)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const m = dist.mean();
+    const expected = 1.0 / @sqrt(math.pi);
+    try testing.expectApproxEqAbs(expected, m, 0.01);
+}
+
+test "PowerNormal: mean shifts with mu" {
+    const dist1 = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const dist2 = try PowerNormal(f64).init(5.0, 1.0, 2.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    const expected_diff = 5.0;
+    try testing.expectApproxEqAbs(expected_diff, m2 - m1, 1e-10);
+}
+
+test "PowerNormal: variance(0,1,1) equals 1 (Normal case)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 1e-10);
+}
+
+test "PowerNormal: variance(0,1,2) approximates 1-1/pi" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const v = dist.variance();
+    const expected = 1.0 - 1.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, v, 0.01);
+}
+
+test "PowerNormal: variance is positive" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    const v = dist.variance();
+    try testing.expect(v > 0.0);
+}
+
+test "PowerNormal: mode(0,1,1) returns 0 (Normal case)" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode, 1e-10);
+}
+
+test "PowerNormal: mode shifts with mu" {
+    const dist = try PowerNormal(f64).init(3.0, 1.0, 2.0);
+    const mode = dist.mode();
+    try testing.expect(mode > 3.0);
+}
+
+test "PowerNormal: entropy is positive and finite" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+    try testing.expect(e > 0.0);
+}
+
+test "PowerNormal: entropy(0,1,1) approximates Normal" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const e = dist.entropy();
+    // H[N(0,1)] = 0.5·ln(2πe) ≈ 1.4189
+    const expected = 0.5 * @log(2.0 * math.pi * math.e);
+    try testing.expectApproxEqAbs(expected, e, 0.05);
+}
+
+test "PowerNormal: sample produces finite values" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "PowerNormal: sample mean convergence for (0,1,1) N=5000" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.0, empirical_mean, 0.05);
+}
+
+test "PowerNormal: sample mean convergence for (0,1,2) N=5000" {
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const expected = 1.0 / @sqrt(math.pi);
+    try testing.expectApproxEqAbs(expected, empirical_mean, 0.05);
+}
+
+test "PowerNormal: validate() succeeds for valid parameters" {
+    const dist = try PowerNormal(f64).init(1.0, 2.0, 1.5);
+    try dist.validate();
+}
+
+test "PowerNormal: validate() fails for sigma <= 0" {
+    var dist: PowerNormal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 0.0;
+    dist.c = 1.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal: validate() fails for c <= 0" {
+    var dist: PowerNormal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 1.0;
+    dist.c = -0.5;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "PowerNormal(f32): init and pdf with f32" {
+    const dist = try PowerNormal(f32).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-5);
+}
+
+test "PowerNormal(f32): cdf in [0, 1] for f32" {
+    const dist = try PowerNormal(f32).init(0.0, 1.0, 2.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "PowerNormal(f32): sample produces finite values" {
+    const dist = try PowerNormal(f32).init(1.0, 2.0, 1.5);
+    var rng = std.Random.DefaultPrng.init(777);
+    for (0..50) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
