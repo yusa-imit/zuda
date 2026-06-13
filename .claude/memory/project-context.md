@@ -1,3 +1,28 @@
+**Session 674 Update (2026-06-13) — FEATURE MODE:**
+
+✅ **ReciprocalInverseGaussian Distribution** — 80th total, 64th continuous — commit 0f4b4ea
+- **Mode**: FEATURE MODE (counter: 674)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ReciprocalInverseGaussian(μ, λ) — Y=1/X where X~IG(μ,λ)
+  * Parameters: μ>0 (location), λ>0 (shape)
+  * Support: (0, ∞)
+  * PDF: √(λ/(2πy)) · exp(-λ(1-μy)²/(2μ²y))
+  * logPDF expanded: 0.5·ln(λ)-0.5·ln(2π)-0.5·ln(y) - λ/(2μ²y) + λ/μ - λy/2
+  * CDF: CLOSED FORM — 1 - Φ(z1) - exp(2λ/μ)·Φ(-z2) [= 1 - IG_CDF(1/y; μ, λ)]
+    where z1=√(λy)·(1/(μy)-1), z2=√(λy)·(1/(μy)+1)
+    overflow guard: when 2λ/μ > 500, compute in log-space
+  * Mean: 1/μ + 1/λ (exact closed form via GIG(-1/2) moment formula)
+  * Variance: 1/(μλ) + 2/λ² (exact; derived from GIG(-1/2) second moment)
+  * Mode: (-1 + √(1 + 4λ²/μ²)) / (2λ) (from d/dx log f = 0: quadratic λy²+y-λ/μ²=0)
+  * Entropy: numerical Simpson 1000 pts, adaptive upper bound
+  * Sample: 1/X via Michael-Schucany-Haas for IG(μ,λ)
+  * Key: RIG(1,1): pdf(1)=1/√(2π)≈0.39894; mean=2; var=3; mode=(-1+√5)/2≈0.618; CDF(1)≈0.332
+  * Key: RIG(2,4): mean=0.75; var=0.25; mode≈0.390
+  * GIG connection: RIG(μ,λ) = GIG(p=1/2, a=λ/μ², b=λ) [p+1=3/2 for moments]
+- **Tests**: 51 tests, all passing
+- **Distribution count**: 80 total (64 continuous + 16 discrete)
+- **Next Priority**: GeneralizedExtremeValue (GEV) or BetaPrimeOfSecondKind or LogitNormal
+
 **Session 673 Update (2026-06-13) — FEATURE MODE:**
 
 ✅ **NoncentralF Distribution** — 79th total, 63rd continuous — commit 385d666
