@@ -46735,6 +46735,204 @@ pub fn LogitNormal(comptime T: type) type {
     };
 }
 
+pub fn GeneralizedNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        alpha: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a GeneralizedNormal distribution.
+        ///
+        /// Errors: alpha ≤ 0, beta ≤ 0, or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, alpha: T, beta: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(alpha > 0.0)) return error.InvalidParameter;
+            if (!(beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            if (!math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .mu = mu, .alpha = alpha, .beta = beta };
+        }
+
+        /// Probability density function f(x) = β/(2·α·Γ(1/β)) · exp(-(|x-μ|/α)^β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const diff = @abs(x - self.mu);
+            const scaled = diff / self.alpha;
+            const term = math.pow(T, scaled, self.beta);
+            const coeff = self.beta / (2.0 * self.alpha * @exp(logGamma(1.0 / self.beta)));
+            return coeff * @exp(-term);
+        }
+
+        /// Log probability density function ln(f(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const diff = @abs(x - self.mu);
+            const scaled = diff / self.alpha;
+            const term = math.pow(T, scaled, self.beta);
+            return @log(self.beta) - @log(2.0) - @log(self.alpha) - logGamma(1.0 / self.beta) - term;
+        }
+
+        /// Cumulative distribution function F(x)
+        ///
+        /// F(x) = 0.5 + sign(x-μ)·0.5·P(1/β, (|x-μ|/α)^β)
+        ///
+        /// Time: O(1) with regularizedGammaP | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x == self.mu) return 0.5;
+            const diff = x - self.mu;
+            const abs_diff = @abs(diff);
+            const scaled = abs_diff / self.alpha;
+            const term = math.pow(T, scaled, self.beta);
+            const p = regularizedGammaP(1.0 / self.beta, term);
+
+            if (diff > 0.0) {
+                return 0.5 + 0.5 * p;
+            } else {
+                return 0.5 - 0.5 * p;
+            }
+        }
+
+        /// Quantile function (inverse CDF) using bisection
+        ///
+        /// Errors: p < 0, p > 1, or NaN → InvalidProbability
+        ///
+        /// Time: O(N) where N=100 bisection iterations | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            if (p == 0.5) return self.mu;
+
+            const max_iter = 100;
+            const tolerance = 1e-10;
+
+            // Bracket the root: [lo, hi]
+            var lo: T = undefined;
+            var hi: T = undefined;
+
+            if (p < 0.5) {
+                // Left tail
+                lo = self.mu - 50.0 * self.alpha;
+                hi = self.mu;
+            } else {
+                // Right tail
+                lo = self.mu;
+                hi = self.mu + 50.0 * self.alpha;
+            }
+
+            // Refine bracket if needed
+            var iter: usize = 0;
+            while (iter < 20) : (iter += 1) {
+                if (p < 0.5) {
+                    if (self.cdf(lo) > p) {
+                        lo = lo - 2.0 * (self.mu - lo);
+                    } else {
+                        break;
+                    }
+                } else {
+                    if (self.cdf(hi) < p) {
+                        hi = hi + 2.0 * (hi - self.mu);
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // Bisection
+            iter = 0;
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                const cdf_mid = self.cdf(mid);
+                const diff = cdf_mid - p;
+
+                if (@abs(diff) < tolerance) {
+                    return mid;
+                }
+
+                if (diff < 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+
+                if (hi - lo < tolerance) {
+                    return (lo + hi) / 2.0;
+                }
+            }
+
+            return (lo + hi) / 2.0;
+        }
+
+        /// Mean of the distribution: E[X] = μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance of the distribution: α²·Γ(3/β)/Γ(1/β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const gamma_3_beta = logGamma(3.0 / self.beta) - logGamma(1.0 / self.beta);
+            const ratio = @exp(gamma_3_beta);
+            return self.alpha * self.alpha * ratio;
+        }
+
+        /// Mode of the distribution: mode = μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Median of the distribution: median = μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.mu;
+        }
+
+        /// Differential entropy in nats: H = 1/β - ln(β) + ln(2·α) + ln(Γ(1/β))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 1.0 / self.beta - @log(self.beta) + @log(2.0 * self.alpha) + logGamma(1.0 / self.beta);
+        }
+
+        /// Generate a random sample using Gamma-based method
+        ///
+        /// Algorithm:
+        /// 1. Sample G ~ Gamma(1/β, 1)
+        /// 2. Sample S uniformly from {-1, +1}
+        /// 3. Return μ + α·S·G^(1/β)
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const gamma_dist = Gamma(T).init(1.0 / self.beta, 1.0) catch unreachable;
+            const g = gamma_dist.sample(rng);
+            const g_power = math.pow(T, g, 1.0 / self.beta);
+            const u = rng.float(T);
+            const sign: T = if (u < 0.5) -1.0 else 1.0;
+            return self.mu + self.alpha * sign * g_power;
+        }
+
+        /// Validate that parameters are valid
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0.0)) return error.InvalidParameter;
+            if (!(self.beta > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
 // === LogitNormal Distribution Tests ===
 
 test "LogitNormal: init succeeds with valid parameters (0, 1)" {
@@ -47152,4 +47350,385 @@ test "LogitNormal(f32): cdf in [0, 1] for f32" {
     const dist = try LogitNormal(f32).init(0.0, 1.0);
     const c = dist.cdf(0.5);
     try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+// ============================================================================
+// GeneralizedNormal Distribution Tests
+// ============================================================================
+
+test "GeneralizedNormal: init with valid parameters mu=0 alpha=1 beta=1" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.alpha);
+    try testing.expectEqual(1.0, dist.beta);
+}
+
+test "GeneralizedNormal: init with nonzero mu" {
+    const dist = try GeneralizedNormal(f64).init(5.0, 2.0, 1.5);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.alpha);
+    try testing.expectEqual(1.5, dist.beta);
+}
+
+test "GeneralizedNormal: init with alpha=0 returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with negative alpha returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with beta=0 returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with negative beta returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with infinite mu returns error" {
+    const result = GeneralizedNormal(f64).init(math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with infinite alpha returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with infinite beta returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with NaN mu returns error" {
+    const result = GeneralizedNormal(f64).init(math.nan(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with NaN alpha returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: init with NaN beta returns error" {
+    const result = GeneralizedNormal(f64).init(0.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: pdf at mu (mu=0 alpha=1 beta=1 matches Laplace)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const pdf_at_mu = dist.pdf(0.0);
+    const expected_laplace = 0.5; // 1/(2*1*Gamma(1)) = 0.5
+    try testing.expectApproxEqAbs(expected_laplace, pdf_at_mu, 1e-10);
+}
+
+test "GeneralizedNormal: pdf at mu (mu=0 alpha=1 beta=2 matches Gaussian)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    const pdf_at_mu = dist.pdf(0.0);
+    // β/(2αΓ(1/β)) = 2/(2·1·Γ(0.5)) = 2/(2·√π) = 1/√π ≈ 0.5641895835
+    const expected_gaussian = 1.0 / @sqrt(math.pi);
+    try testing.expectApproxEqAbs(expected_gaussian, pdf_at_mu, 1e-10);
+}
+
+test "GeneralizedNormal: pdf is positive for all x near mu" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.5);
+    try testing.expect(dist.pdf(-0.1) > 0.0);
+    try testing.expect(dist.pdf(0.0) > 0.0);
+    try testing.expect(dist.pdf(0.1) > 0.0);
+}
+
+test "GeneralizedNormal: pdf is symmetric around mu" {
+    const dist = try GeneralizedNormal(f64).init(2.0, 1.5, 1.8);
+    const pdf_left = dist.pdf(2.0 - 0.5);
+    const pdf_right = dist.pdf(2.0 + 0.5);
+    try testing.expectApproxEqAbs(pdf_left, pdf_right, 1e-10);
+}
+
+test "GeneralizedNormal: logpdf consistent with pdf (mu=0 alpha=1 beta=1)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "GeneralizedNormal: pdf decreases as |x-mu| increases (beta=1)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const pdf0 = dist.pdf(0.0);
+    const pdf1 = dist.pdf(1.0);
+    const pdf2 = dist.pdf(2.0);
+    try testing.expect(pdf0 > pdf1);
+    try testing.expect(pdf1 > pdf2);
+}
+
+test "GeneralizedNormal: cdf at mu is 0.5" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const cdf_at_mu = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, cdf_at_mu, 1e-10);
+}
+
+test "GeneralizedNormal: cdf at mu is 0.5 for nonzero mu" {
+    const dist = try GeneralizedNormal(f64).init(3.0, 1.0, 2.0);
+    const cdf_at_mu = dist.cdf(3.0);
+    try testing.expectApproxEqAbs(0.5, cdf_at_mu, 1e-10);
+}
+
+test "GeneralizedNormal: cdf is monotone increasing" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.5);
+    const cdf1 = dist.cdf(-1.0);
+    const cdf2 = dist.cdf(0.0);
+    const cdf3 = dist.cdf(1.0);
+    const cdf4 = dist.cdf(2.0);
+    try testing.expect(cdf1 < cdf2);
+    try testing.expect(cdf2 < cdf3);
+    try testing.expect(cdf3 < cdf4);
+}
+
+test "GeneralizedNormal: cdf symmetry property F(mu+t) + F(mu-t) = 1" {
+    const dist = try GeneralizedNormal(f64).init(2.0, 1.0, 1.8);
+    const t = 0.5;
+    const cdf_right = dist.cdf(2.0 + t);
+    const cdf_left = dist.cdf(2.0 - t);
+    try testing.expectApproxEqAbs(1.0, cdf_right + cdf_left, 1e-9);
+}
+
+test "GeneralizedNormal: cdf approaches 0 as x -> -inf" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const cdf_very_neg = dist.cdf(-100.0);
+    try testing.expect(cdf_very_neg < 1e-10);
+}
+
+test "GeneralizedNormal: cdf approaches 1 as x -> +inf" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const cdf_very_pos = dist.cdf(100.0);
+    try testing.expect(cdf_very_pos > 1.0 - 1e-10);
+}
+
+test "GeneralizedNormal: quantile(0.5) returns mu" {
+    const dist = try GeneralizedNormal(f64).init(3.5, 1.0, 1.5);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(3.5, q, 1e-10);
+}
+
+test "GeneralizedNormal: quantile(0) returns -inf" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isNegativeInf(q));
+}
+
+test "GeneralizedNormal: quantile(1) returns +inf" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "GeneralizedNormal: quantile with p<0 returns error" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GeneralizedNormal: quantile with p>1 returns error" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GeneralizedNormal: quantile-cdf roundtrip for various probabilities" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.5);
+    const ps: [5]f64 = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const x = try dist.quantile(p);
+        const cdf_x = dist.cdf(x);
+        try testing.expectApproxEqAbs(p, cdf_x, 1e-8);
+    }
+}
+
+test "GeneralizedNormal: quantile is monotone increasing" {
+    const dist = try GeneralizedNormal(f64).init(1.0, 1.0, 2.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.3);
+    const q3 = try dist.quantile(0.7);
+    const q4 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+    try testing.expect(q3 < q4);
+}
+
+test "GeneralizedNormal: mean returns mu (mu=0 alpha=1 beta=1)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectEqual(0.0, m);
+}
+
+test "GeneralizedNormal: mean returns mu (mu=5 alpha=2 beta=1.5)" {
+    const dist = try GeneralizedNormal(f64).init(5.0, 2.0, 1.5);
+    const m = dist.mean();
+    try testing.expectEqual(5.0, m);
+}
+
+test "GeneralizedNormal: variance for beta=1 (Laplace) is 2*alpha^2" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    const expected_laplace = 2.0 * 1.0 * 1.0; // Γ(3)/Γ(1) = 2/1 = 2
+    try testing.expectApproxEqAbs(expected_laplace, v, 1e-10);
+}
+
+test "GeneralizedNormal: variance for beta=2 (Gaussian) is 0.5*alpha^2" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    const v = dist.variance();
+    // α²·Γ(3/β)/Γ(1/β) = 1²·Γ(1.5)/Γ(0.5) = (√π/2)/√π = 0.5
+    const expected_gaussian = 0.5;
+    try testing.expectApproxEqAbs(expected_gaussian, v, 1e-10);
+}
+
+test "GeneralizedNormal: variance increases as beta decreases (heavier tails)" {
+    const dist1 = try GeneralizedNormal(f64).init(0.0, 1.0, 0.5);
+    const dist2 = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const dist3 = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    const v3 = dist3.variance();
+    try testing.expect(v1 > v2);
+    try testing.expect(v2 > v3);
+}
+
+test "GeneralizedNormal: variance scales with alpha^2" {
+    const dist1 = try GeneralizedNormal(f64).init(0.0, 1.0, 1.5);
+    const dist2 = try GeneralizedNormal(f64).init(0.0, 2.0, 1.5);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * v1, v2, 1e-10);
+}
+
+test "GeneralizedNormal: mode returns mu" {
+    const dist = try GeneralizedNormal(f64).init(2.5, 1.0, 1.5);
+    const mode = dist.mode();
+    try testing.expectEqual(2.5, mode);
+}
+
+test "GeneralizedNormal: median returns mu" {
+    const dist = try GeneralizedNormal(f64).init(-1.5, 1.0, 2.0);
+    const median = dist.median();
+    try testing.expectEqual(-1.5, median);
+}
+
+test "GeneralizedNormal: entropy is positive and finite" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.5);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+    try testing.expect(e > 0.0);
+}
+
+test "GeneralizedNormal: entropy increases with alpha (scale)" {
+    const dist1 = try GeneralizedNormal(f64).init(0.0, 0.5, 1.5);
+    const dist2 = try GeneralizedNormal(f64).init(0.0, 1.0, 1.5);
+    const dist3 = try GeneralizedNormal(f64).init(0.0, 2.0, 1.5);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    const e3 = dist3.entropy();
+    try testing.expect(e1 < e2);
+    try testing.expect(e2 < e3);
+}
+
+test "GeneralizedNormal: entropy relationship (log scale increase)" {
+    const dist1 = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    const dist2 = try GeneralizedNormal(f64).init(0.0, 2.0, 2.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    // When alpha doubles, entropy should increase by log(2)
+    try testing.expectApproxEqAbs(@log(2.0), e2 - e1, 1e-10);
+}
+
+test "GeneralizedNormal: sample produces finite values (mu=0 alpha=1 beta=1)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GeneralizedNormal: sample produces finite values (mu=5 alpha=2 beta=0.5)" {
+    const dist = try GeneralizedNormal(f64).init(5.0, 2.0, 0.5);
+    var rng = std.Random.DefaultPrng.init(99);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GeneralizedNormal: sample mean convergence (mu=0 alpha=1 beta=1 with N=10000)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.0, empirical_mean, 0.05);
+}
+
+test "GeneralizedNormal: sample mean convergence (mu=3 alpha=2 beta=2 with N=10000)" {
+    const dist = try GeneralizedNormal(f64).init(3.0, 2.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(3.0, empirical_mean, 0.1);
+}
+
+test "GeneralizedNormal: validate() succeeds for valid parameters" {
+    const dist = try GeneralizedNormal(f64).init(1.0, 2.0, 1.5);
+    try dist.validate();
+}
+
+test "GeneralizedNormal: validate() fails for alpha <= 0" {
+    var dist: GeneralizedNormal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.alpha = 0.0;
+    dist.beta = 1.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal: validate() fails for beta <= 0" {
+    var dist: GeneralizedNormal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.alpha = 1.0;
+    dist.beta = -0.5;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedNormal(f32): init and pdf with f32" {
+    const dist = try GeneralizedNormal(f32).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = @as(f32, 0.5);
+    try testing.expectApproxEqAbs(expected, p, 1e-5);
+}
+
+test "GeneralizedNormal(f32): cdf in [0, 1] for f32" {
+    const dist = try GeneralizedNormal(f32).init(0.0, 1.0, 2.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "GeneralizedNormal(f32): sample produces finite values" {
+    const dist = try GeneralizedNormal(f32).init(1.0, 2.0, 1.5);
+    var rng = std.Random.DefaultPrng.init(777);
+    for (0..50) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
 }
