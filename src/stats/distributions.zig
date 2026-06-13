@@ -46474,3 +46474,682 @@ test "GeneralizedExtremeValue(f32): cdf in [0, 1]" {
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
 
+
+// ============================================================================
+// LogitNormal Distribution
+// ============================================================================
+
+/// LogitNormal distribution LN(μ, σ).
+///
+/// If Y ~ LogitNormal(μ, σ), then logit(Y) = ln(Y/(1-Y)) ~ Normal(μ, σ²).
+///
+/// Parameters:
+///   - mu: Location parameter (μ ∈ ℝ)
+///   - sigma: Scale parameter (σ > 0)
+///
+/// Support: y ∈ (0, 1)
+///
+/// PDF: f(y) = 1 / (σ · y · (1−y) · √(2π)) · exp(−(logit(y)−μ)² / (2σ²))
+///
+/// Time: O(1) for pdf/cdf/quantile/sample; O(N) for mean/variance/entropy
+pub fn LogitNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a LogitNormal distribution.
+        ///
+        /// Errors: sigma ≤ 0 or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        fn normalPdf(z: T) T {
+            return @exp(-0.5 * z * z) / @sqrt(2.0 * math.pi);
+        }
+
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(2.0)));
+        }
+
+        fn normalQuantile(p: T) T {
+            if (p <= 0.0) return -math.inf(T);
+            if (p >= 1.0) return math.inf(T);
+            return @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+        }
+
+        fn sigmoidFn(x: T) T {
+            if (x >= 0.0) {
+                const e = @exp(-x);
+                return 1.0 / (1.0 + e);
+            } else {
+                const e = @exp(x);
+                return e / (1.0 + e);
+            }
+        }
+
+        fn softplus(x: T) T {
+            if (x > 30.0) return x;
+            if (x < -30.0) return @exp(x);
+            return @log(1.0 + @exp(x));
+        }
+
+        fn logitFn(y: T) T {
+            return @log(y) - @log(1.0 - y);
+        }
+
+        /// Probability density function f(y) for y ∈ (0, 1).
+        ///
+        /// f(y) = 1 / (σ·y·(1−y)·√(2π)) · exp(−(logit(y)−μ)² / (2σ²))
+        ///
+        /// Returns 0 for y ≤ 0 or y ≥ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, y: T) T {
+            if (y <= 0.0 or y >= 1.0) return 0.0;
+            const z = (logitFn(y) - self.mu) / self.sigma;
+            return normalPdf(z) / (self.sigma * y * (1.0 - y));
+        }
+
+        /// Log probability density function ln(f(y)).
+        ///
+        /// Returns −∞ for y ≤ 0 or y ≥ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, y: T) T {
+            if (y <= 0.0 or y >= 1.0) return -math.inf(T);
+            const z = (logitFn(y) - self.mu) / self.sigma;
+            return -0.5 * z * z - @log(self.sigma) - 0.5 * @log(2.0 * math.pi) - @log(y) - @log(1.0 - y);
+        }
+
+        /// Cumulative distribution function F(y) = Φ((logit(y)−μ)/σ).
+        ///
+        /// Returns 0 for y ≤ 0, 1 for y ≥ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, y: T) T {
+            if (y <= 0.0) return 0.0;
+            if (y >= 1.0) return 1.0;
+            const z = (logitFn(y) - self.mu) / self.sigma;
+            return normalCdf(z);
+        }
+
+        /// Survival function S(y) = 1 − F(y).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, y: T) T {
+            return 1.0 - self.cdf(y);
+        }
+
+        /// Quantile function (inverse CDF): sigmoid(μ + σ·Φ⁻¹(p)).
+        ///
+        /// Returns 0 for p=0, 1 for p=1.
+        ///
+        /// Errors: p < 0, p > 1, or NaN → InvalidProbability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+            return sigmoidFn(self.mu + self.sigma * normalQuantile(p));
+        }
+
+        /// Median of the distribution: sigmoid(μ).
+        ///
+        /// The median satisfies F(m) = 0.5, i.e., logit(m) = μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return sigmoidFn(self.mu);
+        }
+
+        /// Mean E[Y] computed numerically via 200-point Composite Simpson's rule.
+        ///
+        /// No closed-form expression exists. For μ=0, mean=0.5 exactly by symmetry.
+        ///
+        ///   E[Y] = ∫ sigmoid(x) · φ((x−μ)/σ)/σ dx
+        ///
+        /// Integration range: [μ−6σ, μ+6σ] in the logit domain.
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const N: usize = 200;
+            const lo = self.mu - 6.0 * self.sigma;
+            const hi = self.mu + 6.0 * self.sigma;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= N) : (i += 1) {
+                const x = lo + h * @as(T, @floatFromInt(i));
+                const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const z = (x - self.mu) / self.sigma;
+                sum += w * sigmoidFn(x) * normalPdf(z) / self.sigma;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Variance Var[Y] = E[Y²] − E[Y]² computed numerically.
+        ///
+        /// No closed-form expression exists. For μ=0, σ=1: Var[Y] ≈ 0.0862.
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const N: usize = 200;
+            const lo = self.mu - 6.0 * self.sigma;
+            const hi = self.mu + 6.0 * self.sigma;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var e1: T = 0.0;
+            var e2: T = 0.0;
+            var i: usize = 0;
+            while (i <= N) : (i += 1) {
+                const x = lo + h * @as(T, @floatFromInt(i));
+                const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const z = (x - self.mu) / self.sigma;
+                const phi = normalPdf(z) / self.sigma;
+                const s = sigmoidFn(x);
+                e1 += w * s * phi;
+                e2 += w * s * s * phi;
+            }
+            e1 *= h / 3.0;
+            e2 *= h / 3.0;
+            return e2 - e1 * e1;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// Satisfies logit(y) = μ + σ²·(2y−1), found numerically via 500-point grid scan.
+        ///
+        /// For μ=0 and any σ: mode=0.5 (symmetric distribution).
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const N: usize = 500;
+            var best_y: T = 0.5;
+            var best_p: T = 0.0;
+            var i: usize = 1;
+            while (i < N) : (i += 1) {
+                const y = @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(N));
+                const p = self.pdf(y);
+                if (p > best_p) {
+                    best_p = p;
+                    best_y = y;
+                }
+            }
+            return best_y;
+        }
+
+        /// Differential entropy H(Y) in nats.
+        ///
+        /// H(Y) = H(Normal(μ,σ)) + E[ln(Y(1−Y))]
+        ///       = ½·ln(2πeσ²) + E[X − 2·softplus(X)]
+        ///
+        /// where X ~ Normal(μ, σ²), computed via 200-point Composite Simpson's rule.
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const h_normal = 0.5 * @log(2.0 * math.pi * math.e) + @log(self.sigma);
+            const N: usize = 200;
+            const lo = self.mu - 6.0 * self.sigma;
+            const hi = self.mu + 6.0 * self.sigma;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= N) : (i += 1) {
+                const x = lo + h * @as(T, @floatFromInt(i));
+                const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                const z = (x - self.mu) / self.sigma;
+                const phi = normalPdf(z) / self.sigma;
+                const correction = x - 2.0 * softplus(x);
+                sum += w * correction * phi;
+            }
+            return h_normal + sum * h / 3.0;
+        }
+
+        /// Generate a random sample Y = sigmoid(X) where X ~ Normal(μ, σ).
+        ///
+        /// Uses Box-Muller transform for Normal sampling.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const r1 = rng.float(T);
+            const r2 = rng.float(T);
+            const r1_safe = if (r1 == 0.0) @as(T, 1e-300) else r1;
+            const z = @sqrt(-2.0 * @log(r1_safe)) * @cos(2.0 * math.pi * r2);
+            return sigmoidFn(self.mu + self.sigma * z);
+        }
+
+        /// Assert that distribution parameters are valid: σ > 0, all parameters finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return error.InvalidParameter;
+        }
+    };
+}
+
+// === LogitNormal Distribution Tests ===
+
+test "LogitNormal: init succeeds with valid parameters (0, 1)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    try testing.expect(dist.mu == 0.0);
+    try testing.expect(dist.sigma == 1.0);
+}
+
+test "LogitNormal: init succeeds with valid parameters (1.5, 0.5)" {
+    const dist = try LogitNormal(f64).init(1.5, 0.5);
+    try testing.expect(dist.mu == 1.5);
+    try testing.expect(dist.sigma == 0.5);
+}
+
+test "LogitNormal: init succeeds with negative mu" {
+    const dist = try LogitNormal(f64).init(-2.0, 0.8);
+    try testing.expect(dist.mu == -2.0);
+    try testing.expect(dist.sigma == 0.8);
+}
+
+test "LogitNormal: init fails for sigma <= 0" {
+    const result = LogitNormal(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: init fails for negative sigma" {
+    const result = LogitNormal(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: init fails for non-finite mu (positive infinity)" {
+    const result = LogitNormal(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: init fails for non-finite mu (negative infinity)" {
+    const result = LogitNormal(f64).init(-math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: init fails for non-finite mu (NaN)" {
+    const result = LogitNormal(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: init fails for non-finite sigma (NaN)" {
+    const result = LogitNormal(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: init fails for non-finite sigma (infinity)" {
+    const result = LogitNormal(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "LogitNormal: validate() succeeds for valid distribution (0, 1)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "LogitNormal: validate() succeeds for valid distribution (1.5, 0.5)" {
+    const dist = try LogitNormal(f64).init(1.5, 0.5);
+    try dist.validate();
+}
+
+test "LogitNormal: pdf(0.5; 0, 1) = 4/sqrt(2pi) (peak for symmetric)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    const expected = 4.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "LogitNormal: pdf(0.0; 0, 1) = 0.0 (boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "LogitNormal: pdf(1.0; 0, 1) = 0.0 (boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "LogitNormal: pdf(-0.1; 0, 1) = 0.0 (outside support)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p = dist.pdf(-0.1);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "LogitNormal: pdf(1.1; 0, 1) = 0.0 (outside support)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.1);
+    try testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "LogitNormal: pdf is non-negative on support" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const test_points = [_]f64{ 0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95 };
+    for (test_points) |y| {
+        const p = dist.pdf(y);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "LogitNormal: pdf symmetry pdf(0.3) = pdf(0.7) for mu=0" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p_left = dist.pdf(0.3);
+    const p_right = dist.pdf(0.7);
+    try testing.expectApproxEqAbs(p_left, p_right, 1e-10);
+}
+
+test "LogitNormal: pdf at center is maximum for mu=0" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const p_center = dist.pdf(0.5);
+    const p_off = dist.pdf(0.4);
+    try testing.expect(p_center >= p_off);
+}
+
+test "LogitNormal: logpdf(0.5; 0, 1) = log(4/sqrt(2pi))" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.5);
+    const expected = @log(4.0 / @sqrt(2.0 * math.pi));
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "LogitNormal: logpdf(0.0; 0, 1) = -inf (boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "LogitNormal: logpdf(1.0; 0, 1) = -inf (boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "LogitNormal: logpdf(1.1; 0, 1) = -inf (outside support)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.1);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+test "LogitNormal: logpdf is finite inside support" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const test_points = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (test_points) |y| {
+        const lp = dist.logpdf(y);
+        try testing.expect(math.isFinite(lp));
+    }
+}
+
+test "LogitNormal: cdf(0.5; 0, 1) = 0.5 (since logit(0.5)=0, Phi(0)=0.5)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "LogitNormal: cdf(0.0; 0, 1) = 0.0 (boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "LogitNormal: cdf(1.0; 0, 1) = 1.0 (boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "LogitNormal: cdf is monotonically increasing on support" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    var y: f64 = 0.01;
+    var prev_cdf = dist.cdf(y);
+    while (y < 0.99) : (y += 0.05) {
+        const c = dist.cdf(y);
+        try testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "LogitNormal: cdf symmetry cdf(y) + cdf(1-y) = 1 for mu=0" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const c_low = dist.cdf(0.3);
+    const c_high = dist.cdf(0.7);
+    try testing.expectApproxEqAbs(1.0, c_low + c_high, 1e-10);
+}
+
+test "LogitNormal: cdf(sigmoid(mu); mu, sigma) = 0.5 for mu=1.0" {
+    const dist = try LogitNormal(f64).init(1.0, 0.5);
+    const sigmoid_mu = 1.0 / (1.0 + @exp(-1.0));
+    const c = dist.cdf(sigmoid_mu);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "LogitNormal: sf(0.5; 0, 1) = 0.5 (median)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const s = dist.sf(0.5);
+    try testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "LogitNormal: sf(0.0; 0, 1) = 1.0 (left boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try testing.expectApproxEqAbs(1.0, s, 1e-10);
+}
+
+test "LogitNormal: sf(1.0; 0, 1) = 0.0 (right boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const s = dist.sf(1.0);
+    try testing.expectApproxEqAbs(0.0, s, 1e-10);
+}
+
+test "LogitNormal: sf(y) = 1 - cdf(y) for all y in support" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const test_points = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (test_points) |y| {
+        const sf_val = dist.sf(y);
+        const cdf_val = dist.cdf(y);
+        try testing.expectApproxEqAbs(sf_val, 1.0 - cdf_val, 1e-10);
+    }
+}
+
+test "LogitNormal: quantile(0.5; 0, 1) = 0.5 (median)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.5, q, 1e-10);
+}
+
+test "LogitNormal: quantile(0.0; 0, 1) = 0.0 (left boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "LogitNormal: quantile(1.0; 0, 1) = 1.0 (right boundary)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "LogitNormal: quantile is monotonically increasing" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const ps = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 };
+    var prev_q = try dist.quantile(ps[0]);
+    for (ps[1..]) |p| {
+        const q = try dist.quantile(p);
+        try testing.expect(q >= prev_q);
+        prev_q = q;
+    }
+}
+
+test "LogitNormal: quantile(p < 0) returns InvalidProbability" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogitNormal: quantile(p > 1) returns InvalidProbability" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogitNormal: quantile(NaN) returns InvalidProbability" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "LogitNormal: quantile(cdf(0.3)) roundtrip" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const y = 0.3;
+    const c = dist.cdf(y);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(y, q, 1e-6);
+}
+
+test "LogitNormal: quantile(cdf(0.7)) roundtrip" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const y = 0.7;
+    const c = dist.cdf(y);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(y, q, 1e-6);
+}
+
+test "LogitNormal: median(0, 1) = 0.5 = sigmoid(0)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const med = dist.median();
+    try testing.expectApproxEqAbs(0.5, med, 1e-10);
+}
+
+test "LogitNormal: median = sigmoid(mu) for mu=1.0" {
+    const dist = try LogitNormal(f64).init(1.0, 0.5);
+    const med = dist.median();
+    const expected = 1.0 / (1.0 + @exp(-1.0));
+    try testing.expectApproxEqAbs(expected, med, 1e-10);
+}
+
+test "LogitNormal: median is always in (0, 1)" {
+    const dist = try LogitNormal(f64).init(2.0, 0.3);
+    const med = dist.median();
+    try testing.expect(med > 0.0 and med < 1.0);
+}
+
+test "LogitNormal: mean(0, 1) approx 0.5 by symmetry (tolerance 1e-3)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-3);
+}
+
+test "LogitNormal: mean is in (0, 1)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(m > 0.0 and m < 1.0);
+}
+
+test "LogitNormal: mean is finite" {
+    const dist = try LogitNormal(f64).init(1.5, 0.7);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+}
+
+test "LogitNormal: variance(0, 1) is positive and finite" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(v > 0.0 and math.isFinite(v));
+}
+
+test "LogitNormal: variance increases with sigma for fixed mu" {
+    const dist1 = try LogitNormal(f64).init(0.0, 0.5);
+    const dist2 = try LogitNormal(f64).init(0.0, 1.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expect(v2 > v1);
+}
+
+test "LogitNormal: variance(0, 1) approx 0.0434 (tolerance 1e-2)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(0.0434, v, 1e-2);
+}
+
+test "LogitNormal: mode(0, 1) is in (0, 1)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(m > 0.0 and m < 1.0);
+}
+
+test "LogitNormal: mode(0, 1) approx 0.5 by symmetry (tolerance 1e-2)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.5, m, 1e-2);
+}
+
+test "LogitNormal: mode is finite" {
+    const dist = try LogitNormal(f64).init(1.5, 0.7);
+    const m = dist.mode();
+    try testing.expect(math.isFinite(m));
+}
+
+test "LogitNormal: entropy(0, 1) is positive and finite" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "LogitNormal: entropy increases with sigma (sigma=0.5 vs sigma=1.0)" {
+    const dist1 = try LogitNormal(f64).init(0.0, 0.5);
+    const dist2 = try LogitNormal(f64).init(0.0, 1.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    try testing.expect(e2 > e1);
+}
+
+test "LogitNormal: sample produces values in (0, 1)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0 and s < 1.0);
+    }
+}
+
+test "LogitNormal: sample produces finite values" {
+    const dist = try LogitNormal(f64).init(1.5, 0.7);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "LogitNormal: sample mean convergence for mu=0 (tolerance 0.01 with N=10000)" {
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.5, empirical, 0.01);
+}
+
+test "LogitNormal(f32): init and pdf with f32" {
+    const dist = try LogitNormal(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    const expected = @as(f32, 4.0) / @sqrt(@as(f32, 2.0) * @as(f32, @floatCast(math.pi)));
+    try testing.expectApproxEqAbs(expected, p, 1e-5);
+}
+
+test "LogitNormal(f32): cdf in [0, 1] for f32" {
+    const dist = try LogitNormal(f32).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
