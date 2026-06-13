@@ -45306,6 +45306,21 @@ test "NoncentralF: CDF integral consistency (cdf approaches 1 at large x)" {
     try testing.expect(dist.cdf(100.0) > 0.999);
 }
 
+test "NoncentralF: exact variance at lambda=0 matches central F formula" {
+    // Central F(d1,d2) variance = 2*d2^2*(d1+d2-2) / (d1*(d2-2)^2*(d2-4)) for d2 > 4
+    // For d1=4, d2=10: 2*100*12 / (4*64*6) = 2400/1536 = 1.5625
+    const dist = try NoncentralF(f64).init(4.0, 10.0, 0.0);
+    try testing.expectApproxEqRel(@as(f64, 1.5625), dist.variance(), 1e-6);
+}
+
+test "NoncentralF: variance increases with lambda (fixed d1, d2)" {
+    const d0 = try NoncentralF(f64).init(4.0, 10.0, 0.0);
+    const d2 = try NoncentralF(f64).init(4.0, 10.0, 2.0);
+    const d5 = try NoncentralF(f64).init(4.0, 10.0, 5.0);
+    try testing.expect(d0.variance() < d2.variance());
+    try testing.expect(d2.variance() < d5.variance());
+}
+
 test "NoncentralF(f32): init and pdf" {
     const dist = try NoncentralF(f32).init(5.0, 10.0, 2.0);
     const p = dist.pdf(1.0);
@@ -45899,5 +45914,26 @@ test "ReciprocalInverseGaussian(f32): cdf in [0, 1]" {
     const dist = try ReciprocalInverseGaussian(f32).init(1.0, 1.0);
     const c = dist.cdf(1.0);
     try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "ReciprocalInverseGaussian: RIG-IG duality (cdf_RIG(y) = 1 - cdf_IG(1/y))" {
+    // Y ~ RIG(μ,λ) <=> 1/Y ~ IG(μ,λ), so cdf_RIG(y) = P(Y≤y) = P(1/Y≥1/y) = 1 - cdf_IG(1/y)
+    const rig = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const ig = try InverseGaussian(f64).init(1.0, 1.0);
+    const ys = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (ys) |y| {
+        try testing.expectApproxEqAbs(rig.cdf(y), 1.0 - ig.cdf(1.0 / y), 1e-6);
+    }
+}
+
+test "ReciprocalInverseGaussian: variance decreases as lambda increases" {
+    // var = 1/(mu*lambda) + 2/lambda^2 — both terms decrease with lambda
+    const d1 = try ReciprocalInverseGaussian(f64).init(1.0, 1.0); // var = 3.0
+    const d2 = try ReciprocalInverseGaussian(f64).init(1.0, 2.0); // var = 1.0
+    const d4 = try ReciprocalInverseGaussian(f64).init(1.0, 4.0); // var = 0.375
+    try testing.expect(d1.variance() > d2.variance());
+    try testing.expect(d2.variance() > d4.variance());
+    try testing.expectApproxEqRel(@as(f64, 3.0), d1.variance(), 1e-10);
+    try testing.expectApproxEqRel(@as(f64, 1.0), d2.variance(), 1e-10);
 }
 
