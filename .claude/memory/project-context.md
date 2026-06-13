@@ -1,3 +1,27 @@
+**Session 678 Update (2026-06-14) — FEATURE MODE:**
+
+✅ **GeneralizedNormal Distribution** — 83rd total, 67th continuous — commit 2329b39
+- **Mode**: FEATURE MODE (counter: 678)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: GeneralizedNormal(μ, α, β) — Generalized Gaussian Distribution
+  * Parameters: μ ∈ ℝ (location), α > 0 (scale), β > 0 (shape)
+  * Support: (-∞, +∞)
+  * PDF: β/(2·α·Γ(1/β))·exp(-(|x-μ|/α)^β) — O(1)
+  * logPDF: ln(β) - ln(2) - ln(α) - logGamma(1/β) - (|x-μ|/α)^β — O(1)
+  * CDF: 0.5 + sign(x-μ)·0.5·P(1/β, (|x-μ|/α)^β) via regularizedGammaP — O(1)
+  * Quantile: bisection (100 iterations, 1e-10 tol), bracket expansion for heavy tails
+  * Mean/Mode/Median: μ (exact by symmetry) — O(1)
+  * Variance: α²·Γ(3/β)/Γ(1/β) = α²·exp(logGamma(3/β)-logGamma(1/β)) — O(1)
+  * Entropy: 1/β - ln(β) + ln(2·α) + logGamma(1/β) — O(1)
+  * Sample: G~Gamma(1/β,1) via Marsaglia-Tsang, S=±1 → μ + α·S·G^(1/β)
+  * Special cases: β=1→Laplace(μ,α); β=2→Normal(μ,α/√2); β→∞→Uniform
+  * Key values (μ=0,α=1,β=2): pdf(0)=1/√π≈0.5642; cdf(0)=0.5; var=0.5
+  * Key values (μ=0,α=1,β=1): pdf(0)=0.5; var=2 (matches Laplace)
+  * Uses regularizedGammaP for CDF, logGamma for normalization
+- **Tests**: 49 tests passing
+- **Distribution count**: 83 total (67 continuous + 16 discrete)
+- **Next Priority**: PowerNormal, BetaRectangular, or Kumaraswamy-Normal
+
 **Session 677 Update (2026-06-14) — FEATURE MODE:**
 
 ✅ **LogitNormal Distribution** — 82nd total, 66th continuous — commit 1986ac7
