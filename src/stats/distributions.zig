@@ -47845,62 +47845,55 @@ pub fn PowerNormal(comptime T: type) type {
         ///
         /// Time: O(200) | Space: O(1)
         pub fn mean(self: Self) T {
-            if (self.c == 1.0) return self.mu; // Special case: c=1 → Normal, mean offset = 0
+            if (self.c == 1.0) return self.mu; // Special case: c=1 → Normal, mean = μ
 
+            // E[X] = ∫_{-L}^{L} z·c·Φ(z)^{c-1}·φ(z) dz·σ + μ
+            // z-domain integration avoids singularity near u=1 in u=Φ(z) substitution
             const N: usize = 200;
-            const eps: T = 1e-10;
-            const lo: T = eps;
-            const hi: T = 1.0 - eps;
-            const h: T = (hi - lo) / @as(T, @floatFromInt(N));
+            const L: T = 7.0;
+            const h: T = (2.0 * L) / @as(T, @floatFromInt(N));
 
             var sum: T = 0.0;
             var i: usize = 0;
             while (i <= N) : (i += 1) {
-                const u: T = lo + h * @as(T, @floatFromInt(i));
+                const z: T = -L + h * @as(T, @floatFromInt(i));
                 const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
-                const z: T = normalQuantile(u);
-                const integrand: T = z * math.pow(T, u, self.c - 1.0);
+                const phi_z = normalPdf(z);
+                const Phi_z = normalCdf(z);
+                const integrand = z * self.c * math.pow(T, Phi_z, self.c - 1.0) * phi_z;
                 sum += w * integrand;
             }
 
-            const integral: T = sum * h / 3.0;
-            const mean_z: T = self.c * integral;
-            return self.mu + self.sigma * mean_z;
+            return self.mu + self.sigma * (sum * h / 3.0);
         }
 
         /// Variance Var[X] = σ²·(E[Z²] − E[Z]²)
-        /// where E[Z²] = c·∫_0^1 (Φ⁻¹(u))²·u^{c−1} du
-        ///
-        /// Computed via 200-point Simpson's rule
+        /// where integrals use z-domain: ∫_{-7}^{7} z^k·c·Φ(z)^{c-1}·φ(z) dz
         ///
         /// Time: O(200) | Space: O(1)
         pub fn variance(self: Self) T {
             if (self.c == 1.0) return self.sigma * self.sigma; // Special case: Normal variance = σ²
 
             const N: usize = 200;
-            const eps: T = 1e-10;
-            const lo: T = eps;
-            const hi: T = 1.0 - eps;
-            const h: T = (hi - lo) / @as(T, @floatFromInt(N));
+            const L: T = 7.0;
+            const h: T = (2.0 * L) / @as(T, @floatFromInt(N));
 
             var sum1: T = 0.0;
             var sum2: T = 0.0;
             var i: usize = 0;
             while (i <= N) : (i += 1) {
-                const u: T = lo + h * @as(T, @floatFromInt(i));
+                const z: T = -L + h * @as(T, @floatFromInt(i));
                 const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
-                const z: T = normalQuantile(u);
-                const u_power: T = math.pow(T, u, self.c - 1.0);
-                sum1 += w * z * u_power;
-                sum2 += w * z * z * u_power;
+                const phi_z = normalPdf(z);
+                const Phi_z = normalCdf(z);
+                const base = self.c * math.pow(T, Phi_z, self.c - 1.0) * phi_z;
+                sum1 += w * z * base;
+                sum2 += w * z * z * base;
             }
 
-            const integral1: T = sum1 * h / 3.0;
-            const integral2: T = sum2 * h / 3.0;
-            const mean_z: T = self.c * integral1;
-            const mean_z2: T = self.c * integral2;
-            const var_z: T = mean_z2 - mean_z * mean_z;
-            return self.sigma * self.sigma * var_z;
+            const mean_z = sum1 * h / 3.0;
+            const ez2 = sum2 * h / 3.0;
+            return self.sigma * self.sigma * (ez2 - mean_z * mean_z);
         }
 
         /// Mode of the distribution
@@ -47964,26 +47957,26 @@ pub fn PowerNormal(comptime T: type) type {
         ///
         /// Time: O(200) | Space: O(1)
         pub fn entropy(self: Self) T {
+            // H = ln(σ) - ln(c) + 0.5·ln(2π) + 0.5·E[Z²] + (c-1)/c
+            // where ∫_0^1 ln(u)·u^{c-1} du = -1/c² gives the closed-form -(c-1)/c term
             const N: usize = 200;
-            const eps: T = 1e-10;
-            const lo: T = eps;
-            const hi: T = 1.0 - eps;
-            const h: T = (hi - lo) / @as(T, @floatFromInt(N));
+            const L: T = 7.0;
+            const h: T = (2.0 * L) / @as(T, @floatFromInt(N));
 
             var sum: T = 0.0;
             var i: usize = 0;
             while (i <= N) : (i += 1) {
-                const u: T = lo + h * @as(T, @floatFromInt(i));
+                const z: T = -L + h * @as(T, @floatFromInt(i));
                 const w: T = if (i == 0 or i == N) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
-                const z: T = normalQuantile(u);
-                const u_power: T = math.pow(T, u, self.c - 1.0);
-                sum += w * z * z * u_power;
+                const phi_z = normalPdf(z);
+                const Phi_z = normalCdf(z);
+                const base = self.c * math.pow(T, Phi_z, self.c - 1.0) * phi_z;
+                sum += w * z * z * base;
             }
 
-            const integral: T = sum * h / 3.0;
-            const mean_z2: T = self.c * integral;
+            const ez2: T = sum * h / 3.0;
             const term1: T = @log(self.sigma) - @log(self.c) + 0.5 * @log(2.0 * math.pi);
-            const term2: T = 0.5 * mean_z2 + (self.c - 1.0) / self.c;
+            const term2: T = 0.5 * ez2 + (self.c - 1.0) / self.c;
             return term1 + term2;
         }
 
@@ -48098,8 +48091,9 @@ test "PowerNormal: pdf is positive for all x" {
     try testing.expect(dist.pdf(0.5) > 0.0);
 }
 
-test "PowerNormal: pdf is symmetric around mu" {
-    const dist = try PowerNormal(f64).init(2.0, 1.5, 2.0);
+test "PowerNormal: pdf symmetric around mu when c=1 (Normal)" {
+    // PowerNormal is symmetric only for c=1 (reduces to Normal)
+    const dist = try PowerNormal(f64).init(2.0, 1.5, 1.0);
     const pdf_left = dist.pdf(2.0 - 0.5);
     const pdf_right = dist.pdf(2.0 + 0.5);
     try testing.expectApproxEqAbs(pdf_left, pdf_right, 1e-10);
