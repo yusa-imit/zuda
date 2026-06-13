@@ -1,3 +1,29 @@
+**Session 677 Update (2026-06-14) — FEATURE MODE:**
+
+✅ **LogitNormal Distribution** — 82nd total, 66th continuous — commit 1986ac7
+- **Mode**: FEATURE MODE (counter: 677)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: LogitNormal(μ, σ): Y s.t. logit(Y) ~ Normal(μ, σ²)
+  * Parameters: μ ∈ ℝ (location), σ > 0 (scale)
+  * Support: (0, 1)
+  * PDF: f(y) = 1/(σ·y·(1-y)·√(2π))·exp(-(logit(y)-μ)²/(2σ²)) — O(1)
+  * CDF: Φ((logit(y)-μ)/σ) — exact closed form, O(1)
+  * Quantile: sigmoid(μ + σ·Φ⁻¹(p)) — exact closed form, O(1)
+  * Median: sigmoid(μ) — exact, O(1)
+  * Mean: E[sigmoid(X)] for X~N(μ,σ²) — 200-pt Simpson quadrature
+  * Variance: E[sigmoid(X)²] - E[sigmoid(X)]² — 200-pt Simpson
+  * Mode: 500-point grid scan (handles bimodal case for large σ where σ²>2)
+  * Entropy: H = 0.5·ln(2πeσ²) + E[X - 2·softplus(X)] — 200-pt Simpson
+  * Sample: X~N(μ,σ) via Box-Muller, Y=sigmoid(X)
+  * Key values (μ=0,σ=1): cdf(0.5)=0.5; pdf(0.5)=4/√(2π)≈1.596; mean=0.5; var≈0.0434
+  * Symmetry: pdf(y)=pdf(1-y) and cdf(y)+cdf(1-y)=1 for μ=0
+  * CRITICAL: variance(0,1)≈0.0434 (NOT 0.0862 as test-writer initially guessed)
+  * Uses local helpers: normalPdf, normalCdf, normalQuantile, sigmoidFn, softplus, logitFn
+  * Uses global erfInv (line 1970) via normalQuantile
+- **Tests**: 51 tests, all passing
+- **Distribution count**: 82 total (66 continuous + 16 discrete)
+- **Next Priority**: GeneralizedNormal or BetaPrimeType2 or Lindley variant
+
 **Session 676 Update (2026-06-13) — FEATURE MODE:**
 
 ✅ **GeneralizedExtremeValue Distribution** — 81st total, 65th continuous — commits cdc42a2, 9329537
