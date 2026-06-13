@@ -553,3 +553,5 @@
 {"timestamp":"2026-06-13T14:35:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NoncentralT(nu, delta) distribution with numerical integration CDF/PDF","project":"zuda"}
 {"timestamp":"2026-06-13T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for GeneralizedGamma(a, d, p) distribution","project":"zuda"}
 {"timestamp":"2026-06-13T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedGamma(a, d, p) distribution in distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-13T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 51 failing tests for ReciprocalInverseGaussian distribution","project":"zuda"}
+{"timestamp":"2026-06-13T00:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement ReciprocalInverseGaussian struct — 80th distribution, 64th continuous","project":"zuda"}

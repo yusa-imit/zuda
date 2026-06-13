@@ -45319,3 +45319,585 @@ test "NoncentralF(f32): cdf in [0, 1]" {
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
 
+// ============================================================================
+// Reciprocal Inverse Gaussian Distribution
+// ============================================================================
+// RIG(μ, λ): Y ~ RIG(μ, λ) ⟺ 1/Y ~ IG(μ, λ)
+// Support: (0, ∞)
+// PDF: f(y) = √(λ/(2πy)) × exp(-λ(1-μy)²/(2μ²y))
+// CDF: 1 - Φ(z₁) - exp(2λ/μ)·Φ(-z₂), z₁=√(λy)·(1/(μy)-1), z₂=√(λy)·(1/(μy)+1)
+// Mean: 1/μ + 1/λ
+// Variance: 1/(μλ) + 2/λ²
+// Mode: (-1 + √(1 + 4λ²/μ²)) / (2λ)
+// Key exact values: RIG(1,1): pdf(1)=1/√(2π)≈0.39894; mean=2; var=3; mode≈0.61803; CDF(1)≈0.332
+
+pub fn ReciprocalInverseGaussian(comptime T: type) type {
+    return struct {
+        mu: T,     // μ > 0
+        lambda: T, // λ > 0
+
+        const Self = @This();
+
+        // ---- Private helpers ----
+
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        // ---- Lifecycle ----
+
+        /// Create a Reciprocal Inverse Gaussian distribution with parameters μ > 0, λ > 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, lambda: T) DistributionError!Self {
+            if (mu <= 0.0) return error.InvalidParameter;
+            if (lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .mu = mu, .lambda = lambda };
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.mu <= 0.0) return error.InvalidParameter;
+            if (self.lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.mu) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Validate a value is in the support of the distribution (y > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, y: T) DistributionError!void {
+            _ = self;
+            if (y <= 0.0) return error.OutOfDomain;
+        }
+
+        // ---- PDF / LogPDF ----
+
+        /// Log probability density function at y
+        ///
+        /// log f(y) = (1/2)ln(λ) - (1/2)ln(2π) - (1/2)ln(y) - λ(1-μy)²/(2μ²y)
+        ///          = (1/2)ln(λ) - (1/2)ln(2π) - (1/2)ln(y) - λ/(2μ²y) + λ/μ - λy/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, y: T) T {
+            if (y <= 0.0) return -math.inf(T);
+            const arg = 1.0 - self.mu * y;
+            return 0.5 * (@log(self.lambda) - @log(2.0 * math.pi)) -
+                0.5 * @log(y) -
+                self.lambda * arg * arg / (2.0 * self.mu * self.mu * y);
+        }
+
+        /// Probability density function (PDF) at y
+        ///
+        /// f(y) = √(λ/(2πy)) · exp(-λ(1-μy)²/(2μ²y))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, y: T) T {
+            if (y <= 0.0) return 0.0;
+            return @exp(self.logpdf(y));
+        }
+
+        // ---- CDF / SF ----
+
+        /// Cumulative distribution function (CDF) at y
+        ///
+        /// CDF(y) = 1 - Φ(z₁) - exp(2λ/μ)·Φ(-z₂)
+        /// where z₁ = √(λy)·(1/(μy) - 1), z₂ = √(λy)·(1/(μy) + 1)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, y: T) T {
+            if (y <= 0.0) return 0.0;
+            const sq = @sqrt(self.lambda * y);
+            const inv_muy = 1.0 / (self.mu * y);
+            const z1 = sq * (inv_muy - 1.0);
+            const z2 = sq * (inv_muy + 1.0);
+            const term1 = normalCdf(z1);
+            const log_exp = 2.0 * self.lambda / self.mu;
+            if (log_exp < 500.0) {
+                return 1.0 - term1 - @exp(log_exp) * normalCdf(-z2);
+            }
+            const log_phi = @log(normalCdf(-z2));
+            if (!math.isFinite(log_phi)) return 1.0 - term1;
+            return 1.0 - term1 - @exp(log_exp + log_phi);
+        }
+
+        /// Survival function: P(Y > y) = 1 - CDF(y)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn sf(self: Self, y: T) T {
+            return 1.0 - self.cdf(y);
+        }
+
+        // ---- Quantile ----
+
+        /// Quantile function (inverse CDF): returns y such that P(Y ≤ y) = p
+        ///
+        /// Uses bisection search. Returns error.InvalidProbability for p < 0 or p > 1.
+        ///
+        /// Time: O(100 × O(cdf)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            const mean_val = self.mean();
+            const var_val = self.variance();
+            const std_dev = @sqrt(var_val);
+            var lo: T = 0.0;
+            var hi: T = mean_val + 5.0 * std_dev;
+            while (self.cdf(hi) < p) hi *= 2.0;
+
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-12 * (1.0 + mid)) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // ---- Moments ----
+
+        /// Mean: E[Y] = 1/μ + 1/λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return 1.0 / self.mu + 1.0 / self.lambda;
+        }
+
+        /// Variance: Var[Y] = 1/(μλ) + 2/λ²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return 1.0 / (self.mu * self.lambda) + 2.0 / (self.lambda * self.lambda);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// mode = (-1 + √(1 + 4λ²/μ²)) / (2λ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const ratio = self.lambda / self.mu;
+            return (-1.0 + @sqrt(1.0 + 4.0 * ratio * ratio)) / (2.0 * self.lambda);
+        }
+
+        /// Entropy via numerical Simpson integration
+        ///
+        /// Integrates -∫f(y)·ln(f(y))dy over (0, ∞) using Simpson's rule.
+        ///
+        /// Time: O(1000) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const mean_val = self.mean();
+            const var_val = self.variance();
+            const std_dev = @sqrt(var_val);
+
+            // Adaptive upper bound: start at mean + 5*std_dev, double while tail is significant
+            var upper = mean_val + 5.0 * std_dev;
+            while (self.pdf(upper) * upper > 1e-12) {
+                upper *= 2.0;
+            }
+
+            // Simpson integration with 1000 points
+            const n: usize = 1000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const y = @as(T, @floatFromInt(i)) * h;
+                if (y <= 0.0) continue;
+                const f = self.pdf(y);
+                if (f > 0.0) {
+                    const integrand = f * @log(f);
+                    const coeff: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                    sum += coeff * integrand;
+                }
+            }
+            return -h / 3.0 * sum;
+        }
+
+        // ---- Sampling ----
+
+        /// Generate a random sample using inverse transform of IG sample
+        ///
+        /// Generates X ~ IG(μ, λ) via Michael-Schucany-Haas, returns 1/X
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Step 1: z ~ N(0,1) via Box-Muller
+            const ur1 = rng.float(T);
+            const ur2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
+
+            // Step 2: y = z²
+            const y = z * z;
+
+            // Step 3: compute intermediate values for IG sample
+            const a = self.mu / (2.0 * self.lambda);
+            const x_term = self.mu + a * self.mu * y;
+            const sqrt_term = @sqrt(self.mu * y * (4.0 * self.lambda + self.mu * y));
+            const x = x_term - a * sqrt_term;
+
+            // Step 4: acceptance-rejection for IG(mu, lambda)
+            const u = rng.float(T);
+            const ig_sample = if (u <= self.mu / (self.mu + x)) x else self.mu * self.mu / x;
+
+            // Return reciprocal
+            return 1.0 / ig_sample;
+        }
+    };
+}
+
+test "ReciprocalInverseGaussian: init with valid mu=1, lambda=1" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectEqual(1.0, dist.mu);
+    try testing.expectEqual(1.0, dist.lambda);
+}
+
+test "ReciprocalInverseGaussian: init with mu=2, lambda=4" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    try testing.expectEqual(2.0, dist.mu);
+    try testing.expectEqual(4.0, dist.lambda);
+}
+
+test "ReciprocalInverseGaussian: init with large mu=10, lambda=5" {
+    const dist = try ReciprocalInverseGaussian(f64).init(10.0, 5.0);
+    try testing.expectEqual(10.0, dist.mu);
+    try testing.expectEqual(5.0, dist.lambda);
+}
+
+test "ReciprocalInverseGaussian: init with small mu=0.1, lambda=0.2" {
+    const dist = try ReciprocalInverseGaussian(f64).init(0.1, 0.2);
+    try testing.expectEqual(0.1, dist.mu);
+    try testing.expectEqual(0.2, dist.lambda);
+}
+
+test "ReciprocalInverseGaussian: init with mu=0 returns error" {
+    const result = ReciprocalInverseGaussian(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ReciprocalInverseGaussian: init with mu<0 returns error" {
+    const result = ReciprocalInverseGaussian(f64).init(-1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ReciprocalInverseGaussian: init with lambda=0 returns error" {
+    const result = ReciprocalInverseGaussian(f64).init(1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ReciprocalInverseGaussian: init with lambda<0 returns error" {
+    const result = ReciprocalInverseGaussian(f64).init(1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ReciprocalInverseGaussian: init with mu=NaN returns error" {
+    const result = ReciprocalInverseGaussian(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ReciprocalInverseGaussian: init with lambda=Inf returns error" {
+    const result = ReciprocalInverseGaussian(f64).init(1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ReciprocalInverseGaussian: validate passes for valid params (1, 1)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "ReciprocalInverseGaussian: validate passes for valid params (2, 4)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    try dist.validate();
+}
+
+test "ReciprocalInverseGaussian: validateValue passes for y>0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try dist.validateValue(0.5);
+    try dist.validateValue(1.0);
+    try dist.validateValue(10.0);
+}
+
+test "ReciprocalInverseGaussian: validateValue fails for y=0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(0.0));
+}
+
+test "ReciprocalInverseGaussian: validateValue fails for y<0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectError(error.OutOfDomain, dist.validateValue(-1.0));
+}
+
+test "ReciprocalInverseGaussian: pdf at y=0 is 0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(0.0), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: pdf at y<0 is 0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(-1.0), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: pdf exact value at y=1 for (1,1)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-5);
+}
+
+test "ReciprocalInverseGaussian: pdf is positive for y>0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const ys = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (ys) |y| {
+        try testing.expect(dist.pdf(y) > 0.0);
+    }
+}
+
+test "ReciprocalInverseGaussian: pdf is finite for y>0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.5, 2.0);
+    const ys = [_]f64{ 0.01, 0.1, 1.0, 10.0, 100.0 };
+    for (ys) |y| {
+        try testing.expect(math.isFinite(dist.pdf(y)));
+    }
+}
+
+test "ReciprocalInverseGaussian: logpdf at y<=0 is -inf" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "ReciprocalInverseGaussian: logpdf consistency with pdf" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const ys = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (ys) |y| {
+        const logp = dist.logpdf(y);
+        const p = dist.pdf(y);
+        if (p > 0.0) {
+            try testing.expectApproxEqAbs(@log(p), logp, 1e-8);
+        }
+    }
+}
+
+test "ReciprocalInverseGaussian: logpdf is finite for y>0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 3.0);
+    const ys = [_]f64{ 0.1, 1.0, 10.0 };
+    for (ys) |y| {
+        try testing.expect(math.isFinite(dist.logpdf(y)));
+    }
+}
+
+test "ReciprocalInverseGaussian: cdf at y=0 is 0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(0.0), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: cdf at large y approaches 1" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expect(dist.cdf(50.0) > 0.99);
+}
+
+test "ReciprocalInverseGaussian: cdf exact value at y=1 for (1,1)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.332, c, 0.01);
+}
+
+test "ReciprocalInverseGaussian: cdf is monotone increasing" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.5, 2.0);
+    const ys = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    var prev = dist.cdf(ys[0]);
+    for (ys[1..]) |y| {
+        const curr = dist.cdf(y);
+        try testing.expect(curr >= prev);
+        prev = curr;
+    }
+}
+
+test "ReciprocalInverseGaussian: cdf in [0, 1]" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const ys = [_]f64{ 0.01, 0.1, 1.0, 5.0, 20.0 };
+    for (ys) |y| {
+        const c = dist.cdf(y);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "ReciprocalInverseGaussian: cdf + sf = 1" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const ys = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (ys) |y| {
+        try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(y) + dist.sf(y), 1e-10);
+    }
+}
+
+test "ReciprocalInverseGaussian: sf cdf+sf=1 (multiple params)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    const ys = [_]f64{ 0.1, 0.5, 1.0 };
+    for (ys) |y| {
+        try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(y) + dist.sf(y), 1e-10);
+    }
+}
+
+test "ReciprocalInverseGaussian: quantile boundary p=0 returns 0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), q, 1e-10);
+}
+
+test "ReciprocalInverseGaussian: quantile boundary p=1 returns +inf" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isInf(q));
+}
+
+test "ReciprocalInverseGaussian: quantile invalid p<0" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ReciprocalInverseGaussian: quantile invalid p>1" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ReciprocalInverseGaussian: quantile invalid p=NaN" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "ReciprocalInverseGaussian: quantile roundtrip cdf(quantile(p))≈p" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const q = try dist.quantile(p);
+        const p_check = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, p_check, 1e-3);
+    }
+}
+
+test "ReciprocalInverseGaussian: mean exact value for (1,1)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: mean exact value for (2,4)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    const expected = 0.75;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: mean exact value for (1,2)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 2.0);
+    const expected = 1.5;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: variance exact value for (1,1)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const expected = 3.0;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: variance exact value for (2,4)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    const expected = 0.25;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: variance exact value for (1,2)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 2.0);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-10);
+}
+
+test "ReciprocalInverseGaussian: mode exact value for (1,1)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const expected = (-1.0 + @sqrt(5.0)) / 2.0;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-5);
+}
+
+test "ReciprocalInverseGaussian: mode exact value for (2,4)" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    const expected = (-1.0 + @sqrt(17.0)) / 8.0;
+    try testing.expectApproxEqRel(expected, dist.mode(), 1e-5);
+}
+
+test "ReciprocalInverseGaussian: mode is positive" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.5, 2.0);
+    const m = dist.mode();
+    try testing.expect(m > 0.0);
+    try testing.expect(math.isFinite(m));
+}
+
+test "ReciprocalInverseGaussian: entropy is positive" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "ReciprocalInverseGaussian: entropy is finite" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 4.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "ReciprocalInverseGaussian: sample is positive" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "ReciprocalInverseGaussian: sample is finite" {
+    const dist = try ReciprocalInverseGaussian(f64).init(2.0, 3.0);
+    var rng = std.Random.DefaultPrng.init(99999);
+    for (0..50) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "ReciprocalInverseGaussian: sample mean convergence" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqRel(2.0, empirical, 0.05);
+}
+
+test "ReciprocalInverseGaussian: pdf derivative matches finite-difference CDF" {
+    const dist = try ReciprocalInverseGaussian(f64).init(1.0, 1.0);
+    const y = 1.5;
+    const h = 1e-5;
+    const fd = (dist.cdf(y + h) - dist.cdf(y - h)) / (2.0 * h);
+    try testing.expectApproxEqAbs(dist.pdf(y), fd, 1e-3);
+}
+
+test "ReciprocalInverseGaussian(f32): init and pdf" {
+    const dist = try ReciprocalInverseGaussian(f32).init(1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "ReciprocalInverseGaussian(f32): cdf in [0, 1]" {
+    const dist = try ReciprocalInverseGaussian(f32).init(1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
