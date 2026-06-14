@@ -1,3 +1,26 @@
+**Session 681 Update (2026-06-14) — FEATURE MODE:**
+
+✅ **ExponentialModifiedGaussian Distribution** — 85th total, 69th continuous — commit 32b470b
+- **Mode**: FEATURE MODE (counter: 681)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ExponentialModifiedGaussian(μ, σ, λ) — X = Normal(μ,σ²) + Exponential(λ)
+  * Parameters: μ ∈ ℝ (Normal mean), σ > 0 (Normal std), λ > 0 (Exp rate)
+  * Support: (-∞, +∞) — right-skewed
+  * PDF: f(x) = λ·exp(λ(μ+λσ²/2−x))·Φ((x−μ−λσ²)/σ) — O(1)
+  * logPDF: ln(λ) + λ(μ+λσ²/2−x) + ln(Φ((x−μ−λσ²)/σ)) — O(1)
+  * CDF: Φ((x−μ)/σ) − exp(λ(μ+λσ²/2−x))·Φ((x−μ−λσ²)/σ) — O(1)
+  * Mean: μ + 1/λ (exact) — O(1)
+  * Variance: σ² + 1/λ² (exact) — O(1)
+  * Mode: μ + λσ² + σ·z* where φ(z*)/Φ(z*) = λσ (inverse Mills ratio, bisection) — O(1)
+  * Entropy: 200-point Simpson quadrature — O(N)
+  * Quantile: bisection with dynamic bracket expansion, tol 1e-10, 100 iter — O(log(1/tol))
+  * Sample: Y + Z where Y~N(μ,σ) via Box-Muller, Z~Exp(λ) via −ln(U)/λ
+  * Key values (μ=0,σ=1,λ=1): mean=1, var=2; pdf(0)≈0.26157; cdf(1)≈0.53808
+  * Applications: cognitive science (reaction times), chromatography, finance
+- **Tests**: 44 tests passing
+- **Distribution count**: 85 total (69 continuous + 16 discrete)
+- **Next Priority**: HyperbolicSecant, NoncentralBeta, or ExponentialPower
+
 **Session 678 Update (2026-06-14) — FEATURE MODE:**
 
 ✅ **GeneralizedNormal Distribution** — 83rd total, 67th continuous — commit 2329b39
