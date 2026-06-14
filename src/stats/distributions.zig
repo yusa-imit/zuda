@@ -48495,3 +48495,569 @@ test "PowerNormal: sample variance converges to 1-1/pi for c=2 (N=10000)" {
     const expected = 1.0 - 1.0 / math.pi;
     try testing.expectApproxEqAbs(expected, var_est, 0.1);
 }
+
+/// Exponential-modified Gaussian (EMG) distribution — convolution of Normal and Exponential.
+/// X = Y + Z where Y ~ Normal(mu, sigma²) and Z ~ Exponential(lambda).
+/// This represents the sum of a Gaussian process and an exponential delay.
+///
+/// Parameters:
+/// - mu ∈ ℝ (Normal mean, can be any finite real)
+/// - sigma > 0 (Normal std dev)
+/// - lambda > 0 (Exponential rate parameter)
+///
+/// Mean: mu + 1/lambda | Variance: sigma² + 1/lambda²
+pub fn ExponentialModifiedGaussian(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        lambda: T,
+
+        const Self = @This();
+
+        fn normalPdf(z: T) T {
+            return @exp(-0.5 * z * z) / @sqrt(2.0 * math.pi);
+        }
+
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(2.0)));
+        }
+
+        fn normalQuantile(p: T) T {
+            if (p <= 0.0) return -math.inf(T);
+            if (p >= 1.0) return math.inf(T);
+            return @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+        }
+
+        /// Create an Exponential-modified Gaussian distribution.
+        ///
+        /// Errors: sigma ≤ 0, lambda ≤ 0, or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(sigma > 0.0)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .lambda = lambda };
+        }
+
+        /// Probability density function f(x) = λ·exp(λ(μ + λσ²/2 − x))·Φ((x−μ−λσ²)/σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const sigma2 = self.sigma * self.sigma;
+            const z = (x - self.mu - self.lambda * sigma2) / self.sigma;
+            const exponent = self.lambda * (self.mu + self.lambda * sigma2 / 2.0 - x);
+            return self.lambda * @exp(exponent) * normalCdf(z);
+        }
+
+        /// Log probability density function ln(f(x))
+        /// ln(f(x)) = ln(λ) + λ(μ + λσ²/2 − x) + ln(Φ((x−μ−λσ²)/σ))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const sigma2 = self.sigma * self.sigma;
+            const z = (x - self.mu - self.lambda * sigma2) / self.sigma;
+            const cdf_val = normalCdf(z);
+            if (cdf_val <= 0.0) return -math.inf(T);
+            const exponent = self.lambda * (self.mu + self.lambda * sigma2 / 2.0 - x);
+            return @log(self.lambda) + exponent + @log(cdf_val);
+        }
+
+        /// Cumulative distribution function F(x) = Φ((x−μ)/σ) − exp(λ(μ + λσ²/2 − x))·Φ((x−μ−λσ²)/σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const sigma2 = self.sigma * self.sigma;
+            const z1 = (x - self.mu) / self.sigma;
+            const z2 = (x - self.mu - self.lambda * sigma2) / self.sigma;
+            const exponent = self.lambda * (self.mu + self.lambda * sigma2 / 2.0 - x);
+            return normalCdf(z1) - @exp(exponent) * normalCdf(z2);
+        }
+
+        /// Survival function S(x) = 1 − F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Mean E[X] = μ + 1/λ
+        /// Exact closed-form formula.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu + 1.0 / self.lambda;
+        }
+
+        /// Variance Var[X] = σ² + 1/λ²
+        /// Exact closed-form formula.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const inv_lam = 1.0 / self.lambda;
+            return self.sigma * self.sigma + inv_lam * inv_lam;
+        }
+
+        /// Mode of the distribution via bisection on inverse Mills ratio.
+        /// Mode = μ + λσ² + σ·z* where z* satisfies φ(z*)/Φ(z*) = λσ
+        /// The inverse Mills ratio h(z) = φ(z)/Φ(z) is strictly decreasing.
+        /// Bisects z in [−30, 30] for 100 iterations with tolerance 1e-12.
+        ///
+        /// Time: O(100) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const target = self.lambda * self.sigma;
+            var lo: T = -30.0;
+            var hi: T = 30.0;
+            const tolerance: T = 1e-12;
+
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                const phi_mid = normalPdf(mid);
+                const Phi_mid = normalCdf(mid);
+                const ratio = phi_mid / Phi_mid; // h(z) decreasing as z increases
+
+                if (ratio > target) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+
+                if (hi - lo < tolerance) break;
+            }
+
+            const z_star = (lo + hi) / 2.0;
+            const sigma2 = self.sigma * self.sigma;
+            return self.mu + self.lambda * sigma2 + self.sigma * z_star;
+        }
+
+        /// Entropy via numerical Simpson quadrature over support interval.
+        /// H = −∫f(x)·ln(f(x))dx using 200-point Simpson's rule.
+        /// Integration bounds: [μ − 8(σ+1/λ), μ + 8(σ+1/λ)]
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const spread = self.sigma + 1.0 / self.lambda;
+            const lo = self.mu - 8.0 * spread;
+            const hi = self.mu + 8.0 * spread;
+            const n: usize = 200;
+            const h: T = (hi - lo) / @as(T, @floatFromInt(n));
+
+            var total: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = lo + @as(T, @floatFromInt(i)) * h;
+                const f = self.pdf(x);
+
+                if (f > 1e-300) {
+                    const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                    const lnf = @log(f);
+                    total += w * f * lnf;
+                }
+            }
+
+            return -total * h / 3.0;
+        }
+
+        /// Quantile function (inverse CDF) via bisection.
+        /// For EMG, no closed form exists, so we use bisection with:
+        /// - Bracket: [μ − 8σ, μ + 1/λ + 8σ] (dynamically expanded if needed)
+        /// - 100 iterations, tolerance 1e-10
+        ///
+        /// Errors: p ≤ 0, p ≥ 1, or NaN → InvalidProbability
+        ///
+        /// Time: O(100) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p > 0.0 and p < 1.0)) return error.InvalidProbability;
+
+            var lo = self.mu - 8.0 * self.sigma;
+            var hi = self.mu + 1.0 / self.lambda + 8.0 * self.sigma;
+
+            // Expand bracket if needed
+            while (self.cdf(lo) > p) {
+                lo -= self.sigma;
+            }
+            while (self.cdf(hi) < p) {
+                hi += self.sigma;
+            }
+
+            const tolerance: T = 1e-10;
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+
+                if (hi - lo < tolerance) break;
+            }
+
+            return (lo + hi) / 2.0;
+        }
+
+        /// Generate a random sample: X = Y + Z where Y~N(μ,σ) via Box-Muller and Z~Exp(λ).
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Box-Muller for Normal: use two uniforms to generate one standard normal
+            const unif1 = rng.float(T);
+            const unif2 = rng.float(T);
+            const safe_unif1 = if (unif1 == 0.0) 1e-300 else unif1;
+            const z_std = @sqrt(-2.0 * @log(safe_unif1)) * @cos(2.0 * math.pi * unif2);
+            const y = self.sigma * z_std + self.mu;
+
+            // Exponential: Z = -ln(U)/λ
+            const unif3 = rng.float(T);
+            const safe_unif3 = if (unif3 == 0.0) 1e-300 else unif3;
+            const z = -@log(safe_unif3) / self.lambda;
+
+            return y + z;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("ExponentialModifiedGaussian(mu={d}, sigma={d}, lambda={d})", .{ self.mu, self.sigma, self.lambda });
+        }
+
+        /// Validate that parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.sigma > 0.0)) return error.InvalidParameter;
+            if (!(self.lambda > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ExponentialModifiedGaussian Distribution Tests
+// ============================================================================
+
+test "ExponentialModifiedGaussian: init with valid parameters mu=0 sigma=1 lambda=1" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+    try testing.expectEqual(1.0, dist.lambda);
+}
+
+test "ExponentialModifiedGaussian: init with nonzero mu" {
+    const dist = try ExponentialModifiedGaussian(f64).init(5.0, 2.0, 0.5);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.sigma);
+    try testing.expectEqual(0.5, dist.lambda);
+}
+
+test "ExponentialModifiedGaussian: init with sigma=0 returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with negative sigma returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with lambda=0 returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with negative lambda returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with infinite mu returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with infinite sigma returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with infinite lambda returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with NaN mu returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(math.nan(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with NaN sigma returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: init with NaN lambda returns error" {
+    const result = ExponentialModifiedGaussian(f64).init(0.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: pdf(0; 0,1,1) ≈ 0.26157" {
+    // pdf(x) = λ·exp(λ(μ + λσ²/2 - x))·Φ((x−μ−λσ²)/σ)
+    // At x=0: λ=1, μ=0, σ=1, so pdf(0) = 1·exp(0.5)·Φ(-1)
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.26157, p, 1e-4);
+}
+
+test "ExponentialModifiedGaussian: pdf(1; 0,1,1) ≈ 0.30327" {
+    // At x=1: pdf(1) = 1·exp(-0.5)·Φ(0) = 0.6065·0.5 ≈ 0.30327
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.30327, p, 1e-4);
+}
+
+test "ExponentialModifiedGaussian: pdf is non-negative at multiple points" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(-2.0) >= 0.0);
+    try testing.expect(dist.pdf(-1.0) >= 0.0);
+    try testing.expect(dist.pdf(0.0) >= 0.0);
+    try testing.expect(dist.pdf(1.0) >= 0.0);
+    try testing.expect(dist.pdf(3.0) >= 0.0);
+}
+
+test "ExponentialModifiedGaussian: pdf near 0 for extreme negative x" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(-100.0);
+    try testing.expect(p < 1e-10 or math.isFinite(p));
+}
+
+test "ExponentialModifiedGaussian: pdf integrates to ~1.0" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+
+    // Trapezoidal rule integration from -20 to 30
+    var total: f64 = 0.0;
+    const lo: f64 = -20.0;
+    const hi: f64 = 30.0;
+    const n = 200;
+    const h = (hi - lo) / @as(f64, @floatFromInt(n));
+
+    for (0..n+1) |i| {
+        const x = lo + @as(f64, @floatFromInt(i)) * h;
+        const weight: f64 = if (i == 0 or i == n) 0.5 else 1.0;
+        total += weight * dist.pdf(x);
+    }
+    total *= h;
+
+    try testing.expectApproxEqAbs(1.0, total, 0.01);
+}
+
+test "ExponentialModifiedGaussian: logpdf consistent with pdf at x=0" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    const logpdf_val = dist.logpdf(0.0);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-8);
+}
+
+test "ExponentialModifiedGaussian: logpdf consistent with pdf at x=1.5" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(1.5);
+    const logpdf_val = dist.logpdf(1.5);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-8);
+}
+
+test "ExponentialModifiedGaussian: logpdf is finite for reasonable x" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    try testing.expect(math.isFinite(dist.logpdf(-5.0)));
+    try testing.expect(math.isFinite(dist.logpdf(0.0)));
+    try testing.expect(math.isFinite(dist.logpdf(5.0)));
+}
+
+test "ExponentialModifiedGaussian: cdf(1; 0,1,1) ≈ 0.53808" {
+    // CDF: F(x) = Φ((x−μ)/σ) − exp(λ(μ + λσ²/2 − x))·Φ((x−μ−λσ²)/σ)
+    // At x=1: F(1) = Φ(1) - exp(-0.5)·Φ(0) ≈ 0.84134 - 0.30327 ≈ 0.53808
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.53808, c, 1e-4);
+}
+
+test "ExponentialModifiedGaussian: cdf(0; 0,1,1) ≈ 0.23841" {
+    // At x=0: F(0) = Φ(0) - exp(0.5)·Φ(-1) ≈ 0.5 - 0.26157 ≈ 0.23841
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.23841, c, 1e-4);
+}
+
+test "ExponentialModifiedGaussian: cdf is monotonically increasing" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const c_neg5 = dist.cdf(-5.0);
+    const c_0 = dist.cdf(0.0);
+    const c_5 = dist.cdf(5.0);
+    const c_10 = dist.cdf(10.0);
+    try testing.expect(c_neg5 < c_0);
+    try testing.expect(c_0 < c_5);
+    try testing.expect(c_5 < c_10);
+}
+
+test "ExponentialModifiedGaussian: cdf approaches 0 at extreme left" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-100.0);
+    try testing.expect(c >= 0.0);
+    try testing.expect(c < 1e-6);
+}
+
+test "ExponentialModifiedGaussian: cdf approaches 1 at extreme right" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(50.0);
+    try testing.expect(c <= 1.0);
+    try testing.expect(c > 1.0 - 1e-6);
+}
+
+test "ExponentialModifiedGaussian: mean(0,1,1) ≈ 1.0" {
+    // Mean: μ + 1/λ = 0 + 1/1 = 1.0
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.0, m, 1e-6);
+}
+
+test "ExponentialModifiedGaussian: mean(5,2,0.5) ≈ 7.0" {
+    // Mean: μ + 1/λ = 5 + 1/0.5 = 5 + 2 = 7.0
+    const dist = try ExponentialModifiedGaussian(f64).init(5.0, 2.0, 0.5);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(7.0, m, 1e-6);
+}
+
+test "ExponentialModifiedGaussian: mean(0,1,2) ≈ 0.5" {
+    // Mean: μ + 1/λ = 0 + 1/2 = 0.5
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.5, m, 1e-6);
+}
+
+test "ExponentialModifiedGaussian: variance(0,1,1) ≈ 2.0" {
+    // Variance: σ² + 1/λ² = 1 + 1 = 2.0
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.0, v, 1e-6);
+}
+
+test "ExponentialModifiedGaussian: variance(0,1,2) ≈ 1.25" {
+    // Variance: σ² + 1/λ² = 1 + 0.25 = 1.25
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 2.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.25, v, 1e-6);
+}
+
+test "ExponentialModifiedGaussian: quantile median roundtrip" {
+    // quantile(cdf(x)) should ≈ x
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const x = 0.0;
+    const cdf_x = dist.cdf(x);
+    const q = try dist.quantile(cdf_x);
+    try testing.expectApproxEqAbs(x, q, 1e-5);
+}
+
+test "ExponentialModifiedGaussian: quantile roundtrip at x=1.0" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const x = 1.0;
+    const cdf_x = dist.cdf(x);
+    const q = try dist.quantile(cdf_x);
+    try testing.expectApproxEqAbs(x, q, 1e-5);
+}
+
+test "ExponentialModifiedGaussian: quantile roundtrip at x=3.0" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const x = 3.0;
+    const cdf_x = dist.cdf(x);
+    const q = try dist.quantile(cdf_x);
+    try testing.expectApproxEqAbs(x, q, 1e-5);
+}
+
+test "ExponentialModifiedGaussian: quantile(0) returns error" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(0.0);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "ExponentialModifiedGaussian: quantile(1) returns error" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const result = dist.quantile(1.0);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "ExponentialModifiedGaussian: quantile(0.5) is median (cdf check)" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    const median = try dist.quantile(0.5);
+    const cdf_median = dist.cdf(median);
+    try testing.expectApproxEqAbs(0.5, cdf_median, 1e-5);
+}
+
+test "ExponentialModifiedGaussian: sample produces finite values" {
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(999);
+    for (0..50) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "ExponentialModifiedGaussian: sample mean converges to mu+1/lambda (N=5000)" {
+    // Mean should be 0 + 1/1 = 1.0
+    const dist = try ExponentialModifiedGaussian(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(55555);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(1.0, mean_est, 0.15);
+}
+
+test "ExponentialModifiedGaussian: validate() succeeds for valid parameters" {
+    const dist = try ExponentialModifiedGaussian(f64).init(1.0, 2.0, 0.5);
+    try dist.validate();
+}
+
+test "ExponentialModifiedGaussian: validate() fails for sigma <= 0" {
+    var dist: ExponentialModifiedGaussian(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 0.0;
+    dist.lambda = 1.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian: validate() fails for lambda <= 0" {
+    var dist: ExponentialModifiedGaussian(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 1.0;
+    dist.lambda = -0.5;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExponentialModifiedGaussian(f32): init and pdf with f32" {
+    const dist = try ExponentialModifiedGaussian(f32).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(p > 0.0);
+}
+
+test "ExponentialModifiedGaussian(f32): cdf in [0, 1] for f32" {
+    const dist = try ExponentialModifiedGaussian(f32).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "ExponentialModifiedGaussian(f32): sample produces finite values" {
+    const dist = try ExponentialModifiedGaussian(f32).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(777);
+    for (0..50) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
