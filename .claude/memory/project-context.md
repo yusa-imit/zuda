@@ -1,3 +1,24 @@
+**Session 683 Update (2026-06-15) — FEATURE MODE:**
+
+✅ **NoncentralBeta Distribution** — 87th total, 71st continuous — commit 3f08a28
+- **Mode**: FEATURE MODE (counter: 683)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: NoncentralBeta(α, β, λ) — Poisson mixture of central Beta distributions
+  * Parameters: α > 0 (shape 1), β > 0 (shape 2), λ ≥ 0 (noncentrality; λ=0 → Beta(α, β))
+  * Support: [0, 1]
+  * PDF: Σ_{j=0}^{MAX} w_j · beta_pdf(x; α+j, β) where w_j = Poisson(λ/2) weights — O(MAX_POISSON_TERMS)
+  * CDF: Σ_j w_j · I_x(α+j, β) (regularizedBetaI) — O(MAX_POISSON_TERMS)
+  * Mean: Σ_j w_j · (α+j)/(α+β+j) — exact via mixture sum
+  * Variance: E[X²]-mean² where E[X²]=Σ_j w_j·(α+j)(α+j+1)/((α+β+j)(α+β+j+1))
+  * Sample: J ~ Poisson(λ/2) via poissonKnuth; Gamma(α+J,1)/(Gamma(α+J,1)+Gamma(β,1))
+  * MAX_POISSON_TERMS = 250; private betaPdfAt helper with log-space computation
+  * Key exact values:
+    - NoncentralBeta(1,1,2): PDF(0.5)≈0.90980; CDF(0.5)≈0.30327; Mean≈0.63212
+    - NoncentralBeta(2,3,0)=Beta(2,3): CDF(0.5)=0.6875; Mean=0.4; Var=0.04
+- **Tests**: 60 tests passing
+- **Distribution count**: 87 total (71 continuous + 16 discrete)
+- **Next Priority**: KolmogorovSmirnov or SinhNormal or ExponentialPower variants
+
 **Session 682 Update (2026-06-14) — FEATURE MODE:**
 
 ✅ **HyperbolicSecant Distribution** — 86th total, 70th continuous — commit 2f0bb5a
