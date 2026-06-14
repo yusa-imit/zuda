@@ -1,3 +1,27 @@
+**Session 682 Update (2026-06-14) — FEATURE MODE:**
+
+✅ **HyperbolicSecant Distribution** — 86th total, 70th continuous — commit 2f0bb5a
+- **Mode**: FEATURE MODE (counter: 682)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: HyperbolicSecant(μ, σ) — symmetric leptokurtic distribution
+  * Parameters: μ ∈ ℝ (location), σ > 0 (scale = standard deviation)
+  * Support: (−∞, +∞)
+  * PDF: (1/(2σ))·sech(π(x-μ)/(2σ)) = 1/(2σ·cosh(π(x-μ)/(2σ))) — O(1)
+  * logPDF: −ln(2σ) − ln(cosh(π(x-μ)/(2σ))) — O(1)
+  * CDF: (2/π)·arctan(exp(π(x-μ)/(2σ))) — O(1)
+  * Quantile: μ + (2σ/π)·ln(tan(πp/2)) — exact closed form — O(1)
+  * Mean: μ (exact) — O(1)
+  * Variance: σ² (exact; from MGF M(t)=sec(σt)·exp(μt)) — O(1)
+  * Mode: μ — O(1)
+  * Entropy: ≈ ln(4σ) via 200-point Simpson quadrature — O(200)
+  * Sample: exact inverse CDF X = μ + (2σ/π)·ln(tan(πU/2)) — O(1)
+  * Key values (μ=0,σ=1): pdf(0)=0.5; cdf(0)=0.5; quantile(0.5)=0; entropy≈1.3863=ln(4)
+  * Characteristic function: φ(t)=sech(σt)·exp(iμt); excess kurtosis=2
+  * Applications: financial returns modeling, Bayesian statistics, random matrix theory
+- **Tests**: 34 HyperbolicSecant tests + 4180 total tests passing
+- **Distribution count**: 86 total (70 continuous + 16 discrete)
+- **Next Priority**: NoncentralBeta or Kolmogorov-Smirnov or ExponentialPower (already done as GeneralizedNormal)
+
 **Session 681 Update (2026-06-14) — FEATURE MODE:**
 
 ✅ **ExponentialModifiedGaussian Distribution** — 85th total, 69th continuous — commit 32b470b
