@@ -477,30 +477,12 @@ pub fn Gamma(comptime T: type) type {
                     }
                 }
             } else {
-                // Ahrens-Dieter acceptance-rejection for α < 1
-                // Generate Gamma(α+1, β) then multiply by U^(1/α)
-                const e = math.e;
-                const alpha_plus_1 = self.shape + 1.0;
-
-                while (true) {
-                    const uniform1 = rng.float(T);
-                    const uniform2 = rng.float(T);
-                    const uniform3 = rng.float(T);
-
-                    if (uniform1 <= e / (e + alpha_plus_1)) {
-                        const xi = std.math.pow(T, (e + alpha_plus_1) * uniform2 / e, 1.0 / alpha_plus_1);
-                        if (uniform3 <= @exp(-xi)) {
-                            const gamma_sample = xi * std.math.pow(T, uniform1, 1.0 / self.shape);
-                            return gamma_sample / self.rate;
-                        }
-                    } else {
-                        const xi = -@log((e + alpha_plus_1) * (1.0 - uniform2) / (alpha_plus_1 * e));
-                        if (uniform3 <= std.math.pow(T, xi, alpha_plus_1 - 1.0)) {
-                            const gamma_sample = xi * std.math.pow(T, uniform1, 1.0 / self.shape);
-                            return gamma_sample / self.rate;
-                        }
-                    }
-                }
+                // Reduction for α < 1: if G ~ Gamma(α+1, β) and U ~ Uniform(0,1) independent,
+                // then G · U^(1/α) ~ Gamma(α, β).  (Ahrens & Dieter 1982, relation 4.1)
+                const shape_plus1 = Self{ .shape = self.shape + 1.0, .rate = self.rate };
+                const g = shape_plus1.sample(rng);
+                const u = rng.float(T);
+                return g * math.pow(T, u, 1.0 / self.shape);
             }
         }
 
@@ -47352,6 +47334,31 @@ test "LogitNormal(f32): cdf in [0, 1] for f32" {
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
 
+test "LogitNormal: sample variance converges to approx 0.0434 for (0,1) N=20000" {
+    // Var[LogitNormal(0,1)] ≈ 0.04341 (no closed form, numerical)
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(55555);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 20000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    const var_est = sum_sq / @as(f64, @floatFromInt(n)) - mean_est * mean_est;
+    try testing.expectApproxEqAbs(0.0434, var_est, 0.005);
+}
+
+test "LogitNormal: cdf(sigmoid(0.5); 0, 1) = 0.5" {
+    // By definition, median of LogitNormal(0,σ) is sigmoid(0) = 0.5
+    // More specific: cdf(0.5; 0, 1) = Phi((logit(0.5)-0)/1) = Phi(0) = 0.5
+    const dist = try LogitNormal(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
 // ============================================================================
 // GeneralizedNormal Distribution Tests
 // ============================================================================
@@ -47731,6 +47738,74 @@ test "GeneralizedNormal(f32): sample produces finite values" {
         const s = dist.sample(rng.random());
         try testing.expect(math.isFinite(s));
     }
+}
+
+test "GeneralizedNormal: cdf(0.5; 0, 1, 1) matches Laplace formula" {
+    // beta=1 → Laplace(0, 1): CDF(x>0) = 1 - 0.5*exp(-x)
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.cdf(0.5);
+    const laplace_cdf = 1.0 - 0.5 * @exp(-0.5);
+    try testing.expectApproxEqAbs(laplace_cdf, result, 1e-9);
+}
+
+test "GeneralizedNormal: cdf(1.0; 0, 1, 2) matches Phi(sqrt(2))" {
+    // beta=2 → Normal(0, 1/sqrt(2)): CDF(1.0) = Phi(1.0 * sqrt(2)) ≈ 0.9213503
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    const result = dist.cdf(1.0);
+    // Phi(sqrt(2)) = 0.5*(1 + erf(1)) ≈ 0.5 + 0.5*0.84270... = 0.92135
+    // Tolerance 1e-7: regularizedGammaP and erf use different algorithms with similar precision
+    const expected = 0.5 * (1.0 + erf(1.0));
+    try testing.expectApproxEqAbs(expected, result, 1e-7);
+}
+
+test "GeneralizedNormal: entropy(0, 1, 1) matches Laplace(0, 1) entropy = 1 + ln(2)" {
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.entropy();
+    const laplace_entropy = 1.0 + @log(2.0);
+    try testing.expectApproxEqAbs(laplace_entropy, result, 1e-10);
+}
+
+test "GeneralizedNormal: entropy(0, 1, 2) matches Normal(0, 1/sqrt(2)) entropy" {
+    // H[GN(0,1,2)] = 0.5 + 0.5*ln(pi)
+    // H[N(0, 1/sqrt(2))] = 0.5*ln(2*pi*e*(0.5)) = 0.5*(1 + ln(pi)) = 0.5 + 0.5*ln(pi)
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    const result = dist.entropy();
+    const expected = 0.5 + 0.5 * @log(math.pi);
+    try testing.expectApproxEqAbs(expected, result, 1e-10);
+}
+
+test "GeneralizedNormal: sample variance converges to 2 for beta=1 (Laplace, N=20000)" {
+    // Var[GN(0, 1, 1)] = alpha^2 * Gamma(3)/Gamma(1) = 1^2 * 2/1 = 2
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(11111);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 20000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    const var_est = sum_sq / @as(f64, @floatFromInt(n)) - mean_est * mean_est;
+    try testing.expectApproxEqAbs(2.0, var_est, 0.1);
+}
+
+test "GeneralizedNormal: sample variance converges to 0.5 for beta=2 (Gaussian, N=20000)" {
+    // Var[GN(0, 1, 2)] = alpha^2 * Gamma(1.5)/Gamma(0.5) = 1 * (sqrt(pi)/2)/sqrt(pi) = 0.5
+    const dist = try GeneralizedNormal(f64).init(0.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(22222);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 20000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    const var_est = sum_sq / @as(f64, @floatFromInt(n)) - mean_est * mean_est;
+    try testing.expectApproxEqAbs(0.5, var_est, 0.05);
 }
 
 /// PowerNormal distribution: f(x) = (c/σ) · Φ((x−μ)/σ)^{c−1} · φ((x−μ)/σ)
@@ -48367,4 +48442,56 @@ test "PowerNormal(f32): sample produces finite values" {
         const s = dist.sample(rng.random());
         try testing.expect(math.isFinite(s));
     }
+}
+
+test "PowerNormal: cdf(1; 0, 1, 1) matches Phi(1) (Normal special case)" {
+    // c=1: CDF = Phi^1(z) = Phi(z), so cdf(1; 0,1,1) = Phi(1)
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    const result = dist.cdf(1.0);
+    const phi_1 = 0.5 * (1.0 + erf(1.0 / @sqrt(2.0)));
+    try testing.expectApproxEqAbs(phi_1, result, 1e-9);
+}
+
+test "PowerNormal: cdf(1; 0, 1, 2) equals Phi(1)^2" {
+    // c=2: CDF = Phi^2(z), so cdf(1; 0,1,2) = Phi(1)^2
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    const result = dist.cdf(1.0);
+    const phi_1 = 0.5 * (1.0 + erf(1.0 / @sqrt(2.0)));
+    const expected = phi_1 * phi_1;
+    try testing.expectApproxEqAbs(expected, result, 1e-9);
+}
+
+test "PowerNormal: sample variance converges to 1 for c=1 (Normal, N=10000)" {
+    // Var[PowerNormal(0,1,1)] = 1 (Normal)
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(33333);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    const var_est = sum_sq / @as(f64, @floatFromInt(n)) - mean_est * mean_est;
+    try testing.expectApproxEqAbs(1.0, var_est, 0.1);
+}
+
+test "PowerNormal: sample variance converges to 1-1/pi for c=2 (N=10000)" {
+    // Var[PowerNormal(0,1,2)] = 1 - 1/pi ≈ 0.6817
+    const dist = try PowerNormal(f64).init(0.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(44444);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    const var_est = sum_sq / @as(f64, @floatFromInt(n)) - mean_est * mean_est;
+    const expected = 1.0 - 1.0 / math.pi;
+    try testing.expectApproxEqAbs(expected, var_est, 0.1);
 }
