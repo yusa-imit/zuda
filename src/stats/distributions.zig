@@ -6259,6 +6259,27 @@ test "Gumbel: memory safety" {
     }
 }
 
+test "Gumbel: validate passes for valid parameters" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    try dist.validate();
+    const dist2 = try Gumbel(f64).init(-5.0, 2.5);
+    try dist2.validate();
+}
+
+test "Gumbel: sample mean convergence (N=10000)" {
+    // Gumbel mean = μ + β·γ where γ ≈ 0.5772156649015329 (Euler-Mascheroni constant)
+    var prng = std.Random.DefaultPrng.init(0xABCDEF01);
+    const rng = prng.random();
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    const expected_mean = 0.5772156649015329;
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| sum += dist.sample(rng);
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    // 5% relative error tolerance (Gumbel has moderate tail, N=10000 should converge well)
+    try testing.expect(@abs(sample_mean - expected_mean) / expected_mean < 0.05);
+}
+
 // ============================================================================
 // Bernoulli Distribution Tests
 // ============================================================================
@@ -6461,6 +6482,28 @@ test "Bernoulli: pmf sums to 1.0" {
     const dist2 = try Bernoulli(f64).init(0.7);
     const sum2 = dist2.pmf(0) + dist2.pmf(1);
     try expectApproxEqRel(1.0, sum2, 1e-10);
+}
+
+test "Bernoulli: validate passes for valid p" {
+    const dist = try Bernoulli(f64).init(0.5);
+    try dist.validate();
+    const dist2 = try Bernoulli(f64).init(0.0);
+    try dist2.validate();
+    const dist3 = try Bernoulli(f64).init(1.0);
+    try dist3.validate();
+}
+
+test "Bernoulli: sample proportion converges to p (N=5000)" {
+    var prng = std.Random.DefaultPrng.init(0xFEEDFACE);
+    const rng = prng.random();
+    const p: f64 = 0.3;
+    const dist = try Bernoulli(f64).init(p);
+    var ones: u64 = 0;
+    const n: u64 = 5000;
+    for (0..n) |_| ones += dist.sample(rng);
+    const proportion = @as(f64, @floatFromInt(ones)) / @as(f64, @floatFromInt(n));
+    // Allow 5% relative error from expected proportion p=0.3
+    try testing.expect(@abs(proportion - p) < 0.05);
 }
 
 // ============================================================================
@@ -6678,6 +6721,27 @@ test "Geometric: pmf series sums to ~1.0" {
         sum += dist.pmf(k);
     }
     try expectApproxEqRel(1.0, sum, 1e-6);
+}
+
+test "Geometric: validate passes for valid p" {
+    const dist = try Geometric(f64).init(0.5);
+    try dist.validate();
+    const dist2 = try Geometric(f64).init(1.0);
+    try dist2.validate();
+}
+
+test "Geometric: sample mean converges to 1/p (N=5000)" {
+    // Geometric(p) mean = 1/p
+    var prng = std.Random.DefaultPrng.init(0xCAFEBABE);
+    const rng = prng.random();
+    const p: f64 = 0.25;
+    const dist = try Geometric(f64).init(p);
+    const expected_mean = 1.0 / p; // 4.0
+    var total: u64 = 0;
+    const n: u64 = 5000;
+    for (0..n) |_| total += dist.sample(rng);
+    const sample_mean = @as(f64, @floatFromInt(total)) / @as(f64, @floatFromInt(n));
+    try testing.expect(@abs(sample_mean - expected_mean) / expected_mean < 0.05);
 }
 
 // ============================================================================
