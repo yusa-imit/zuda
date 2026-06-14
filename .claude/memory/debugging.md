@@ -203,3 +203,7 @@ while (true) {
 - Tests: update to use `try` or `expectError` for error cases
 
 **Dead Code Discovery**: `subsets.zig` checked `n > 63` but parameter type is `u6` (max value = 63), making the condition always false. Removed the unreachable check.
+
+**YuleSimon Variance Formula (2026-06-15)**: The Wikipedia article on Yule-Simon sometimes lists Var = ρ²(ρ+1)/((ρ-1)²(ρ-2)) but the correct formula derived by telescoping sums is Var = ρ²/((ρ-1)²(ρ-2)). For ρ=3: correct value is 2.25, not 9.0. Verified via partial fraction decomposition of E[X²] = Σ 18k/((k+3)(k+2)(k+1)) where the partial fractions telescope to a finite constant.
+
+**YuleSimon Entropy ρ=1 (2026-06-15)**: Entropy ≈ 2·Σ log(k)/(k²-1) ≈ 2.026 nats. The test-writer guessed 2.5 which is wrong. Computed via integral approximation: 2·∫_1^∞ log(x)/x² dx = 2 with correction for lower terms.

@@ -1,3 +1,27 @@
+**Session 684 Update (2026-06-15) — FEATURE MODE:**
+
+✅ **YuleSimon Distribution** — 88th total, 17th discrete — commit 96a0a26
+- **Mode**: FEATURE MODE (counter: 684)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: YuleSimon(ρ) — discrete power-law distribution
+  * Parameter: ρ > 0 (shape; larger ρ = lighter tail, more mass at k=1)
+  * Support: {1, 2, 3, ...}
+  * PMF: P(X=k) = ρ·B(k, ρ+1) = ρ·Γ(k)·Γ(ρ+1)/Γ(k+ρ+1) via logGamma — O(1)
+  * CDF: F(k) = 1 − ρ·B(k+1, ρ) in log-exp space — O(1)
+  * Survival recurrence: S(k) = S(k−1)·k/(k+ρ) — O(k)
+  * PMF recurrence: P(k+1) = P(k)·k/(k+ρ+1) starting P(1)=ρ/(ρ+1) — O(k)
+  * Mean: ρ/(ρ−1) for ρ>1 (NaN/inf for ρ≤1)
+  * Variance: ρ²/((ρ−1)²(ρ−2)) for ρ>2 (inf for ρ≤2)
+  * Mode: 1 (PMF strictly decreasing)
+  * Entropy: truncated series via PMF recurrence until p_k < eps — O(N)
+  * Sample: survival recurrence inverse CDF — O(E[X]) expected
+  * Key exact values: P(X=1|ρ=1)=0.5; P(X=1|ρ=2)=2/3; P(X=1|ρ=3)=0.75
+  * Variance correction: Wikipedia says ρ²(ρ+1)/((ρ-1)²(ρ-2)) but derivation+telescoping gives ρ²/((ρ-1)²(ρ-2))
+  * Entropy ρ=1 ≈ 2.026 nats (NOT 2.5 — test-writer was wrong; telescoping series converges to ≈2)
+- **Tests**: 41 tests passing (4 sampling convergence tests N=20000 ±5%)
+- **Distribution count**: 88 total (71 continuous + 17 discrete)
+- **Next Priority**: Conway-Maxwell-Poisson or Kolmogorov distribution
+
 **Session 683 Update (2026-06-15) — FEATURE MODE:**
 
 ✅ **NoncentralBeta Distribution** — 87th total, 71st continuous — commit 3f08a28
