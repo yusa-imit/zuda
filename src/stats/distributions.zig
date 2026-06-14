@@ -50203,3 +50203,500 @@ test "NoncentralBeta: large lambda pdf is positive and finite" {
     try testing.expect(p > 0.0);
     try testing.expect(math.isFinite(p));
 }
+
+// ============================================================================
+// Yule-Simon Distribution
+// ============================================================================
+
+/// Yule-Simon distribution YuleSimon(ρ) — a discrete power-law distribution.
+///
+/// Arises as the limiting distribution in the Pólya urn model and describes
+/// word-frequency ranks (Zipf's law), city sizes, species distributions,
+/// and citation counts (Price's law).
+///
+/// Support: {1, 2, 3, ...}
+/// Parameter: ρ > 0 (shape; larger ρ → lighter tail, more mass at k=1)
+///
+/// PMF: P(X=k; ρ) = ρ·B(k, ρ+1) = ρ·Γ(k)·Γ(ρ+1)/Γ(k+ρ+1)
+/// CDF: F(k; ρ) = 1 − ρ·B(k+1, ρ) = 1 − ρ·Γ(k+1)·Γ(ρ)/Γ(k+ρ+1)
+///
+/// Survival recurrence: S(k) = S(k−1)·k/(k+ρ), S(0)=1
+/// PMF recurrence:      P(k+1) = P(k)·k/(k+ρ+1), P(1)=ρ/(ρ+1)
+///
+/// Mean:     ρ/(ρ−1)                       for ρ > 1  (else +∞)
+/// Variance: ρ²/((ρ−1)²(ρ−2))             for ρ > 2  (else +∞)
+/// Mode:     1  (PMF strictly decreasing)
+pub fn YuleSimon(comptime T: type) type {
+    return struct {
+        rho: T,
+
+        const Self = @This();
+
+        /// Initialize YuleSimon(ρ) distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(rho: T) DistributionError!Self {
+            if (!(rho > 0.0) or !math.isFinite(rho)) return error.InvalidParameter;
+            return Self{ .rho = rho };
+        }
+
+        /// Probability mass function P(X=k).
+        ///
+        /// P(X=k) = ρ·B(k, ρ+1) = exp(log(ρ) + lgamma(k) + lgamma(ρ+1) − lgamma(k+ρ+1))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function log P(X=k).
+        ///
+        /// log P(X=k) = log(ρ) + lgamma(k) + lgamma(ρ+1) − lgamma(k+ρ+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            return @log(self.rho) + logGamma(kf) + logGamma(self.rho + 1.0) - logGamma(kf + self.rho + 1.0);
+        }
+
+        /// Survival function P(X > k) = ρ·B(k+1, ρ).
+        ///
+        /// sf(0) = 1; sf(k) = ρ·Γ(k+1)·Γ(ρ)/Γ(k+ρ+1) for k ≥ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            if (k == 0) return 1.0;
+            const kf: T = @floatFromInt(k);
+            const log_s = @log(self.rho) + logGamma(kf + 1.0) + logGamma(self.rho) - logGamma(kf + self.rho + 1.0);
+            return @exp(log_s);
+        }
+
+        /// Cumulative distribution function P(X ≤ k).
+        ///
+        /// F(k) = 1 − S(k) = 1 − ρ·B(k+1, ρ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return 1.0 - self.sf(k);
+        }
+
+        /// Quantile function: smallest k ≥ 1 such that CDF(k) ≥ prob.
+        ///
+        /// Uses the survival recurrence S(k) = S(k−1)·k/(k+ρ) for O(k*) time
+        /// where k* is the returned quantile.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) u64 {
+            if (prob <= 0.0) return 1;
+            const p = if (prob >= 1.0) 1.0 - math.floatEps(T) else prob;
+            // Walk via survival recurrence: S(k) = P(X > k)
+            // Return first k with CDF(k) = 1−S(k) ≥ p, i.e. S(k) ≤ 1−p
+            var s: T = 1.0; // S(0) = 1
+            var k: u64 = 0;
+            while (k < 10_000_000) {
+                k += 1;
+                const kf: T = @floatFromInt(k);
+                s *= kf / (kf + self.rho);
+                if (s <= 1.0 - p) return k;
+            }
+            return k;
+        }
+
+        /// Mean: ρ/(ρ−1) for ρ > 1, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.rho <= 1.0) return math.inf(T);
+            return self.rho / (self.rho - 1.0);
+        }
+
+        /// Variance: ρ²/((ρ−1)²(ρ−2)) for ρ > 2, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.rho <= 2.0) return math.inf(T);
+            const rho_m1 = self.rho - 1.0;
+            const rho_m2 = self.rho - 2.0;
+            return (self.rho * self.rho) / (rho_m1 * rho_m1 * rho_m2);
+        }
+
+        /// Mode of the distribution (always 1; PMF is strictly decreasing).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Shannon entropy H(X) in nats, computed via truncated series.
+        ///
+        /// H = −Σ_{k=1}^{N} P(k)·log(P(k)) until tail contribution < ε.
+        ///
+        /// Time: O(N) where N is the truncation point | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Use PMF recurrence: P(k+1) = P(k)·k/(k+ρ+1)
+            var p_k: T = self.rho / (self.rho + 1.0); // P(1)
+            var h: T = 0.0;
+            const max_iter: u64 = 100_000;
+            var k: u64 = 1;
+            while (k <= max_iter) : (k += 1) {
+                if (p_k < math.floatEps(T)) break;
+                const kf: T = @floatFromInt(k);
+                h -= p_k * (self.logpmf(k));
+                // advance recurrence: P(k+1) = P(k)·k/(k+ρ+1)
+                p_k *= kf / (kf + self.rho + 1.0);
+            }
+            return h;
+        }
+
+        /// Generate a random sample using the survival recurrence.
+        ///
+        /// Generates U ~ Uniform(0,1) then finds k via S(k) ≤ 1−U.
+        ///
+        /// Time: O(E[X]) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var s: T = 1.0; // S(0) = 1
+            var k: u64 = 0;
+            while (k < 10_000_000) {
+                k += 1;
+                const kf: T = @floatFromInt(k);
+                s *= kf / (kf + self.rho);
+                if (s <= 1.0 - u) return k;
+            }
+            return k;
+        }
+
+        /// Validate internal invariants: ρ > 0 and finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.rho > 0.0) or !math.isFinite(self.rho)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Yule-Simon Distribution Tests (88th distribution, 17th discrete)
+// ============================================================================
+
+test "YuleSimon: init with valid rho=1.0 succeeds" {
+    const dist = try YuleSimon(f64).init(1.0);
+    try testing.expect(dist.rho == 1.0);
+}
+
+test "YuleSimon: init with valid rho=2.0 succeeds" {
+    const dist = try YuleSimon(f64).init(2.0);
+    try testing.expect(dist.rho == 2.0);
+}
+
+test "YuleSimon: init with valid rho=3.0 succeeds" {
+    const dist = try YuleSimon(f64).init(3.0);
+    try testing.expect(dist.rho == 3.0);
+}
+
+test "YuleSimon: init with rho=0.0 returns InvalidParameter error" {
+    const result = YuleSimon(f64).init(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "YuleSimon: init with negative rho returns InvalidParameter error" {
+    const result = YuleSimon(f64).init(-1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "YuleSimon: init with NaN rho returns InvalidParameter error" {
+    const result = YuleSimon(f64).init(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "YuleSimon: pmf k=0 returns 0.0" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const pmf_val = dist.pmf(0);
+    try testing.expectEqual(0.0, pmf_val);
+}
+
+test "YuleSimon: pmf k=1 rho=1 equals 0.5" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.5;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "YuleSimon: pmf k=2 rho=1 equals 1/6" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 1.0 / 6.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "YuleSimon: pmf k=3 rho=1 equals 1/12" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 1.0 / 12.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "YuleSimon: pmf k=1 rho=2 equals 2/3" {
+    const dist = try YuleSimon(f64).init(2.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "YuleSimon: pmf k=1 rho=3 equals 0.75" {
+    const dist = try YuleSimon(f64).init(3.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.75;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "YuleSimon: pmf k=2 rho=3 equals 0.15" {
+    const dist = try YuleSimon(f64).init(3.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.15;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "YuleSimon: logpmf k=0 returns -inf" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const logpmf_val = dist.logpmf(0);
+    try testing.expect(math.isNegativeInf(logpmf_val));
+}
+
+test "YuleSimon: logpmf k=1 rho=1 equals ln(0.5)" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const logpmf_val = dist.logpmf(1);
+    const expected: f64 = @log(0.5);
+    try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "YuleSimon: logpmf consistent with pmf" {
+    const dist = try YuleSimon(f64).init(2.0);
+    for (1..6) |k| {
+        const pmf_val = dist.pmf(k);
+        const logpmf_val = dist.logpmf(k);
+        const expected = @log(pmf_val);
+        try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+    }
+}
+
+test "YuleSimon: cdf k=0 returns 0.0" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const cdf_val = dist.cdf(0);
+    try testing.expectEqual(0.0, cdf_val);
+}
+
+test "YuleSimon: cdf k=1 rho=1 equals 0.5" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const cdf_val = dist.cdf(1);
+    const expected: f64 = 0.5;
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "YuleSimon: cdf k=2 rho=1 equals 2/3" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const cdf_val = dist.cdf(2);
+    const expected: f64 = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "YuleSimon: cdf k=1 rho=2 equals 2/3" {
+    const dist = try YuleSimon(f64).init(2.0);
+    const cdf_val = dist.cdf(1);
+    const expected: f64 = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "YuleSimon: cdf is non-decreasing" {
+    const dist = try YuleSimon(f64).init(2.0);
+    var prev_cdf: f64 = 0.0;
+    for (1..21) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "YuleSimon: sf k=0 rho=1 equals 1.0" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const sf_val = dist.sf(0);
+    try testing.expectEqual(1.0, sf_val);
+}
+
+test "YuleSimon: sf k=1 rho=1 equals 0.5" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const sf_val = dist.sf(1);
+    const expected: f64 = 0.5;
+    try testing.expectApproxEqAbs(expected, sf_val, 1e-9);
+}
+
+test "YuleSimon: sf plus cdf equals 1" {
+    const dist = try YuleSimon(f64).init(2.0);
+    for (1..6) |k| {
+        const cdf_val = dist.cdf(k);
+        const sf_val = dist.sf(k);
+        try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+    }
+}
+
+test "YuleSimon: mean rho=2 equals 2.0" {
+    const dist = try YuleSimon(f64).init(2.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 2.0;
+    try testing.expectApproxEqAbs(expected, mean_val, 1e-10);
+}
+
+test "YuleSimon: mean rho=3 equals 1.5" {
+    const dist = try YuleSimon(f64).init(3.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 1.5;
+    try testing.expectApproxEqAbs(expected, mean_val, 1e-10);
+}
+
+test "YuleSimon: mean rho=1 returns positive infinity" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isPositiveInf(mean_val));
+}
+
+test "YuleSimon: variance rho=3 equals 2.25" {
+    const dist = try YuleSimon(f64).init(3.0);
+    const var_val = dist.variance();
+    // Var = ρ²/((ρ-1)²(ρ-2)) = 9/(4·1) = 2.25
+    const expected: f64 = 2.25;
+    try testing.expectApproxEqAbs(expected, var_val, 1e-8);
+}
+
+test "YuleSimon: variance rho=2 returns positive infinity" {
+    const dist = try YuleSimon(f64).init(2.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isPositiveInf(var_val));
+}
+
+test "YuleSimon: mode always returns 1" {
+    const rhos = [_]f64{ 0.5, 1.0, 2.0, 3.0, 5.0 };
+    for (rhos) |rho| {
+        const dist = try YuleSimon(f64).init(rho);
+        const mode_val = dist.mode();
+        try testing.expectEqual(1, mode_val);
+    }
+}
+
+test "YuleSimon: pmf is strictly decreasing" {
+    const dist = try YuleSimon(f64).init(2.0);
+    var prev_pmf: f64 = dist.pmf(1);
+    for (2..11) |k| {
+        const curr_pmf = dist.pmf(k);
+        try testing.expect(curr_pmf < prev_pmf);
+        prev_pmf = curr_pmf;
+    }
+}
+
+test "YuleSimon: pmf sums to approximately 1 (rho=3)" {
+    const dist = try YuleSimon(f64).init(3.0);
+    var sum: f64 = 0.0;
+    for (1..10001) |k| {
+        sum += dist.pmf(k);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "YuleSimon: quantile with p=0.5 and rho=1 returns 1" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const q = dist.quantile(0.5);
+    try testing.expectEqual(1, q);
+}
+
+test "YuleSimon: quantile with p=0.60 and rho=1 returns 2" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const q = dist.quantile(0.60);
+    try testing.expectEqual(2, q);
+}
+
+test "YuleSimon: quantile cdf roundtrip" {
+    const dist = try YuleSimon(f64).init(2.0);
+    const probs = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (probs) |prob| {
+        const q = dist.quantile(prob);
+        const c = dist.cdf(q);
+        try testing.expect(c >= prob);
+    }
+}
+
+test "YuleSimon: entropy is finite and positive" {
+    const dist = try YuleSimon(f64).init(2.0);
+    const entropy_val = dist.entropy();
+    try testing.expect(math.isFinite(entropy_val));
+    try testing.expect(entropy_val > 0.0);
+}
+
+test "YuleSimon: entropy rho=1 within expected range" {
+    const dist = try YuleSimon(f64).init(1.0);
+    const entropy_val = dist.entropy();
+    // Entropy for rho=1 ≈ 2·Σ log(k)/(k²-1) ≈ 2.026 nats (numerical computation)
+    try testing.expect(entropy_val > 1.9);
+    try testing.expect(entropy_val < 2.2);
+}
+
+test "YuleSimon: sample produces k >= 1" {
+    var rng = std.Random.DefaultPrng.init(0x12345678);
+    const dist = try YuleSimon(f64).init(2.0);
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng.random());
+        try testing.expect(sample_val >= 1);
+    }
+}
+
+test "YuleSimon: sample rho=2 mean convergence (N=20000)" {
+    var rng = std.Random.DefaultPrng.init(0x87654321);
+    const dist = try YuleSimon(f64).init(2.0);
+    const expected_mean = 2.0;
+
+    var sum: f64 = 0.0;
+    const n = 20000;
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const error_pct = @abs(sample_mean - expected_mean) / expected_mean * 100.0;
+    try testing.expect(error_pct < 5.0);
+}
+
+test "YuleSimon: sample rho=3 mean convergence (N=20000)" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try YuleSimon(f64).init(3.0);
+    const expected_mean = 1.5;
+
+    var sum: f64 = 0.0;
+    const n = 20000;
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const error_pct = @abs(sample_mean - expected_mean) / expected_mean * 100.0;
+    try testing.expect(error_pct < 5.0);
+}
+
+test "YuleSimon: validate passes for valid rho" {
+    const dist = try YuleSimon(f64).init(2.5);
+    try dist.validate();
+}
+
+test "YuleSimon(f32): init and pmf with f32" {
+    const dist = try YuleSimon(f32).init(2.0);
+    const pmf_val = dist.pmf(1);
+    try testing.expect(math.isFinite(pmf_val));
+    try testing.expect(pmf_val > 0.0);
+}
+
+test "YuleSimon(f32): cdf in [0,1]" {
+    const dist = try YuleSimon(f32).init(2.0);
+    const c = dist.cdf(5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
