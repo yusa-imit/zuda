@@ -48735,6 +48735,163 @@ pub fn ExponentialModifiedGaussian(comptime T: type) type {
 }
 
 // ============================================================================
+// HyperbolicSecant Distribution
+// ============================================================================
+
+/// Hyperbolic Secant distribution — a symmetric, leptokurtic continuous distribution.
+///
+/// Parameterization:
+///   μ ∈ ℝ   — location parameter (mean, median, mode)
+///   σ > 0   — scale parameter (standard deviation)
+///
+/// Support: (−∞, +∞)
+/// PDF:     f(x) = (1/(2σ)) · sech(π(x−μ)/(2σ))
+/// CDF:     F(x) = (2/π) · arctan(exp(π(x−μ)/(2σ)))
+/// Quantile: Q(p) = μ + (2σ/π) · ln(tan(πp/2))  [exact closed form]
+/// Mean:    μ   [exact]
+/// Variance: σ² [exact; MGF M(t) = sec(σt)·exp(μt)]
+/// Mode:    μ
+/// Entropy: ≈ ln(4σ)  [numerical; exact form: ln(2σ) + (1/π)·∫sech(u)ln(cosh(u))du]
+///
+/// Characteristic function: φ(t) = sech(σt) · exp(iμt)
+/// Excess kurtosis: 2 (leptokurtic)
+/// Applications: financial returns modeling, Bayesian statistics, random matrix theory
+pub fn HyperbolicSecant(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a Hyperbolic Secant distribution.
+        ///
+        /// Errors: sigma ≤ 0 or non-finite parameters → InvalidParameter
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(sigma > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Probability density function f(x) = sech(π(x−μ)/(2σ)) / (2σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = math.pi * (x - self.mu) / (2.0 * self.sigma);
+            return 1.0 / (2.0 * self.sigma * math.cosh(z));
+        }
+
+        /// Log probability density function −ln(2σ) − ln(cosh(π(x−μ)/(2σ)))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = math.pi * (x - self.mu) / (2.0 * self.sigma);
+            return -@log(2.0 * self.sigma) - @log(math.cosh(z));
+        }
+
+        /// Cumulative distribution function F(x) = (2/π) · arctan(exp(π(x−μ)/(2σ)))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = math.pi * (x - self.mu) / (2.0 * self.sigma);
+            return (2.0 / math.pi) * math.atan(@exp(z));
+        }
+
+        /// Survival function S(x) = 1 − F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function Q(p) = μ + (2σ/π) · ln(tan(πp/2))  [exact closed form]
+        ///
+        /// Errors: p ≤ 0 or p ≥ 1 or NaN → InvalidProbability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p > 0.0 and p < 1.0)) return error.InvalidProbability;
+            const tan_val = math.tan(math.pi * p / 2.0);
+            return self.mu + (2.0 * self.sigma / math.pi) * @log(tan_val);
+        }
+
+        /// Mean E[X] = μ  [exact]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance Var[X] = σ²  [exact; MGF M(t) = sec(σt) gives M''(0)=σ²]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.sigma * self.sigma;
+        }
+
+        /// Mode: μ  [unique maximum; sech(π(x−μ)/(2σ)) is maximized when argument=0]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Differential entropy via 200-point Simpson quadrature on standardized form.
+        /// H = ln(2σ) + (1/π) · ∫_{−20}^{20} sech(u) · ln(cosh(u)) du ≈ ln(4σ)
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Integrate (1/π)·sech(u)·ln(cosh(u)) over u ∈ [−20, 20]
+            // Beyond ±20: sech(20) ≈ 4e-9, negligible
+            const limit: T = 20.0;
+            const n: usize = 200;
+            const h: T = 2.0 * limit / @as(T, @floatFromInt(n));
+
+            var total: T = 0.0;
+            for (0..n + 1) |i| {
+                const u = -limit + @as(T, @floatFromInt(i)) * h;
+                const ch = math.cosh(u);
+                const sech_val = 1.0 / ch;
+                const ln_ch = @log(ch);
+                const integrand = sech_val * ln_ch / math.pi;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                total += w * integrand;
+            }
+
+            return @log(2.0 * self.sigma) + total * h / 3.0;
+        }
+
+        /// Sample using exact inverse CDF: X = μ + (2σ/π) · ln(tan(πU/2)), U ~ Uniform(0,1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const safe_u = if (u <= 0.0) @as(T, 1e-15) else u;
+            const tan_val = math.tan(math.pi * safe_u / 2.0);
+            return self.mu + (2.0 * self.sigma / math.pi) * @log(tan_val);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("HyperbolicSecant(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+        }
+
+        /// Validate distribution parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.sigma > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
 // ExponentialModifiedGaussian Distribution Tests
 // ============================================================================
 
@@ -49060,4 +49217,289 @@ test "ExponentialModifiedGaussian(f32): sample produces finite values" {
         const s = dist.sample(rng.random());
         try testing.expect(math.isFinite(s));
     }
+}
+
+// ============================================================================
+// HyperbolicSecant Distribution Tests
+// ============================================================================
+
+test "HyperbolicSecant: init with valid parameters mu=0 sigma=1" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+}
+
+test "HyperbolicSecant: init with nonzero mu and sigma=2" {
+    const dist = try HyperbolicSecant(f64).init(5.0, 2.0);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.sigma);
+}
+
+test "HyperbolicSecant: init with sigma=0 returns error" {
+    const result = HyperbolicSecant(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HyperbolicSecant: init with negative sigma returns error" {
+    const result = HyperbolicSecant(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HyperbolicSecant: init with infinite mu returns error" {
+    const result = HyperbolicSecant(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HyperbolicSecant: pdf(0; mu=0, sigma=1) ≈ 0.5" {
+    // PDF: f(x) = sech(π(x-μ)/(2σ)) / (2σ)
+    // At x=0: f(0) = sech(0) / 2 = 1/2 = 0.5
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(0.5, p, 1e-10);
+}
+
+test "HyperbolicSecant: pdf(1; mu=0, sigma=1) ≈ 0.19934" {
+    // At x=1: f(1) = sech(π/2) / 2 = 1/(2·cosh(π/2))
+    // cosh(π/2) ≈ 2.5092, so f(1) ≈ 1/(2·2.5092) ≈ 0.19934
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(0.19934, p, 1e-4);
+}
+
+test "HyperbolicSecant: pdf is symmetric around mu" {
+    // f(x) = f(2μ-x) for any x
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const p_pos = dist.pdf(1.0);
+    const p_neg = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+}
+
+test "HyperbolicSecant: pdf is non-negative at multiple points" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    try testing.expect(dist.pdf(-3.0) >= 0.0);
+    try testing.expect(dist.pdf(-1.0) >= 0.0);
+    try testing.expect(dist.pdf(0.0) >= 0.0);
+    try testing.expect(dist.pdf(1.0) >= 0.0);
+    try testing.expect(dist.pdf(3.0) >= 0.0);
+}
+
+test "HyperbolicSecant: pdf integrates to approximately 1.0" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+
+    // Trapezoidal rule integration from -30 to 30
+    var total: f64 = 0.0;
+    const lo: f64 = -30.0;
+    const hi: f64 = 30.0;
+    const n = 200;
+    const h = (hi - lo) / @as(f64, @floatFromInt(n));
+
+    for (0..n+1) |i| {
+        const x = lo + @as(f64, @floatFromInt(i)) * h;
+        const weight: f64 = if (i == 0 or i == n) 0.5 else 1.0;
+        total += weight * dist.pdf(x);
+    }
+    total *= h;
+
+    try testing.expectApproxEqAbs(1.0, total, 0.01);
+}
+
+test "HyperbolicSecant: logpdf consistent with pdf at x=0" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    const logpdf_val = dist.logpdf(0.0);
+    const expected_logpdf = @log(pdf_val);
+    try testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-10);
+}
+
+test "HyperbolicSecant: logpdf(0; mu=0, sigma=1) ≈ ln(0.5) ≈ -0.6931" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expectApproxEqAbs(-0.6931, lp, 1e-4);
+}
+
+test "HyperbolicSecant: cdf(0; mu=0, sigma=1) ≈ 0.5" {
+    // CDF: F(x) = (2/π) · arctan(exp(π(x-μ)/(2σ)))
+    // At x=0: F(0) = (2/π) · arctan(exp(0)) = (2/π) · arctan(1) = (2/π) · (π/4) = 0.5
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "HyperbolicSecant: cdf(1; mu=0, sigma=1) ≈ 0.8695" {
+    // At x=1: F(1) = (2/π) · arctan(exp(π/2))
+    // exp(π/2) ≈ 4.8104773809653516, arctan(...) ≈ 1.3668953934821895, (2/π)·... ≈ 0.86951811
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(0.8695, c, 1e-4);
+}
+
+test "HyperbolicSecant: cdf(-1; mu=0, sigma=1) ≈ 0.1305" {
+    // By symmetry: F(-1) = 1 - F(1) ≈ 1 - 0.86951811 ≈ 0.13048189
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(0.1305, c, 1e-4);
+}
+
+test "HyperbolicSecant: cdf symmetry F(x) + F(-x) = 1 for mu=0" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const c_pos = dist.cdf(2.0);
+    const c_neg = dist.cdf(-2.0);
+    try testing.expectApproxEqAbs(1.0, c_pos + c_neg, 1e-10);
+}
+
+test "HyperbolicSecant: cdf is monotonically increasing" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const c_neg5 = dist.cdf(-5.0);
+    const c_0 = dist.cdf(0.0);
+    const c_5 = dist.cdf(5.0);
+    try testing.expect(c_neg5 < c_0);
+    try testing.expect(c_0 < c_5);
+}
+
+test "HyperbolicSecant: sf(x) = 1 - cdf(x)" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    const s = dist.sf(1.0);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-12);
+}
+
+test "HyperbolicSecant: quantile(0.5) = mu (median at x=0)" {
+    // quantile(p) = μ + (2σ/π) · ln(tan(πp/2))
+    // At p=0.5: quantile(0.5) = μ + (2σ/π)·ln(tan(π/4)) = μ + (2σ/π)·ln(1) = μ + 0 = μ
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "HyperbolicSecant: quantile(0.0) returns error" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const result = dist.quantile(0.0);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HyperbolicSecant: quantile(1.0) returns error" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.0);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HyperbolicSecant: quantile(NaN) returns error" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const nan = math.nan(f64);
+    const result = dist.quantile(nan);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "HyperbolicSecant: quantile-cdf roundtrip at x=1.5" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const x = 1.5;
+    const cdf_x = dist.cdf(x);
+    const q = try dist.quantile(cdf_x);
+    try testing.expectApproxEqAbs(x, q, 1e-8);
+}
+
+test "HyperbolicSecant: mean(mu=0, sigma=1) = 0.0 (exact)" {
+    // Mean: μ = 0.0
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "HyperbolicSecant: mean(mu=5, sigma=2) = 5.0 (exact)" {
+    // Mean: μ = 5.0
+    const dist = try HyperbolicSecant(f64).init(5.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(5.0, m, 1e-10);
+}
+
+test "HyperbolicSecant: variance(mu=0, sigma=1) = 1.0 (exact)" {
+    // Variance: σ² = 1.0
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 1e-10);
+}
+
+test "HyperbolicSecant: mode(mu=0, sigma=1) = 0.0 (exact)" {
+    // Mode: μ = 0.0
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const md = dist.mode();
+    try testing.expectApproxEqAbs(0.0, md, 1e-10);
+}
+
+test "HyperbolicSecant: entropy(mu=0, sigma=1) ≈ ln(4) ≈ 1.3863" {
+    // Entropy: ln(4σ) = ln(4·1) = ln(4) ≈ 1.3863
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(1.3863, e, 0.01);
+}
+
+test "HyperbolicSecant: entropy(mu=0, sigma=2) ≈ ln(8) ≈ 2.0794" {
+    // Entropy: ln(4·2) = ln(8) ≈ 2.0794
+    const dist = try HyperbolicSecant(f64).init(0.0, 2.0);
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(2.0794, e, 0.01);
+}
+
+test "HyperbolicSecant: sample produces finite values" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..50) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "HyperbolicSecant: sample mean converges to mu=0 (N=5000)" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(0.0, mean_est, 0.1);
+}
+
+test "HyperbolicSecant: sample variance converges to sigma²=1 (N=5000)" {
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean_est = sum / @as(f64, @floatFromInt(n));
+    const var_est = sum_sq / @as(f64, @floatFromInt(n)) - mean_est * mean_est;
+    try testing.expectApproxEqAbs(1.0, var_est, 0.25);
+}
+
+test "HyperbolicSecant: validate() succeeds for valid parameters" {
+    const dist = try HyperbolicSecant(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "HyperbolicSecant: validate() fails for sigma=0" {
+    var dist: HyperbolicSecant(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 0.0;
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "HyperbolicSecant(f32): init and pdf with f32" {
+    const dist = try HyperbolicSecant(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(p > 0.0);
+}
+
+test "HyperbolicSecant(f32): cdf in [0, 1] for f32" {
+    const dist = try HyperbolicSecant(f32).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
 }
