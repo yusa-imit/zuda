@@ -51445,3 +51445,476 @@ test "ConwayMaxwellPoisson(f32): cdf in [0,1]" {
     const c = dist.cdf(5);
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
+
+/// Kolmogorov distribution — limiting distribution of the Kolmogorov-Smirnov test statistic.
+///
+/// If D_n = sup_x |F_n(x) − F(x)| is the KS statistic, then √n · D_n → K as n → ∞.
+/// Used for computing p-values in one-sample KS tests.
+///
+/// CDF: K(x) = 1 − 2·Σ_{j=1}^∞ (−1)^{j−1}·exp(−2j²x²)  for x > 0
+/// PDF: k(x) = 8x·Σ_{j=1}^∞ (−1)^{j−1}·j²·exp(−2j²x²)  for x > 0
+///
+/// No parameters — unit distribution.
+///
+/// Mean: √(π/2)·ln(2) ≈ 0.8687
+/// Variance: π²/12 − (π/2)·ln²(2) ≈ 0.0678
+///
+/// Time: O(J) for pdf/cdf where J = number of series terms (≤ 20 in practice) | Space: O(1)
+pub fn Kolmogorov(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        /// Create a Kolmogorov distribution instance. No parameters required.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init() Self {
+            return .{};
+        }
+
+        // Alternating series: Σ_{j=1}^∞ (−1)^{j−1} exp(−2j²x²)
+        // Used for CDF: K(x) = 1 − 2·S(x)
+        fn seriesS(x: T) T {
+            const x2 = x * x;
+            var s: T = 0.0;
+            var sign: T = 1.0;
+            var j: u32 = 1;
+            while (j <= 100) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const term = sign * math.exp(-2.0 * jf * jf * x2);
+                s += term;
+                if (@abs(term) < 1e-15 * (@abs(s) + 1e-300)) break;
+                sign = -sign;
+            }
+            return s;
+        }
+
+        // Alternating series: Σ_{j=1}^∞ (−1)^{j−1} j² exp(−2j²x²)
+        // Used for PDF: k(x) = 8x·T(x)
+        fn seriesT(x: T) T {
+            const x2 = x * x;
+            var s: T = 0.0;
+            var sign: T = 1.0;
+            var j: u32 = 1;
+            while (j <= 100) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const term = sign * jf * jf * math.exp(-2.0 * jf * jf * x2);
+                s += term;
+                if (@abs(term) < 1e-15 * (@abs(s) + 1e-300)) break;
+                sign = -sign;
+            }
+            return s;
+        }
+
+        /// PDF: k(x) = 8x·Σ_{j=1}^∞ (−1)^{j−1}·j²·exp(−2j²x²).
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(J) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            _ = self;
+            if (x <= 0.0) return 0.0;
+            const p = 8.0 * x * seriesT(x);
+            return @max(0.0, p);
+        }
+
+        /// Log PDF: ln k(x).
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(J) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// CDF: K(x) = 1 − 2·Σ_{j=1}^∞ (−1)^{j−1}·exp(−2j²x²).
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(J) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            _ = self;
+            if (x <= 0.0) return 0.0;
+            const result = 1.0 - 2.0 * seriesS(x);
+            return @max(0.0, @min(1.0, result));
+        }
+
+        /// Quantile (inverse CDF) via bisection.
+        /// Returns x such that CDF(x) ≈ p.
+        ///
+        /// Errors: error.InvalidProbability if p ∉ (0, 1) or p is NaN/±∞.
+        ///
+        /// Time: O(J·log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p > 0.0 and p < 1.0) or !math.isFinite(p)) return error.InvalidProbability;
+            var lo: T = 1e-8;
+            var hi: T = 10.0;
+            // Expand upper bound if CDF(hi) < p (shouldn't be needed but defensive)
+            while (self.cdf(hi) < p) : (hi *= 2.0) {}
+            var iter: u32 = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo < 1e-10) break;
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Mean: √(π/2)·ln(2) ≈ 0.8687.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.sqrt(math.pi / 2.0) * @log(@as(T, 2.0));
+        }
+
+        /// Variance: π²/12 − (π/2)·ln²(2) ≈ 0.0678.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            const ln2 = @log(@as(T, 2.0));
+            return math.pi * math.pi / 12.0 - (math.pi / 2.0) * ln2 * ln2;
+        }
+
+        /// Mode: x at which PDF is maximum, found by ternary search ≈ 0.735.
+        ///
+        /// Time: O(J·log(1/ε)) | Space: O(1)
+        pub fn mode(self: Self) T {
+            var lo: T = 0.4;
+            var hi: T = 1.0;
+            var iter: u32 = 0;
+            while (hi - lo > 1e-9 and iter < 200) : (iter += 1) {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.pdf(m1) < self.pdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Shannon entropy H = −∫ k(x) ln k(x) dx, via Simpson quadrature.
+        ///
+        /// Time: O(N·J) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n: u32 = 1000;
+            const lo_x: T = 1e-4;
+            const hi_x: T = 8.0;
+            const h = (hi_x - lo_x) / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: u32 = 0;
+            while (i <= n) : (i += 1) {
+                const x = lo_x + @as(T, @floatFromInt(i)) * h;
+                const p = self.pdf(x);
+                if (p > 0.0) {
+                    const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                    sum -= w * p * @log(p);
+                }
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Generate a random sample via inverse CDF.
+        ///
+        /// Time: O(J·log(1/ε)) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) T {
+            const u = @max(@as(T, 1e-15), @min(@as(T, 1.0 - 1e-15), rng.float(T)));
+            // u is in (0, 1) so quantile won't error
+            return self.quantile(u) catch 1.0;
+        }
+
+        /// Validate invariants. Always succeeds — no parameters to validate.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            _ = self;
+        }
+    };
+}
+
+// ============================================================================
+// Kolmogorov Distribution Tests (90th total, 72nd continuous)
+// ============================================================================
+
+test "Kolmogorov: init creates usable instance" {
+    const dist = Kolmogorov(f64).init();
+    _ = dist;
+}
+
+test "Kolmogorov: pdf(0) = 0 (boundary)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "Kolmogorov: pdf(1.0) is positive" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(dist.pdf(1.0) > 0.0);
+}
+
+test "Kolmogorov: pdf(1.0) ≈ 1.072 (series verified)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@as(f64, 1.072), dist.pdf(1.0), 0.005);
+}
+
+test "Kolmogorov: pdf(0.5) is positive" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(dist.pdf(0.5) > 0.0);
+}
+
+test "Kolmogorov: pdf(2.0) is positive but small" {
+    const dist = Kolmogorov(f64).init();
+    const p = dist.pdf(2.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(p < 0.1);
+}
+
+test "Kolmogorov: pdf(negative x) = 0" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-10.0));
+}
+
+test "Kolmogorov: pdf is zero at large x (x=10.0)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(dist.pdf(10.0) < 1e-6);
+}
+
+test "Kolmogorov: logpdf(1.0) = log(pdf(1.0))" {
+    const dist = Kolmogorov(f64).init();
+    const pdf_val = dist.pdf(1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    try testing.expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "Kolmogorov: logpdf(0.5) = log(pdf(0.5))" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@log(dist.pdf(0.5)), dist.logpdf(0.5), 1e-10);
+}
+
+test "Kolmogorov: logpdf(0) = -infinity" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+}
+
+test "Kolmogorov: logpdf(negative x) = -infinity" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "Kolmogorov: cdf(0) = 0 (boundary)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "Kolmogorov: cdf(1.0) ≈ 0.7300 (well-known value)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@as(f64, 0.7300), dist.cdf(1.0), 1e-4);
+}
+
+test "Kolmogorov: cdf(1.36) ≈ 0.95 (alpha=0.05 critical value)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@as(f64, 0.95), dist.cdf(1.36), 1e-3);
+}
+
+test "Kolmogorov: cdf(1.628) ≈ 0.99 (alpha=0.01 critical value)" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@as(f64, 0.99), dist.cdf(1.628), 1e-3);
+}
+
+test "Kolmogorov: cdf is monotonically increasing" {
+    const dist = Kolmogorov(f64).init();
+    var prev: f64 = dist.cdf(0.1);
+    var xi: u32 = 1;
+    while (xi <= 15) : (xi += 1) {
+        const x = 0.1 + @as(f64, @floatFromInt(xi)) * 0.2;
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "Kolmogorov: cdf(10.0) ≈ 1.0" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(dist.cdf(10.0) >= 0.999999);
+}
+
+test "Kolmogorov: cdf(negative x) = 0" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "Kolmogorov: cdf always in [0, 1]" {
+    const dist = Kolmogorov(f64).init();
+    var xi: u32 = 0;
+    while (xi <= 10) : (xi += 1) {
+        const x = @as(f64, @floatFromInt(xi)) * 0.5;
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "Kolmogorov: quantile(0.5) ≈ 0.8276 (median)" {
+    const dist = Kolmogorov(f64).init();
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.8276), q, 1e-2);
+}
+
+test "Kolmogorov: quantile(0.73) ≈ 1.0" {
+    const dist = Kolmogorov(f64).init();
+    const q = try dist.quantile(0.73);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), q, 1e-3);
+}
+
+test "Kolmogorov: quantile(0.95) ≈ 1.36" {
+    const dist = Kolmogorov(f64).init();
+    const q = try dist.quantile(0.95);
+    try testing.expectApproxEqAbs(@as(f64, 1.36), q, 5e-2);
+}
+
+test "Kolmogorov: quantile(0) returns error.InvalidProbability" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectError(error.InvalidProbability, dist.quantile(0.0));
+}
+
+test "Kolmogorov: quantile(1) returns error.InvalidProbability" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.0));
+}
+
+test "Kolmogorov: quantile(-0.1) returns error.InvalidProbability" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Kolmogorov: quantile(1.1) returns error.InvalidProbability" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Kolmogorov: quantile(NaN) returns error.InvalidProbability" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Kolmogorov: quantile is monotonically increasing" {
+    const dist = Kolmogorov(f64).init();
+    var prev_q: f64 = 0.0;
+    var pi: u32 = 1;
+    while (pi <= 19) : (pi += 1) {
+        const p = @as(f64, @floatFromInt(pi)) * 0.05;
+        const q = try dist.quantile(p);
+        try testing.expect(q >= prev_q);
+        prev_q = q;
+    }
+}
+
+test "Kolmogorov: cdf(quantile(p)) ≈ p roundtrip" {
+    const dist = Kolmogorov(f64).init();
+    var pi: u32 = 1;
+    while (pi <= 9) : (pi += 1) {
+        const p = @as(f64, @floatFromInt(pi)) * 0.1;
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-3);
+    }
+}
+
+test "Kolmogorov: mean() ≈ 0.8687" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@as(f64, 0.8687), dist.mean(), 1e-3);
+}
+
+test "Kolmogorov: variance() ≈ 0.0678" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expectApproxEqAbs(@as(f64, 0.0678), dist.variance(), 1e-3);
+}
+
+test "Kolmogorov: variance is positive" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "Kolmogorov: mean is positive" {
+    const dist = Kolmogorov(f64).init();
+    try testing.expect(dist.mean() > 0.0);
+}
+
+test "Kolmogorov: entropy() is positive and finite" {
+    const dist = Kolmogorov(f64).init();
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+    try testing.expect(math.isFinite(e));
+}
+
+test "Kolmogorov: mode() is approximately 0.735" {
+    const dist = Kolmogorov(f64).init();
+    const m = dist.mode();
+    try testing.expect(m > 0.7 and m < 0.8);
+}
+
+test "Kolmogorov: sample() produces positive values" {
+    const dist = Kolmogorov(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        try testing.expect(dist.sample(rng.random()) > 0.0);
+    }
+}
+
+test "Kolmogorov: sample() values mostly less than 5.0" {
+    const dist = Kolmogorov(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    var count: u32 = 0;
+    for (0..1000) |_| {
+        if (dist.sample(rng.random()) < 5.0) count += 1;
+    }
+    try testing.expect(count > 900);
+}
+
+test "Kolmogorov: sample mean converges to theoretical mean (N=10000)" {
+    const dist = Kolmogorov(f64).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    for (0..10000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 10000.0;
+    try testing.expectApproxEqRel(dist.mean(), sample_mean, 0.05);
+}
+
+test "Kolmogorov: validate() always succeeds" {
+    const dist = Kolmogorov(f64).init();
+    try dist.validate();
+}
+
+test "Kolmogorov(f32): pdf and cdf work" {
+    const dist = Kolmogorov(f32).init();
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    try testing.expectApproxEqAbs(@as(f32, 0.7300), dist.cdf(1.0), 1e-3);
+}
+
+test "Kolmogorov(f32): mean and variance" {
+    const dist = Kolmogorov(f32).init();
+    try testing.expectApproxEqAbs(@as(f32, 0.8687), dist.mean(), 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 0.0678), dist.variance(), 1e-2);
+}
+
+test "Kolmogorov(f32): quantile error handling" {
+    const dist = Kolmogorov(f32).init();
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.5));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.5));
+}
+
+test "Kolmogorov(f32): sample produces positive values" {
+    const dist = Kolmogorov(f32).init();
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        try testing.expect(dist.sample(rng.random()) > 0.0);
+    }
+}

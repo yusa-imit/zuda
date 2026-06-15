@@ -568,3 +568,5 @@
 {"timestamp":"2026-06-15T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 52 failing tests for NoncentralBeta(α, β, λ) distribution","project":"zuda"}
 {"timestamp":"2026-06-15T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NoncentralBeta(α, β, λ) distribution (87th total, 71st continuous)","project":"zuda"}
 {"timestamp":"2026-06-15T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for YuleSimon(rho) distribution","project":"zuda"}
+{"timestamp":"2026-06-15T07:44:49Z","action":"subagent","agent_type":"test-writer","task":"Write tests for Kolmogorov distribution","project":"zuda"}
+{"timestamp":"2026-06-15T07:44:49Z","action":"subagent","agent_type":"zig-developer","task":"Implement Kolmogorov distribution","project":"zuda"}
