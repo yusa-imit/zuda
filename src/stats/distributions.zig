@@ -51918,3 +51918,621 @@ test "Kolmogorov(f32): sample produces positive values" {
         try testing.expect(dist.sample(rng.random()) > 0.0);
     }
 }
+
+// ============================================================================
+// SinhArcsinh Distribution (Jones & Pewsey, 2009)
+// 91st total, 73rd continuous
+// X = ξ + λ·sinh((arcsinh(Z)+ε)/δ) where Z ~ N(0,1)
+//
+// PDF:  f(x) = (δ/(λ√(2π))) · C/√(1+u²) · exp(−S²/2)
+//   where u=(x−ξ)/λ, S=sinh(δ·arcsinh(u)−ε), C=cosh(δ·arcsinh(u)−ε)
+// CDF:  Φ(S) (exact)
+// Quantile: ξ + λ·sinh((arcsinh(Φ⁻¹(p))+ε)/δ) (exact)
+//
+// Mean:     ξ when ε=0; otherwise numerical quadrature over Z~N(0,1)
+// Variance: λ² when ε=0,δ=1; otherwise numerical quadrature
+// Entropy:  H[Z] + log(λ/δ) − ½E_Z[log(1+Z²)] + ½E_Z[log(1+U²)]
+//           where H[Z]=½log(2πe), U=sinh((arcsinh(Z)+ε)/δ)
+//
+// Special cases:
+//   ε=0, δ=1 → Normal(ξ, λ²)
+//   ε=0      → symmetric, mean=mode=median=ξ
+//   δ<1      → heavier tails than normal; δ>1 → lighter tails
+//   ε>0      → right-skewed; ε<0 → left-skewed
+// ============================================================================
+
+/// SinhArcsinh distribution (Jones & Pewsey, 2009) — SHASH(ξ, λ, ε, δ).
+///
+/// Flexible 4-parameter family on the full real line. The transformation
+/// X = ξ + λ·sinh((arcsinh(Z)+ε)/δ) for Z~N(0,1) yields a distribution
+/// that reduces to Normal(ξ, λ²) when ε=0, δ=1.
+///
+/// Parameters:
+///   xi (ξ): location ∈ ℝ
+///   lambda (λ): scale > 0
+///   epsilon (ε): skewness ∈ ℝ; ε=0 → symmetric
+///   delta (δ): tail weight > 0; δ>1 → lighter tails; δ<1 → heavier tails
+///
+/// Support: (−∞, +∞)
+///
+/// Mean:     ξ when ε=0; otherwise ξ + λ·E_Z[sinh((arcsinh(Z)+ε)/δ)]
+/// Variance: λ² when ε=0,δ=1; otherwise λ²·Var_Z[sinh((arcsinh(Z)+ε)/δ)]
+///
+/// Time: O(1) for pdf/cdf/quantile/sample; O(N) for mean/variance/entropy (N=400) | Space: O(1)
+pub fn SinhArcsinh(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        xi: T,
+        lambda: T,
+        epsilon: T,
+        delta: T,
+
+        /// Create a SinhArcsinh distribution.
+        ///
+        /// Errors: error.InvalidParameter if λ≤0, δ≤0, or any parameter is non-finite/NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, lambda: T, epsilon: T, delta: T) DistributionError!Self {
+            if (!math.isFinite(xi) or !math.isFinite(lambda) or
+                !math.isFinite(epsilon) or !math.isFinite(delta)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            if (!(delta > 0.0)) return error.InvalidParameter;
+            return Self{ .xi = xi, .lambda = lambda, .epsilon = epsilon, .delta = delta };
+        }
+
+        // Standard normal CDF: Φ(x) = 0.5*(1 + erf(x/√2))
+        fn normalCdf(x: T) T {
+            return 0.5 * (1.0 + erf(x / math.sqrt(@as(T, 2.0))));
+        }
+
+        // Standard normal quantile: Φ⁻¹(p) = √2·erfInv(2p−1)
+        fn normalQuantile(p: T) T {
+            return math.sqrt(@as(T, 2.0)) * erfInv(2.0 * p - 1.0);
+        }
+
+        // Compute φ = δ·arcsinh(u) − ε, then S = sinh(φ), C = cosh(φ)
+        // where u = (x − ξ) / λ
+        inline fn sc(self: Self, x: T) struct { S: T, C: T, u: T } {
+            const u = (x - self.xi) / self.lambda;
+            const phi = self.delta * math.asinh(u) - self.epsilon;
+            return .{ .S = math.sinh(phi), .C = math.cosh(phi), .u = u };
+        }
+
+        /// PDF: (δ/(λ√(2π))) · C/√(1+u²) · exp(−S²/2).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const t = self.sc(x);
+            const norm = self.delta / (self.lambda * math.sqrt(@as(T, 2.0) * math.pi));
+            return @max(0.0, norm * (t.C / math.sqrt(1.0 + t.u * t.u)) * math.exp(-0.5 * t.S * t.S));
+        }
+
+        /// Log PDF: ln(δ) − ln(λ) − ½ln(2π) + ln(C) − ½ln(1+u²) − S²/2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const t = self.sc(x);
+            return @log(self.delta) - @log(self.lambda) - 0.5 * @log(@as(T, 2.0) * math.pi) +
+                @log(t.C) - 0.5 * @log(1.0 + t.u * t.u) - 0.5 * t.S * t.S;
+        }
+
+        /// CDF: Φ(sinh(δ·arcsinh((x−ξ)/λ) − ε)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            return normalCdf(self.sc(x).S);
+        }
+
+        /// Quantile: ξ + λ·sinh((arcsinh(Φ⁻¹(p)) + ε)/δ).
+        ///
+        /// Errors: error.InvalidProbability if p ∉ (0, 1) or NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p > 0.0 and p < 1.0)) return error.InvalidProbability;
+            const z = normalQuantile(p);
+            return self.xi + self.lambda * math.sinh((math.asinh(z) + self.epsilon) / self.delta);
+        }
+
+        /// Mean: ξ when ε=0 (symmetry); otherwise ξ + λ·∫ sinh((arcsinh(z)+ε)/δ)·φ(z) dz
+        /// via 400-point composite Simpson over z ∈ [−8, 8].
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.epsilon == 0.0) return self.xi;
+            const n: u32 = 400;
+            const lo: T = -8.0;
+            const hi: T = 8.0;
+            const h = (hi - lo) / @as(T, @floatFromInt(n));
+            const inv_sqrt2pi: T = 1.0 / math.sqrt(@as(T, 2.0) * math.pi);
+            var sum: T = 0.0;
+            var i: u32 = 0;
+            while (i <= n) : (i += 1) {
+                const z = lo + @as(T, @floatFromInt(i)) * h;
+                const phi_z = inv_sqrt2pi * math.exp(-0.5 * z * z);
+                const val = math.sinh((math.asinh(z) + self.epsilon) / self.delta) * phi_z;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * val;
+            }
+            return self.xi + self.lambda * (sum * h / 3.0);
+        }
+
+        /// Variance: λ²·(E[sinh²((arcsinh(Z)+ε)/δ)] − E[sinh((arcsinh(Z)+ε)/δ)]²)
+        /// via 400-point composite Simpson.
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const n: u32 = 400;
+            const lo: T = -8.0;
+            const hi: T = 8.0;
+            const h = (hi - lo) / @as(T, @floatFromInt(n));
+            const inv_sqrt2pi: T = 1.0 / math.sqrt(@as(T, 2.0) * math.pi);
+            var sum1: T = 0.0;
+            var sum2: T = 0.0;
+            var i: u32 = 0;
+            while (i <= n) : (i += 1) {
+                const z = lo + @as(T, @floatFromInt(i)) * h;
+                const phi_z = inv_sqrt2pi * math.exp(-0.5 * z * z);
+                const s = math.sinh((math.asinh(z) + self.epsilon) / self.delta);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum1 += w * s * phi_z;
+                sum2 += w * s * s * phi_z;
+            }
+            const e1 = sum1 * h / 3.0;
+            const e2 = sum2 * h / 3.0;
+            return @max(0.0, self.lambda * self.lambda * (e2 - e1 * e1));
+        }
+
+        /// Mode: ξ when ε=0 (symmetry); otherwise found by ternary search.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.epsilon == 0.0) return self.xi;
+            var lo = self.xi - 10.0 * self.lambda;
+            var hi = self.xi + 10.0 * self.lambda;
+            var iter: u32 = 0;
+            while (hi - lo > 1e-8 and iter < 300) : (iter += 1) {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.pdf(m1) < self.pdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Shannon entropy via change-of-variables to Z~N(0,1):
+        /// H[X] = H[Z] + log(λ/δ) − ½E_Z[log(1+Z²)] + ½E_Z[log(1+U²)]
+        /// where H[Z] = ½log(2πe), U = sinh((arcsinh(Z)+ε)/δ).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const half_log_2pie: T = 0.5 * (@log(@as(T, 2.0) * math.pi) + 1.0);
+            const n: u32 = 400;
+            const lo: T = -8.0;
+            const hi: T = 8.0;
+            const h = (hi - lo) / @as(T, @floatFromInt(n));
+            const inv_sqrt2pi: T = 1.0 / math.sqrt(@as(T, 2.0) * math.pi);
+            var sum_logz: T = 0.0;
+            var sum_logu: T = 0.0;
+            var i: u32 = 0;
+            while (i <= n) : (i += 1) {
+                const z = lo + @as(T, @floatFromInt(i)) * h;
+                const phi_z = inv_sqrt2pi * math.exp(-0.5 * z * z);
+                const u = math.sinh((math.asinh(z) + self.epsilon) / self.delta);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum_logz += w * @log(1.0 + z * z) * phi_z;
+                sum_logu += w * @log(1.0 + u * u) * phi_z;
+            }
+            const e_logz = sum_logz * h / 3.0;
+            const e_logu = sum_logu * h / 3.0;
+            return half_log_2pie + @log(self.lambda / self.delta) - 0.5 * e_logz + 0.5 * e_logu;
+        }
+
+        /// Generate a sample: Z ~ N(0,1) via Box-Muller, X = ξ + λ·sinh((arcsinh(Z)+ε)/δ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) T {
+            const r1 = @max(@as(T, 1e-15), rng.float(T));
+            const r2 = rng.float(T);
+            const z = math.sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+            return self.xi + self.lambda * math.sinh((math.asinh(z) + self.epsilon) / self.delta);
+        }
+
+        /// Validate distribution parameters.
+        ///
+        /// Errors: error.InvalidParameter if λ≤0, δ≤0, or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.xi) or !math.isFinite(self.lambda) or
+                !math.isFinite(self.epsilon) or !math.isFinite(self.delta)) return error.InvalidParameter;
+            if (!(self.lambda > 0.0)) return error.InvalidParameter;
+            if (!(self.delta > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// SinhArcsinh Distribution Tests (91st total, 73rd continuous)
+// ============================================================================
+
+test "SinhArcsinh: init with valid parameters xi=0 lambda=1 epsilon=0 delta=1" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectEqual(0.0, dist.xi);
+    try testing.expectEqual(1.0, dist.lambda);
+    try testing.expectEqual(0.0, dist.epsilon);
+    try testing.expectEqual(1.0, dist.delta);
+}
+
+test "SinhArcsinh: init with nonzero xi" {
+    const dist = try SinhArcsinh(f64).init(5.0, 2.0, 0.5, 1.5);
+    try testing.expectEqual(5.0, dist.xi);
+    try testing.expectEqual(2.0, dist.lambda);
+    try testing.expectEqual(0.5, dist.epsilon);
+    try testing.expectEqual(1.5, dist.delta);
+}
+
+test "SinhArcsinh: init with lambda=0 returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 0.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with negative lambda returns error" {
+    const result = SinhArcsinh(f64).init(0.0, -1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with delta=0 returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 1.0, 0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with negative delta returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 1.0, 0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with infinite xi returns error" {
+    const result = SinhArcsinh(f64).init(math.inf(f64), 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with infinite lambda returns error" {
+    const result = SinhArcsinh(f64).init(0.0, math.inf(f64), 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with infinite epsilon returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 1.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with infinite delta returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with NaN xi returns error" {
+    const result = SinhArcsinh(f64).init(math.nan(f64), 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with NaN lambda returns error" {
+    const result = SinhArcsinh(f64).init(0.0, math.nan(f64), 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with NaN epsilon returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 1.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: init with NaN delta returns error" {
+    const result = SinhArcsinh(f64).init(0.0, 1.0, 0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SinhArcsinh: pdf(0; 0,1,0,1) = 1/sqrt(2pi) [Normal(0,1) special case]" {
+    // SHASH(0,1,0,1) = N(0,1); u=0, S=sinh(0)=0, C=cosh(0)=1
+    // f(0) = (1/sqrt(2pi)) * 1/1 * exp(0) = 1/sqrt(2pi) ≈ 0.39894
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / math.sqrt(2.0 * math.pi)), dist.pdf(0.0), 1e-7);
+}
+
+test "SinhArcsinh: pdf(0; 0,1,0,0.5) ≈ 0.5/sqrt(2pi) [heavy-tailed case]" {
+    // SHASH(0,1,0,0.5): u=0, phi=0.5*0-0=0, S=sinh(0)=0, C=cosh(0)=1
+    // f(0) = (0.5/sqrt(2pi)) * 1/1 * exp(0) = 0.5/sqrt(2pi) ≈ 0.19947
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5 / math.sqrt(2.0 * math.pi)), dist.pdf(0.0), 1e-7);
+}
+
+test "SinhArcsinh: pdf(0; 0,1,1,1) ≈ 0.3088 [right-skewed case]" {
+    // u=0, phi=1*0-1=-1, S=sinh(-1)≈-1.17520, C=cosh(-1)≈1.54308
+    // f(0) = (1/sqrt(2pi)) * 1.54308 * exp(-1.17520^2/2) ≈ 0.3088
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.3088), dist.pdf(0.0), 0.002);
+}
+
+test "SinhArcsinh: pdf(0; 0,2,0,1) ≈ 1/(2*sqrt(2pi)) [scale=2 Normal case]" {
+    // SHASH(0,2,0,1): u=0, S=0, C=1; f(0) = (1/(2*sqrt(2pi))) * 1 * 1 ≈ 0.19947
+    const dist = try SinhArcsinh(f64).init(0.0, 2.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / (2.0 * math.sqrt(2.0 * math.pi))), dist.pdf(0.0), 1e-7);
+}
+
+test "SinhArcsinh: pdf is non-negative at multiple points" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.pdf(-3.0) >= 0.0);
+    try testing.expect(dist.pdf(-1.0) >= 0.0);
+    try testing.expect(dist.pdf(0.0) >= 0.0);
+    try testing.expect(dist.pdf(1.0) >= 0.0);
+    try testing.expect(dist.pdf(3.0) >= 0.0);
+}
+
+test "SinhArcsinh: pdf integrates to ≈ 1.0 [Normal special case]" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    var total: f64 = 0.0;
+    const lo: f64 = -30.0;
+    const hi: f64 = 30.0;
+    const n = 200;
+    const h = (hi - lo) / @as(f64, @floatFromInt(n));
+    for (0..n + 1) |i| {
+        const x = lo + @as(f64, @floatFromInt(i)) * h;
+        const weight: f64 = if (i == 0 or i == n) 0.5 else 1.0;
+        total += weight * dist.pdf(x);
+    }
+    total *= h;
+    try testing.expectApproxEqAbs(1.0, total, 0.01);
+}
+
+test "SinhArcsinh: logpdf consistent with pdf at x=0" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-8);
+}
+
+test "SinhArcsinh: logpdf is finite for reasonable x" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(math.isFinite(dist.logpdf(-5.0)));
+    try testing.expect(math.isFinite(dist.logpdf(0.0)));
+    try testing.expect(math.isFinite(dist.logpdf(5.0)));
+}
+
+test "SinhArcsinh: cdf(0; 0,1,0,1) = 0.5 [Normal special case]" {
+    // SHASH(0,1,0,1) = N(0,1); S=sinh(0)=0; Phi(0)=0.5
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(0.0), 1e-10);
+}
+
+test "SinhArcsinh: cdf(0; 0,1,0,0.5) = 0.5 [symmetry when epsilon=0]" {
+    // ε=0 → symmetric around ξ=0; CDF(0)=0.5 for any δ
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(0.0), 1e-10);
+}
+
+test "SinhArcsinh: cdf(0; 0,1,1,1) ≈ Phi(sinh(-1)) ≈ 0.1199 [right-skewed]" {
+    // S = sinh(1*arcsinh(0) - 1) = sinh(-1) = -1.17520
+    // CDF(0) = Phi(-1.17520) ≈ 0.1199
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.1199), dist.cdf(0.0), 0.003);
+}
+
+test "SinhArcsinh: cdf is monotonically increasing" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    const c_neg5 = dist.cdf(-5.0);
+    const c_0 = dist.cdf(0.0);
+    const c_5 = dist.cdf(5.0);
+    const c_10 = dist.cdf(10.0);
+    try testing.expect(c_neg5 < c_0);
+    try testing.expect(c_0 < c_5);
+    try testing.expect(c_5 < c_10);
+}
+
+test "SinhArcsinh: cdf approaches 0 at extreme left" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.cdf(-100.0) < 1e-6);
+}
+
+test "SinhArcsinh: cdf approaches 1 at extreme right" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expect(dist.cdf(100.0) > 1.0 - 1e-6);
+}
+
+test "SinhArcsinh: quantile error for p<=0" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.5));
+    try testing.expectError(error.InvalidProbability, dist.quantile(0.0));
+}
+
+test "SinhArcsinh: quantile error for p>=1" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.0));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.5));
+}
+
+test "SinhArcsinh: quantile-cdf roundtrip at x=0" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(dist.cdf(0.0));
+    try testing.expectApproxEqAbs(@as(f64, 0.0), q, 1e-5);
+}
+
+test "SinhArcsinh: quantile-cdf roundtrip at x=1.5" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(dist.cdf(1.5));
+    try testing.expectApproxEqAbs(@as(f64, 1.5), q, 1e-5);
+}
+
+test "SinhArcsinh: quantile-cdf roundtrip at x=-2.3" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(dist.cdf(-2.3));
+    try testing.expectApproxEqAbs(@as(f64, -2.3), q, 1e-5);
+}
+
+test "SinhArcsinh: mean(0,1,0,1) = 0.0 [Normal special case]" {
+    // ε=0 → mean = ξ = 0 (exact, via shortcut)
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.mean(), 1e-10);
+}
+
+test "SinhArcsinh: mean(5,1,0,1) = 5.0 [location shift]" {
+    // ε=0 → mean = ξ = 5 (exact, via shortcut)
+    const dist = try SinhArcsinh(f64).init(5.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), dist.mean(), 1e-10);
+}
+
+test "SinhArcsinh: mean(0,2,0,1) = 0.0 [symmetric, any lambda]" {
+    // ε=0 → mean = ξ = 0 regardless of λ
+    const dist = try SinhArcsinh(f64).init(0.0, 2.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.mean(), 1e-10);
+}
+
+test "SinhArcsinh: variance(0,1,0,1) = 1.0 [Normal(0,1) special case]" {
+    // SHASH(0,1,0,1) = N(0,1); Var = λ² = 1
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.variance(), 0.01);
+}
+
+test "SinhArcsinh: variance(0,2,0,1) = 4.0 [scale squared]" {
+    // SHASH(0,2,0,1) = N(0,4); Var = λ² = 4
+    const dist = try SinhArcsinh(f64).init(0.0, 2.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 4.0), dist.variance(), 0.1);
+}
+
+test "SinhArcsinh: mode(0,1,0,1) = 0.0 [symmetric]" {
+    // ε=0 → mode = ξ = 0 (exact, via shortcut)
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.mode(), 1e-10);
+}
+
+test "SinhArcsinh: mode(5,1,0,1) = 5.0 [location shift]" {
+    // ε=0 → mode = ξ = 5 (exact, via shortcut)
+    const dist = try SinhArcsinh(f64).init(5.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 5.0), dist.mode(), 1e-10);
+}
+
+test "SinhArcsinh: entropy(0,1,0,1) ≈ 0.5*log(2*pi*e) ≈ 1.4189 [Normal entropy]" {
+    // H[N(0,1)] = 0.5*log(2*pi*e) ≈ 1.4189 nats
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.4189), dist.entropy(), 0.01);
+}
+
+test "SinhArcsinh: sample produces finite values" {
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..50) |_| {
+        try testing.expect(math.isFinite(dist.sample(rng.random())));
+    }
+}
+
+test "SinhArcsinh: sample mean converges to xi=0 for Normal special case (N=5000)" {
+    // SHASH(0,1,0,1) = N(0,1); E[X] = 0
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    for (0..5000) |_| sum += dist.sample(rng.random());
+    try testing.expectApproxEqAbs(@as(f64, 0.0), sum / 5000.0, 0.1);
+}
+
+test "SinhArcsinh: sample variance converges to 1.0 for Normal special case (N=5000)" {
+    // SHASH(0,1,0,1) = N(0,1); Var[X] = 1
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / 5000.0;
+    const v = sum_sq / 5000.0 - m * m;
+    try testing.expectApproxEqAbs(@as(f64, 1.0), v, 0.15);
+}
+
+test "SinhArcsinh: symmetry pdf(d) = pdf(-d) for epsilon=0" {
+    // When ε=0 and ξ=0, distribution is symmetric: pdf(x) = pdf(-x)
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(dist.pdf(1.5), dist.pdf(-1.5), 1e-10);
+    try testing.expectApproxEqAbs(dist.pdf(2.0), dist.pdf(-2.0), 1e-10);
+}
+
+test "SinhArcsinh: symmetry cdf(d) + cdf(-d) = 1 for epsilon=0" {
+    // When ε=0 and ξ=0, F(x) + F(-x) = 1
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(2.0) + dist.cdf(-2.0), 1e-10);
+}
+
+test "SinhArcsinh: validate() succeeds for valid parameters" {
+    const dist = try SinhArcsinh(f64).init(1.0, 2.0, 0.5, 1.5);
+    try dist.validate();
+}
+
+test "SinhArcsinh: validate() fails for lambda=0" {
+    var dist: SinhArcsinh(f64) = undefined;
+    dist.xi = 0.0;
+    dist.lambda = 0.0;
+    dist.epsilon = 0.0;
+    dist.delta = 1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "SinhArcsinh: validate() fails for delta=0" {
+    var dist: SinhArcsinh(f64) = undefined;
+    dist.xi = 0.0;
+    dist.lambda = 1.0;
+    dist.epsilon = 0.0;
+    dist.delta = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "SinhArcsinh(f32): init and pdf with f32" {
+    const dist = try SinhArcsinh(f32).init(0.0, 1.0, 0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(p > 0.0);
+}
+
+test "SinhArcsinh(f32): cdf in [0,1] for f32" {
+    const dist = try SinhArcsinh(f32).init(0.0, 1.0, 0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "SinhArcsinh(f32): sample produces finite values" {
+    const dist = try SinhArcsinh(f32).init(0.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(777);
+    for (0..50) |_| {
+        try testing.expect(math.isFinite(dist.sample(rng.random())));
+    }
+}
+
+test "SinhArcsinh: skewness — epsilon>0 gives right-skewed distribution" {
+    // For right-skewed SHASH(0,1,1,1): mode < median < mean
+    // Moving offset from mode: left captures more probability mass than right
+    const dist = try SinhArcsinh(f64).init(0.0, 1.0, 1.0, 1.0);
+    const m = dist.mode();
+    const offset = 1.5;
+    const c_right = dist.cdf(m + offset);
+    const c_left = dist.cdf(m - offset);
+    // CDF at mode < 0.5 (median > mode for right-skewed); left tail much smaller than right
+    const left_gap = 0.5 - c_left;   // probability in left tail
+    const right_gain = c_right - 0.5; // probability in right band above 0.5
+    try testing.expect(left_gap > right_gain);
+}
+
+test "SinhArcsinh: tail weight — delta<1 gives heavier tails than delta>1" {
+    // At extreme x, heavy-tailed (δ<1) has more probability than light-tailed (δ>1)
+    const dist_light = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 2.0);
+    const dist_heavy = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 0.5);
+    try testing.expect(dist_heavy.pdf(5.0) > dist_light.pdf(5.0));
+}
+
+test "SinhArcsinh: median equals xi for epsilon=0" {
+    // When ε=0, CDF(ξ) = Phi(S) where S=sinh(δ*arcsinh(0)-0)=sinh(0)=0; Phi(0)=0.5
+    const dist = try SinhArcsinh(f64).init(3.0, 2.0, 0.0, 1.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(3.0), 1e-10);
+}
