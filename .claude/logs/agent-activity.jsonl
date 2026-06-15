@@ -570,3 +570,5 @@
 {"timestamp":"2026-06-15T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for YuleSimon(rho) distribution","project":"zuda"}
 {"timestamp":"2026-06-15T07:44:49Z","action":"subagent","agent_type":"test-writer","task":"Write tests for Kolmogorov distribution","project":"zuda"}
 {"timestamp":"2026-06-15T07:44:49Z","action":"subagent","agent_type":"zig-developer","task":"Implement Kolmogorov distribution","project":"zuda"}
+{"timestamp":"2026-06-15T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for SinhArcsinh distribution (SHASH) — 91st distribution, 73rd continuous","project":"zuda"}
+{"timestamp":"2026-06-15T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement SinhArcsinh distribution in distributions.zig — 91st distribution, 73rd continuous","project":"zuda"}

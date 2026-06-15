@@ -1,4 +1,31 @@
-**Session 686 Update (2026-06-15) — FEATURE MODE [CURRENT]:**
+**Session 687 Update (2026-06-15) — FEATURE MODE [CURRENT]:**
+
+✅ **SinhArcsinh Distribution** — 91st total, 73rd continuous — commit d457263
+- **Mode**: FEATURE MODE (counter: 687)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: SinhArcsinh(ξ, λ, ε, δ) — Jones & Pewsey (2009) flexible 4-parameter family
+  * Parameters: ξ ∈ ℝ (location), λ > 0 (scale), ε ∈ ℝ (skewness), δ > 0 (tail weight)
+  * Transformation: X = ξ + λ·sinh((arcsinh(Z)+ε)/δ) where Z~N(0,1)
+  * Equivalently: Z(x) = sinh(δ·arcsinh(u)−ε), u=(x−ξ)/λ
+  * PDF: (δ/(λ√(2π)))·C/√(1+u²)·exp(−S²/2), S=sinh(δ·arcsinh(u)−ε), C=cosh(...)
+  * CDF: Φ(S) — exact O(1)
+  * Quantile: ξ+λ·sinh((arcsinh(Φ⁻¹(p))+ε)/δ) — exact O(1)
+  * Mean: ξ when ε=0 (exact); 400-pt Simpson in z-domain otherwise
+  * Variance: λ² when ε=0,δ=1; E[sinh²(...)]-E[sinh(...)]² via Simpson
+  * Mode: ξ when ε=0 (exact); ternary search in [ξ-10λ, ξ+10λ] otherwise
+  * Entropy: H[Z]+log(λ/δ)−½E_Z[log(1+Z²)]+½E_Z[log(1+U²)] — stable Z-domain formula
+  * Sample: Box-Muller Z → X=ξ+λ·sinh((arcsinh(Z)+ε)/δ) — exact O(1)
+  * Special cases: ε=0,δ=1 → N(ξ,λ²); ε=0 → symmetric (mode=mean=median=ξ)
+  * CRITICAL: sinh(-1) = -1.17520 (NOT -0.84147 as test-writer erroneously stated)
+    test-writer confused sinh(-1) with Φ⁻¹(0.2)≈-0.842; test values corrected:
+    pdf(0;0,1,1,1)≈0.3088, cdf(0;0,1,1,1)≈0.1199
+  * Zig issue: `u1` shadows primitive type `u1` — use `r1`, `r2` instead
+- **Tests**: 55 tests passing
+- **Distribution count**: 91 total (73 continuous + 18 discrete)
+- **Total tests**: 4,451
+- **Next Priority**: Next distribution per PRD queue
+
+**Session 686 Update (2026-06-15) — FEATURE MODE [PREVIOUS]:**
 
 ✅ **Kolmogorov Distribution** — 90th total, 72nd continuous — commit 7422864
 - **Mode**: FEATURE MODE (counter: 686)
