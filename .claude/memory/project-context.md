@@ -1,4 +1,24 @@
-**Session 686 Update (2026-06-15) — FEATURE MODE:**
+**Session 686 Update (2026-06-15) — FEATURE MODE [CURRENT]:**
+
+✅ **Kolmogorov Distribution** — 90th total, 72nd continuous — commit 7422864
+- **Mode**: FEATURE MODE (counter: 686)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Kolmogorov(T) — limiting distribution of KS test statistic √n·D_n
+  * No parameters (unit distribution)
+  * CDF: K(x) = 1 − 2·Σ_{j=1}^∞ (−1)^{j−1}·exp(−2j²x²) for x > 0
+  * PDF: k(x) = 8x·Σ_{j=1}^∞ (−1)^{j−1}·j²·exp(−2j²x²) for x > 0
+  * Mean: √(π/2)·ln(2) ≈ 0.8687; Variance: π²/12 − (π/2)·ln²(2) ≈ 0.0678
+  * Mode ≈ 0.735 (ternary search); Entropy via Simpson quadrature over [1e-4, 8]
+  * Quantile: bisection search; Sample: inverse CDF via quantile
+  * Key critical values: CDF(1.0)≈0.730, CDF(1.36)≈0.950, CDF(1.628)≈0.990
+  * IMPORTANT: PDF(1.0) ≈ 1.072 (NOT 0.6867 as test-writer initially stated)
+  * IMPORTANT: Variance ≈ 0.0678 (NOT 0.2566 as test-writer initially stated)
+- **Tests**: 47 tests passing
+- **Distribution count**: 90 total (72 continuous + 18 discrete)
+- **Total tests**: 4,396
+- **Next Priority**: Next distribution per PRD queue
+
+**Previous Session 686 Update (2026-06-15) — FEATURE MODE:**
 
 ✅ **ConwayMaxwellPoisson Distribution** — 89th total, 18th discrete — commits 7806e31, 5bcd3ba
 - **Mode**: FEATURE MODE (counter: 686)
