@@ -50290,6 +50290,236 @@ test "NoncentralBeta: large lambda pdf is positive and finite" {
 /// Mean:     ρ/(ρ−1)                       for ρ > 1  (else +∞)
 /// Variance: ρ²/((ρ−1)²(ρ−2))             for ρ > 2  (else +∞)
 /// Mode:     1  (PMF strictly decreasing)
+
+// ============================================================================
+// Conway-Maxwell-Poisson Distribution
+// ============================================================================
+
+/// Conway-Maxwell-Poisson distribution CMP(λ, ν)
+///
+/// Generalizes Poisson (ν=1), Geometric (ν=0, λ<1), and Bernoulli (ν→∞).
+///
+/// PMF: P(X=k) = λ^k / ((k!)^ν · Z(λ,ν))
+/// where Z(λ,ν) = Σ_{j=0}^∞ λ^j / (j!)^ν is the normalizing constant.
+///
+/// Parameters:
+///   - lambda (λ): rate parameter (λ > 0)
+///   - nu (ν): dispersion parameter (ν ≥ 0; ν=0 requires λ < 1)
+///     * ν < 1: overdispersed (Var > Mean)
+///     * ν = 1: equidispersed Poisson (Var = Mean)
+///     * ν > 1: underdispersed (Var < Mean)
+///
+/// Time: O(k*) for pmf/cdf where k* is effective support size | Space: O(1)
+pub fn ConwayMaxwellPoisson(comptime T: type) type {
+    return struct {
+        lambda: T,
+        nu: T,
+        log_z: T, // cached log normalizing constant
+
+        const Self = @This();
+
+        /// Initialize CMP(λ, ν).
+        /// λ > 0; ν ≥ 0; if ν = 0 then additionally λ < 1.
+        ///
+        /// Computes and caches the log normalizing constant log Z(λ, ν).
+        ///
+        /// Time: O(k*) where k* ≈ max(λ^(1/ν) + 6√(λ^(1/ν)/ν), 50) | Space: O(1)
+        pub fn init(lambda: T, nu: T) DistributionError!Self {
+            if (!(lambda > 0.0) or !math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(nu >= 0.0) or !math.isFinite(nu)) return error.InvalidParameter;
+            if (nu == 0.0 and !(lambda < 1.0)) return error.InvalidParameter;
+            const lz = computeCMPLogZ(T, lambda, nu);
+            return Self{ .lambda = lambda, .nu = nu, .log_z = lz };
+        }
+
+        /// Probability mass function P(X=k).
+        ///
+        /// P(X=k) = λ^k / ((k!)^ν · Z(λ,ν))
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function.
+        ///
+        /// log P(X=k) = k·log(λ) - ν·log(k!) - log(Z)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const kf: T = @floatFromInt(k);
+            return kf * @log(self.lambda) - self.nu * logGamma(kf + 1.0) - self.log_z;
+        }
+
+        /// Cumulative distribution function P(X ≤ k).
+        ///
+        /// F(k) = Σ_{j=0}^{k} P(X=j)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var i: u64 = 0;
+            while (i <= k) : (i += 1) {
+                sum += self.pmf(i);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile function (inverse CDF) - returns k such that P(X ≤ k) ≥ p.
+        ///
+        /// Time: O(k*) where k* is the result | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0) or !(p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= p) return k;
+            }
+            return k;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// Computed numerically: Σ k·P(X=k)
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var sum: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 1;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                sum += @as(T, @floatFromInt(k)) * pmf_k;
+            }
+            return sum;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var = E[X²] - (E[X])²
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            var e_x2: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 1;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                const kf: T = @floatFromInt(k);
+                e_x2 += kf * kf * pmf_k;
+            }
+            return e_x2 - m * m;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// For ν > 0: floor(λ^(1/ν))
+        /// For ν = 0: 0 (geometric, strictly decreasing)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            if (self.nu == 0.0) return 0;
+            const mode_f = @exp(@log(self.lambda) / self.nu);
+            if (!math.isFinite(mode_f) or mode_f < 0.0) return 0;
+            return @intFromFloat(@floor(mode_f));
+        }
+
+        /// Entropy of the distribution in nats.
+        ///
+        /// H = -Σ P(X=k)·log(P(X=k))
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                if (pmf_k > 0.0) {
+                    sum -= pmf_k * @log(pmf_k);
+                }
+            }
+            return sum;
+        }
+
+        /// Generate a random sample from this distribution using inverse CDF.
+        ///
+        /// Time: O(k*) where k* is the sample value | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= u) return k;
+            }
+            return k;
+        }
+
+        /// Assert that parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return DistributionError.InvalidParameter;
+            if (!(self.nu >= 0.0) or !math.isFinite(self.nu)) return DistributionError.InvalidParameter;
+            if (self.nu == 0.0 and !(self.lambda < 1.0)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.log_z)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+/// Compute log Z(λ, ν) = log(Σ_{k=0}^∞ λ^k / (k!)^ν).
+///
+/// Uses unimodal two-pass approach:
+/// - Pass 1: walk k=0,1,2,... tracking max log-term.
+/// - Once past the peak, stop when the term is 40 log-units below the max.
+/// - Pass 2: sum exp(log_term - log_max) over the same range.
+/// - Return log_max + log(sum).
+///
+/// Time: O(k*) where k* ≈ effective support size | Space: O(1)
+fn computeCMPLogZ(comptime T: type, lambda: T, nu: T) T {
+    const log_lambda = @log(lambda);
+    const MAX_K: u64 = 50_000;
+
+    // Pass 1: find effective truncation k_stop and max log-term
+    var log_max: T = 0.0; // k=0: log_term = 0
+    var past_peak: bool = false;
+    var k_stop: u64 = 0;
+
+    var k: u64 = 1;
+    while (k <= MAX_K) : (k += 1) {
+        const kf: T = @floatFromInt(k);
+        const lt = kf * log_lambda - nu * logGamma(kf + 1.0);
+        if (lt > log_max) {
+            log_max = lt;
+        } else {
+            past_peak = true;
+        }
+        if (past_peak and lt < log_max - 40.0) {
+            k_stop = k;
+            break;
+        }
+        k_stop = k;
+    }
+
+    // Pass 2: sum exp(log_term - log_max)
+    var sum: T = 0.0;
+    var j: u64 = 0;
+    while (j <= k_stop) : (j += 1) {
+        const jf: T = @floatFromInt(j);
+        const lt = jf * log_lambda - nu * logGamma(jf + 1.0);
+        sum += @exp(lt - log_max);
+    }
+
+    return log_max + @log(sum);
+}
+
 pub fn YuleSimon(comptime T: type) type {
     return struct {
         rho: T,
