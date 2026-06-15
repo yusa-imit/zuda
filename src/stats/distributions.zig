@@ -52536,3 +52536,533 @@ test "SinhArcsinh: median equals xi for epsilon=0" {
     const dist = try SinhArcsinh(f64).init(3.0, 2.0, 0.0, 1.5);
     try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(3.0), 1e-10);
 }
+
+// ============================================================================
+// Moyal Distribution (92nd total, 74th continuous)
+// ============================================================================
+
+/// Moyal distribution — approximation to Landau distribution used in particle physics
+///
+/// Energy-loss distribution in detector physics. X ~ Moyal(μ, σ) has:
+/// - PDF: f(x) = (1/(σ√(2π))) · exp(-(z + exp(-z))/2), where z = (x - μ)/σ
+/// - CDF: F(x) = erfc(exp(-z/2) / √2)
+/// - Quantile: Q(p) = μ - 2σ·ln(√2·erfInv(1-p))
+///
+/// Parameters:
+///   - μ: Location parameter (ℝ)
+///   - σ: Scale parameter (σ > 0)
+///
+/// Support: (-∞, +∞)
+///
+/// Mean: μ + σ(γ_E + ln 2), where γ_E ≈ 0.5772 (Euler-Mascheroni constant)
+/// Variance: σ² · π²/2
+/// Mode: μ (always)
+///
+/// Time: O(1) for pdf/cdf/quantile/sample
+pub fn Moyal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a Moyal distribution with given location and scale
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (1/(σ√(2π))) · exp(-(z + exp(-z))/2), where z = (x - μ)/σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const exp_neg_z = @exp(-z);
+            const exponent = -(z + exp_neg_z) / 2.0;
+            const norm_factor = 1.0 / (self.sigma * @sqrt(2.0 * math.pi));
+            return norm_factor * @exp(exponent);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = -(z + exp(-z))/2 - log(σ) - (1/2)·log(2π)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const exp_neg_z = @exp(-z);
+            return -(z + exp_neg_z) / 2.0 - @log(self.sigma) - 0.5 * @log(2.0 * math.pi);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 - erf(exp(-z/2) / √2), where z = (x - μ)/σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const arg = @exp(-z / 2.0) / @sqrt(2.0);
+            return 1.0 - erf(arg);
+        }
+
+        /// Survival function (SF) at x: 1 - CDF(x)
+        ///
+        /// S(x) = erf(exp(-z/2) / √2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+            const arg = @exp(-z / 2.0) / @sqrt(2.0);
+            return erf(arg);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = μ - 2σ·ln(√2·erfInv(1-p))
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            const inv_erf = erfInv(1.0 - p);
+            const arg = @sqrt(2.0) * inv_erf;
+            return self.mu - 2.0 * self.sigma * @log(@abs(arg));
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses exact sampler: μ - 2σ·ln(|Z|), where Z ~ N(0,1) via Box-Muller
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) T {
+            const r1 = @max(@as(T, 1e-15), rng.float(T));
+            const r2 = rng.float(T);
+            const z = math.sqrt(-2.0 * @log(r1)) * @cos(2.0 * math.pi * r2);
+            return self.mu - 2.0 * self.sigma * @log(@abs(z));
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = μ + σ(γ_E + ln 2), where γ_E ≈ 0.5772156649015329
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const euler_mascheroni: T = 0.5772156649015329;
+            const ln2: T = @log(2.0);
+            return self.mu + self.sigma * (euler_mascheroni + ln2);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = σ² · π²/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const pi_sq_half = (math.pi * math.pi) / 2.0;
+            return self.sigma * self.sigma * pi_sq_half;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = μ (always, location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Shannon entropy of the distribution
+        ///
+        /// H[X] = (γ_E + 1)/2 + log(σ) + (1/2)·log(4π)
+        /// where γ_E ≈ 0.5772156649015329 (Euler-Mascheroni constant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const euler_mascheroni: T = 0.5772156649015329;
+            return (euler_mascheroni + 1.0) / 2.0 + @log(self.sigma) + 0.5 * @log(4.0 * math.pi);
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Errors: error.InvalidParameter if σ ≤ 0 or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu) or !math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (!(self.sigma > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Moyal Distribution Tests (92nd total, 74th continuous)
+// ============================================================================
+
+test "Moyal: init with valid parameters mu=0 sigma=1" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+}
+
+test "Moyal: init with nonzero mu" {
+    const dist = try Moyal(f64).init(5.0, 2.0);
+    try testing.expectEqual(5.0, dist.mu);
+    try testing.expectEqual(2.0, dist.sigma);
+}
+
+test "Moyal: init with sigma=0 returns error" {
+    const result = Moyal(f64).init(0.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Moyal: init with negative sigma returns error" {
+    const result = Moyal(f64).init(0.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Moyal: init with infinite mu returns error" {
+    const result = Moyal(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Moyal: init with infinite sigma returns error" {
+    const result = Moyal(f64).init(0.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Moyal: init with NaN mu returns error" {
+    const result = Moyal(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Moyal: init with NaN sigma returns error" {
+    const result = Moyal(f64).init(0.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Moyal: pdf(0; 0,1) ≈ 0.2420 [exp(-0.5) / sqrt(2π)]" {
+    // z=0: -(0 + 1)/2 = -0.5; pdf = exp(-0.5) / sqrt(2π) ≈ 0.2420
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const expected: f64 = @exp(-0.5) / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-4);
+}
+
+test "Moyal: pdf(2; 0,1) evaluates correctly" {
+    // z=2: -(2 + exp(-2))/2 ≈ -(2 + 0.1353)/2 ≈ -1.0677; pdf ≈ exp(-1.0677) / sqrt(2π)
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const p = dist.pdf(2.0);
+    try testing.expect(p > 0.0 and p < 0.25);
+}
+
+test "Moyal: pdf(-1; 0,1) evaluates correctly" {
+    // z=-1: -(-1 + exp(1))/2 ≈ -(2.7183-1)/2 ≈ -0.8592; pdf > 0
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try testing.expect(p > 0.0);
+}
+
+test "Moyal: pdf is non-negative everywhere" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expect(dist.pdf(-10.0) >= 0.0);
+    try testing.expect(dist.pdf(-3.0) >= 0.0);
+    try testing.expect(dist.pdf(0.0) >= 0.0);
+    try testing.expect(dist.pdf(3.0) >= 0.0);
+    try testing.expect(dist.pdf(10.0) >= 0.0);
+}
+
+test "Moyal: logpdf consistent with pdf at x=0" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "Moyal: logpdf(0; 0,1) ≈ -1.416 [log(exp(-0.5) / sqrt(2π))]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const expected: f64 = -0.5 - 0.5 * @log(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, dist.logpdf(0.0), 1e-6);
+}
+
+test "Moyal: logpdf is finite for reasonable x" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expect(math.isFinite(dist.logpdf(-5.0)));
+    try testing.expect(math.isFinite(dist.logpdf(0.0)));
+    try testing.expect(math.isFinite(dist.logpdf(5.0)));
+}
+
+test "Moyal: cdf(0; 0,1) ≈ 0.3173 [erfc(1/sqrt(2))]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    // F(0) = erfc(exp(0) / sqrt(2)) = erfc(1/sqrt(2)) ≈ 0.3173
+    try testing.expectApproxEqAbs(@as(f64, 0.3173), dist.cdf(0.0), 1e-3);
+}
+
+test "Moyal: cdf(2; 0,1) ≈ 0.711 [erfc(exp(-1)/sqrt(2))]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    // F(2) = erfc(exp(-1) / sqrt(2)) ≈ 0.711
+    try testing.expectApproxEqAbs(@as(f64, 0.711), dist.cdf(2.0), 0.01);
+}
+
+test "Moyal: cdf(-1; 0,1) ≈ 0.104 [erfc(exp(0.5)/sqrt(2))]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    // F(-1) = erfc(exp(0.5) / sqrt(2)) ≈ 0.104
+    try testing.expectApproxEqAbs(@as(f64, 0.104), dist.cdf(-1.0), 0.01);
+}
+
+test "Moyal: cdf(5; 0,1) ≈ 0.935" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const c = dist.cdf(5.0);
+    try testing.expect(c > 0.9 and c < 0.99);
+}
+
+test "Moyal: cdf is monotonically increasing" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const c_neg5 = dist.cdf(-5.0);
+    const c_neg2 = dist.cdf(-2.0);
+    const c_0 = dist.cdf(0.0);
+    const c_2 = dist.cdf(2.0);
+    const c_5 = dist.cdf(5.0);
+    try testing.expect(c_neg5 < c_neg2);
+    try testing.expect(c_neg2 < c_0);
+    try testing.expect(c_0 < c_2);
+    try testing.expect(c_2 < c_5);
+}
+
+test "Moyal: cdf approaches 0 at extreme left" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expect(dist.cdf(-100.0) < 1e-6);
+}
+
+test "Moyal: cdf approaches 1 at extreme right" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expect(dist.cdf(100.0) > 1.0 - 1e-6);
+}
+
+test "Moyal: sf(x) + cdf(x) = 1" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expectApproxEqAbs(1.0, dist.cdf(-2.0) + dist.sf(-2.0), 1e-10);
+    try testing.expectApproxEqAbs(1.0, dist.cdf(0.0) + dist.sf(0.0), 1e-10);
+    try testing.expectApproxEqAbs(1.0, dist.cdf(3.0) + dist.sf(3.0), 1e-10);
+}
+
+test "Moyal: quantile error for p<0" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.5));
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Moyal: quantile error for p>1" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.5));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Moyal: quantile(0) = -infinity" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(q == -math.inf(f64));
+}
+
+test "Moyal: quantile(1) = +infinity" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(q == math.inf(f64));
+}
+
+test "Moyal: quantile(0.5; 0,1) ≈ 0.787 [median]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.787), q, 0.01);
+}
+
+test "Moyal: quantile is monotonically increasing" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "Moyal: quantile-cdf roundtrip at x=0" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), q, 1e-6);
+}
+
+test "Moyal: quantile-cdf roundtrip at x=2.5" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const c = dist.cdf(2.5);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(@as(f64, 2.5), q, 1e-6);
+}
+
+test "Moyal: quantile-cdf roundtrip at x=-1.5" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.5);
+    const q = try dist.quantile(c);
+    try testing.expectApproxEqAbs(@as(f64, -1.5), q, 1e-6);
+}
+
+test "Moyal: mean(0,1) ≈ 1.2704 [γ_E + ln(2)]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    // Mean = 0 + 1 * (0.5772 + 0.6931) ≈ 1.2703
+    try testing.expectApproxEqAbs(@as(f64, 1.2704), dist.mean(), 1e-3);
+}
+
+test "Moyal: mean(2,3) = 2 + 3*(γ_E + ln(2)) [location-scale]" {
+    const dist = try Moyal(f64).init(2.0, 3.0);
+    const expected: f64 = 2.0 + 3.0 * (0.5772156649015329 + @log(2.0));
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-3);
+}
+
+test "Moyal: variance(0,1) ≈ 4.9348 [π²/2]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    // Var = 1² · π²/2 ≈ 4.9348
+    try testing.expectApproxEqAbs(@as(f64, 4.9348), dist.variance(), 0.01);
+}
+
+test "Moyal: variance(0,2) = 4 * variance(0,1) [scale squared]" {
+    const dist1 = try Moyal(f64).init(0.0, 1.0);
+    const dist2 = try Moyal(f64).init(0.0, 2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(4.0 * v1, v2, 0.01);
+}
+
+test "Moyal: mode(0,1) = 0 [always equals mu]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    try testing.expectEqual(0.0, dist.mode());
+}
+
+test "Moyal: mode(5,2) = 5 [location parameter]" {
+    const dist = try Moyal(f64).init(5.0, 2.0);
+    try testing.expectEqual(5.0, dist.mode());
+}
+
+test "Moyal: entropy(0,1) ≈ 2.054 [(γ_E+1)/2 + log(1) + 0.5*log(4π)]" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    // H = (0.5772 + 1)/2 + 0 + 0.5*log(4π) ≈ 0.7886 + 1.2658 ≈ 2.054
+    try testing.expectApproxEqAbs(@as(f64, 2.054), dist.entropy(), 0.01);
+}
+
+test "Moyal: entropy(0,2) = entropy(0,1) + log(2)" {
+    const dist1 = try Moyal(f64).init(0.0, 1.0);
+    const dist2 = try Moyal(f64).init(0.0, 2.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try testing.expectApproxEqAbs(h1 + @log(2.0), h2, 1e-10);
+}
+
+test "Moyal: sample produces finite values" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..50) |_| {
+        try testing.expect(math.isFinite(dist.sample(rng.random())));
+    }
+}
+
+test "Moyal: sample mean converges to theoretical mean (N=10000)" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    for (0..10000) |_| sum += dist.sample(rng.random());
+    const sample_mean = sum / 10000.0;
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.2);
+}
+
+test "Moyal: sample variance converges to theoretical variance (N=10000)" {
+    const dist = try Moyal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..10000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean = sum / 10000.0;
+    const variance = sum_sq / 10000.0 - mean * mean;
+    const theoretical_variance = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_variance, variance, 0.5);
+}
+
+test "Moyal: validate() succeeds for valid parameters" {
+    const dist = try Moyal(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "Moyal: validate() fails for sigma=0" {
+    var dist: Moyal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Moyal: validate() fails for negative sigma" {
+    var dist: Moyal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = -1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Moyal: validate() fails for infinite mu" {
+    var dist: Moyal(f64) = undefined;
+    dist.mu = math.inf(f64);
+    dist.sigma = 1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Moyal: validate() fails for infinite sigma" {
+    var dist: Moyal(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Moyal(f32): init and pdf with f32" {
+    const dist = try Moyal(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expect(math.isFinite(p));
+    try testing.expect(p > 0.0);
+}
+
+test "Moyal(f32): cdf in [0,1] for f32" {
+    const dist = try Moyal(f32).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "Moyal(f32): sample produces finite values" {
+    const dist = try Moyal(f32).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(777);
+    for (0..50) |_| {
+        try testing.expect(math.isFinite(dist.sample(rng.random())));
+    }
+}
+
+test "Moyal: location-scale property Q(p; mu=2, sigma=3) = 2 + 3*Q(p; mu=0, sigma=1)" {
+    const dist_base = try Moyal(f64).init(0.0, 1.0);
+    const dist_shifted = try Moyal(f64).init(2.0, 3.0);
+    const q_base = try dist_base.quantile(0.25);
+    const q_shifted = try dist_shifted.quantile(0.25);
+    try testing.expectApproxEqAbs(2.0 + 3.0 * q_base, q_shifted, 1e-10);
+}
+
+test "Moyal: location-scale property mean(mu=2, sigma=3) = 2 + 3*mean(mu=0, sigma=1)" {
+    const dist_base = try Moyal(f64).init(0.0, 1.0);
+    const dist_shifted = try Moyal(f64).init(2.0, 3.0);
+    const m_base = dist_base.mean();
+    const m_shifted = dist_shifted.mean();
+    try testing.expectApproxEqAbs(2.0 + 3.0 * m_base, m_shifted, 1e-10);
+}
