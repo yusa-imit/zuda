@@ -1,4 +1,28 @@
-**Session 687 Update (2026-06-15) — FEATURE MODE [CURRENT]:**
+**Session 688 Update (2026-06-16) — FEATURE MODE [CURRENT]:**
+
+✅ **Moyal Distribution** — 92nd total, 74th continuous — commit 6f2be7a
+- **Mode**: FEATURE MODE (counter: 688)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Moyal(μ, σ) — approximation to Landau distribution (particle physics)
+  * Named after physicist J. E. Moyal; energy-loss distribution in detector physics
+  * Parameters: μ ∈ ℝ (location), σ > 0 (scale)
+  * PDF: (1/(σ√(2π)))·exp(-(z+e^{-z})/2) where z=(x-μ)/σ — O(1) exact
+  * CDF: 1-erf(e^{-z/2}/√2) = erfc(e^{-z/2}/√2) — O(1) exact
+  * Quantile: μ-2σ·log(√2·erfInv(1-p)) — O(1) exact (uses module-level erfInv)
+  * Sample: μ-2σ·log(|N(0,1)|) — exact sampler via Box-Muller, O(1)
+  * Mean: μ+σ(γ_E+ln2) where γ_E≈0.5772156649015329; for (0,1)≈1.2704
+  * Variance: σ²·π²/2; for (0,1)≈4.9348
+  * Mode: μ (always — derivative of z+e^{-z} is 1-e^{-z}=0 at z=0)
+  * Entropy: (γ_E+1)/2 + log(σ) + (1/2)·log(4π); for (0,1)≈2.054
+  * CDF is right-skewed: F(0;0,1)≈0.317, F(2;0,1)≈0.711
+  * Right-skewed: median≈0.787 > mode=0 < mean≈1.270
+  * Key: sample uses Box-Muller N(0,1) with @max(1e-15, r1) to avoid log(0)
+- **Tests**: 53 tests passing
+- **Distribution count**: 92 total (74 continuous + 18 discrete)
+- **Total tests**: 4,504 (was 4,451)
+- **Next Priority**: Next distribution per PRD queue
+
+**Session 687 Update (2026-06-15) — FEATURE MODE [PREVIOUS]:**
 
 ✅ **SinhArcsinh Distribution** — 91st total, 73rd continuous — commit d457263
 - **Mode**: FEATURE MODE (counter: 687)
