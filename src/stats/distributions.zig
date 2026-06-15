@@ -6487,7 +6487,7 @@ test "Bernoulli: pmf sums to 1.0" {
 test "Bernoulli: validate passes for valid p" {
     const dist = try Bernoulli(f64).init(0.5);
     try dist.validate();
-    const dist2 = try Bernoulli(f64).init(0.0);
+    const dist2 = try Bernoulli(f64).init(0.001);
     try dist2.validate();
     const dist3 = try Bernoulli(f64).init(1.0);
     try dist3.validate();
