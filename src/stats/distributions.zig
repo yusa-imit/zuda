@@ -50764,3 +50764,454 @@ test "YuleSimon(f32): cdf in [0,1]" {
     const c = dist.cdf(5);
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
+
+// ============================================================================
+// Conway-Maxwell-Poisson Distribution Tests (89th, 18th discrete)
+// ============================================================================
+
+test "ConwayMaxwellPoisson: init with valid params (1,1) succeeds" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    try testing.expect(math.isFinite(dist.lambda));
+    try testing.expect(math.isFinite(dist.nu));
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellPoisson: init with valid params (4,2) succeeds" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    try testing.expect(math.isFinite(dist.lambda));
+    try testing.expect(math.isFinite(dist.nu));
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellPoisson: init with valid params (0.5,0) succeeds" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    try testing.expect(math.isFinite(dist.lambda));
+    try testing.expect(dist.nu == 0.0);
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellPoisson: init with valid params (2,0.5) succeeds" {
+    const dist = try ConwayMaxwellPoisson(f64).init(2.0, 0.5);
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellPoisson: init with valid params (3,3) succeeds" {
+    const dist = try ConwayMaxwellPoisson(f64).init(3.0, 3.0);
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellPoisson: init with lambda=0 returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with lambda=-1 returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(-1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with lambda=inf returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with lambda=NaN returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with nu=-1 returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with nu=inf returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with nu=0 and lambda=1.0 returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: init with nu=0 and lambda=2.0 returns InvalidParameter" {
+    const result = ConwayMaxwellPoisson(f64).init(2.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellPoisson: pmf Poisson case (1,1) pmf(0) approx e^(-1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    const expected = @exp(-1.0);
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: pmf Poisson case (1,1) pmf(1) approx e^(-1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const expected = @exp(-1.0);
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: pmf Poisson case (1,1) pmf(2) approx e^(-1)/2" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(2);
+    const expected = @exp(-1.0) / 2.0;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: pmf Geometric case (0.5,0) pmf(0)=0.5" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.5;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: pmf Geometric case (0.5,0) pmf(1)=0.25" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.25;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: pmf Geometric case (0.5,0) pmf(2)=0.125" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.125;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: pmf general case (4,2) pmf(0) approx 0.08848" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.08848;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-3);
+}
+
+test "ConwayMaxwellPoisson: pmf general case (4,2) pmf(1) approx 0.35391" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.35391;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-3);
+}
+
+test "ConwayMaxwellPoisson: pmf general case (4,2) pmf(2) approx 0.35391" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.35391;
+    try testing.expectApproxEqRel(expected, pmf_val, 1e-3);
+}
+
+test "ConwayMaxwellPoisson: pmf sums to ~1.0 for (1,1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..100) |k| {
+        sum += dist.pmf(k);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "ConwayMaxwellPoisson: pmf sums to ~1.0 for (0.5,0)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    var sum: f64 = 0.0;
+    for (0..100) |k| {
+        sum += dist.pmf(k);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "ConwayMaxwellPoisson: pmf sums to ~1.0 for (4,2)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    var sum: f64 = 0.0;
+    for (0..100) |k| {
+        sum += dist.pmf(k);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "ConwayMaxwellPoisson: logpmf consistent with pmf for k=0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    const logpmf_val = dist.logpmf(0);
+    const expected = @log(pmf_val);
+    try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "ConwayMaxwellPoisson: logpmf consistent with pmf for k=1" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const logpmf_val = dist.logpmf(1);
+    const expected = @log(pmf_val);
+    try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "ConwayMaxwellPoisson: logpmf consistent with pmf for k=2" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const pmf_val = dist.pmf(2);
+    const logpmf_val = dist.logpmf(2);
+    const expected = @log(pmf_val);
+    try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "ConwayMaxwellPoisson: logpmf consistent with pmf for k=5" {
+    const dist = try ConwayMaxwellPoisson(f64).init(2.0, 0.5);
+    const pmf_val = dist.pmf(5);
+    const logpmf_val = dist.logpmf(5);
+    const expected = @log(pmf_val);
+    try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "ConwayMaxwellPoisson: cdf is monotone non-decreasing (1,1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    var prev_cdf: f64 = 0.0;
+    for (0..10) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "ConwayMaxwellPoisson: cdf is monotone non-decreasing (4,2)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    var prev_cdf: f64 = 0.0;
+    for (0..10) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "ConwayMaxwellPoisson: cdf reaches ~1.0 at high k for (1,1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(99);
+    try testing.expectApproxEqAbs(1.0, cdf_val, 1e-6);
+}
+
+test "ConwayMaxwellPoisson: cdf(k) = cdf(k-1) + pmf(k) for (1,1) k=1" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const cdf_k = dist.cdf(1);
+    const cdf_k_minus_1 = dist.cdf(0);
+    const pmf_k = dist.pmf(1);
+    try testing.expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "ConwayMaxwellPoisson: cdf(k) = cdf(k-1) + pmf(k) for (4,2) k=2" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const cdf_k = dist.cdf(2);
+    const cdf_k_minus_1 = dist.cdf(1);
+    const pmf_k = dist.pmf(2);
+    try testing.expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "ConwayMaxwellPoisson: quantile rejects p < 0 as InvalidProbability" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellPoisson: quantile rejects p > 1 as InvalidProbability" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellPoisson: quantile at p=0 returns 0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(0, q);
+}
+
+test "ConwayMaxwellPoisson: quantile-cdf roundtrip for (1,1) at k=0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const cdf_k = dist.cdf(0);
+    const p = cdf_k - 0.01; // Slightly below CDF(0)
+    if (p >= 0.0) {
+        const q = try dist.quantile(p);
+        try testing.expect(q >= 0);
+    }
+}
+
+test "ConwayMaxwellPoisson: quantile-cdf roundtrip for (1,1) at k=1" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const cdf_k = dist.cdf(1);
+    const p = cdf_k + 0.01; // Slightly above CDF(1)
+    if (p <= 1.0) {
+        const q = try dist.quantile(p);
+        try testing.expect(q >= 1);
+    }
+}
+
+test "ConwayMaxwellPoisson: quantile-cdf roundtrip for (4,2) at k=2" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const cdf_k = dist.cdf(2);
+    if (cdf_k < 1.0) {
+        const q = try dist.quantile(cdf_k);
+        try testing.expect(q >= 2);
+    }
+}
+
+test "ConwayMaxwellPoisson: quantile-cdf roundtrip for (0.5,0) at k=3" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const cdf_k = dist.cdf(3);
+    if (cdf_k < 1.0) {
+        const q = try dist.quantile(cdf_k + 0.001);
+        try testing.expect(q >= 3);
+    }
+}
+
+test "ConwayMaxwellPoisson: mean Poisson case (1,1) approx 1.0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.0, m, 0.01);
+}
+
+test "ConwayMaxwellPoisson: mean Poisson case (4,1) approx 4.0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 1.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(4.0, m, 0.01);
+}
+
+test "ConwayMaxwellPoisson: mean Geometric case (0.5,0) approx 1.0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.0, m, 0.01);
+}
+
+test "ConwayMaxwellPoisson: mean general case (4,2) approx 1.727" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(1.727, m, 0.05);
+}
+
+test "ConwayMaxwellPoisson: variance Poisson case (1,1) approx 1.0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 0.01);
+}
+
+test "ConwayMaxwellPoisson: variance Poisson case (4,1) approx 4.0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(4.0, v, 0.01);
+}
+
+test "ConwayMaxwellPoisson: variance Geometric case (0.5,0) approx 2.0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(2.0, v, 0.05);
+}
+
+test "ConwayMaxwellPoisson: variance underdispersed for (4,2)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const m = dist.mean();
+    const v = dist.variance();
+    try testing.expect(v < m);
+}
+
+test "ConwayMaxwellPoisson: mode (1,1) is 0 or 1" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expect(mode_val == 0 or mode_val == 1);
+}
+
+test "ConwayMaxwellPoisson: mode (4,1) is 3 or 4" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expect(mode_val == 3 or mode_val == 4);
+}
+
+test "ConwayMaxwellPoisson: mode (4,2) is 1 or 2" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const mode_val = dist.mode();
+    try testing.expect(mode_val == 1 or mode_val == 2);
+}
+
+test "ConwayMaxwellPoisson: mode (0.5,0) is 0" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    const mode_val = dist.mode();
+    try testing.expectEqual(0, mode_val);
+}
+
+test "ConwayMaxwellPoisson: entropy is positive and finite for (1,1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const ent = dist.entropy();
+    try testing.expect(ent > 0.0);
+    try testing.expect(math.isFinite(ent));
+}
+
+test "ConwayMaxwellPoisson: entropy underdispersed lower than Poisson" {
+    const dist_poisson = try ConwayMaxwellPoisson(f64).init(4.0, 1.0);
+    const dist_underdispersed = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const ent_poisson = dist_poisson.entropy();
+    const ent_underdispersed = dist_underdispersed.entropy();
+    try testing.expect(ent_underdispersed < ent_poisson);
+}
+
+test "ConwayMaxwellPoisson: sample produces non-negative integers" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    for (0..1000) |_| {
+        const sample_val = dist.sample(rng.random());
+        try testing.expect(sample_val >= 0);
+    }
+}
+
+test "ConwayMaxwellPoisson: sample mean convergence (1,1) with N=5000" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    const expected_mean = 1.0;
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const error_pct = @abs(sample_mean - expected_mean) / expected_mean * 100.0;
+    try testing.expect(error_pct < 5.0);
+}
+
+test "ConwayMaxwellPoisson: sample mean convergence (4,2) with N=5000" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    const expected_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const error_pct = @abs(sample_mean - expected_mean) / expected_mean * 100.0;
+    try testing.expect(error_pct < 10.0);
+}
+
+test "ConwayMaxwellPoisson: validate passes for (1,1)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "ConwayMaxwellPoisson: validate passes for (4,2)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(4.0, 2.0);
+    try dist.validate();
+}
+
+test "ConwayMaxwellPoisson: validate passes for (0.5,0)" {
+    const dist = try ConwayMaxwellPoisson(f64).init(0.5, 0.0);
+    try dist.validate();
+}
+
+test "ConwayMaxwellPoisson(f32): init and pmf returns finite value" {
+    const dist = try ConwayMaxwellPoisson(f32).init(1.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    try testing.expect(math.isFinite(pmf_val));
+}
+
+test "ConwayMaxwellPoisson(f32): cdf in [0,1]" {
+    const dist = try ConwayMaxwellPoisson(f32).init(1.0, 1.0);
+    const c = dist.cdf(5);
+    try testing.expect(c >= 0.0 and c <= 1.0);
+}
