@@ -51853,10 +51853,10 @@ test "Kolmogorov: entropy() is positive and finite" {
     try testing.expect(math.isFinite(e));
 }
 
-test "Kolmogorov: mode() is approximately 0.735" {
+test "Kolmogorov: mode() ≈ 0.735 (ternary search on pdf)" {
     const dist = Kolmogorov(f64).init();
     const m = dist.mode();
-    try testing.expect(m > 0.7 and m < 0.8);
+    try testing.expectApproxEqAbs(@as(f64, 0.735), m, 0.005);
 }
 
 test "Kolmogorov: sample() produces positive values" {
@@ -51893,9 +51893,10 @@ test "Kolmogorov: validate() always succeeds" {
     try dist.validate();
 }
 
-test "Kolmogorov(f32): pdf and cdf work" {
+test "Kolmogorov(f32): pdf(1.0) ≈ 1.072 and cdf(1.0) ≈ 0.7300" {
     const dist = Kolmogorov(f32).init();
-    try testing.expect(dist.pdf(1.0) > 0.0);
+    // pdf(1.0) ≈ 1.072 (series verified; memory note: NOT 0.6867)
+    try testing.expectApproxEqAbs(@as(f32, 1.072), dist.pdf(1.0), 0.01);
     try testing.expectApproxEqAbs(@as(f32, 0.7300), dist.cdf(1.0), 1e-3);
 }
 
@@ -52263,13 +52264,15 @@ test "SinhArcsinh: pdf(0; 0,2,0,1) ≈ 1/(2*sqrt(2pi)) [scale=2 Normal case]" {
     try testing.expectApproxEqAbs(@as(f64, 1.0 / (2.0 * math.sqrt(2.0 * math.pi))), dist.pdf(0.0), 1e-7);
 }
 
-test "SinhArcsinh: pdf is non-negative at multiple points" {
+test "SinhArcsinh: pdf at x=±1 and x=±3 matches Normal(0,1) special case" {
+    // For ε=0, δ=1: X ~ Normal(ξ, λ²); pdf matches φ((x-ξ)/λ)/λ
     const dist = try SinhArcsinh(f64).init(0.0, 1.0, 0.0, 1.0);
-    try testing.expect(dist.pdf(-3.0) >= 0.0);
-    try testing.expect(dist.pdf(-1.0) >= 0.0);
-    try testing.expect(dist.pdf(0.0) >= 0.0);
-    try testing.expect(dist.pdf(1.0) >= 0.0);
-    try testing.expect(dist.pdf(3.0) >= 0.0);
+    const phi1 = @exp(-0.5) / @sqrt(2.0 * math.pi); // φ(±1) ≈ 0.24197
+    const phi3 = @exp(-4.5) / @sqrt(2.0 * math.pi); // φ(±3) ≈ 0.00443
+    try testing.expectApproxEqAbs(phi1, dist.pdf(1.0), 1e-5);
+    try testing.expectApproxEqAbs(phi1, dist.pdf(-1.0), 1e-5);
+    try testing.expectApproxEqAbs(phi3, dist.pdf(3.0), 1e-5);
+    try testing.expectApproxEqAbs(phi3, dist.pdf(-3.0), 1e-5);
 }
 
 test "SinhArcsinh: pdf integrates to ≈ 1.0 [Normal special case]" {
@@ -52756,18 +52759,20 @@ test "Moyal: pdf(0; 0,1) ≈ 0.2420 [exp(-0.5) / sqrt(2π)]" {
     try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-4);
 }
 
-test "Moyal: pdf(2; 0,1) evaluates correctly" {
-    // z=2: -(2 + exp(-2))/2 ≈ -(2 + 0.1353)/2 ≈ -1.0677; pdf ≈ exp(-1.0677) / sqrt(2π)
+test "Moyal: pdf(2; 0,1) ≈ 0.13724 [exp(-1.0677) / sqrt(2π)]" {
+    // z=2: -(2 + exp(-2))/2 = -1.06767; pdf = exp(-1.06767)/sqrt(2π) ≈ 0.13724
     const dist = try Moyal(f64).init(0.0, 1.0);
     const p = dist.pdf(2.0);
-    try testing.expect(p > 0.0 and p < 0.25);
+    const expected = @exp(-0.5 * (2.0 + @exp(-2.0))) / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
 }
 
-test "Moyal: pdf(-1; 0,1) evaluates correctly" {
-    // z=-1: -(-1 + exp(1))/2 ≈ -(2.7183-1)/2 ≈ -0.8592; pdf > 0
+test "Moyal: pdf(-1; 0,1) ≈ 0.16882 [exp(-0.85914) / sqrt(2π)]" {
+    // z=-1: -(-1 + exp(1))/2 = -0.85914; pdf = exp(-0.85914)/sqrt(2π) ≈ 0.16882
     const dist = try Moyal(f64).init(0.0, 1.0);
     const p = dist.pdf(-1.0);
-    try testing.expect(p > 0.0);
+    const expected = @exp(-0.5 * (-1.0 + @exp(1.0))) / @sqrt(2.0 * math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
 }
 
 test "Moyal: pdf is non-negative everywhere" {
