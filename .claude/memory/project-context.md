@@ -1,3 +1,26 @@
+**Session 686 Update (2026-06-15) — FEATURE MODE:**
+
+✅ **ConwayMaxwellPoisson Distribution** — 89th total, 18th discrete — commits 7806e31, 5bcd3ba
+- **Mode**: FEATURE MODE (counter: 686)
+- **CI Status**: Fixed Bernoulli validate test bug (commit f18f90c); CI was failing
+- **Bug Fixed**: Bernoulli "validate passes for valid p" test used init(0.0) which contradicts init's constraint p>0
+  * Fix: replaced init(0.0) with init(0.001) in validate test
+- **Implementation**: ConwayMaxwellPoisson(λ, ν) — discrete distribution generalizing Poisson, Geometric, Bernoulli
+  * Parameters: λ > 0 (rate), ν ≥ 0 (dispersion); if ν=0 then λ<1 required
+  * ν=0: Geometric-like; ν=1: Poisson(λ); ν>1: underdispersed; 0<ν<1: overdispersed
+  * PMF: P(X=k) = λ^k / ((k!)^ν · Z(λ,ν)); Z = normalizing constant
+  * logZ: two-pass unimodal log-sum-exp; MAX_K=50000; stop 40 log-units below peak
+  * helper: computeCMPLogZ(T, lambda, nu) — O(k*) where k* ≈ effective support
+  * mean/variance/entropy: numerical summation (stop at floatEps)
+  * mode: floor(λ^(1/ν)) for ν>0; 0 for ν=0 — O(1)
+  * sample: inverse CDF via uniform U — O(mean) expected
+  * logZ cached in struct at init time
+  * Special cases: COM(1,1)=Poisson(1) → pmf(0)=e^(-1); COM(0.5,0) → pmf(k)=0.5^(k+1)
+  * COM(4,2): pmf(1)=pmf(2) (tied at ≈0.354), mode∈{1,2}
+- **Tests**: 65 tests passing (init/pmf/logpmf/cdf/quantile/mean/variance/mode/entropy/sample/validate)
+- **Distribution count**: 89 total (71 continuous + 18 discrete)
+- **Next Priority**: Kolmogorov distribution (Kolmogorov-Smirnov limit distribution)
+
 **Session 684 Update (2026-06-15) — FEATURE MODE:**
 
 ✅ **YuleSimon Distribution** — 88th total, 17th discrete — commit 96a0a26
