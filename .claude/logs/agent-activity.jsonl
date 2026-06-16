@@ -574,3 +574,4 @@
 {"timestamp":"2026-06-15T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement SinhArcsinh distribution in distributions.zig — 91st distribution, 73rd continuous","project":"zuda"}
 {"timestamp":"2026-06-16T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Moyal distribution (92nd total, 74th continuous)","project":"zuda"}
 {"timestamp":"2026-06-16T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 74 failing tests for Bradford distribution (94th total)","project":"zuda"}
+{"timestamp":"2026-06-16T12:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write ContinuousBernoulli distribution tests","project":"zuda"}
