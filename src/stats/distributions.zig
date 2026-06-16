@@ -54577,6 +54577,204 @@ pub fn ContinuousBernoulli(comptime T: type) type {
     };
 }
 
+// ============================================================================
+// PERT Distribution — Beta(α₁, α₂) with linear transformation [min, max]
+// ============================================================================
+
+pub fn PERT(comptime T: type) type {
+    return struct {
+        min: T,
+        mode_val: T,
+        max: T,
+        shape: T,
+        alpha1: T,
+        alpha2: T,
+
+        const Self = @This();
+
+        /// Create a PERT (Program Evaluation and Review Technique) distribution
+        ///
+        /// Parameters:
+        ///   - min: minimum value (a), must satisfy a < mode_val < max
+        ///   - mode_val: most likely value (m)
+        ///   - max: maximum value (b)
+        ///   - shape: shape parameter λ > 0 (default 4 in PERT)
+        ///
+        /// Derived:
+        ///   - α₁ = 1 + λ·(m - a)/(b - a)
+        ///   - α₂ = 1 + λ·(b - m)/(b - a)
+        ///
+        /// Relationship: X = a + (b - a)·Y where Y ~ Beta(α₁, α₂)
+        ///
+        /// Errors: a ≥ m, m ≥ b, λ ≤ 0, or any parameter is NaN/inf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(min: T, mode_val: T, max: T, shape: T) DistributionError!Self {
+            // Check for NaN or inf in any parameter
+            if (!math.isFinite(min) or !math.isFinite(mode_val) or !math.isFinite(max) or !math.isFinite(shape)) {
+                return error.InvalidParameter;
+            }
+            // Check constraints: a < m < b and λ > 0
+            if (!(min < mode_val and mode_val < max and shape > 0.0)) {
+                return error.InvalidParameter;
+            }
+            // Compute alpha parameters
+            const range = max - min;
+            const alpha1 = 1.0 + shape * (mode_val - min) / range;
+            const alpha2 = 1.0 + shape * (max - mode_val) / range;
+            return Self{
+                .min = min,
+                .mode_val = mode_val,
+                .max = max,
+                .shape = shape,
+                .alpha1 = alpha1,
+                .alpha2 = alpha2,
+            };
+        }
+
+        /// Probability density function
+        ///
+        /// f(x) = (x-a)^(α₁-1)·(b-x)^(α₂-1) / (B(α₁,α₂)·(b-a)^(α₁+α₂-1)) for x ∈ [a, b], else 0
+        ///
+        /// Computed via log-space for numerical stability:
+        /// log f(x) = (α₁-1)·ln(y) + (α₂-1)·ln(1-y) - ln(B(α₁,α₂)) - ln(b-a)
+        /// where y = (x-a)/(b-a)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= self.min or x >= self.max) return 0.0;
+            const range = self.max - self.min;
+            const y = (x - self.min) / range;
+            const log_beta_const = logBeta(self.alpha1, self.alpha2);
+            const log_pdf_val = (self.alpha1 - 1.0) * @log(y) + (self.alpha2 - 1.0) * @log(1.0 - y) - log_beta_const - @log(range);
+            return @exp(log_pdf_val);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// F(x) = I((x-a)/(b-a); α₁, α₂)  where I is the regularized incomplete Beta
+        ///
+        /// Boundary: F(a) = 0, F(b) = 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.min) return 0.0;
+            if (x >= self.max) return 1.0;
+            const y = (x - self.min) / (self.max - self.min);
+            return regularizedBetaI(self.alpha1, self.alpha2, y);
+        }
+
+        /// Quantile function (inverse CDF) — returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection on CDF with 100 iterations to solve F(x) = p
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN
+        ///
+        /// Time: O(100) ≈ O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.min;
+            if (p == 1.0) return self.max;
+
+            // Bisection: find x such that cdf(x) = p
+            var lo = self.min;
+            var hi = self.max;
+            var x: T = (lo + hi) / 2.0;
+            for (0..100) |_| {
+                const cdf_x = self.cdf(x);
+                if (cdf_x < p) {
+                    lo = x;
+                } else {
+                    hi = x;
+                }
+                x = (lo + hi) / 2.0;
+            }
+            return x;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = min + (max - min)·E[Y]  where Y ~ Beta(α₁, α₂)
+        ///      = min + (max - min)·α₁/(α₁ + α₂)
+        ///      = (min + shape·mode_val + max) / (shape + 2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.min + (self.max - self.min) * self.alpha1 / (self.alpha1 + self.alpha2);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = (max - min)²·Var[Y]  where Y ~ Beta(α₁, α₂)
+        ///        = (max - min)²·(α₁·α₂) / ((α₁+α₂)²·(α₁+α₂+1))
+        ///        = (mean - min)·(max - mean) / (shape + 3)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mu = self.mean();
+            return (mu - self.min) * (self.max - mu) / (self.shape + 3.0);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Always returns the mode_val parameter (the most likely value)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mode_val;
+        }
+
+        /// Differential entropy
+        ///
+        /// H = ln(B(α₁, α₂)) - (α₁-1)·ψ(α₁) - (α₂-1)·ψ(α₂) + (α₁+α₂-2)·ψ(α₁+α₂) + ln(b-a)
+        ///
+        /// where ψ is the digamma function and B is the Beta function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const log_beta_const = logBeta(self.alpha1, self.alpha2);
+            const dg_a1 = digamma(T, self.alpha1);
+            const dg_a2 = digamma(T, self.alpha2);
+            const dg_sum = digamma(T, self.alpha1 + self.alpha2);
+            const range = self.max - self.min;
+            return log_beta_const - (self.alpha1 - 1.0) * dg_a1 - (self.alpha2 - 1.0) * dg_a2 + (self.alpha1 + self.alpha2 - 2.0) * dg_sum + @log(range);
+        }
+
+        /// Generate a random sample using the Gamma ratio method
+        ///
+        /// Sample Y ~ Beta(α₁, α₂) via:
+        ///   g1 ~ Gamma(α₁, rate=1)
+        ///   g2 ~ Gamma(α₂, rate=1)
+        ///   y = g1 / (g1 + g2)
+        /// Then return X = min + (max - min)·y
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: anytype) T {
+            // alpha1, alpha2 > 0 and rate=1.0 are guaranteed by init — Gamma.init cannot fail here
+            const g1_sampler = Gamma(T).init(self.alpha1, 1.0) catch unreachable;
+            const g2_sampler = Gamma(T).init(self.alpha2, 1.0) catch unreachable;
+            const g1 = g1_sampler.sample(rng);
+            const g2 = g2_sampler.sample(rng);
+            const y = g1 / (g1 + g2);
+            return self.min + (self.max - self.min) * y;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Returns error.InvalidParameter if:
+        ///   - min ≥ mode_val
+        ///   - mode_val ≥ max
+        ///   - shape ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.min < self.mode_val and self.mode_val < self.max and self.shape > 0.0)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
 test "ContinuousBernoulli: init succeeds with lambda=0.3" {
     const dist = try ContinuousBernoulli(f64).init(0.3);
     try testing.expectEqual(@as(f64, 0.3), dist.lambda);
@@ -55075,4 +55273,411 @@ test "ContinuousBernoulli: as lambda→0.5 from above, entropy→0" {
     const dist = try ContinuousBernoulli(f64).init(0.51);
     const e = dist.entropy();
     try testing.expect(e > -0.01 and e < 0.0);
+}
+
+// PERT Distribution Tests
+// ============================================================================
+
+test "PERT: init succeeds with valid params min=0, mode=0.5, max=1, shape=4" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.min);
+    try testing.expectEqual(@as(f64, 0.5), dist.mode_val);
+    try testing.expectEqual(@as(f64, 1.0), dist.max);
+    try testing.expectEqual(@as(f64, 4.0), dist.shape);
+}
+
+test "PERT: init succeeds with valid params min=1, mode=3, max=5, shape=4" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.min);
+    try testing.expectEqual(@as(f64, 3.0), dist.mode_val);
+    try testing.expectEqual(@as(f64, 5.0), dist.max);
+    try testing.expectEqual(@as(f64, 4.0), dist.shape);
+}
+
+test "PERT: init succeeds with valid params min=0, mode=0.2, max=1, shape=4" {
+    const dist = try PERT(f64).init(0.0, 0.2, 1.0, 4.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.min);
+    try testing.expectEqual(@as(f64, 0.2), dist.mode_val);
+    try testing.expectEqual(@as(f64, 1.0), dist.max);
+}
+
+test "PERT: init succeeds with small shape parameter shape=0.5" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 0.5);
+    try testing.expectEqual(@as(f64, 0.5), dist.shape);
+}
+
+test "PERT: init succeeds with large shape parameter shape=100" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 100.0);
+    try testing.expectEqual(@as(f64, 100.0), dist.shape);
+}
+
+test "PERT: init fails when min >= mode" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.5, 0.5, 1.0, 4.0));
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.6, 0.5, 1.0, 4.0));
+}
+
+test "PERT: init fails when mode >= max" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 1.0, 1.0, 4.0));
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 1.1, 1.0, 4.0));
+}
+
+test "PERT: init fails when shape <= 0" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, 1.0, 0.0));
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, 1.0, -1.0));
+}
+
+test "PERT: init fails when min is NaN" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(math.nan(f64), 0.5, 1.0, 4.0));
+}
+
+test "PERT: init fails when mode is NaN" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, math.nan(f64), 1.0, 4.0));
+}
+
+test "PERT: init fails when max is NaN" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, math.nan(f64), 4.0));
+}
+
+test "PERT: init fails when shape is NaN" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, 1.0, math.nan(f64)));
+}
+
+test "PERT: init fails when min is +inf" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(math.inf(f64), 0.5, 1.0, 4.0));
+}
+
+test "PERT: init fails when mode is +inf" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, math.inf(f64), 1.0, 4.0));
+}
+
+test "PERT: init fails when max is +inf" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, math.inf(f64), 4.0));
+}
+
+test "PERT: init fails when shape is +inf" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, 1.0, math.inf(f64)));
+}
+
+test "PERT: init fails when min is -inf" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(-math.inf(f64), 0.5, 1.0, 4.0));
+}
+
+test "PERT: init fails when max is -inf" {
+    try testing.expectError(error.InvalidParameter, PERT(f64).init(0.0, 0.5, -math.inf(f64), 4.0));
+}
+
+test "PERT: pdf outside [min, max] returns 0" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.1));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(1.1));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(2.0));
+}
+
+test "PERT: pdf is positive inside (min, max)" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expect(dist.pdf(0.1) > 0.0);
+    try testing.expect(dist.pdf(0.3) > 0.0);
+    try testing.expect(dist.pdf(0.5) > 0.0);
+    try testing.expect(dist.pdf(0.7) > 0.0);
+    try testing.expect(dist.pdf(0.9) > 0.0);
+}
+
+test "PERT: pdf(mode) = 1.875 for symmetric case PERT(0, 0.5, 1, 4)" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 1.875), p, 1e-3);
+}
+
+test "PERT: pdf integrates to approximately 1 on [min, max]" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    var sum: f64 = 0.0;
+    const dx = 0.001;
+    var x: f64 = 0.0;
+    while (x <= 1.0) : (x += dx) {
+        sum += dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum, 1e-2);
+}
+
+test "PERT: pdf is finite everywhere on (min, max)" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    for ([_]f64{ 0.05, 0.2, 0.5, 0.8, 0.95 }) |x| {
+        try testing.expect(math.isFinite(dist.pdf(x)));
+    }
+}
+
+test "PERT: cdf at min returns 0" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(0.0), 1e-10);
+}
+
+test "PERT: cdf at max returns 1" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(1.0), 1e-10);
+}
+
+test "PERT: cdf below min returns 0" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-0.5));
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "PERT: cdf above max returns 1" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.cdf(1.5));
+    try testing.expectEqual(@as(f64, 1.0), dist.cdf(2.0));
+}
+
+test "PERT: cdf is monotone increasing" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const c1 = dist.cdf(0.1);
+    const c2 = dist.cdf(0.3);
+    const c3 = dist.cdf(0.5);
+    const c4 = dist.cdf(0.7);
+    const c5 = dist.cdf(0.9);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+    try testing.expect(c3 < c4);
+    try testing.expect(c4 < c5);
+}
+
+test "PERT: cdf at mode = 0.5 for symmetric case PERT(0, 0.5, 1, 4)" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), c, 1e-10);
+}
+
+test "PERT: quantile at p=0 returns min" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), q, 1e-10);
+}
+
+test "PERT: quantile at p=1 returns max" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), q, 1e-10);
+}
+
+test "PERT: quantile at p=0.5 returns approximately mode for symmetric case" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), q, 1e-2);
+}
+
+test "PERT: quantile fails for p < 0" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "PERT: quantile fails for p > 1" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "PERT: quantile fails for p = NaN" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "PERT: cdf(quantile(p)) roundtrip for p=0.25" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-8);
+}
+
+test "PERT: cdf(quantile(p)) roundtrip for p=0.75" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-8);
+}
+
+test "PERT: quantile is monotone increasing" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.3);
+    const q3 = try dist.quantile(0.5);
+    const q4 = try dist.quantile(0.7);
+    const q5 = try dist.quantile(0.9);
+    try testing.expect(q1 <= q2);
+    try testing.expect(q2 <= q3);
+    try testing.expect(q3 <= q4);
+    try testing.expect(q4 <= q5);
+}
+
+test "PERT: mean for symmetric case PERT(0, 0.5, 1, 4) = 0.5" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(@as(f64, 0.5), m, 1e-10);
+}
+
+test "PERT: mean for PERT(1, 3, 5, 4) = 3.0" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(@as(f64, 3.0), m, 1e-10);
+}
+
+test "PERT: mean for PERT(0, 0.2, 1, 4) = 0.3" {
+    const dist = try PERT(f64).init(0.0, 0.2, 1.0, 4.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(@as(f64, 0.3), m, 1e-10);
+}
+
+test "PERT: mean is in [min, max]" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const m = dist.mean();
+    try testing.expect(m >= 0.0 and m <= 1.0);
+}
+
+test "PERT: variance for symmetric case PERT(0, 0.5, 1, 4) ≈ 0.03571" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(@as(f64, 0.03571), v, 1e-4);
+}
+
+test "PERT: variance for PERT(1, 3, 5, 4) ≈ 0.5714" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 7.0), v, 1e-3);
+}
+
+test "PERT: variance is positive" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "PERT: mode returns the mode parameter" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectEqual(@as(f64, 0.5), dist.mode());
+}
+
+test "PERT: mode returns the mode parameter for PERT(1, 3, 5, 4)" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    try testing.expectEqual(@as(f64, 3.0), dist.mode());
+}
+
+test "PERT: entropy for PERT(0, 0.5, 1, 4) ≈ -0.268" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    const e = dist.entropy();
+    try testing.expectApproxEqAbs(@as(f64, -0.268), e, 0.01);
+}
+
+test "PERT: entropy is finite" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "PERT: sample produces values in [min, max]" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0.0 and s <= 1.0);
+    }
+}
+
+test "PERT: sample produces values in [1, 5] for PERT(1, 3, 5, 4)" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(54321);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 1.0 and s <= 5.0);
+    }
+}
+
+test "PERT: sample produces finite values" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(99999);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "PERT: sample mean converges to theoretical mean for PERT(0, 0.5, 1, 4)" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(11111);
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 5000.0;
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.03);
+}
+
+test "PERT: sample mean converges to theoretical mean for PERT(1, 3, 5, 4)" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(22222);
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 5000.0;
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.05);
+}
+
+test "PERT: validate succeeds for valid params PERT(0, 0.5, 1, 4)" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    try dist.validate();
+}
+
+test "PERT: validate succeeds for valid params PERT(1, 3, 5, 4)" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    try dist.validate();
+}
+
+test "PERT: validate fails when min >= mode" {
+    var dist: PERT(f64) = undefined;
+    dist.min = 0.5;
+    dist.mode_val = 0.5;
+    dist.max = 1.0;
+    dist.shape = 4.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PERT: validate fails when mode >= max" {
+    var dist: PERT(f64) = undefined;
+    dist.min = 0.0;
+    dist.mode_val = 1.0;
+    dist.max = 1.0;
+    dist.shape = 4.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PERT: validate fails when shape <= 0" {
+    var dist: PERT(f64) = undefined;
+    dist.min = 0.0;
+    dist.mode_val = 0.5;
+    dist.max = 1.0;
+    dist.shape = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PERT(f32): init succeeds" {
+    const dist = try PERT(f32).init(0.0, 0.5, 1.0, 4.0);
+    try testing.expectEqual(@as(f32, 0.0), dist.min);
+    try testing.expectEqual(@as(f32, 0.5), dist.mode_val);
+}
+
+test "PERT(f32): pdf produces finite values" {
+    const dist = try PERT(f32).init(0.0, 0.5, 1.0, 4.0);
+    for ([_]f32{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(math.isFinite(p));
+    }
+}
+
+test "PERT(f32): cdf in [0, 1]" {
+    const dist = try PERT(f32).init(0.0, 0.5, 1.0, 4.0);
+    for ([_]f32{ 0.0, 0.25, 0.5, 0.75, 1.0 }) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
 }
