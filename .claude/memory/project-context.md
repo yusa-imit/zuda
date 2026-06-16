@@ -1,3 +1,27 @@
+**Session 692 Update (2026-06-16) — FEATURE MODE [CURRENT]:**
+
+✅ **ContinuousBernoulli Distribution** — 95th total, 77th continuous — commit 2e5671b
+- **Mode**: FEATURE MODE (counter: 692)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ContinuousBernoulli(λ) — bounded [0,1], ML/VAE applications
+  * Introduced by Loaiza-Ganem & Cunningham (2019) for VAE decoders on unit-interval data
+  * Parameter: λ ∈ (0,1); λ=0.5 → Uniform(0,1) as a special case
+  * Normalizing constant: C(λ) = ln(λ/(1-λ))/(2λ-1); C(0.5)=2 (limit)
+  * PDF: C(λ)·λ^x·(1-λ)^(1-x) — O(1) exact
+  * CDF: (1-λ)·(1-(λ/(1-λ))^x)/(1-2λ) — O(1) exact; CDF=x for λ=0.5
+  * Quantile: ln(1-p·(1-2λ)/(1-λ))/ln(λ/(1-λ)) — O(1) exact
+  * Sample: direct inverse-CDF — O(1), no rejection sampling
+  * Mean: λ/(2λ-1)-1/ln(λ/(1-λ)); symmetry: mean(λ)+mean(1-λ)=1
+  * Mode: 0 if λ<0.5, 1 if λ>0.5, 0.5 if λ=0.5
+  * Entropy: -ln(C)-ln(λ/(1-λ))·E[X]-ln(1-λ) — exact O(1); ≤0 for all λ
+  * Variance: numerical 200-pt Simpson
+  * CRITICAL: Use |2λ-1| < 1e-10 threshold for Uniform limit (C=2, CDF=x, quantile=p)
+  * entropy(λ=0.5) = 0; entropy(λ=0.7) ≈ -0.0296 (negative — more concentrated)
+- **Tests**: 72 tests passing
+- **Distribution count**: 95 total (77 continuous + 18 discrete)
+- **Total tests**: 4,721 (was 4,649)
+- **Next Priority**: Next distribution per PRD queue
+
 **Session 691 Update (2026-06-16) — FEATURE MODE [CURRENT]:**
 
 ✅ **Bradford Distribution** — 94th total, 76th continuous — commit f2e58bf
