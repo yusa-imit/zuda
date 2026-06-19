@@ -55275,6 +55275,38 @@ test "ContinuousBernoulli: as lambda→0.5 from above, entropy→0" {
     try testing.expect(e > -0.01 and e < 0.0);
 }
 
+test "ContinuousBernoulli: sample variance converges to theoretical variance (N=5000, lambda=0.7)" {
+    const dist = try ContinuousBernoulli(f64).init(0.7);
+    var rng = std.Random.DefaultPrng.init(77777);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const sample_mean = sum / 5000.0;
+    const sample_var = sum_sq / 5000.0 - sample_mean * sample_mean;
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.02);
+}
+
+test "ContinuousBernoulli: sample variance converges to theoretical variance (N=5000, lambda=0.3)" {
+    const dist = try ContinuousBernoulli(f64).init(0.3);
+    var rng = std.Random.DefaultPrng.init(33377);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const sample_mean = sum / 5000.0;
+    const sample_var = sum_sq / 5000.0 - sample_mean * sample_mean;
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.02);
+}
+
 // PERT Distribution Tests
 // ============================================================================
 
@@ -55680,6 +55712,41 @@ test "PERT(f32): cdf in [0, 1]" {
         const c = dist.cdf(x);
         try testing.expect(c >= 0.0 and c <= 1.0);
     }
+}
+
+test "PERT: sample variance converges to theoretical variance (N=5000, PERT(0,0.5,1,4))" {
+    const dist = try PERT(f64).init(0.0, 0.5, 1.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(55544);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const sample_mean = sum / 5000.0;
+    const sample_var = sum_sq / 5000.0 - sample_mean * sample_mean;
+    // Theoretical variance = (mean-min)*(max-mean)/(shape+3) = 0.5*0.5/7 ≈ 0.035714
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.01);
+}
+
+test "PERT: sample variance converges to theoretical variance (N=5000, PERT(1,3,5,4))" {
+    const dist = try PERT(f64).init(1.0, 3.0, 5.0, 4.0);
+    var rng = std.Random.DefaultPrng.init(66655);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const sample_mean = sum / 5000.0;
+    const sample_var = sum_sq / 5000.0 - sample_mean * sample_mean;
+    // Theoretical variance = (mean-1)*(5-mean)/(4+3); mean = (1+4*3+5)/6 = 3
+    // = (3-1)*(5-3)/7 = 4/7 ≈ 0.5714
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.1);
 }
 
 /// Tukey Lambda distribution TL(μ, σ, λ) — flexible symmetric distribution
@@ -56302,4 +56369,38 @@ test "TukeyLambda: scale transformation: TL(0, 2, 1) variance ≈ 4/3" {
     const dist = try TukeyLambda(f64).init(0.0, 2.0, 1.0);
     const v = dist.variance();
     try testing.expectApproxEqAbs(@as(f64, 4.0 / 3.0), v, 1e-6);
+}
+
+test "TukeyLambda: sample variance converges to theoretical variance (N=5000, lambda=1)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(44444);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const sample_mean = sum / 5000.0;
+    const sample_var = sum_sq / 5000.0 - sample_mean * sample_mean;
+    // Theoretical variance for TL(0,1,1) = 1/3 ≈ 0.3333
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.05);
+}
+
+test "TukeyLambda: sample variance converges to theoretical variance (N=5000, lambda=0)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(55555);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    for (0..5000) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const sample_mean = sum / 5000.0;
+    const sample_var = sum_sq / 5000.0 - sample_mean * sample_mean;
+    // Theoretical variance for TL(0,1,0) = pi^2/3 ≈ 3.2899 (Logistic variance)
+    const theoretical_var = dist.variance();
+    try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.5);
 }
