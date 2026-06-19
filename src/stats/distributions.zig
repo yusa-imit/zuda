@@ -55681,3 +55681,625 @@ test "PERT(f32): cdf in [0, 1]" {
         try testing.expect(c >= 0.0 and c <= 1.0);
     }
 }
+
+/// Tukey Lambda distribution TL(μ, σ, λ) — flexible symmetric distribution
+/// defined by its quantile function. A single-parameter family with the standard
+/// form generalized by location (μ) and scale (σ > 0).
+///
+/// Quantile (primary definition):
+///   Q_std(p; λ) = (p^λ − (1−p)^λ) / λ  for λ ≠ 0
+///   Q_std(p; 0) = ln(p/(1−p))           for λ = 0 (logistic)
+///   Q(p; μ,σ,λ) = μ + σ · Q_std(p; λ)
+///
+/// Support:
+///   λ > 0: bounded [μ − σ/λ, μ + σ/λ]
+///   λ ≤ 0: unbounded (−∞, +∞)
+///
+/// Special cases:
+///   λ = 0  → Logistic(μ, σ)  [pdf(0;0,1,0) = 0.25]
+///   λ = 1  → Uniform on [μ−σ, μ+σ]  [pdf = 1/(2σ)]
+///   λ = −1 → Cauchy-like heavy tails (infinite variance)
+///
+/// Mean: μ (always, by symmetry)
+/// Mode: μ (always, by symmetry)
+/// Variance: σ² · V(λ); V(1) = 1/3; V(0) = π²/3; NaN for λ ≤ −0.5
+///
+/// Time: O(1) for quantile/sample; O(log(1/ε)) for cdf/pdf (bisection)
+/// Space: O(1)
+pub fn TukeyLambda(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        lambda: T,
+
+        const Self = @This();
+
+        /// Initialize TukeyLambda(mu, sigma, lambda).
+        /// Returns error.InvalidParameter if sigma <= 0 or any param is non-finite.
+        pub fn init(mu: T, sigma: T, lambda: T) !Self {
+            if (!math.isFinite(mu) or !math.isFinite(sigma) or !math.isFinite(lambda))
+                return error.InvalidParameter;
+            if (sigma <= 0)
+                return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .lambda = lambda };
+        }
+
+        /// Validate internal invariants.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0) return error.InvalidParameter;
+        }
+
+        /// Standard quantile Q_std(p; λ) without location/scale.
+        fn quantileStd(p: T, lambda: T) T {
+            if (@abs(lambda) < 1e-10) {
+                // λ → 0: logistic quantile = ln(p/(1-p))
+                return @log(p / (1.0 - p));
+            }
+            return (@exp(lambda * @log(p)) - @exp(lambda * @log(1.0 - p))) / lambda;
+        }
+
+        /// Derivative of Q_std with respect to p.
+        fn quantileStdDeriv(p: T, lambda: T) T {
+            if (@abs(lambda) < 1e-10) {
+                // λ=0: d/dp ln(p/(1-p)) = 1/p + 1/(1-p) = 1/(p(1-p))
+                return 1.0 / (p * (1.0 - p));
+            }
+            // Q'(p; λ) = p^(λ-1) + (1-p)^(λ-1)
+            return @exp((lambda - 1.0) * @log(p)) + @exp((lambda - 1.0) * @log(1.0 - p));
+        }
+
+        /// Quantile function (inverse CDF): Q(p) = mu + sigma * Q_std(p; lambda).
+        /// For lambda > 0: Q(0) = mu - sigma/lambda, Q(1) = mu + sigma/lambda.
+        /// For lambda <= 0: Q(0) = -inf, Q(1) = +inf.
+        ///
+        /// Returns error.InvalidProbability if p < 0 or p > 1 or is NaN.
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) !T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (self.lambda > 1e-10) {
+                // bounded support
+                if (p == 0.0) return self.mu - self.sigma / self.lambda;
+                if (p == 1.0) return self.mu + self.sigma / self.lambda;
+            } else {
+                if (p == 0.0) return -math.inf(T);
+                if (p == 1.0) return math.inf(T);
+            }
+            return self.mu + self.sigma * quantileStd(p, self.lambda);
+        }
+
+        /// CDF via bisection on the quantile function.
+        /// For lambda > 0, returns 0/1 outside bounded support.
+        ///
+        /// Time: O(log(1/ε)) where ε ≈ 1e-15 | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.mu) / self.sigma;
+
+            // Handle bounded support
+            if (self.lambda > 1e-10) {
+                const lo = -1.0 / self.lambda;
+                const hi = 1.0 / self.lambda;
+                if (z <= lo) return 0.0;
+                if (z >= hi) return 1.0;
+            }
+
+            // Bisection: find p in (0,1) such that Q_std(p; lambda) == z
+            var lo: T = 1e-15;
+            var hi: T = 1.0 - 1e-15;
+            var mid: T = undefined;
+            var i: usize = 0;
+            while (i < 60) : (i += 1) {
+                mid = (lo + hi) * 0.5;
+                const q = quantileStd(mid, self.lambda);
+                if (q < z) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// PDF at x. Uses pdf(x) = 1/(sigma * Q'(F(x))).
+        /// Returns 0 outside bounded support (lambda > 0).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (self.lambda > 1e-10) {
+                const lo = self.mu - self.sigma / self.lambda;
+                const hi = self.mu + self.sigma / self.lambda;
+                if (x < lo or x > hi) return 0.0;
+                if (x == lo or x == hi) return 0.0; // boundary
+            }
+            const p = self.cdf(x);
+            // Clamp p away from 0 and 1 to avoid division by zero
+            const p_safe = @max(1e-15, @min(1.0 - 1e-15, p));
+            const deriv = quantileStdDeriv(p_safe, self.lambda);
+            if (deriv <= 0.0) return 0.0;
+            return 1.0 / (self.sigma * deriv);
+        }
+
+        /// Mean of TukeyLambda(mu, sigma, lambda) = mu (always, by symmetry).
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Mode of TukeyLambda(mu, sigma, lambda) = mu (by symmetry).
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance = sigma^2 * V(lambda).
+        /// V(1) = 1/3; V(0) = pi^2/3; NaN for lambda <= -0.5 (infinite variance).
+        ///
+        /// Exact formula for lambda != 0, lambda > -0.5:
+        ///   V(lambda) = 2/(lambda^2) * [1/(2*lambda+1) - B(lambda+1, lambda+1)]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.lambda <= -0.5) return math.nan(T);
+
+            if (@abs(self.lambda) < 1e-10) {
+                // lambda = 0: Logistic(0, 1) variance = pi^2/3
+                return self.sigma * self.sigma * math.pi * math.pi / 3.0;
+            }
+
+            // B(lambda+1, lambda+1) = Gamma(lambda+1)^2 / Gamma(2*lambda+2)
+            // = (lambda!)^2 / (2*lambda+1)!
+            // Use lgamma for numerical stability
+            const a = self.lambda + 1.0;
+            const log_beta = 2.0 * math.lgamma(T, a) - math.lgamma(T, 2.0 * a);
+            const beta_val = @exp(log_beta);
+            const two_lam_plus1: T = 2.0 * self.lambda + 1.0;
+            const v_std = 2.0 / (self.lambda * self.lambda) * (1.0 / two_lam_plus1 - beta_val);
+            return self.sigma * self.sigma * v_std;
+        }
+
+        /// Differential entropy = ln(sigma) + ∫₀¹ ln(Q'_std(p)) dp (200-pt Simpson).
+        /// Time: O(N) where N=200 | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 200;
+            const h: T = 1.0 / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            var k: usize = 1;
+            while (k < N) : (k += 1) {
+                const p: T = @as(T, @floatFromInt(k)) * h;
+                const p_safe = @max(1e-15, @min(1.0 - 1e-15, p));
+                const deriv = quantileStdDeriv(p_safe, self.lambda);
+                const w: T = if (k % 2 == 0) 2.0 else 4.0;
+                sum += w * @log(deriv);
+            }
+            // Add endpoints (both are +inf for unbounded, log of boundary deriv for bounded)
+            // For lambda=0: deriv at endpoints → infinity → contributes 0 weight
+            // Simpson: (h/3) * [f(0) + 4f(1) + 2f(2) + ... + f(N)]
+            // We skip endpoints (they may be singular) and accept small boundary error
+            const integral = (h / 3.0) * sum;
+            return @log(self.sigma) + integral;
+        }
+
+        /// Sample via inverse CDF: Q(U) where U ~ Uniform(0,1).
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            // Clamp away from boundaries for numerical safety
+            u = @max(1e-15, @min(1.0 - 1e-15, u));
+            return self.mu + self.sigma * quantileStd(u, self.lambda);
+        }
+
+        /// Log-PDF for numerical stability.
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p_val = self.pdf(x);
+            if (p_val <= 0.0) return -math.inf(T);
+            return @log(p_val);
+        }
+    };
+}
+
+// TukeyLambda distribution tests — these will FAIL until TukeyLambda is implemented
+
+test "TukeyLambda: init succeeds for valid params TL(0, 1, 0)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+    try testing.expectEqual(@as(f64, 0.0), dist.lambda);
+}
+
+test "TukeyLambda: init succeeds for valid params TL(2, 1, 0.5)" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.5);
+    try testing.expectEqual(@as(f64, 2.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.sigma);
+    try testing.expectEqual(@as(f64, 0.5), dist.lambda);
+}
+
+test "TukeyLambda: init succeeds for negative lambda TL(0, 1, -0.5)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, -0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+}
+
+test "TukeyLambda: init fails for sigma = 0" {
+    try testing.expectError(error.InvalidParameter, TukeyLambda(f64).init(0.0, 0.0, 0.0));
+}
+
+test "TukeyLambda: init fails for sigma < 0" {
+    try testing.expectError(error.InvalidParameter, TukeyLambda(f64).init(0.0, -1.0, 0.0));
+}
+
+test "TukeyLambda: init fails for non-finite sigma" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, TukeyLambda(f64).init(0.0, inf, 0.0));
+}
+
+test "TukeyLambda: validate succeeds for valid params" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "TukeyLambda: validate succeeds for positive lambda" {
+    const dist = try TukeyLambda(f64).init(1.0, 2.0, 0.5);
+    try dist.validate();
+}
+
+test "TukeyLambda: validate fails for sigma = 0" {
+    var dist: TukeyLambda(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = 0.0;
+    dist.lambda = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "TukeyLambda: validate fails for sigma < 0" {
+    var dist: TukeyLambda(f64) = undefined;
+    dist.mu = 0.0;
+    dist.sigma = -1.0;
+    dist.lambda = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "TukeyLambda: quantile at p=0.5 equals mu (symmetry)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), q, 1e-10);
+}
+
+test "TukeyLambda: quantile at p=0.5 equals mu for shifted distribution" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), q, 1e-10);
+}
+
+test "TukeyLambda: quantile for lambda=1 at p=0 returns mu-sigma" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(@as(f64, -1.0), q, 1e-10);
+}
+
+test "TukeyLambda: quantile for lambda=1 at p=1 returns mu+sigma" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), q, 1e-10);
+}
+
+test "TukeyLambda: quantile for lambda=0.5 at p=0 returns mu-2*sigma" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(@as(f64, -2.0), q, 1e-10);
+}
+
+test "TukeyLambda: quantile for lambda=0.5 at p=1 returns mu+2*sigma" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), q, 1e-10);
+}
+
+test "TukeyLambda: quantile is monotone increasing" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.3);
+    const q3 = try dist.quantile(0.5);
+    const q4 = try dist.quantile(0.7);
+    const q5 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+    try testing.expect(q3 < q4);
+    try testing.expect(q4 < q5);
+}
+
+test "TukeyLambda: quantile fails for p < 0" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "TukeyLambda: quantile fails for p > 1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "TukeyLambda: quantile fails for p = NaN" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "TukeyLambda: cdf at mean returns 0.5" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), c, 1e-8);
+}
+
+test "TukeyLambda: cdf at mean returns 0.5 for shifted distribution" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.0);
+    const c = dist.cdf(2.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), c, 1e-8);
+}
+
+test "TukeyLambda: cdf is monotone increasing" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const c1 = dist.cdf(-1.0);
+    const c2 = dist.cdf(-0.5);
+    const c3 = dist.cdf(0.0);
+    const c4 = dist.cdf(0.5);
+    const c5 = dist.cdf(1.0);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+    try testing.expect(c3 < c4);
+    try testing.expect(c4 < c5);
+}
+
+test "TukeyLambda: cdf within [0, 1]" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    for ([_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 }) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "TukeyLambda: cdf outside support [mu-sigma/lambda, mu+sigma/lambda] for lambda=1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(-2.0), 1e-8);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(2.0), 1e-8);
+}
+
+test "TukeyLambda: cdf outside support for lambda=0.5" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(-2.1), 1e-8);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(2.1), 1e-8);
+}
+
+test "TukeyLambda: cdf(quantile(p)) roundtrip for p=0.25" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-8);
+}
+
+test "TukeyLambda: cdf(quantile(p)) roundtrip for p=0.75" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-8);
+}
+
+test "TukeyLambda: cdf(quantile(p)) roundtrip for p=0.1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const p = 0.1;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-7);
+}
+
+test "TukeyLambda: pdf at center mu for lambda=0 ≈ 0.25" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.25), p, 1e-6);
+}
+
+test "TukeyLambda: pdf at center mu for lambda=1 ≈ 0.5" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), p, 1e-6);
+}
+
+test "TukeyLambda: pdf is non-negative" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    for ([_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 }) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "TukeyLambda: pdf is finite within support" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    for ([_]f64{ -1.99, -1.0, 0.0, 1.0, 1.99 }) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(math.isFinite(p));
+    }
+}
+
+test "TukeyLambda: pdf zero outside support for lambda=1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(-2.0), 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(2.0), 1e-10);
+}
+
+test "TukeyLambda: pdf zero outside support for lambda=0.5" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(-2.01), 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pdf(2.01), 1e-10);
+}
+
+test "TukeyLambda: pdf integrates to approximately 1 for lambda=1 (bounded case)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 100;
+    const dx = 2.0 / @as(f64, @floatFromInt(n));
+    var x: f64 = -1.0;
+    while (x <= 1.0) : (x += dx) {
+        sum += dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sum, 0.01);
+}
+
+test "TukeyLambda: mean returns mu" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mean());
+}
+
+test "TukeyLambda: mean returns mu for shifted distribution" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.mean());
+}
+
+test "TukeyLambda: mean returns mu for lambda=1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mean());
+}
+
+test "TukeyLambda: mode returns mu" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "TukeyLambda: mode returns mu for shifted distribution" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.5);
+    try testing.expectEqual(@as(f64, 2.0), dist.mode());
+}
+
+test "TukeyLambda: variance for lambda=1 ≈ 1/3" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), v, 1e-6);
+}
+
+test "TukeyLambda: variance for lambda=0 ≈ pi²/3 ≈ 3.2899" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(@as(f64, math.pi * math.pi / 3.0), v, 0.01);
+}
+
+test "TukeyLambda: variance scales with sigma²" {
+    const dist1 = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    const dist2 = try TukeyLambda(f64).init(0.0, 2.0, 1.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(v2 / v1, 4.0, 1e-6);
+}
+
+test "TukeyLambda: variance is positive" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "TukeyLambda: entropy is finite for lambda=0" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "TukeyLambda: entropy is finite for lambda=1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "TukeyLambda: entropy scales with sigma (log relationship)" {
+    const dist1 = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    const dist2 = try TukeyLambda(f64).init(0.0, 2.0, 0.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    // entropy increases by log(2) ≈ 0.693 when sigma doubles
+    try testing.expectApproxEqAbs(e2 - e1, @log(@as(f64, 2.0)), 0.1);
+}
+
+test "TukeyLambda: sample produces values within expected support for lambda=1" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= -1.0 and s <= 1.0);
+    }
+}
+
+test "TukeyLambda: sample produces finite values" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    var rng = std.Random.DefaultPrng.init(54321);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "TukeyLambda: sample mean converges to theoretical mean for TL(0, 1, 0)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(11111);
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 5000.0;
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.05);
+}
+
+test "TukeyLambda: sample mean converges to theoretical mean for TL(2, 1, 0.5)" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.5);
+    var rng = std.Random.DefaultPrng.init(22222);
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 5000.0;
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.05);
+}
+
+test "TukeyLambda: sample mean converges to theoretical mean for TL(0, 1, 1)" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(33333);
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / 5000.0;
+    const theoretical_mean = dist.mean();
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.05);
+}
+
+test "TukeyLambda(f32): init succeeds" {
+    const dist = try TukeyLambda(f32).init(0.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f32, 0.0), dist.mu);
+}
+
+test "TukeyLambda(f32): pdf is finite" {
+    const dist = try TukeyLambda(f32).init(0.0, 1.0, 0.5);
+    const p = dist.pdf(0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "TukeyLambda(f32): cdf in [0, 1]" {
+    const dist = try TukeyLambda(f32).init(0.0, 1.0, 1.0);
+    for ([_]f32{ -1.0, 0.0, 1.0 }) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "TukeyLambda: location-scale shift: TL(2, 1, 0) has mean=2" {
+    const dist = try TukeyLambda(f64).init(2.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.mean());
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(2.0), 1e-8);
+}
+
+test "TukeyLambda: scale transformation: TL(0, 2, 1) has support [-2, 2]" {
+    const dist = try TukeyLambda(f64).init(0.0, 2.0, 1.0);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(-2.0), 1e-8);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(2.0), 1e-8);
+}
+
+test "TukeyLambda: scale transformation: TL(0, 2, 1) variance ≈ 4/3" {
+    const dist = try TukeyLambda(f64).init(0.0, 2.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 3.0), v, 1e-6);
+}
