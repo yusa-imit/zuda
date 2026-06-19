@@ -1,3 +1,25 @@
+**Session 694 Update (2026-06-20) — FEATURE MODE [CURRENT]:**
+
+✅ **TukeyLambda Distribution** — 97th total, 79th continuous — commit 43b9ba0
+- **Mode**: FEATURE MODE (counter: 694)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: TukeyLambda(μ, σ, λ) — quantile-function-defined flexible symmetric distribution
+  * Q_std(p; λ) = (p^λ − (1−p)^λ)/λ for λ≠0; ln(p/(1−p)) for λ=0
+  * Full: Q(p; μ,σ,λ) = μ + σ · Q_std(p; λ)
+  * CDF: bisection in [0,1] (60 iterations); PDF = 1/(σ·Q'(F(x)))
+  * Q'(p; λ) = p^(λ-1) + (1-p)^(λ-1) for λ≠0; 1/(p(1-p)) for λ=0
+  * Special cases: λ=0→Logistic(μ,σ) [pdf(0;0,1,0)=0.25]; λ=1→Uniform[μ-σ,μ+σ]; λ=-1→heavy tails
+  * Support: [μ-σ/λ, μ+σ/λ] for λ>0 (bounded); (-∞,+∞) for λ≤0
+  * Mean=μ, Mode=μ always (by symmetry)
+  * Variance: σ²·V(λ); V(1)=1/3; V(0)=π²/3; NaN for λ≤-0.5 (infinite variance)
+  * Variance formula: 2/(λ²)·[1/(2λ+1) - B(λ+1,λ+1)] using lgamma for Beta
+  * Entropy: ln(σ) + 200-pt Simpson of ∫₀¹ ln(Q'(p)) dp
+  * Sample: inverse-CDF (O(1)) — U clamped to [1e-15, 1-1e-15]
+  * CRITICAL: Use |λ| < 1e-10 threshold for λ=0 special case
+- **Tests**: 56 tests; 4,842 total (was 4,789)
+- **Distribution count**: 97 total (79 continuous + 18 discrete)
+- **Next Priority**: Next distribution per PRD queue
+
 **Session 692 Update (2026-06-16) — FEATURE MODE [CURRENT]:**
 
 ✅ **ContinuousBernoulli Distribution** — 95th total, 77th continuous — commit 2e5671b
