@@ -1,3 +1,23 @@
+**Session 699 Update (2026-06-21) — FEATURE MODE [CURRENT]:**
+
+✅ **ZipfMandelbrot Distribution** — 102nd total, 21st discrete — commit 4c7c72f
+- **Mode**: FEATURE MODE (counter: 699)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ZipfMandelbrot(T) — discrete power-law with offset on {1,...,N}
+  * PMF: P(X=k) = (k+q)^{-s} / H(N,s,q) for k=1,...,N; H = Σ_{j=1}^N (j+q)^{-s}
+  * Parameters: n≥1 (support), s>0 (exponent), q≥0 (shift offset)
+  * Special: q=0 → Zipf(N,s); large q → Uniform on {1,...,N}; N→∞,q=1 → Zeta(s+1) shifted
+  * Mode: always 1 (PMF strictly decreasing since (k+q)^{-s} monotone in k)
+  * Mean: Σ k*(k+q)^{-s}/H — precomputed O(1) after O(n) init
+  * Variance: Σ k²*(k+q)^{-s}/H − mean² — precomputed O(1)
+  * Entropy: ln(H) + s·Σ ln(k+q)·(k+q)^{-s}/H — precomputed O(1)
+  * Cross-check: q=0 pmf matches Zipf exactly; q→∞ mean→(n+1)/2 (Uniform)
+  * For N=5, s=1.5, q=1: pmf(1)≈0.42673; mean≈2.18645; variance≈1.71385; entropy≈1.43344
+  * Sample: binary search on CDF table O(log n); init O(n) space for CDF
+- **Tests**: 36 new tests; 5,034 total (was 4,998)
+- **Distribution count**: 102 total (81 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — LogGamma or Nakagami or another distribution
+
 **Session 698 Update (2026-06-20) — FEATURE MODE [CURRENT]:**
 
 ✅ **DoubleWeibull Distribution** — 101st total, 81st continuous — commit 9cd9297
