@@ -57422,6 +57422,12 @@ test "DiscreteWeibull: mode is 0 for most parameters" {
     try expectEqual(0, dist.mode());
 }
 
+test "DiscreteWeibull: mode is non-zero for beta>1 high q" {
+    const dist = try DiscreteWeibull(f64).init(0.9, 2.0);
+    // PMF(0)=0.1, PMF(1)=0.2439, PMF(2)=0.2687, PMF(3)=0.2021 -> mode=2
+    try expectEqual(@as(u64, 2), dist.mode());
+}
+
 test "DiscreteWeibull: mean q=0.5, beta=1.0" {
     const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
     // For Geometric(p=0.5) on {0,1,...}, mean = p/(1-p) = 0.5/0.5 = 1.0
@@ -57676,11 +57682,9 @@ test "BoundedPareto: f32 type support" {
 
 test "BoundedPareto: alpha=1 special case" {
     const dist = try BoundedPareto(f64).init(1.0, 1.0, 10.0);
-    // For alpha=1, should compute mean via log formula
+    // For alpha=1: mean = L * ln(H/L) / (1 - L/H) = ln(10) / 0.9 ≈ 2.5584
     const mean_val = dist.mean();
-    try testing.expect(!math.isNan(mean_val));
-    try testing.expect(!math.isInf(mean_val));
-    try testing.expect(mean_val > 1.0 and mean_val < 10.0);
+    try expectApproxEqAbs(2.5584, mean_val, 1e-3);
 }
 
 // ============================================================================
