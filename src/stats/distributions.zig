@@ -56936,3 +56936,749 @@ test "Zeta: pmf ratio follows power law: pmf(k+1)/pmf(k) = (k/(k+1))^s" {
         try testing.expectApproxEqAbs(expected_ratio, actual_ratio, 1e-12);
     }
 }
+
+// ============================================================================
+// DiscreteWeibull Distribution (Type I)
+// ============================================================================
+
+/// DiscreteWeibull distribution (Type I, Nakagawa & Osaki 1975).
+///
+/// PMF: P(X=k) = q^{k^β} - q^{(k+1)^β}, k = 0, 1, 2, ...
+/// CDF: F(k) = 1 - q^{(k+1)^β}
+///
+/// Parameters:
+///   - q ∈ (0, 1): survival probability parameter
+///   - beta > 0: shape parameter (β=1 → Geometric(1-q) on {0,1,...})
+///
+/// Time: O(N) for mean/entropy (truncated sum), O(1) for pmf/cdf/quantile/sample
+pub fn DiscreteWeibull(comptime T: type) type {
+    return struct {
+        q: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a DiscreteWeibull distribution.
+        /// Requires: q ∈ (0,1), beta > 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(q: T, beta: T) DistributionError!Self {
+            if (!(q > 0.0 and q < 1.0)) return error.InvalidParameter;
+            if (!(beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(q) or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .q = q, .beta = beta };
+        }
+
+        /// PMF: P(X=k) = q^{k^β} - q^{(k+1)^β}
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            const k_f: T = @floatFromInt(k);
+            const k1_f = k_f + 1.0;
+            const lower = math.pow(T, self.q, math.pow(T, k_f, self.beta));
+            const upper = math.pow(T, self.q, math.pow(T, k1_f, self.beta));
+            return lower - upper;
+        }
+
+        /// CDF: F(k) = 1 - q^{(k+1)^β}
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            const k1_f: T = @floatFromInt(k + 1);
+            return 1.0 - math.pow(T, self.q, math.pow(T, k1_f, self.beta));
+        }
+
+        /// Quantile: smallest k such that CDF(k) >= p
+        /// Exact O(1): k = ceil((log(1-p)/log(q))^{1/β}) - 1 (floored to 0)
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) u64 {
+            if (p <= 0.0) return 0;
+            if (p >= 1.0) {
+                // Search for large k; fallback to linear scan
+                var k: u64 = 0;
+                while (self.cdf(k) < 1.0 - 1e-14) : (k += 1) {}
+                return k;
+            }
+            // Solve: (k+1)^β >= log(1-p)/log(q)
+            // Note: log(q) < 0, log(1-p) <= 0 → ratio is >= 0
+            const log_q = @log(self.q);
+            const log_1mp = @log(1.0 - p);
+            const ratio = log_1mp / log_q; // >= 0
+            const threshold = math.pow(T, ratio, 1.0 / self.beta);
+            // k+1 >= threshold → k >= threshold - 1
+            const k_f = @ceil(threshold - 1.0);
+            if (k_f <= 0.0) return 0;
+            return @intFromFloat(k_f);
+        }
+
+        /// Mode: returns 0 for most parameters; 0 when PMF is monotone decreasing.
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            // PMF(0) >= PMF(1) iff q^1 - q^{2^β} >= q^{2^β} - q^{3^β}
+            // The PMF at k=0 is always >= PMF at any k>0 when β <= 1
+            // For β > 1 the PMF can be unimodal; search up to ~20 to find peak
+            var best_k: u64 = 0;
+            var best_p = self.pmf(0);
+            if (self.beta > 1.0) {
+                var k: u64 = 1;
+                while (k <= 20) : (k += 1) {
+                    const p_k = self.pmf(k);
+                    if (p_k > best_p) {
+                        best_p = p_k;
+                        best_k = k;
+                    } else {
+                        break; // PMF is unimodal
+                    }
+                }
+            }
+            return best_k;
+        }
+
+        /// Mean: Σ_{k=0}^{N} k·PMF(k) (truncated sum, converges quickly)
+        /// Time: O(N) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= 10000) : (k += 1) {
+                const p_k = self.pmf(k);
+                if (p_k < 1e-15) break;
+                sum += @as(T, @floatFromInt(k)) * p_k;
+            }
+            return sum;
+        }
+
+        /// Variance: E[X²] - mean²
+        /// Time: O(N) | Space: O(1)
+        pub fn variance(self: Self) T {
+            var ex2: T = 0.0;
+            var k: u64 = 1;
+            while (k <= 10000) : (k += 1) {
+                const p_k = self.pmf(k);
+                if (p_k < 1e-15) break;
+                const kf: T = @floatFromInt(k);
+                ex2 += kf * kf * p_k;
+            }
+            const m = self.mean();
+            return ex2 - m * m;
+        }
+
+        /// Entropy: -Σ PMF(k)·log(PMF(k))
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var h: T = 0.0;
+            var k: u64 = 0;
+            while (k <= 10000) : (k += 1) {
+                const p_k = self.pmf(k);
+                if (p_k < 1e-15) break;
+                h -= p_k * @log(p_k);
+            }
+            return h;
+        }
+
+        /// Generate a random sample using inverse CDF.
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u);
+        }
+
+        /// Assert internal invariants.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.q > 0.0 and self.q < 1.0)) return error.InvalidParameter;
+            if (!(self.beta > 0.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// BoundedPareto Distribution (Truncated Pareto / Minimax Distribution)
+// ============================================================================
+
+/// BoundedPareto (Truncated Pareto / Minimax) distribution.
+///
+/// A Pareto distribution bounded on [lower, upper].
+///
+/// PDF: f(x) = α·L^α·x^{-α-1} / (1 - (L/H)^α)  for x ∈ [L, H]
+/// CDF: F(x) = (1 - (L/x)^α) / (1 - (L/H)^α)
+/// Quantile: Q(p) = L·(1 - p·(1-(L/H)^α))^{-1/α}
+///
+/// Parameters:
+///   - alpha > 0: shape (Pareto tail index)
+///   - lower (L) > 0: lower bound
+///   - upper (H) > lower: upper bound
+///
+/// Applications: Internet traffic modeling, income distributions, file sizes.
+///
+/// Time: O(1) for pdf/cdf/quantile/sample
+pub fn BoundedPareto(comptime T: type) type {
+    return struct {
+        alpha: T,
+        lower: T,
+        upper: T,
+
+        const Self = @This();
+
+        /// Create a BoundedPareto distribution.
+        /// Requires: alpha > 0, lower > 0, upper > lower.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, lower: T, upper: T) DistributionError!Self {
+            if (!(alpha > 0.0)) return error.InvalidParameter;
+            if (!(lower > 0.0)) return error.InvalidParameter;
+            if (!(upper > lower)) return error.InvalidParameter;
+            if (!math.isFinite(alpha) or !math.isFinite(lower) or !math.isFinite(upper)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .lower = lower, .upper = upper };
+        }
+
+        /// PDF: f(x) = α·L^α·x^{-α-1} / (1 - (L/H)^α)  for x ∈ [L, H], 0 outside
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.lower or x > self.upper) return 0.0;
+            const ratio = math.pow(T, self.lower / self.upper, self.alpha);
+            const norm = 1.0 - ratio;
+            return self.alpha * math.pow(T, self.lower, self.alpha) * math.pow(T, x, -(self.alpha + 1.0)) / norm;
+        }
+
+        /// Log-PDF: log f(x) = log(α) + α·log(L) - (α+1)·log(x) - log(1-(L/H)^α)
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.lower or x > self.upper) return -math.inf(T);
+            const ratio = math.pow(T, self.lower / self.upper, self.alpha);
+            const log_norm = @log(1.0 - ratio);
+            return @log(self.alpha) + self.alpha * @log(self.lower) - (self.alpha + 1.0) * @log(x) - log_norm;
+        }
+
+        /// CDF: F(x) = (1 - (L/x)^α) / (1 - (L/H)^α) for x ∈ [L, H]
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.lower) return 0.0;
+            if (x >= self.upper) return 1.0;
+            const denom = 1.0 - math.pow(T, self.lower / self.upper, self.alpha);
+            const numer = 1.0 - math.pow(T, self.lower / x, self.alpha);
+            return numer / denom;
+        }
+
+        /// Quantile: Q(p) = L·(1 - p·(1-(L/H)^α))^{-1/α}
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (p <= 0.0) return self.lower;
+            if (p >= 1.0) return self.upper;
+            const ratio = math.pow(T, self.lower / self.upper, self.alpha);
+            const inner = 1.0 - p * (1.0 - ratio);
+            return self.lower * math.pow(T, inner, -1.0 / self.alpha);
+        }
+
+        /// Mode: always lower boundary (PDF is monotone decreasing on [L, H]).
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.lower;
+        }
+
+        /// Mean: (α/(α-1))·L·(1-(L/H)^{α-1})/(1-(L/H)^α) for α≠1
+        ///       L·ln(H/L)/(1-L/H) for α=1
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const L = self.lower;
+            const H = self.upper;
+            const a = self.alpha;
+            const denom = 1.0 - math.pow(T, L / H, a);
+            if (@abs(a - 1.0) < 1e-10) {
+                // α=1 special case: mean = L·ln(H/L) / (1 - L/H)
+                return L * @log(H / L) / denom;
+            }
+            const numer = 1.0 - math.pow(T, L / H, a - 1.0);
+            return (a / (a - 1.0)) * L * numer / denom;
+        }
+
+        /// Variance: E[X²] - mean²
+        /// E[X²] = (α/(α-2))·L²·(1-(L/H)^{α-2})/(1-(L/H)^α) for α≠2
+        /// Time: O(1) or O(100) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const L = self.lower;
+            const H = self.upper;
+            const a = self.alpha;
+            const denom = 1.0 - math.pow(T, L / H, a);
+            const ex2: T = if (@abs(a - 2.0) < 1e-10) blk: {
+                // α=2 special case: E[X²] = 2·L²·ln(H/L) / (1-(L/H)^2)
+                break :blk 2.0 * L * L * @log(H / L) / denom;
+            } else blk: {
+                // General: E[X²] = (α/(α-2))·L²·(1-(L/H)^{α-2})/(1-(L/H)^α)
+                const numer = 1.0 - math.pow(T, L / H, a - 2.0);
+                break :blk (a / (a - 2.0)) * L * L * numer / denom;
+            };
+            const m = self.mean();
+            return ex2 - m * m;
+        }
+
+        /// Entropy: computed numerically via 200-point Simpson's rule
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const L = self.lower;
+            const H = self.upper;
+            const n = 200;
+            const dx = (H - L) / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const x = L + @as(T, @floatFromInt(i)) * dx;
+                const f = self.pdf(x);
+                const weight: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                if (f > 0.0) {
+                    sum += weight * (-f * @log(f));
+                }
+            }
+            return sum * dx / 3.0;
+        }
+
+        /// Generate a random sample using inverse CDF.
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u);
+        }
+
+        /// Assert internal invariants.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.alpha > 0.0)) return error.InvalidParameter;
+            if (!(self.lower > 0.0)) return error.InvalidParameter;
+            if (!(self.upper > self.lower)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+// DiscreteWeibull and BoundedPareto tests
+// ============================================================================
+// DISCRETE WEIBULL DISTRIBUTION TESTS (99th distribution)
+// ============================================================================
+
+test "DiscreteWeibull: init with valid parameters" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    try testing.expect(!math.isNan(dist.q));
+    try testing.expect(!math.isNan(dist.beta));
+    try testing.expect(dist.q > 0.0 and dist.q < 1.0);
+    try testing.expect(dist.beta > 0.0);
+}
+
+test "DiscreteWeibull: init with q=0 returns error" {
+    const result = DiscreteWeibull(f64).init(0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "DiscreteWeibull: init with q=1 returns error" {
+    const result = DiscreteWeibull(f64).init(1.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "DiscreteWeibull: init with q>1 returns error" {
+    const result = DiscreteWeibull(f64).init(1.5, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "DiscreteWeibull: init with negative q returns error" {
+    const result = DiscreteWeibull(f64).init(-0.5, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "DiscreteWeibull: init with beta<=0 returns error" {
+    const result = DiscreteWeibull(f64).init(0.5, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "DiscreteWeibull: init with negative beta returns error" {
+    const result = DiscreteWeibull(f64).init(0.5, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "DiscreteWeibull: pmf at k=0, q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // PMF(0) = q^0 - q^1 = 1 - 0.5 = 0.5 (this is geometric)
+    const pmf_val = dist.pmf(0);
+    try expectApproxEqAbs(0.5, pmf_val, 1e-10);
+}
+
+test "DiscreteWeibull: pmf at k=1, q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // PMF(1) = q^1 - q^2 = 0.5 - 0.25 = 0.25 (geometric)
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqAbs(0.25, pmf_val, 1e-10);
+}
+
+test "DiscreteWeibull: pmf at k=2, q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // PMF(2) = q^2 - q^3 = 0.25 - 0.125 = 0.125 (geometric)
+    const pmf_val = dist.pmf(2);
+    try expectApproxEqAbs(0.125, pmf_val, 1e-10);
+}
+
+test "DiscreteWeibull: pmf at k=0, q=0.9, beta=2.0" {
+    const dist = try DiscreteWeibull(f64).init(0.9, 2.0);
+    // PMF(0) = q^(0^2) - q^(1^2) = q^0 - q^1 = 1 - 0.9 = 0.1
+    const pmf_val = dist.pmf(0);
+    try expectApproxEqAbs(0.1, pmf_val, 1e-10);
+}
+
+test "DiscreteWeibull: pmf at k=1, q=0.9, beta=2.0" {
+    const dist = try DiscreteWeibull(f64).init(0.9, 2.0);
+    // PMF(1) = q^1 - q^4 = 0.9 - 0.6561 = 0.2439
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqAbs(0.2439, pmf_val, 1e-4);
+}
+
+test "DiscreteWeibull: pmf at k=2, q=0.9, beta=2.0" {
+    const dist = try DiscreteWeibull(f64).init(0.9, 2.0);
+    // PMF(2) = q^4 - q^9 = 0.6561 - 0.3874 = 0.2687
+    const pmf_val = dist.pmf(2);
+    try expectApproxEqAbs(0.2687, pmf_val, 1e-4);
+}
+
+test "DiscreteWeibull: pmf non-negative" {
+    const dist = try DiscreteWeibull(f64).init(0.7, 1.5);
+    for (0..10) |k| {
+        const pmf_val = dist.pmf(@intCast(k));
+        try testing.expect(pmf_val >= 0.0);
+    }
+}
+
+test "DiscreteWeibull: cdf at k=0, q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // CDF(0) = 1 - q^1 = 1 - 0.5 = 0.5
+    const cdf_val = dist.cdf(0);
+    try expectApproxEqAbs(0.5, cdf_val, 1e-10);
+}
+
+test "DiscreteWeibull: cdf at k=1, q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // CDF(1) = 1 - q^2 = 1 - 0.25 = 0.75
+    const cdf_val = dist.cdf(1);
+    try expectApproxEqAbs(0.75, cdf_val, 1e-10);
+}
+
+test "DiscreteWeibull: cdf at k=0, q=0.9, beta=2.0" {
+    const dist = try DiscreteWeibull(f64).init(0.9, 2.0);
+    // CDF(0) = 1 - q^1 = 1 - 0.9 = 0.1
+    const cdf_val = dist.cdf(0);
+    try expectApproxEqAbs(0.1, cdf_val, 1e-10);
+}
+
+test "DiscreteWeibull: cdf at k=1, q=0.9, beta=2.0" {
+    const dist = try DiscreteWeibull(f64).init(0.9, 2.0);
+    // CDF(1) = 1 - q^4 = 1 - 0.6561 = 0.3439
+    const cdf_val = dist.cdf(1);
+    try expectApproxEqAbs(0.3439, cdf_val, 1e-4);
+}
+
+test "DiscreteWeibull: cdf monotone increasing" {
+    const dist = try DiscreteWeibull(f64).init(0.7, 1.5);
+    var prev_cdf: f64 = 0.0;
+    for (0..10) |k| {
+        const cdf_val = dist.cdf(@intCast(k));
+        try testing.expect(cdf_val >= prev_cdf);
+        prev_cdf = cdf_val;
+    }
+}
+
+test "DiscreteWeibull: cdf approaches 1 for large k" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    const cdf_large = dist.cdf(100);
+    try testing.expect(cdf_large > 0.99);
+}
+
+test "DiscreteWeibull: quantile at p=0 returns 0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    const q = dist.quantile(0.0);
+    try expectEqual(0, q);
+}
+
+test "DiscreteWeibull: quantile-cdf roundtrip, q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (ps) |p| {
+        const k = dist.quantile(p);
+        const cdf_k = dist.cdf(k);
+        const cdf_k_minus_1 = if (k > 0) dist.cdf(k - 1) else 0.0;
+        // CDF(k-1) < p <= CDF(k)
+        try testing.expect(cdf_k_minus_1 < p + 1e-10 or cdf_k_minus_1 <= p);
+        try testing.expect(p <= cdf_k + 1e-10);
+    }
+}
+
+test "DiscreteWeibull: pmf sum to approximately 1 (truncated)" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    var pmf_sum: f64 = 0.0;
+    // Sum PMF from k=0 to k=100 (approximately complete for q=0.5)
+    for (0..101) |k| {
+        pmf_sum += dist.pmf(@intCast(k));
+    }
+    // For q=0.5, sum to k=100 should be very close to 1
+    try expectApproxEqAbs(1.0, pmf_sum, 1e-5);
+}
+
+test "DiscreteWeibull: mode is 0 for most parameters" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // For beta=1 (geometric), mode is always 0
+    try expectEqual(0, dist.mode());
+}
+
+test "DiscreteWeibull: mean q=0.5, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    // For Geometric(p=0.5) on {0,1,...}, mean = p/(1-p) = 0.5/0.5 = 1.0
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(1.0, mean_val, 1e-2);
+}
+
+test "DiscreteWeibull: sample convergence to mean, q=0.7, beta=1.0" {
+    const dist = try DiscreteWeibull(f64).init(0.7, 1.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    const samples = 5000;
+    for (0..samples) |_| {
+        const sample_val: f64 = @floatFromInt(dist.sample(rng));
+        sum += sample_val;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(samples));
+
+    // Theoretical mean for Geometric(p=1-q=0.3) is q/(1-q) = 0.7/0.3 ≈ 2.333
+    const theoretical_mean = 0.7 / 0.3;
+    try expectApproxEqRel(theoretical_mean, empirical_mean, 0.05);
+}
+
+test "DiscreteWeibull: validate passes for valid params" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    try dist.validate();
+}
+
+test "DiscreteWeibull: f32 type support" {
+    const dist = try DiscreteWeibull(f32).init(0.5, 1.0);
+    const pmf_val = dist.pmf(0);
+    try expectApproxEqAbs(@as(f32, 0.5), pmf_val, 1e-5);
+}
+
+// ============================================================================
+// BOUNDED PARETO DISTRIBUTION TESTS (100th distribution)
+// ============================================================================
+
+test "BoundedPareto: init with valid parameters" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    try testing.expect(!math.isNan(dist.alpha));
+    try testing.expect(!math.isNan(dist.lower));
+    try testing.expect(!math.isNan(dist.upper));
+    try testing.expect(dist.alpha > 0.0);
+    try testing.expect(dist.lower > 0.0);
+    try testing.expect(dist.lower < dist.upper);
+}
+
+test "BoundedPareto: init with alpha<=0 returns error" {
+    const result = BoundedPareto(f64).init(0.0, 1.0, 10.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BoundedPareto: init with negative alpha returns error" {
+    const result = BoundedPareto(f64).init(-1.0, 1.0, 10.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BoundedPareto: init with lower<=0 returns error" {
+    const result = BoundedPareto(f64).init(2.0, 0.0, 10.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BoundedPareto: init with negative lower returns error" {
+    const result = BoundedPareto(f64).init(2.0, -1.0, 10.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BoundedPareto: init with upper<=lower returns error" {
+    const result = BoundedPareto(f64).init(2.0, 5.0, 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BoundedPareto: init with upper<lower returns error" {
+    const result = BoundedPareto(f64).init(2.0, 5.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BoundedPareto: pdf at x=lower boundary, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // PDF(1) = 2*1^2*1^{-3} / (1-(1/10)^2) = 2 / 0.99 ≈ 2.0202
+    const pdf_val = dist.pdf(1.0);
+    try expectApproxEqAbs(2.0 / 0.99, pdf_val, 1e-4);
+}
+
+test "BoundedPareto: pdf at x=2, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // PDF(2) = 2*1*2^{-3} / (1-0.01) = 0.25 / 0.99 ≈ 0.2525
+    const pdf_val = dist.pdf(2.0);
+    try expectApproxEqAbs(0.25 / 0.99, pdf_val, 1e-4);
+}
+
+test "BoundedPareto: pdf at x=5, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // PDF(5) = 2*1*5^{-3} / 0.99 = (2/125) / 0.99 ≈ 0.0162
+    const pdf_val = dist.pdf(5.0);
+    const expected = (2.0 / 125.0) / 0.99;
+    try expectApproxEqAbs(expected, pdf_val, 1e-4);
+}
+
+test "BoundedPareto: pdf non-negative and bounded" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    for (0..100) |i_| {
+        const i: f64 = @floatFromInt(i_);
+        const x = 1.0 + (10.0 - 1.0) * i / 100.0;
+        const pdf_val = dist.pdf(x);
+        try testing.expect(pdf_val >= 0.0);
+    }
+}
+
+test "BoundedPareto: cdf at x=lower boundary, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // CDF(1) = (1 - (1/1)^2) / (1 - (1/10)^2) = 0 / 0.99 = 0
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqAbs(0.0, cdf_val, 1e-10);
+}
+
+test "BoundedPareto: cdf at x=upper boundary, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // CDF(10) = (1 - (1/10)^2) / (1 - (1/10)^2) = 1
+    const cdf_val = dist.cdf(10.0);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-10);
+}
+
+test "BoundedPareto: cdf at x=2, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // CDF(2) = (1 - (1/2)^2) / (1 - (1/10)^2) = 0.75 / 0.99 ≈ 0.7576
+    const cdf_val = dist.cdf(2.0);
+    try expectApproxEqAbs(0.75 / 0.99, cdf_val, 1e-4);
+}
+
+test "BoundedPareto: cdf monotone increasing" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    var prev_cdf: f64 = 0.0;
+    for (0..20) |i_| {
+        const i: f64 = @floatFromInt(i_);
+        const x = 1.0 + (10.0 - 1.0) * i / 20.0;
+        const cdf_val = dist.cdf(x);
+        try testing.expect(cdf_val >= prev_cdf);
+        prev_cdf = cdf_val;
+    }
+}
+
+test "BoundedPareto: cdf=0 for x<lower" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const cdf_val = dist.cdf(0.5);
+    try expectApproxEqAbs(0.0, cdf_val, 1e-10);
+}
+
+test "BoundedPareto: cdf=1 for x>upper" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const cdf_val = dist.cdf(20.0);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-10);
+}
+
+test "BoundedPareto: quantile at p=0 returns lower" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const q = dist.quantile(0.0);
+    try expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "BoundedPareto: quantile at p=1 returns upper" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const q = dist.quantile(1.0);
+    try expectApproxEqAbs(10.0, q, 1e-10);
+}
+
+test "BoundedPareto: quantile at p=0.5, L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // Quantile(0.5) = 1 / (1 - 0.5*(1-0.01))^{1/2} = 1 / (1 - 0.495)^0.5 = 1 / sqrt(0.505) ≈ 1.4071
+    const q = dist.quantile(0.5);
+    const expected = 1.0 / @sqrt(0.505);
+    try expectApproxEqAbs(expected, q, 1e-4);
+}
+
+test "BoundedPareto: quantile-cdf roundtrip" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (ps) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(p, cdf_q, 1e-10);
+    }
+}
+
+test "BoundedPareto: mode is always lower boundary" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    try expectApproxEqAbs(1.0, dist.mode(), 1e-10);
+}
+
+test "BoundedPareto: mode L=5, H=100" {
+    const dist = try BoundedPareto(f64).init(3.0, 5.0, 100.0);
+    try expectApproxEqAbs(5.0, dist.mode(), 1e-10);
+}
+
+test "BoundedPareto: mean L=1, H=10, alpha=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // mean = (2/(2-1)) * 1 * (1-(1/10)^1) / (1-(1/10)^2) = 2 * 0.9 / 0.99 ≈ 1.8182
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(1.8182, mean_val, 1e-3);
+}
+
+test "BoundedPareto: sample converges to mean, alpha=2, L=1, H=10" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    const samples = 5000;
+    for (0..samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(samples));
+    const theoretical_mean = dist.mean();
+
+    try expectApproxEqRel(theoretical_mean, empirical_mean, 0.05);
+}
+
+test "BoundedPareto: validate passes for valid params" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    try dist.validate();
+}
+
+test "BoundedPareto: pdf integral approximates to 1 (numerical)" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+
+    // Simpson's rule approximation over [L, H]
+    const n = 100;
+    var integral: f64 = 0.0;
+    const dx = (10.0 - 1.0) / @as(f64, @floatFromInt(n));
+
+    for (0..n + 1) |i_| {
+        const i: f64 = @floatFromInt(i_);
+        const x = 1.0 + i * dx;
+        const weight: f64 = if (i == 0 or i == n) 1.0 else if (@as(u64, @intFromFloat(i)) % 2 == 1) 4.0 else 2.0;
+        integral += weight * dist.pdf(x);
+    }
+    integral *= dx / 3.0;
+
+    try expectApproxEqAbs(1.0, integral, 0.01);
+}
+
+test "BoundedPareto: f32 type support" {
+    const dist = try BoundedPareto(f32).init(2.0, 1.0, 10.0);
+    const pdf_val = dist.pdf(2.0);
+    const expected: f32 = 0.25 / 0.99;
+    try expectApproxEqAbs(expected, pdf_val, 1e-4);
+}
+
+test "BoundedPareto: alpha=1 special case" {
+    const dist = try BoundedPareto(f64).init(1.0, 1.0, 10.0);
+    // For alpha=1, should compute mean via log formula
+    const mean_val = dist.mean();
+    try testing.expect(!math.isNan(mean_val));
+    try testing.expect(!math.isInf(mean_val));
+    try testing.expect(mean_val > 1.0 and mean_val < 10.0);
+}
