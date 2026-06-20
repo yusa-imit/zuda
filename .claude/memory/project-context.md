@@ -1,3 +1,26 @@
+**Session 697 Update (2026-06-20) — FEATURE MODE [CURRENT] — 100-DISTRIBUTION MILESTONE:**
+
+✅ **DiscreteWeibull + BoundedPareto** — 100th total (80 continuous + 20 discrete) — commit cf4fd65
+- **Mode**: FEATURE MODE (counter: 697)
+- **CI Status**: GREEN; 0 open issues
+- **DiscreteWeibull (99th, discrete)**: Type I (Nakagawa & Osaki, 1975)
+  * PMF: P(X=k) = q^{k^β} - q^{(k+1)^β}; CDF: F(k) = 1 - q^{(k+1)^β}
+  * β=1 → Geometric(1-q) special case; β>1 → unimodal PMF
+  * Quantile: exact O(1): ceil((log(1-p)/log(q))^{1/β}) - 1
+  * Mean: O(N) truncated sum (≤10000 terms); Variance/Entropy: numerical
+  * Mode: 0 for β≤1; unimodal search (≤20 steps) for β>1
+  * Sample: inverse CDF O(1)
+- **BoundedPareto (100th, continuous)**: Truncated Pareto / Minimax distribution
+  * PDF: f(x) = αL^α·x^{-α-1} / (1-(L/H)^α) on [L,H]
+  * CDF: (1-(L/x)^α)/(1-(L/H)^α); Quantile: L·(1-p·(1-(L/H)^α))^{-1/α} — O(1) exact
+  * Mean: (α/(α-1))·L·(1-(L/H)^{α-1})/(1-(L/H)^α) for α≠1; log-based for α=1
+  * Variance: E[X²]-mean²; special case α=2: E[X²]=2L²ln(H/L)/(1-(L/H)^2)
+  * Mode: always L; Entropy: 200-pt Simpson
+  * Applications: internet traffic, income distributions, file sizes
+- **Tests**: 57 new tests; 4,948 total (was 4,891)
+- **Distribution count**: 100 total (80 continuous + 20 discrete) — MILESTONE!
+- **Next Priority**: Next FEATURE session — v2.0 track or additional distributions
+
 **Session 696 Update (2026-06-20) — FEATURE MODE [CURRENT]:**
 
 ✅ **Zeta Distribution** — 98th total, 19th discrete — commit 4a891fe

@@ -580,3 +580,5 @@
 {"timestamp":"2026-06-20T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for TukeyLambda distribution (97th total, 79th continuous)","project":"zuda"}
 {"timestamp":"2026-06-20T00:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement TukeyLambda distribution — quantile-based flexible symmetric dist","project":"zuda"}
 {"timestamp":"2026-06-20T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Zeta distribution (98th total, 19th discrete)","project":"zuda"}
+{"timestamp":"2026-06-20T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for DiscreteWeibull and BoundedPareto distributions","project":"zuda"}
+{"timestamp":"2026-06-20T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement DiscreteWeibull and BoundedPareto distributions (99th and 100th)","project":"zuda"}
