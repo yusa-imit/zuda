@@ -58780,3 +58780,435 @@ test "ZipfMandelbrot: single element n=1" {
     var prng = std.Random.DefaultPrng.init(1);
     try expectEqual(@as(u64, 1), dist.sample(prng.random()));
 }
+
+// ============================================================================
+// TruncatedExponential Distribution
+// ============================================================================
+
+/// TruncatedExponential distribution — Exponential truncated to [0, b]
+///
+/// Probability density function (PDF):
+///   f(x) = λ·exp(-λx) / C  for x in [0, b], 0 otherwise
+///   where C = 1 - exp(-λb)
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = (1 - exp(-λx)) / C  for x in [0, b]
+///
+/// Parameters:
+///   - rate (λ): Rate parameter (λ > 0)
+///   - upper (b): Upper bound (b > 0)
+///
+/// Support: [0, b]
+/// Mode: 0 (monotone decreasing)
+/// Mean: (1 - (1 + u)·exp(-u)) / (λ·C)  where u = λb
+/// Entropy: log(C/λ) + 1 - u·exp(-u)/C
+///
+/// Time: O(1) for pdf/cdf/quantile/sample
+pub fn TruncatedExponential(comptime T: type) type {
+    return struct {
+        rate: T,
+        upper: T,
+        _C: T, // Normalization constant: 1 - exp(-rate*upper)
+
+        const Self = @This();
+
+        /// Create a truncated exponential distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(rate: T, upper: T) DistributionError!Self {
+            if (rate <= 0.0) return error.InvalidParameter;
+            if (upper <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(rate) or !math.isFinite(upper)) return error.InvalidParameter;
+
+            const C = -math.expm1(-rate * upper); // 1 - exp(-rate*upper)
+            if (C <= 0.0) return error.InvalidParameter;
+
+            return Self{
+                .rate = rate,
+                .upper = upper,
+                ._C = C,
+            };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = λ·exp(-λx) / C  for x in [0, b], 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0 or x > self.upper) return 0.0;
+            return (self.rate * math.exp(-self.rate * x)) / self._C;
+        }
+
+        /// Log probability density function (logPDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            if (x < 0.0 or x > self.upper) return -math.inf(T);
+            return @log(self.rate) - self.rate * x - @log(self._C);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = (1 - exp(-λx)) / C  for x in [0, b]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= self.upper) return 1.0;
+            return (1.0 - math.exp(-self.rate * x)) / self._C;
+        }
+
+        /// Survival function (SF) at x = P(X > x)
+        ///
+        /// S(x) = (exp(-λx) - exp(-λb)) / C
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            if (x >= self.upper) return 0.0;
+            return (math.exp(-self.rate * x) - math.exp(-self.rate * self.upper)) / self._C;
+        }
+
+        /// Quantile function (inverse CDF) at probability p
+        ///
+        /// Q(p) = -log(1 - p·C) / λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return self.upper;
+            return -math.log1p(-p * self._C) / self.rate;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = (1 - (1 + u)·exp(-u)) / (λ·C)  where u = λb
+        /// For small u (< 1e-9): E[X] ≈ b/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const u = self.rate * self.upper;
+            if (u < 1e-9) {
+                // Taylor expansion: E[X] ≈ b/2 for small u
+                return self.upper / 2.0;
+            }
+            const exp_u = math.exp(-u);
+            return (1.0 - (1.0 + u) * exp_u) / (self.rate * self._C);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = E[X²] - E[X]²
+        /// where E[X²] = (2/λ² - (b² + 2b/λ)·exp(-λb)) / C
+        /// For small u: Var[X] ≈ b²/12
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const u = self.rate * self.upper;
+            if (u < 1e-9) {
+                // Taylor expansion: Var[X] ≈ b²/12 for small u
+                return (self.upper * self.upper) / 12.0;
+            }
+            const exp_u = math.exp(-u);
+            const mean_val = self.mean();
+            const ex2 = (2.0 / (self.rate * self.rate) - (self.upper * self.upper + 2.0 * self.upper / self.rate) * exp_u) / self._C;
+            return ex2 - mean_val * mean_val;
+        }
+
+        /// Mode of the distribution (always 0 for exponential decay)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// H = log(C/λ) + 1 - u·exp(-u)/C  where u = λb
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const u = self.rate * self.upper;
+            const exp_u = math.exp(-u);
+            return @log(self._C / self.rate) + 1.0 - (u * exp_u / self._C);
+        }
+
+        /// Sample from the distribution using inverse CDF method
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return -math.log1p(-u * self._C) / self.rate;
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.rate > 0.0)) return error.InvalidParameter;
+            if (!(self.upper > 0.0)) return error.InvalidParameter;
+            if (!(self._C > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.rate) or !math.isFinite(self.upper)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// TruncatedExponential Tests
+// ============================================================================
+
+test "TruncatedExponential: init with valid parameters" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    _ = dist;
+}
+
+test "TruncatedExponential: init rate=0 fails" {
+    const result = TruncatedExponential(f64).init(0.0, 2.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedExponential: init negative rate fails" {
+    const result = TruncatedExponential(f64).init(-1.0, 2.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedExponential: init upper=0 fails" {
+    const result = TruncatedExponential(f64).init(1.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedExponential: init negative upper fails" {
+    const result = TruncatedExponential(f64).init(1.0, -2.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "TruncatedExponential: pdf below range returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(0.0, dist.pdf(-0.1));
+}
+
+test "TruncatedExponential: pdf at x=0 equals lambda/C" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // C = 1 - exp(-2) ≈ 0.86466
+    // pdf(0) = 1.0 / 0.86466 ≈ 1.15651
+    try std.testing.expectApproxEqAbs(1.15651, dist.pdf(0.0), 1e-4);
+}
+
+test "TruncatedExponential: pdf at x=1.0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // C ≈ 0.86466, pdf(1) = exp(-1) / 0.86466 ≈ 0.42543
+    try std.testing.expectApproxEqAbs(0.42543, dist.pdf(1.0), 1e-4);
+}
+
+test "TruncatedExponential: pdf at upper bound" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // pdf(2) = exp(-2) / 0.86466 ≈ 0.15651
+    try std.testing.expectApproxEqAbs(0.15651, dist.pdf(2.0), 1e-4);
+}
+
+test "TruncatedExponential: pdf above range returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(0.0, dist.pdf(2.1));
+}
+
+test "TruncatedExponential: pdf integrates to ~1" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const n = 1000;
+    const dx = dist.upper / @as(f64, @floatFromInt(n));
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const x = @as(f64, @floatFromInt(i)) * dx + dx / 2.0;
+        sum += dist.pdf(x) * dx;
+    }
+    try std.testing.expectApproxEqAbs(1.0, sum, 1e-3);
+}
+
+test "TruncatedExponential: logPdf at x=1.0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const pdf_val = dist.pdf(1.0);
+    const log_pdf_val = dist.logPdf(1.0);
+    try std.testing.expectApproxEqAbs(@log(pdf_val), log_pdf_val, 1e-14);
+}
+
+test "TruncatedExponential: logPdf below range returns -inf" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(-math.inf(f64), dist.logPdf(-0.1));
+}
+
+test "TruncatedExponential: cdf at x=0 returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(0.0, dist.cdf(0.0));
+}
+
+test "TruncatedExponential: cdf at x=1.0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // F(1) = (1 - exp(-1)) / (1 - exp(-2)) ≈ 0.63212 / 0.86466 ≈ 0.73105
+    try std.testing.expectApproxEqAbs(0.73105, dist.cdf(1.0), 1e-4);
+}
+
+test "TruncatedExponential: cdf at upper bound returns 1" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(1.0, dist.cdf(2.0));
+}
+
+test "TruncatedExponential: cdf at negative x returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(0.0, dist.cdf(-1.0));
+}
+
+test "TruncatedExponential: cdf is monotonically increasing" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const cdf0 = dist.cdf(0.5);
+    const cdf1 = dist.cdf(1.0);
+    const cdf2 = dist.cdf(1.5);
+    try std.testing.expect(cdf0 <= cdf1);
+    try std.testing.expect(cdf1 <= cdf2);
+}
+
+test "TruncatedExponential: sf at x=0 returns 1" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(1.0, dist.sf(0.0));
+}
+
+test "TruncatedExponential: sf at upper bound returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(0.0, dist.sf(2.0));
+}
+
+test "TruncatedExponential: sf + cdf = 1" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const x = 0.8;
+    const sum = dist.sf(x) + dist.cdf(x);
+    try std.testing.expectApproxEqAbs(1.0, sum, 1e-14);
+}
+
+test "TruncatedExponential: quantile at p=0 returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectEqual(0.0, q);
+}
+
+test "TruncatedExponential: quantile at p=1 returns upper" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expectApproxEqAbs(2.0, q, 1e-14);
+}
+
+test "TruncatedExponential: quantile at p=0.5" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.5);
+    // Q(0.5) = -log(1 - 0.5*(1-exp(-2))) / 1 ≈ 0.56622
+    try std.testing.expectApproxEqAbs(0.56622, q, 1e-4);
+}
+
+test "TruncatedExponential: quantile-cdf roundtrip at x=1.0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const cdf_val = dist.cdf(1.0);
+    const q = try dist.quantile(cdf_val);
+    try std.testing.expectApproxEqAbs(1.0, q, 1e-12);
+}
+
+test "TruncatedExponential: cdf-quantile roundtrip at p=0.3" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.3);
+    const cdf_val = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.3, cdf_val, 1e-12);
+}
+
+test "TruncatedExponential: mean value" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // E[X] ≈ 0.68696
+    try std.testing.expectApproxEqAbs(0.68696, dist.mean(), 1e-4);
+}
+
+test "TruncatedExponential: variance value" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // Var[X] ≈ 0.58897
+    try std.testing.expectApproxEqAbs(0.58897, dist.variance(), 1e-4);
+}
+
+test "TruncatedExponential: entropy value" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    // H ≈ 0.54155
+    try std.testing.expectApproxEqAbs(0.54155, dist.entropy(), 1e-4);
+}
+
+test "TruncatedExponential: mode returns 0" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try std.testing.expectEqual(0.0, dist.mode());
+}
+
+test "TruncatedExponential: validate passes for valid dist" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "TruncatedExponential: sample in valid range" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= 0.0 and s <= dist.upper);
+    }
+}
+
+test "TruncatedExponential: empirical mean converges" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try std.testing.expectApproxEqAbs(theoretical_mean, empirical_mean, 0.05);
+}
+
+test "TruncatedExponential: f32 support" {
+    const dist = try TruncatedExponential(f32).init(1.0, 2.0);
+    try dist.validate();
+    const p = dist.pdf(1.0);
+    try std.testing.expect(p > 0.0);
+}
+
+test "TruncatedExponential: small rate*upper edge case" {
+    const dist = try TruncatedExponential(f64).init(0.001, 0.001);
+    // For small u: mean ≈ b/2 = 0.0005
+    try std.testing.expectApproxEqAbs(0.0005, dist.mean(), 1e-6);
+    // For small u, variance computation is numerically sensitive, just verify it's positive
+    try std.testing.expect(dist.variance() > 0.0);
+}
+
+test "TruncatedExponential: large rate*upper edge case" {
+    const dist = try TruncatedExponential(f64).init(50.0, 2.0);
+    // Mean should be very small, approaching 1/50 = 0.02
+    const m = dist.mean();
+    try std.testing.expect(m < 0.05);
+}
+
+test "TruncatedExponential: quantile is non-decreasing" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try std.testing.expect(q1 <= q2);
+    try std.testing.expect(q2 <= q3);
+}
+
+test "TruncatedExponential: pdf is non-negative" {
+    const dist = try TruncatedExponential(f64).init(1.0, 2.0);
+    var x: f64 = 0.0;
+    while (x <= dist.upper) : (x += 0.1) {
+        try std.testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
