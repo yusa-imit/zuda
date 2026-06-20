@@ -58193,3 +58193,586 @@ test "DoubleWeibull: f32 type support pdf(0, k=1)" {
     const pdf_val = dist.pdf(0.0);
     try expectApproxEqAbs(@as(f32, 0.5), pdf_val, 1e-5);
 }
+
+// ============================================================================
+// ZipfMandelbrot distribution
+// ============================================================================
+
+/// ZipfMandelbrot distribution — discrete power law with offset on {1, ..., N}
+///
+/// PMF: P(X = k; N, s, q) = (k + q)^{-s} / H(N, s, q)   for k = 1, ..., N
+///
+/// where H(N, s, q) = Σ_{j=1}^N (j + q)^{-s}  is the normalization constant.
+///
+/// Parameters:
+///   - n:  support size, n ≥ 1 (integer)
+///   - s:  exponent, s > 0
+///   - q:  offset / shift, q ≥ 0
+///
+/// Special cases:
+///   - q = 0  → Zipf(n, s)                (classic Zipf–Estoup law)
+///   - q → ∞  → Uniform on {1, ..., n}    (offset dominates, all weights equal)
+///   - n → ∞, q = 1  → Zeta(s) shifted    (Hurwitz-zeta based power law)
+///
+/// Properties:
+///   Support:  {1, 2, ..., n}
+///   Mode:     1  (PMF is strictly decreasing in k for all q ≥ 0)
+///   Mean:     Σ_{k=1}^n k·(k+q)^{-s} / H
+///   Variance: Σ_{k=1}^n k²·(k+q)^{-s}/H − mean²
+///   Entropy:  ln H + s · Σ_{k=1}^n ln(k+q)·(k+q)^{-s}/H    [nats]
+///
+/// The shift q "softens" the initial skew: large q makes weights for small k
+/// closer together, so the distribution is less concentrated at k=1.
+///
+/// Applications: Linguistics (word frequencies with additive smoothing), internet
+///   traffic, social network degree distributions, bibliometrics, ecology.
+///
+/// Reference: Mandelbrot, B. (1953). "An informational theory of the statistical
+///   structure of language." Communication Theory, 486–502. Zipf (1949).
+///
+/// Time: O(n) for init | O(log n) for sample/quantile | O(1) for pmf/cdf/moments
+/// Space: O(n) for CDF table
+pub fn ZipfMandelbrot(comptime T: type) type {
+    return struct {
+        n: u64,
+        s: T,
+        q: T,
+        h_norm: T,   // H(n, s, q) — normalization constant
+        mean_val: T, // precomputed mean = Σ k·w_k / h_norm
+        var_num: T,  // Σ k²·w_k (unscaled; divide by h_norm for E[X²])
+        h_log: T,    // Σ ln(k+q)·w_k for entropy
+        cum_probs: []T,
+
+        const Self = @This();
+
+        /// Initialize ZipfMandelbrot(n, s, q)
+        ///
+        /// Precomputes normalization constant, moment helpers, and CDF table.
+        ///
+        /// Time: O(n) | Space: O(n)
+        pub fn init(allocator: std.mem.Allocator, n: u64, s: T, q: T) error{ InvalidParameter, OutOfMemory }!Self {
+            if (n < 1) return error.InvalidParameter;
+            if (s <= 0.0 or !std.math.isFinite(s)) return error.InvalidParameter;
+            if (!(q >= 0.0) or !std.math.isFinite(q)) return error.InvalidParameter;
+
+            var h_norm: T = 0.0;
+            var mean_num: T = 0.0;
+            var var_num: T = 0.0;
+            var h_log: T = 0.0;
+
+            for (1..n + 1) |j| {
+                const jf = @as(T, @floatFromInt(j));
+                const kq = jf + q;
+                const w = std.math.pow(T, kq, -s);
+                h_norm += w;
+                mean_num += jf * w;
+                var_num += jf * jf * w;
+                h_log += @log(kq) * w;
+            }
+
+            const mean_val = mean_num / h_norm;
+
+            const cum_probs = try allocator.alloc(T, n);
+            errdefer allocator.free(cum_probs);
+
+            var cumsum: T = 0.0;
+            for (1..n + 1) |k| {
+                const kf = @as(T, @floatFromInt(k));
+                cumsum += std.math.pow(T, kf + q, -s) / h_norm;
+                cum_probs[k - 1] = cumsum;
+            }
+
+            return Self{
+                .n = n,
+                .s = s,
+                .q = q,
+                .h_norm = h_norm,
+                .mean_val = mean_val,
+                .var_num = var_num,
+                .h_log = h_log,
+                .cum_probs = cum_probs,
+            };
+        }
+
+        /// Free allocated CDF table
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.cum_probs);
+        }
+
+        /// Probability mass function P(X = k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0 or k > self.n) return 0.0;
+            const kf = @as(T, @floatFromInt(k));
+            return std.math.pow(T, kf + self.q, -self.s) / self.h_norm;
+        }
+
+        /// Log probability mass function ln P(X = k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0 or k > self.n) return -std.math.inf(T);
+            const kf = @as(T, @floatFromInt(k));
+            return -self.s * @log(kf + self.q) - @log(self.h_norm);
+        }
+
+        /// Cumulative distribution function P(X ≤ k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            if (k >= self.n) return 1.0;
+            return self.cum_probs[k - 1];
+        }
+
+        /// Quantile function — smallest k with P(X ≤ k) ≥ p
+        ///
+        /// Time: O(log n) | Space: O(1)
+        pub fn quantile(self: Self, p: T) error{InvalidProbability}!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 1;
+            if (p >= 1.0) return self.n;
+            var left: usize = 0;
+            var right: usize = self.n - 1;
+            while (left < right) {
+                const mid = left + (right - left) / 2;
+                if (self.cum_probs[mid] < p) {
+                    left = mid + 1;
+                } else {
+                    right = mid;
+                }
+            }
+            return left + 1;
+        }
+
+        /// Mode of the distribution — always 1 (PMF strictly decreasing in k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mean_val;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return (self.var_num / self.h_norm) - (self.mean_val * self.mean_val);
+        }
+
+        /// Standard deviation of the distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn stddev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Entropy in nats: H = ln(H_norm) + s·Σ ln(k+q)·w_k / H_norm
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.h_norm) + self.s * (self.h_log / self.h_norm);
+        }
+
+        /// Sample from the distribution via inverse CDF (binary search on table)
+        ///
+        /// Time: O(log n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var left: usize = 0;
+            var right: usize = self.n - 1;
+            while (left < right) {
+                const mid = left + (right - left) / 2;
+                if (self.cum_probs[mid] < u) {
+                    left = mid + 1;
+                } else {
+                    right = mid;
+                }
+            }
+            return @min(left + 1, self.n);
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n < 1) return error.InvalidParameter;
+            if (self.s <= 0.0 or !std.math.isFinite(self.s)) return error.InvalidParameter;
+            if (!(self.q >= 0.0) or !std.math.isFinite(self.q)) return error.InvalidParameter;
+            if (self.h_norm <= 0.0 or !std.math.isFinite(self.h_norm)) return error.InvalidParameter;
+            if (self.cum_probs.len != self.n) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ZipfMandelbrot Tests
+// ============================================================================
+
+// H(5, 1.5, 1) = 2^{-1.5}+3^{-1.5}+4^{-1.5}+5^{-1.5}+6^{-1.5}
+// = 0.353553+0.192450+0.125000+0.089443+0.068041 = 0.828487
+// pmf(1) = 2^{-1.5}/H = 0.353553/0.828487 = 0.426730
+// mean    = 1.811431/0.828487 = 2.18645
+
+test "ZipfMandelbrot: init valid parameters" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectEqual(10, dist.n);
+    try expectApproxEqRel(1.5, dist.s, 1e-10);
+    try expectApproxEqRel(1.0, dist.q, 1e-10);
+}
+
+test "ZipfMandelbrot: init rejects n=0" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, ZipfMandelbrot(f64).init(allocator, 0, 1.5, 1.0));
+}
+
+test "ZipfMandelbrot: init rejects s=0" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, ZipfMandelbrot(f64).init(allocator, 10, 0.0, 1.0));
+}
+
+test "ZipfMandelbrot: init rejects s<0" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, ZipfMandelbrot(f64).init(allocator, 10, -1.5, 1.0));
+}
+
+test "ZipfMandelbrot: init rejects q<0" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, ZipfMandelbrot(f64).init(allocator, 10, 1.5, -0.1));
+}
+
+test "ZipfMandelbrot: init rejects non-finite s" {
+    const allocator = testing.allocator;
+    try expectError(error.InvalidParameter, ZipfMandelbrot(f64).init(allocator, 10, std.math.inf(f64), 1.0));
+    try expectError(error.InvalidParameter, ZipfMandelbrot(f64).init(allocator, 10, std.math.nan(f64), 1.0));
+}
+
+test "ZipfMandelbrot: pmf returns 0 for k=0" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectEqual(0.0, dist.pmf(0));
+}
+
+test "ZipfMandelbrot: pmf returns 0 for k>n" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectEqual(0.0, dist.pmf(11));
+    try expectEqual(0.0, dist.pmf(100));
+}
+
+test "ZipfMandelbrot: pmf strictly decreasing" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    for (1..10) |k| {
+        try testing.expect(dist.pmf(k) > dist.pmf(k + 1));
+    }
+}
+
+test "ZipfMandelbrot: pmf sums to 1 (n=5, s=1.5, q=1)" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    var total: f64 = 0.0;
+    for (1..6) |k| {
+        total += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, total, 1e-12);
+}
+
+test "ZipfMandelbrot: pmf(1) value n=5 s=1.5 q=1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    // H(5,1.5,1) ≈ 0.828487; pmf(1) = 2^{-1.5}/H ≈ 0.42673
+    try expectApproxEqAbs(0.42673, dist.pmf(1), 1e-4);
+}
+
+test "ZipfMandelbrot: cdf(0) = 0 and cdf(n) = 1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+    try expectApproxEqAbs(1.0, dist.cdf(5), 1e-12);
+}
+
+test "ZipfMandelbrot: cdf non-decreasing" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 2.0, 0.5);
+    defer dist.deinit(allocator);
+
+    var prev: f64 = 0.0;
+    for (1..11) |k| {
+        const c = dist.cdf(k);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "ZipfMandelbrot: cdf(1) equals pmf(1)" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectApproxEqAbs(dist.pmf(1), dist.cdf(1), 1e-12);
+}
+
+test "ZipfMandelbrot: quantile roundtrip cdf->quantile" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    for (1..11) |k| {
+        const p = dist.cdf(k);
+        const q_val = try dist.quantile(p);
+        // quantile(cdf(k)) should give back k (or possibly k+1 if cdf(k)==cdf(k+1), impossible here)
+        try testing.expect(q_val == k or q_val == k + 1);
+    }
+}
+
+test "ZipfMandelbrot: quantile(0) = 1 and quantile(1) = n" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 8, 2.0, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectEqual(1, try dist.quantile(0.0));
+    try expectEqual(8, try dist.quantile(1.0));
+}
+
+test "ZipfMandelbrot: quantile rejects p<0 and p>1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(std.math.nan(f64)));
+}
+
+test "ZipfMandelbrot: mode is always 1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 20, 1.5, 2.0);
+    defer dist.deinit(allocator);
+
+    try expectEqual(1, dist.mode());
+}
+
+test "ZipfMandelbrot: mean n=5 s=1.5 q=1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    // mean = 1.811431/0.828487 ≈ 2.18645
+    try expectApproxEqAbs(2.18645, dist.mean(), 1e-4);
+}
+
+test "ZipfMandelbrot: variance positive" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "ZipfMandelbrot: variance n=5 s=1.5 q=1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    // E[X²]/H - mean² ≈ 1.71385
+    try expectApproxEqAbs(1.71385, dist.variance(), 1e-3);
+}
+
+test "ZipfMandelbrot: entropy finite and positive" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    const h = dist.entropy();
+    try testing.expect(std.math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "ZipfMandelbrot: entropy n=5 s=1.5 q=1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    // H = ln(H_norm) + s * h_log/H_norm ≈ 1.43344
+    try expectApproxEqAbs(1.43344, dist.entropy(), 1e-4);
+}
+
+test "ZipfMandelbrot: q=0 matches Zipf pmf" {
+    const allocator = testing.allocator;
+    // With q=0, ZipfMandelbrot should give same pmf as Zipf
+    const zm = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 0.0);
+    defer zm.deinit(allocator);
+    const zp = try Zipf(f64).init(allocator, 5, 1.5);
+    defer zp.deinit(allocator);
+
+    for (1..6) |k| {
+        try expectApproxEqAbs(zp.pmf(k), zm.pmf(k), 1e-12);
+    }
+}
+
+test "ZipfMandelbrot: q=0 matches Zipf mean" {
+    const allocator = testing.allocator;
+    const zm = try ZipfMandelbrot(f64).init(allocator, 10, 2.0, 0.0);
+    defer zm.deinit(allocator);
+    const zp = try Zipf(f64).init(allocator, 10, 2.0);
+    defer zp.deinit(allocator);
+
+    try expectApproxEqAbs(zp.mean(), zm.mean(), 1e-10);
+}
+
+test "ZipfMandelbrot: large q approaches Uniform" {
+    const allocator = testing.allocator;
+    // With q → ∞ all weights (k+q)^{-s} ≈ q^{-s} are nearly equal → Uniform
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1e6);
+    defer dist.deinit(allocator);
+
+    // Each pmf should be close to 1/5 = 0.2
+    for (1..6) |k| {
+        try expectApproxEqAbs(0.2, dist.pmf(k), 1e-3);
+    }
+}
+
+test "ZipfMandelbrot: large q mean approaches (n+1)/2" {
+    const allocator = testing.allocator;
+    const n: u64 = 10;
+    const dist = try ZipfMandelbrot(f64).init(allocator, n, 1.5, 1e6);
+    defer dist.deinit(allocator);
+
+    // Uniform mean on {1,...,10} = 5.5
+    try expectApproxEqAbs(5.5, dist.mean(), 0.05);
+}
+
+test "ZipfMandelbrot: logpmf consistency with pmf" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 8, 1.5, 0.5);
+    defer dist.deinit(allocator);
+
+    for (1..9) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-12);
+    }
+}
+
+test "ZipfMandelbrot: logpmf for k=0 and k>n is -inf" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectEqual(-std.math.inf(f64), dist.logpmf(0));
+    try expectEqual(-std.math.inf(f64), dist.logpmf(6));
+}
+
+test "ZipfMandelbrot: sample distribution matches pmf (n=5)" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 2.0, 1.0);
+    defer dist.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+
+    var counts = [_]u64{0} ** 5;
+    const trials: usize = 10000;
+    for (0..trials) |_| {
+        const k = dist.sample(rng);
+        counts[k - 1] += 1;
+    }
+
+    for (1..6) |k| {
+        const empirical = @as(f64, @floatFromInt(counts[k - 1])) / @as(f64, @floatFromInt(trials));
+        try expectApproxEqAbs(dist.pmf(k), empirical, 0.02);
+    }
+}
+
+test "ZipfMandelbrot: sample mean converges" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(9999);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    const samples: usize = 5000;
+    for (0..samples) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(samples));
+    try expectApproxEqAbs(dist.mean(), empirical_mean, 0.1);
+}
+
+test "ZipfMandelbrot: validate passes for valid dist" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try dist.validate();
+}
+
+test "ZipfMandelbrot: validate with q=0 (Zipf-special-case)" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 5, 2.0, 0.0);
+    defer dist.deinit(allocator);
+
+    try dist.validate();
+}
+
+test "ZipfMandelbrot: f32 type support pmf sums to 1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f32).init(allocator, 8, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    var total: f32 = 0.0;
+    for (1..9) |k| {
+        total += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(@as(f32, 1.0), total, 1e-5);
+}
+
+test "ZipfMandelbrot: stddev is sqrt of variance" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 10, 1.5, 1.0);
+    defer dist.deinit(allocator);
+
+    try expectApproxEqAbs(@sqrt(dist.variance()), dist.stddev(), 1e-12);
+}
+
+test "ZipfMandelbrot: single element n=1" {
+    const allocator = testing.allocator;
+    const dist = try ZipfMandelbrot(f64).init(allocator, 1, 2.0, 1.0);
+    defer dist.deinit(allocator);
+
+    // Only k=1 is in support
+    try expectApproxEqAbs(1.0, dist.pmf(1), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pmf(2), 1e-15);
+    try expectApproxEqAbs(1.0, dist.cdf(1), 1e-12);
+    try expectApproxEqAbs(1.0, dist.mean(), 1e-12);
+    try expectApproxEqAbs(0.0, dist.variance(), 1e-12);
+    try expectEqual(@as(u64, 1), try dist.quantile(0.5));
+    var prng = std.Random.DefaultPrng.init(1);
+    try expectEqual(@as(u64, 1), dist.sample(prng.random()));
+}
