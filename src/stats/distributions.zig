@@ -57682,3 +57682,514 @@ test "BoundedPareto: alpha=1 special case" {
     try testing.expect(!math.isInf(mean_val));
     try testing.expect(mean_val > 1.0 and mean_val < 10.0);
 }
+
+// ============================================================================
+// DoubleWeibull — Symmetric generalization of Laplace, bimodal for k>1 (101st)
+// ============================================================================
+
+/// DoubleWeibull(k, λ) — symmetric generalization of Laplace
+///
+/// PDF: f(x) = (k/(2λ)) · (|x|/λ)^{k-1} · exp(-(|x|/λ)^k)
+/// CDF: x < 0: 0.5 · exp(-(|x|/λ)^k); x ≥ 0: 1 - 0.5 · exp(-(x/λ)^k)
+/// Mean: 0.0 (by symmetry)
+/// Variance: λ² · Γ(1 + 2/k)
+/// Mode: 0 for k ≤ 1; λ·((k-1)/k)^{1/k} for k > 1
+/// Entropy: γ_E·(1-1/k) + 1 + ln(2λ/k)
+pub fn DoubleWeibull(comptime T: type) type {
+    return struct {
+        k: T,
+        lambda: T,
+
+        const Self = @This();
+
+        /// Initialize DoubleWeibull(k, λ)
+        /// Time: O(1) | Space: O(1)
+        pub fn init(k: T, lambda: T) error{InvalidParameter}!Self {
+            if (k <= 0.0 or lambda <= 0.0 or !math.isFinite(k) or !math.isFinite(lambda)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .k = k, .lambda = lambda };
+        }
+
+        /// Probability density function at x
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x == 0.0) {
+                if (self.k < 1.0) return math.inf(T);
+                if (self.k == 1.0) return 1.0 / (2.0 * self.lambda);
+                return 0.0;
+            }
+
+            const abs_x = @abs(x);
+            const ratio = abs_x / self.lambda;
+            const ratio_pow_k = math.pow(T, ratio, self.k);
+            const coeff = self.k / (2.0 * self.lambda);
+            const ratio_pow_k_minus_1 = math.pow(T, ratio, self.k - 1.0);
+
+            return coeff * ratio_pow_k_minus_1 * @exp(-ratio_pow_k);
+        }
+
+        /// Log probability density at x
+        /// Time: O(1) | Space: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            if (x == 0.0) {
+                if (self.k < 1.0) return math.inf(T);
+                if (self.k == 1.0) return -@log(2.0 * self.lambda);
+                return -math.inf(T);
+            }
+
+            const abs_x = @abs(x);
+            const ratio = abs_x / self.lambda;
+            const ratio_pow_k = math.pow(T, ratio, self.k);
+
+            return @log(self.k) - @log(2.0 * self.lambda) + (self.k - 1.0) * @log(ratio) - ratio_pow_k;
+        }
+
+        /// Cumulative distribution function at x
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) {
+                const abs_x = @abs(x);
+                const ratio_pow_k = math.pow(T, abs_x / self.lambda, self.k);
+                return 0.5 * @exp(-ratio_pow_k);
+            }
+            if (x == 0.0) return 0.5;
+            // x > 0
+            const ratio_pow_k = math.pow(T, x / self.lambda, self.k);
+            return 1.0 - 0.5 * @exp(-ratio_pow_k);
+        }
+
+        /// Quantile function (inverse CDF) at probability p
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (!(p >= 0.0 and p <= 1.0)) return math.nan(T);
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            if (p == 0.5) return 0.0;
+
+            if (p < 0.5) {
+                return -self.lambda * math.pow(T, -@log(2.0 * p), 1.0 / self.k);
+            } else {
+                return self.lambda * math.pow(T, -@log(2.0 * (1.0 - p)), 1.0 / self.k);
+            }
+        }
+
+        /// Mean of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Variance of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const gamma_arg = 1.0 + 2.0 / self.k;
+            const gamma_val = @exp(logGamma(gamma_arg));
+            return self.lambda * self.lambda * gamma_val;
+        }
+
+        /// Mode of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.k <= 1.0) return 0.0;
+            return self.lambda * math.pow(T, (self.k - 1.0) / self.k, 1.0 / self.k);
+        }
+
+        /// Entropy of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const euler_gamma = 0.5772156649015329;
+            return euler_gamma * (1.0 - 1.0 / self.k) + 1.0 + @log(2.0 * self.lambda / self.k);
+        }
+
+        /// Sample from the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            if (u < 0.5) {
+                return -self.lambda * math.pow(T, -@log(2.0 * u), 1.0 / self.k);
+            } else {
+                return self.lambda * math.pow(T, -@log(2.0 * (1.0 - u)), 1.0 / self.k);
+            }
+        }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            try testing.expect(self.k > 0.0);
+            try testing.expect(self.lambda > 0.0);
+        }
+    };
+}
+
+// Tests for DoubleWeibull
+test "DoubleWeibull: init valid params k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    try testing.expect(dist.k == 1.0);
+    try testing.expect(dist.lambda == 1.0);
+}
+
+test "DoubleWeibull: init valid params k=2 lambda=1.5" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.5);
+    try testing.expect(dist.k == 2.0);
+    try testing.expect(dist.lambda == 1.5);
+}
+
+test "DoubleWeibull: init k=0 returns error" {
+    const result = DoubleWeibull(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleWeibull: init k<0 returns error" {
+    const result = DoubleWeibull(f64).init(-1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleWeibull: init lambda=0 returns error" {
+    const result = DoubleWeibull(f64).init(1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleWeibull: init lambda<0 returns error" {
+    const result = DoubleWeibull(f64).init(1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleWeibull: init non-finite k returns error" {
+    const result = DoubleWeibull(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleWeibull: init non-finite lambda returns error" {
+    const result = DoubleWeibull(f64).init(1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleWeibull: pdf at x=0 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try expectApproxEqAbs(0.5, pdf_val, 1e-10);
+}
+
+test "DoubleWeibull: pdf at x=1 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = 0.5 * @exp(-1.0);
+    try expectApproxEqAbs(expected, pdf_val, 1e-10);
+}
+
+test "DoubleWeibull: pdf at x=-1 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(-1.0);
+    const expected = 0.5 * @exp(-1.0);
+    try expectApproxEqAbs(expected, pdf_val, 1e-10);
+}
+
+test "DoubleWeibull: pdf at x=0 k=2 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try expectApproxEqAbs(0.0, pdf_val, 1e-10);
+}
+
+test "DoubleWeibull: pdf at x=1 k=2 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = @exp(-1.0);
+    try expectApproxEqAbs(expected, pdf_val, 1e-10);
+}
+
+test "DoubleWeibull: pdf at x=-1 k=2 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(-1.0);
+    const expected = @exp(-1.0);
+    try expectApproxEqAbs(expected, pdf_val, 1e-10);
+}
+
+test "DoubleWeibull: pdf symmetry pdf(x)==pdf(-x)" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (xs) |x| {
+        const pdf_pos = dist.pdf(x);
+        const pdf_neg = dist.pdf(-x);
+        try expectApproxEqRel(pdf_pos, pdf_neg, 1e-10);
+    }
+}
+
+test "DoubleWeibull: pdf non-negative" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    var x: f64 = -5.0;
+    while (x <= 5.0) : (x += 0.5) {
+        const pdf_val = dist.pdf(x);
+        try testing.expect(pdf_val >= 0.0 or math.isInf(pdf_val));
+    }
+}
+
+test "DoubleWeibull: pdf integral approximates 1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+
+    // Simpson's rule over [-10, 10]
+    const n = 200;
+    var integral: f64 = 0.0;
+    const dx = 20.0 / @as(f64, @floatFromInt(n));
+
+    for (0..n + 1) |i_| {
+        const i: f64 = @floatFromInt(i_);
+        const x = -10.0 + i * dx;
+        const weight: f64 = if (i == 0 or i == n) 1.0 else if (@as(u64, @intFromFloat(i)) % 2 == 1) 4.0 else 2.0;
+        integral += weight * dist.pdf(x);
+    }
+    integral *= dx / 3.0;
+
+    try expectApproxEqAbs(1.0, integral, 0.01);
+}
+
+test "DoubleWeibull: cdf at x=0 is always 0.5" {
+    const test_cases = [_][2]f64{ [_]f64{ 0.5, 1.0 }, [_]f64{ 1.0, 1.0 }, [_]f64{ 2.0, 1.5 } };
+    for (test_cases) |case| {
+        const dist = try DoubleWeibull(f64).init(case[0], case[1]);
+        try expectApproxEqAbs(0.5, dist.cdf(0.0), 1e-10);
+    }
+}
+
+test "DoubleWeibull: cdf at x=1 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    const expected = 1.0 - 0.5 * @exp(-1.0);
+    try expectApproxEqAbs(expected, cdf_val, 1e-10);
+}
+
+test "DoubleWeibull: cdf at x=-1 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(-1.0);
+    const expected = 0.5 * @exp(-1.0);
+    try expectApproxEqAbs(expected, cdf_val, 1e-10);
+}
+
+test "DoubleWeibull: cdf symmetry cdf(x) + cdf(-x) == 1" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const xs = [_]f64{ 1.0, 2.0, 3.0 };
+    for (xs) |x| {
+        const cdf_pos = dist.cdf(x);
+        const cdf_neg = dist.cdf(-x);
+        try expectApproxEqAbs(1.0, cdf_pos + cdf_neg, 1e-10);
+    }
+}
+
+test "DoubleWeibull: cdf monotone increasing" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const xs = [_]f64{ -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0 };
+    for (0..xs.len - 1) |i| {
+        const cdf1 = dist.cdf(xs[i]);
+        const cdf2 = dist.cdf(xs[i + 1]);
+        try testing.expect(cdf1 <= cdf2);
+    }
+}
+
+test "DoubleWeibull: cdf approaches 0 for large negative" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const cdf_val = dist.cdf(-100.0);
+    try testing.expect(cdf_val < 1e-10);
+}
+
+test "DoubleWeibull: cdf approaches 1 for large positive" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const cdf_val = dist.cdf(100.0);
+    try testing.expect(cdf_val > 1.0 - 1e-10);
+}
+
+test "DoubleWeibull: quantile at p=0.5 is 0" {
+    const test_cases = [_][2]f64{ [_]f64{ 0.5, 1.0 }, [_]f64{ 1.0, 1.0 }, [_]f64{ 2.0, 1.5 } };
+    for (test_cases) |case| {
+        const dist = try DoubleWeibull(f64).init(case[0], case[1]);
+        try expectApproxEqAbs(0.0, dist.quantile(0.5), 1e-10);
+    }
+}
+
+test "DoubleWeibull: quantile at p=0.1 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.1);
+    const expected = -@log(5.0);
+    try expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "DoubleWeibull: quantile at p=0.9 k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.9);
+    const expected = @log(5.0);
+    try expectApproxEqAbs(expected, q, 1e-10);
+}
+
+test "DoubleWeibull: quantile p<0.5 returns negative" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const q = dist.quantile(0.25);
+    try testing.expect(q < 0.0);
+}
+
+test "DoubleWeibull: quantile p>0.5 returns positive" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const q = dist.quantile(0.75);
+    try testing.expect(q > 0.0);
+}
+
+test "DoubleWeibull: quantile at p=0 returns -inf" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expect(math.isInf(q) and q < 0.0);
+}
+
+test "DoubleWeibull: quantile at p=1 returns +inf" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0.0);
+}
+
+test "DoubleWeibull: quantile invalid p<0 returns nan" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "DoubleWeibull: quantile invalid p>1 returns nan" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "DoubleWeibull: quantile-cdf roundtrip" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqAbs(p, cdf_q, 1e-10);
+    }
+}
+
+test "DoubleWeibull: mean is 0" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+}
+
+test "DoubleWeibull: mean is 0 across k values" {
+    const ks = [_]f64{ 0.5, 1.0, 1.5, 2.0, 3.0 };
+    for (ks) |k| {
+        const dist = try DoubleWeibull(f64).init(k, 1.0);
+        try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+    }
+}
+
+test "DoubleWeibull: variance k=1 lambda=1 is 2" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(2.0, var_val, 1e-6);
+}
+
+test "DoubleWeibull: variance k=2 lambda=1 is 1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(1.0, var_val, 1e-6);
+}
+
+test "DoubleWeibull: variance k=0.5 lambda=1 is 24" {
+    const dist = try DoubleWeibull(f64).init(0.5, 1.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(24.0, var_val, 1e-4);
+}
+
+test "DoubleWeibull: variance scales with lambda^2" {
+    const dist1 = try DoubleWeibull(f64).init(1.5, 1.0);
+    const dist2 = try DoubleWeibull(f64).init(1.5, 2.0);
+    const var_val1 = dist1.variance();
+    const var_val2 = dist2.variance();
+    try expectApproxEqRel(4.0 * var_val1, var_val2, 1e-10);
+}
+
+test "DoubleWeibull: mode k=1 is 0" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-10);
+}
+
+test "DoubleWeibull: mode k<=1 is always 0" {
+    const ks = [_]f64{ 0.5, 0.8, 1.0 };
+    for (ks) |k| {
+        const dist = try DoubleWeibull(f64).init(k, 1.0);
+        try expectApproxEqAbs(0.0, dist.mode(), 1e-10);
+    }
+}
+
+test "DoubleWeibull: mode k=2 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    const expected = 1.0 / @sqrt(2.0);
+    try expectApproxEqAbs(expected, mode_val, 1e-4);
+}
+
+test "DoubleWeibull: mode k=3 lambda=2" {
+    const dist = try DoubleWeibull(f64).init(3.0, 2.0);
+    const mode_val = dist.mode();
+    const expected = 2.0 * math.pow(f64, 2.0 / 3.0, 1.0 / 3.0);
+    try expectApproxEqAbs(expected, mode_val, 1e-4);
+}
+
+test "DoubleWeibull: entropy k=1 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(1.0, 1.0);
+    const entropy_val = dist.entropy();
+    const expected = 1.0 + @log(2.0);
+    try expectApproxEqAbs(expected, entropy_val, 1e-4);
+}
+
+test "DoubleWeibull: entropy k=2 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    const entropy_val = dist.entropy();
+    const euler_gamma = 0.5772156649015329;
+    const expected = euler_gamma * 0.5 + 1.0;
+    try expectApproxEqAbs(expected, entropy_val, 1e-4);
+}
+
+test "DoubleWeibull: sample mean converges to 0" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    const samples = 5000;
+    for (0..samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(samples));
+
+    try testing.expect(@abs(empirical_mean) < 0.1);
+}
+
+test "DoubleWeibull: sample variance converges k=2 lambda=1" {
+    const dist = try DoubleWeibull(f64).init(2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const samples = 5000;
+    for (0..samples) |_| {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const n = @as(f64, @floatFromInt(samples));
+    const mean_val = sum / n;
+    const var_val = sum_sq / n - mean_val * mean_val;
+    const theoretical_var = dist.variance();
+
+    try expectApproxEqRel(theoretical_var, var_val, 0.15);
+}
+
+test "DoubleWeibull: validate passes for valid params" {
+    const dist = try DoubleWeibull(f64).init(1.5, 1.0);
+    try dist.validate();
+}
+
+test "DoubleWeibull: f32 type support pdf(0, k=1)" {
+    const dist = try DoubleWeibull(f32).init(1.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f32, 0.5), pdf_val, 1e-5);
+}
