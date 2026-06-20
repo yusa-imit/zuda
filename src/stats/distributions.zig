@@ -56404,3 +56404,535 @@ test "TukeyLambda: sample variance converges to theoretical variance (N=5000, la
     const theoretical_var = dist.variance();
     try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.5);
 }
+
+// =============================================================================
+// Zeta (Riemann Zeta / Discrete Power Law) Distribution
+// =============================================================================
+
+/// Zeta distribution — infinite discrete power law on {1, 2, 3, ...}
+///
+/// PMF:  P(X = k; s) = k^{-s} / ζ(s)  for k = 1, 2, 3, ...
+/// CDF:  P(X ≤ k; s) = Σ_{j=1}^k j^{-s} / ζ(s)
+///
+/// Parameter:
+///   s: shape exponent, s > 1
+///
+/// Properties:
+///   Support:  {1, 2, 3, ...}   Mode: 1 (PMF is strictly decreasing)
+///   Mean:     ζ(s-1)/ζ(s)  for s > 2;  +∞ otherwise
+///   Variance: ζ(s-2)/ζ(s) - mean²  for s > 3;  +∞ otherwise
+///   Entropy:  ln(ζ(s)) + s · (−ζ′(s)) / ζ(s)  [nats]
+///
+/// Distinct from Zipf (finite-support power law): Zeta has infinite support
+/// and requires no allocator — ζ(s) is precomputed via Euler-Maclaurin series.
+///
+/// Applications: Zipf's law, frequency-rank distributions, internet traffic,
+///   city-size distributions, word frequency analysis.
+///
+/// Reference: Riemann (1859); Knuth TAOCP Vol.2 §3.4; Devroye (1986) §11.3
+pub fn Zeta(comptime T: type) type {
+    return struct {
+        s: T,
+        zeta_s: T,   // ζ(s)       — normalization constant
+        zeta_s1: T,  // ζ(s-1)     — for mean; +∞ when s ≤ 2
+        zeta_s2: T,  // ζ(s-2)     — for variance; +∞ when s ≤ 3
+        zeta_ds: T,  // −ζ′(s)     — Σ_{k=1}^∞ ln(k)·k^{−s}, for entropy
+
+        const Self = @This();
+
+        /// Compute Riemann ζ(s_arg) for s_arg > 1 via Euler-Maclaurin summation.
+        ///
+        /// Uses N=5000 direct terms plus Euler-Maclaurin tail correction:
+        ///   Σ_{k=N+1}^∞ k^{−s} ≈ N^{1−s}/(s−1) − N^{−s}/2
+        ///
+        /// Derivation: E-M gives Σ_{k=N+1}^∞ f(k) = ∫_N^∞ f dx − f(N)/2 + O(f′(N))
+        ///
+        /// Accuracy: error < 10^{-10} for s ≥ 1.5; < 10^{-5} for s ≥ 1.1 (N=5000).
+        ///
+        /// Time: O(N) | Space: O(1)
+        fn computeZeta(s_arg: T) T {
+            const N: u64 = 5000;
+            var sum: T = 0.0;
+            for (1..N + 1) |k| {
+                const k_f: T = @floatFromInt(k);
+                sum += math.pow(T, k_f, -s_arg);
+            }
+            const n_f: T = @floatFromInt(N);
+            // Euler-Maclaurin tail: ∫_N^∞ x^{-s} dx − f(N)/2
+            sum += math.pow(T, n_f, 1.0 - s_arg) / (s_arg - 1.0);
+            sum -= math.pow(T, n_f, -s_arg) * 0.5;
+            return sum;
+        }
+
+        /// Compute −ζ′(s_arg) = Σ_{k=1}^∞ ln(k)·k^{−s_arg} for s_arg > 1.
+        ///
+        /// The k=1 term is zero (ln(1)=0); direct sum starts at k=2.
+        /// E-M tail: ∫_N^∞ ln(x)/x^s dx − ln(N)/N^s / 2
+        ///   = N^{1-s}/(s-1) · (ln(N) + 1/(s-1)) − ln(N)·N^{-s}/2
+        ///
+        /// Time: O(N) | Space: O(1)
+        fn computeMinusZetaDeriv(s_arg: T) T {
+            const N: u64 = 5000;
+            var sum: T = 0.0;
+            for (2..N + 1) |k| {
+                const k_f: T = @floatFromInt(k);
+                sum += @log(k_f) * math.pow(T, k_f, -s_arg);
+            }
+            const n_f: T = @floatFromInt(N);
+            const log_n = @log(n_f);
+            const integral_tail = math.pow(T, n_f, 1.0 - s_arg) / (s_arg - 1.0) *
+                (log_n + 1.0 / (s_arg - 1.0));
+            const boundary = log_n * math.pow(T, n_f, -s_arg) * 0.5;
+            sum += integral_tail - boundary;
+            return sum;
+        }
+
+        /// Create a Zeta distribution with exponent s > 1.
+        ///
+        /// Precomputes ζ(s), ζ(s-1), ζ(s-2), and −ζ′(s) at construction.
+        ///
+        /// Time: O(N) where N = 5000 | Space: O(1)
+        pub fn init(s: T) DistributionError!Self {
+            if (!(s > 1.0) or !math.isFinite(s)) return error.InvalidParameter;
+            return Self{
+                .s = s,
+                .zeta_s = computeZeta(s),
+                .zeta_s1 = if (s > 2.0) computeZeta(s - 1.0) else math.inf(T),
+                .zeta_s2 = if (s > 3.0) computeZeta(s - 2.0) else math.inf(T),
+                .zeta_ds = computeMinusZetaDeriv(s),
+            };
+        }
+
+        /// Probability mass function: P(X = k) = k^{−s} / ζ(s)
+        ///
+        /// Returns 0 for k = 0 (outside support).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            const k_f: T = @floatFromInt(k);
+            return math.pow(T, k_f, -self.s) / self.zeta_s;
+        }
+
+        /// Log probability mass function: log P(X = k) = −s·ln(k) − ln(ζ(s))
+        ///
+        /// Returns −∞ for k = 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const k_f: T = @floatFromInt(k);
+            return -self.s * @log(k_f) - @log(self.zeta_s);
+        }
+
+        /// Cumulative distribution function: P(X ≤ k) = Σ_{j=1}^k j^{−s} / ζ(s)
+        ///
+        /// Returns 0 for k = 0.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            var sum: T = 0.0;
+            for (1..k + 1) |j| {
+                const j_f: T = @floatFromInt(j);
+                sum += math.pow(T, j_f, -self.s);
+            }
+            return @min(1.0, sum / self.zeta_s);
+        }
+
+        /// Survival function: P(X > k) = 1 − CDF(k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k such that P(X ≤ k) ≥ p.
+        ///
+        /// Linear scan from k = 1; terminates when cumulative mass ≥ p or
+        /// when the next term contributes less than 10^{-15} (numerical 1.0).
+        ///
+        /// Time: O(k*) where k* is the returned value | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0 or p < self.pmf(1)) return 1;
+            if (p == 1.0) return error.InvalidProbability;
+            var cumsum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= 1_000_000_000) {
+                const k_f: T = @floatFromInt(k);
+                const contrib = math.pow(T, k_f, -self.s) / self.zeta_s;
+                cumsum += contrib;
+                if (cumsum >= p) return k;
+                if (contrib < 1e-15) return k; // numerical CDF ≈ 1.0
+                k += 1;
+            }
+            return k;
+        }
+
+        /// Mode: always 1 (PMF is strictly decreasing for s > 1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(_: Self) u64 {
+            return 1;
+        }
+
+        /// Mean: E[X] = ζ(s−1) / ζ(s)  for s > 2;  +∞ for 1 < s ≤ 2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.s <= 2.0) return math.inf(T);
+            return self.zeta_s1 / self.zeta_s;
+        }
+
+        /// Variance: ζ(s−2)/ζ(s) − mean²  for s > 3;  +∞ otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.s <= 3.0) return math.inf(T);
+            const m = self.mean();
+            return self.zeta_s2 / self.zeta_s - m * m;
+        }
+
+        /// Shannon entropy (nats): H = ln(ζ(s)) + s · (−ζ′(s)) / ζ(s)
+        ///
+        /// Always positive and finite for s > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.zeta_s) + self.s * self.zeta_ds / self.zeta_s;
+        }
+
+        /// Sample from Zeta(s) using Devroye's (1986) acceptance-rejection algorithm.
+        ///
+        /// Proposal: X = floor(U^{−1/(s−1)}) ~ discretized Pareto.
+        /// Acceptance condition: V·X·(T−1)/(b−1) ≤ T/b, b = 2^{s−1}, T = (1+1/X)^{s−1}.
+        ///
+        /// Expected iterations: O(1) amortized for s > 1.
+        ///
+        /// Reference: Devroye (1986), Non-Uniform Random Variate Generation, p. 551
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const b = math.pow(T, 2.0, self.s - 1.0);
+            const b_minus_1 = b - 1.0;
+            const inv_sm1 = 1.0 / (self.s - 1.0);
+            while (true) {
+                const u = rng.float(T);
+                if (u == 0.0) continue;
+                const v = rng.float(T);
+                const x_f = @floor(math.pow(T, u, -inv_sm1));
+                if (!math.isFinite(x_f) or x_f < 1.0 or x_f > 1e15) continue;
+                const t = math.pow(T, 1.0 + 1.0 / x_f, self.s - 1.0);
+                if (v * x_f * (t - 1.0) / b_minus_1 <= t / b) {
+                    return @intFromFloat(x_f);
+                }
+            }
+        }
+
+        /// Validate internal state: s > 1 and finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.s > 1.0) or !math.isFinite(self.s)) return error.InvalidParameter;
+        }
+    };
+}
+
+// Zeta Distribution Tests
+test "Zeta: init valid s=2" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectApproxEqAbs(@as(f64, 2.0), dist.s, 1e-15);
+}
+
+test "Zeta: init valid s=1.5" {
+    const dist = try Zeta(f64).init(1.5);
+    try testing.expectApproxEqAbs(@as(f64, 1.5), dist.s, 1e-15);
+}
+
+test "Zeta: init valid s=4.0" {
+    const dist = try Zeta(f64).init(4.0);
+    try testing.expect(dist.zeta_s > 1.0);
+}
+
+test "Zeta: init invalid s=1.0 returns error" {
+    try testing.expectError(error.InvalidParameter, Zeta(f64).init(1.0));
+}
+
+test "Zeta: init invalid s=0.5 returns error" {
+    try testing.expectError(error.InvalidParameter, Zeta(f64).init(0.5));
+}
+
+test "Zeta: init invalid s=-1 returns error" {
+    try testing.expectError(error.InvalidParameter, Zeta(f64).init(-1.0));
+}
+
+test "Zeta: init invalid s=inf returns error" {
+    try testing.expectError(error.InvalidParameter, Zeta(f64).init(math.inf(f64)));
+}
+
+test "Zeta: zeta_s for s=2 equals pi^2/6" {
+    const dist = try Zeta(f64).init(2.0);
+    // ζ(2) = π²/6 ≈ 1.64493406684823
+    try testing.expectApproxEqAbs(@as(f64, 1.6449340668482264), dist.zeta_s, 1e-8);
+}
+
+test "Zeta: zeta_s for s=4 equals pi^4/90" {
+    const dist = try Zeta(f64).init(4.0);
+    // ζ(4) = π⁴/90 ≈ 1.08232323371113
+    try testing.expectApproxEqAbs(@as(f64, 1.0823232337111381), dist.zeta_s, 1e-8);
+}
+
+test "Zeta: pmf(0) = 0" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pmf(0));
+}
+
+test "Zeta: pmf(1; s=2) = 1/zeta(2) ≈ 0.6079" {
+    const dist = try Zeta(f64).init(2.0);
+    const expected: f64 = 1.0 / 1.6449340668482264;
+    try testing.expectApproxEqAbs(expected, dist.pmf(1), 1e-8);
+}
+
+test "Zeta: pmf(2; s=2) = 1/(4*zeta(2)) ≈ 0.1520" {
+    const dist = try Zeta(f64).init(2.0);
+    const expected: f64 = 1.0 / (4.0 * 1.6449340668482264);
+    try testing.expectApproxEqAbs(expected, dist.pmf(2), 1e-8);
+}
+
+test "Zeta: pmf is strictly decreasing" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expect(dist.pmf(1) > dist.pmf(2));
+    try testing.expect(dist.pmf(2) > dist.pmf(3));
+    try testing.expect(dist.pmf(3) > dist.pmf(10));
+    try testing.expect(dist.pmf(10) > dist.pmf(100));
+}
+
+test "Zeta: pmf sums to ≈1 over first 1000 terms (s=3)" {
+    const dist = try Zeta(f64).init(3.0);
+    var total: f64 = 0.0;
+    for (1..1001) |k| {
+        total += dist.pmf(@intCast(k));
+    }
+    // ζ(3)≈1.2021, so Σ_{1}^{1000} k^{-3}/ζ(3) should be very close to 1
+    try testing.expectApproxEqAbs(@as(f64, 1.0), total, 1e-3);
+}
+
+test "Zeta: logpmf(0) = -inf" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expect(math.isNegativeInf(dist.logpmf(0)));
+}
+
+test "Zeta: logpmf consistent with pmf" {
+    const dist = try Zeta(f64).init(2.0);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        const expected = @log(dist.pmf(k));
+        try testing.expectApproxEqAbs(expected, dist.logpmf(k), 1e-10);
+    }
+}
+
+test "Zeta: cdf(0) = 0" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0));
+}
+
+test "Zeta: cdf(1; s=2) ≈ 0.6079" {
+    const dist = try Zeta(f64).init(2.0);
+    const expected: f64 = 1.0 / 1.6449340668482264;
+    try testing.expectApproxEqAbs(expected, dist.cdf(1), 1e-8);
+}
+
+test "Zeta: cdf(2; s=2) ≈ 0.7599" {
+    const dist = try Zeta(f64).init(2.0);
+    // CDF(2) = (1 + 1/4) / ζ(2) = 1.25/1.6449...
+    const expected: f64 = 1.25 / 1.6449340668482264;
+    try testing.expectApproxEqAbs(expected, dist.cdf(2), 1e-8);
+}
+
+test "Zeta: cdf is non-decreasing" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expect(dist.cdf(1) <= dist.cdf(2));
+    try testing.expect(dist.cdf(2) <= dist.cdf(3));
+    try testing.expect(dist.cdf(3) <= dist.cdf(10));
+    try testing.expect(dist.cdf(10) <= dist.cdf(100));
+}
+
+test "Zeta: cdf approaches 1 for large k" {
+    const dist = try Zeta(f64).init(2.0);
+    const c = dist.cdf(1000);
+    try testing.expect(c > 0.999);
+    try testing.expect(c <= 1.0);
+}
+
+test "Zeta: sf + cdf = 1" {
+    const dist = try Zeta(f64).init(3.0);
+    for ([_]u64{ 1, 2, 5, 10 }) |k| {
+        try testing.expectApproxEqAbs(@as(f64, 1.0), dist.cdf(k) + dist.sf(k), 1e-12);
+    }
+}
+
+test "Zeta: quantile(0.5; s=2) = 1 (since CDF(1) ≈ 0.608 > 0.5)" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectEqual(@as(u64, 1), try dist.quantile(0.5));
+}
+
+test "Zeta: quantile(0.7; s=2) = 2 (CDF(1)≈0.608 < 0.7 ≤ CDF(2)≈0.760)" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectEqual(@as(u64, 2), try dist.quantile(0.7));
+}
+
+test "Zeta: quantile(0.8; s=2) = 3 (CDF(2)≈0.760 < 0.8 ≤ CDF(3)≈0.828)" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectEqual(@as(u64, 3), try dist.quantile(0.8));
+}
+
+test "Zeta: quantile is consistent with cdf (roundtrip)" {
+    const dist = try Zeta(f64).init(2.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const k = try dist.quantile(p);
+        // P(X ≤ k) ≥ p and P(X ≤ k-1) < p
+        try testing.expect(dist.cdf(k) >= p);
+        if (k > 1) try testing.expect(dist.cdf(k - 1) < p);
+    }
+}
+
+test "Zeta: quantile(0.0) returns 1 (smallest support value)" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectEqual(@as(u64, 1), try dist.quantile(0.0));
+}
+
+test "Zeta: quantile(1.0) returns error" {
+    const dist = try Zeta(f64).init(2.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.0));
+}
+
+test "Zeta: mode = 1 always" {
+    const dist2 = try Zeta(f64).init(2.0);
+    const dist5 = try Zeta(f64).init(5.0);
+    try testing.expectEqual(@as(u64, 1), dist2.mode());
+    try testing.expectEqual(@as(u64, 1), dist5.mode());
+}
+
+test "Zeta: mean is +inf for s ≤ 2" {
+    const dist1 = try Zeta(f64).init(1.5);
+    const dist2 = try Zeta(f64).init(2.0);
+    try testing.expect(math.isInf(dist1.mean()));
+    try testing.expect(math.isInf(dist2.mean()));
+}
+
+test "Zeta: mean(s=4) = zeta(3)/zeta(4) ≈ 1.1107" {
+    const dist = try Zeta(f64).init(4.0);
+    // ζ(3)/ζ(4) = 1.2020569.../1.0823232... ≈ 1.1107
+    try testing.expectApproxEqAbs(@as(f64, 1.1107), dist.mean(), 5e-3);
+}
+
+test "Zeta: mean(s=3) is finite (s > 2)" {
+    const dist = try Zeta(f64).init(3.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+    try testing.expect(m > 1.0); // always > 1
+}
+
+test "Zeta: variance is +inf for s ≤ 3" {
+    const dist2 = try Zeta(f64).init(2.0);
+    const dist3 = try Zeta(f64).init(3.0);
+    try testing.expect(math.isInf(dist2.variance()));
+    try testing.expect(math.isInf(dist3.variance()));
+}
+
+test "Zeta: variance(s=4) = zeta(2)/zeta(4) - mean^2 ≈ 0.286" {
+    const dist = try Zeta(f64).init(4.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+    try testing.expect(v > 0.0);
+    // zeta(2)/zeta(4) - (zeta(3)/zeta(4))^2 ≈ 1.5198 - 1.2336 ≈ 0.286
+    try testing.expectApproxEqAbs(@as(f64, 0.286), v, 0.02);
+}
+
+test "Zeta: entropy is positive and finite" {
+    for ([_]f64{ 1.5, 2.0, 3.0, 4.0 }) |s| {
+        const dist = try Zeta(f64).init(s);
+        const h = dist.entropy();
+        try testing.expect(math.isFinite(h));
+        try testing.expect(h > 0.0);
+    }
+}
+
+test "Zeta: entropy decreases as s increases (more concentrated)" {
+    const dist2 = try Zeta(f64).init(2.0);
+    const dist3 = try Zeta(f64).init(3.0);
+    const dist5 = try Zeta(f64).init(5.0);
+    try testing.expect(dist2.entropy() > dist3.entropy());
+    try testing.expect(dist3.entropy() > dist5.entropy());
+}
+
+test "Zeta: validate passes for valid s" {
+    const dist = try Zeta(f64).init(2.0);
+    try dist.validate();
+}
+
+test "Zeta: sample returns values in support {1,2,3,...}" {
+    const dist = try Zeta(f64).init(2.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..100) |_| {
+        const x = dist.sample(rng.random());
+        try testing.expect(x >= 1);
+    }
+}
+
+test "Zeta: sample mode is 1 (most frequent value for s=2, N=5000)" {
+    const dist = try Zeta(f64).init(2.0);
+    var rng = std.Random.DefaultPrng.init(99999);
+    var count_1: u64 = 0;
+    var count_2: u64 = 0;
+    const N: u64 = 5000;
+    for (0..N) |_| {
+        const x = dist.sample(rng.random());
+        if (x == 1) count_1 += 1;
+        if (x == 2) count_2 += 1;
+    }
+    // P(1) ≈ 0.608 >> P(2) ≈ 0.152
+    try testing.expect(count_1 > count_2);
+    // Empirical P(1) should be roughly 0.608 ± 3*sqrt(0.608*0.392/5000) ≈ ±0.021
+    const emp_p1 = @as(f64, @floatFromInt(count_1)) / @as(f64, N);
+    try testing.expectApproxEqAbs(@as(f64, 0.608), emp_p1, 0.04);
+}
+
+test "Zeta: sample mean converges to theoretical mean for s=4 (N=5000)" {
+    const dist = try Zeta(f64).init(4.0);
+    var rng = std.Random.DefaultPrng.init(77777);
+    var sum: f64 = 0.0;
+    const N: f64 = 5000.0;
+    for (0..5000) |_| {
+        const x = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(x));
+    }
+    const sample_mean = sum / N;
+    const theoretical_mean = dist.mean(); // ≈ 1.1107
+    try testing.expectApproxEqAbs(theoretical_mean, sample_mean, 0.05);
+}
+
+test "Zeta: f32 variant basic sanity" {
+    const dist = try Zeta(f32).init(2.0);
+    // pmf(1) should be ≈ 0.6079
+    try testing.expectApproxEqAbs(@as(f32, 0.6079), dist.pmf(1), 1e-3);
+    // cdf(1) ≈ 0.6079
+    try testing.expectApproxEqAbs(@as(f32, 0.6079), dist.cdf(1), 1e-3);
+    // entropy is positive
+    try testing.expect(dist.entropy() > 0.0);
+}
+
+test "Zeta: pmf(k) and cdf relationship: pmf(1) = cdf(1)" {
+    const dist = try Zeta(f64).init(3.0);
+    try testing.expectApproxEqAbs(dist.pmf(1), dist.cdf(1), 1e-10);
+}
+
+test "Zeta: pmf ratio follows power law: pmf(k+1)/pmf(k) = (k/(k+1))^s" {
+    const dist = try Zeta(f64).init(3.0);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const k_f: f64 = @floatFromInt(k);
+        const expected_ratio = math.pow(f64, k_f / (k_f + 1.0), 3.0);
+        const actual_ratio = dist.pmf(k + 1) / dist.pmf(k);
+        try testing.expectApproxEqAbs(expected_ratio, actual_ratio, 1e-12);
+    }
+}
