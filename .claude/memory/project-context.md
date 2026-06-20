@@ -1,3 +1,22 @@
+**Session 701 Update (2026-06-21) — FEATURE MODE [COMPLETED]:**
+
+✅ **TruncatedExponential Distribution** — 103rd total, 82nd continuous — commit 7376a82
+- **Mode**: FEATURE MODE (counter: 701)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: TruncatedExponential(T) — Exponential truncated to [0, b]
+  * Parameters: rate λ > 0, upper b > 0; precomputed _C = -expm1(-λb) = 1-exp(-λb)
+  * PDF: λ·exp(-λx)/C for x∈[0,b]; CDF: (1-exp(-λx))/C; SF: (exp(-λx)-exp(-λb))/C
+  * Quantile: -log1p(-p·C)/λ — exact closed form, O(1) → enables O(1) sampling
+  * Mean: (1-(1+u)·exp(-u))/(λ·C) where u=λb; fallback b/2 for u<1e-9
+  * Variance: E[X²]-E[X]² where E[X²]=(2/λ²-(b²+2b/λ)·exp(-λb))/C; fallback b²/12
+  * Entropy: log(C/λ)+1-u·exp(-u)/C (verified: →ln(b) for small u, →1-ln(λ) for large u)
+  * Mode: 0 (PDF monotone decreasing for λ>0)
+  * validate(): returns !void (error.InvalidParameter if params invalid)
+  * sample(): returns T (no error), uses exact inverse CDF
+  * 38 tests covering pdf/cdf/quantile/sample/moments/edge cases — all passing
+- **Total tests**: 5,073 (was 5,036; +37 new TruncatedExponential tests)
+- **Distribution count**: 103 total (82 continuous + 21 discrete)
+
 **Session 700 Update (2026-06-21) — STABILIZATION MODE [COMPLETED]:**
 
 - **Mode**: STABILIZATION (counter: 700)
