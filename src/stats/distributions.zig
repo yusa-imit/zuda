@@ -61496,3 +61496,593 @@ test "Epanechnikov: pdf maximum at mode (invariant)" {
         }
     }
 }
+
+// ============================================================================
+// SHIFTED GOMPERTZ DISTRIBUTION
+// ============================================================================
+
+/// ShiftedGompertz(b, eta) — Shifted Gompertz distribution
+///
+/// The Shifted Gompertz distribution is a two-parameter continuous distribution
+/// on [0, ∞) with applications in reliability and survival analysis.
+///
+/// Parameters:
+/// - b > 0: scale/hazard parameter
+/// - eta ≥ 0: shift parameter (eta = 0 reduces to Exponential(b))
+///
+/// Special case: When eta = 0, this is Exponential(b)
+pub fn ShiftedGompertz(comptime T: type) type {
+    return struct {
+        b: T,
+        eta: T,
+
+        const Self = @This();
+
+        /// Create a ShiftedGompertz distribution
+        ///
+        /// Parameters: b (scale, b > 0), eta (shift, eta ≥ 0)
+        /// Support: [0, ∞)
+        ///
+        /// Errors: error.InvalidParameter if b ≤ 0, eta < 0, or parameters are non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(b: T, eta: T) DistributionError!Self {
+            if (!(b > 0.0) or !(eta >= 0.0) or !math.isFinite(b) or !math.isFinite(eta)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .b = b, .eta = eta };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = b * e^{-bx} * e^{-eta*e^{-bx}} * (1 + eta*(1 - e^{-bx}))
+        ///
+        /// Returns 0 if x < 0 (outside support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const exp_neg_bx = @exp(-self.b * x);
+            const exp_eta_term = @exp(-self.eta * exp_neg_bx);
+            const one_minus_exp = 1.0 - exp_neg_bx;
+            return self.b * exp_neg_bx * exp_eta_term * (1.0 + self.eta * one_minus_exp);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(b) - bx - eta*e^{-bx} + log(1 + eta*(1-e^{-bx}))
+        ///
+        /// Returns -∞ if x < 0 (outside support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const exp_neg_bx = @exp(-self.b * x);
+            const one_minus_exp = 1.0 - exp_neg_bx;
+            const log_factor = 1.0 + self.eta * one_minus_exp;
+            if (log_factor <= 0.0) return -math.inf(T);
+            return @log(self.b) - self.b * x - self.eta * exp_neg_bx + @log(log_factor);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = (1 - e^{-bx}) * e^{-eta*e^{-bx}}
+        ///
+        /// Returns 0 if x ≤ 0, and approaches 1 as x → ∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const exp_neg_bx = @exp(-self.b * x);
+            const one_minus_exp = 1.0 - exp_neg_bx;
+            return one_minus_exp * @exp(-self.eta * exp_neg_bx);
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection with adaptive upper bound (100 iterations).
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN
+        ///
+        /// Time: O(log(1/tolerance)) ≈ O(100) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            // Adaptive upper bound: start with 1/b, double while cdf(hi) < p
+            var hi = 1.0 / self.b;
+            while (self.cdf(hi) < p) {
+                hi *= 2.0;
+            }
+
+            // Bisection search (100 iterations)
+            var lo: T = 0.0;
+            for (0..100) |_| {
+                const mid = (lo + hi) / 2.0;
+                const cdf_mid = self.cdf(mid);
+                if (cdf_mid < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            return (lo + hi) / 2.0;
+        }
+
+        /// Generate a random sample from this distribution using inverse CDF
+        ///
+        /// Time: O(log(1/tolerance)) ≈ O(100) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            // Clamp to [1e-14, 1 - 1e-14] to avoid boundary quantile numerical issues
+            const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            const q = self.quantile(u_safe) catch unreachable;
+            return q;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// When eta = 0: mode = 0 (Exponential case)
+        /// When eta > 0: mode = -log(u_star) / b
+        ///   where u_star = ((eta + 3) - sqrt(eta² + 2η + 5)) / (2η)
+        /// If u_star ≥ 1.0: mode = 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.eta == 0.0) return 0.0;
+
+            // u_star = ((eta + 3) - sqrt(eta² + 2η + 5)) / (2η)
+            const discriminant = self.eta * self.eta + 2.0 * self.eta + 5.0;
+            const sqrt_disc = @sqrt(discriminant);
+            const u_star = ((self.eta + 3.0) - sqrt_disc) / (2.0 * self.eta);
+
+            if (u_star >= 1.0) return 0.0;
+            return -@log(u_star) / self.b;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// Computed numerically via Simpson's rule integration of (1 - F(x))
+        /// over [0, 50/b].
+        ///
+        /// Time: O(n) where n is number of integration points (200) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const upper = 50.0 / self.b;
+            const n: usize = 200;
+            const h = upper / @as(T, @floatFromInt(n));
+
+            var sum_odd: T = 0.0;
+            var sum_even: T = 0.0;
+
+            for (1..n) |i| {
+                const x = h * @as(T, @floatFromInt(i));
+                const val = 1.0 - self.cdf(x);
+                if (i % 2 == 1) {
+                    sum_odd += val;
+                } else {
+                    sum_even += val;
+                }
+            }
+
+            const sf_0 = 1.0 - self.cdf(0.0);
+            const sf_upper = 1.0 - self.cdf(upper);
+            const integral = (h / 3.0) * (sf_0 + 4.0 * sum_odd + 2.0 * sum_even + sf_upper);
+            return integral;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Computed numerically: Var = 2*∫₀^∞ x*(1-F(x)) dx - mean²
+        /// Uses Simpson's rule integration over [0, 50/b].
+        ///
+        /// Time: O(n) where n is number of integration points (200) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            const upper = 50.0 / self.b;
+            const n: usize = 200;
+            const h = upper / @as(T, @floatFromInt(n));
+
+            var sum_odd: T = 0.0;
+            var sum_even: T = 0.0;
+
+            for (1..n) |i| {
+                const x = h * @as(T, @floatFromInt(i));
+                const val = x * (1.0 - self.cdf(x));
+                if (i % 2 == 1) {
+                    sum_odd += val;
+                } else {
+                    sum_even += val;
+                }
+            }
+
+            const f_0 = 0.0 * (1.0 - self.cdf(0.0));
+            const f_upper = upper * (1.0 - self.cdf(upper));
+            const integral = (h / 3.0) * (f_0 + 4.0 * sum_odd + 2.0 * sum_even + f_upper);
+            const second_moment = 2.0 * integral;
+            return second_moment - m * m;
+        }
+
+        /// Shannon differential entropy
+        ///
+        /// Computed numerically via Simpson's rule integration of -f(x)*log(f(x))
+        /// over [0, 50/b].
+        ///
+        /// Time: O(n) where n is number of integration points (200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const upper = 50.0 / self.b;
+            const n: usize = 200;
+            const h = upper / @as(T, @floatFromInt(n));
+
+            var sum_odd: T = 0.0;
+            var sum_even: T = 0.0;
+
+            for (1..n) |i| {
+                const x = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+                if (f > 0.0) {
+                    const val = -f * @log(f);
+                    if (i % 2 == 1) {
+                        sum_odd += val;
+                    } else {
+                        sum_even += val;
+                    }
+                }
+            }
+
+            const f_0 = self.pdf(0.0);
+            const f_upper = self.pdf(upper);
+            var integrand_0: T = 0.0;
+            var integrand_upper: T = 0.0;
+
+            if (f_0 > 0.0) integrand_0 = -f_0 * @log(f_0);
+            if (f_upper > 0.0) integrand_upper = -f_upper * @log(f_upper);
+
+            const integral = (h / 3.0) * (integrand_0 + 4.0 * sum_odd + 2.0 * sum_even + integrand_upper);
+            return integral;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.b > 0.0) or !(self.eta >= 0.0) or !math.isFinite(self.b) or !math.isFinite(self.eta)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// SHIFTED GOMPERTZ DISTRIBUTION TESTS
+// ============================================================================
+
+test "ShiftedGompertz: init with valid parameters (b=1, eta=0)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 0.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.b, 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.eta, 1e-10);
+}
+
+test "ShiftedGompertz: init with valid parameters (b=2, eta=1)" {
+    const dist = try ShiftedGompertz(f64).init(2.0, 1.0);
+    try std.testing.expectApproxEqAbs(2.0, dist.b, 1e-10);
+    try std.testing.expectApproxEqAbs(1.0, dist.eta, 1e-10);
+}
+
+test "ShiftedGompertz: init with valid parameters (b=0.5, eta=2)" {
+    const dist = try ShiftedGompertz(f64).init(0.5, 2.0);
+    try std.testing.expectApproxEqAbs(0.5, dist.b, 1e-10);
+    try std.testing.expectApproxEqAbs(2.0, dist.eta, 1e-10);
+}
+
+test "ShiftedGompertz: init rejects b=0" {
+    const result = ShiftedGompertz(f64).init(0.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects b<0" {
+    const result = ShiftedGompertz(f64).init(-1.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects eta<0" {
+    const result = ShiftedGompertz(f64).init(1.0, -0.5);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects b=NaN" {
+    const result = ShiftedGompertz(f64).init(std.math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects eta=NaN" {
+    const result = ShiftedGompertz(f64).init(1.0, std.math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects b=inf" {
+    const result = ShiftedGompertz(f64).init(math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects b=-inf" {
+    const result = ShiftedGompertz(f64).init(-math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: init rejects eta=inf" {
+    const result = ShiftedGompertz(f64).init(1.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: pdf(x<0) = 0" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(-0.1), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(-1.0), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(-100.0), 1e-10);
+}
+
+test "ShiftedGompertz: pdf(0; b=1, eta=1) = e^{-1} ≈ 0.367879" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const expected = 1.0 / math.e;
+    try std.testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-5);
+}
+
+test "ShiftedGompertz: pdf(1; b=1, eta=1) ≈ 0.415523" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.415523, dist.pdf(1.0), 1e-4);
+}
+
+test "ShiftedGompertz: pdf(0; b=2, eta=1) = 2*e^{-1} ≈ 0.735759" {
+    const dist = try ShiftedGompertz(f64).init(2.0, 1.0);
+    const expected = 2.0 / math.e;
+    try std.testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-5);
+}
+
+test "ShiftedGompertz: pdf(0; b=1, eta=0) = 1.0 (Exponential case)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 0.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.pdf(0.0), 1e-10);
+}
+
+test "ShiftedGompertz: logpdf(x<0) = -inf" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expect(math.isNegativeInf(dist.logpdf(-0.1)));
+    try std.testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "ShiftedGompertz: logpdf consistency with pdf" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        const expected_logpdf = @log(pdf_val);
+        try std.testing.expectApproxEqAbs(expected_logpdf, logpdf_val, 1e-5);
+    }
+}
+
+test "ShiftedGompertz: cdf(x<0) = 0" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(-0.1), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(-1.0), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(-100.0), 1e-10);
+}
+
+test "ShiftedGompertz: cdf(0) = 0 exactly" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-10);
+}
+
+test "ShiftedGompertz: cdf(1; b=1, eta=1) ≈ 0.437467" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.437467, dist.cdf(1.0), 1e-4);
+}
+
+test "ShiftedGompertz: cdf(1; b=1, eta=2) ≈ 0.303024" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 2.0);
+    try std.testing.expectApproxEqAbs(0.303024, dist.cdf(1.0), 1e-3);
+}
+
+test "ShiftedGompertz: cdf is monotone increasing" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0 };
+    var prev_cdf: f64 = dist.cdf(0.0);
+    for (x_vals[1..]) |x| {
+        const curr_cdf = dist.cdf(x);
+        try std.testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "ShiftedGompertz: cdf approaches 1 for large x" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expect(dist.cdf(100.0) > 0.99);
+}
+
+test "ShiftedGompertz: sf + cdf = 1" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 3.0, 5.0 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try std.testing.expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+test "ShiftedGompertz: quantile error for p<0" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "ShiftedGompertz: quantile error for p>1" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "ShiftedGompertz: quantile(0) = 0" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "ShiftedGompertz: quantile(1) = +inf" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expect(math.isPositiveInf(q));
+}
+
+test "ShiftedGompertz: quantile roundtrip (p=0.3)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(p, cdf_q, 1e-3);
+}
+
+test "ShiftedGompertz: quantile roundtrip (p=0.5)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(p, cdf_q, 1e-3);
+}
+
+test "ShiftedGompertz: quantile roundtrip (p=0.9)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const cdf_q = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(p, cdf_q, 1e-3);
+}
+
+test "ShiftedGompertz: mode(b=1, eta=1) ≈ 0.534292" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.534292, dist.mode(), 1e-3);
+}
+
+test "ShiftedGompertz: mode(b=2, eta=1) ≈ 0.267146" {
+    const dist = try ShiftedGompertz(f64).init(2.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.267146, dist.mode(), 1e-3);
+}
+
+test "ShiftedGompertz: mode(b=1, eta=0.3) = 0" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 0.3);
+    try std.testing.expectApproxEqAbs(0.0, dist.mode(), 1e-10);
+}
+
+test "ShiftedGompertz: mode(b=1, eta=0.5) = 0" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 0.5);
+    try std.testing.expectApproxEqAbs(0.0, dist.mode(), 1e-10);
+}
+
+test "ShiftedGompertz: mode(b=1, eta=2) ≈ 1.053710" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 2.0);
+    try std.testing.expectApproxEqAbs(1.053710, dist.mode(), 1e-4);
+}
+
+test "ShiftedGompertz: mode(b=1, eta=0) = 0 (Exponential case)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 0.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.mode(), 1e-10);
+}
+
+test "ShiftedGompertz: mean is positive" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const mean = dist.mean();
+    try std.testing.expect(mean > 0.0);
+}
+
+test "ShiftedGompertz: variance is positive" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const variance = dist.variance();
+    try std.testing.expect(variance > 0.0);
+}
+
+test "ShiftedGompertz: sample convergence (b=1, eta=1) mean" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const theoretical_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n_samples = 5000;
+    for (0..n_samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n_samples));
+    try std.testing.expectApproxEqAbs(theoretical_mean, empirical_mean, theoretical_mean * 0.15);
+}
+
+test "ShiftedGompertz: sample convergence (b=2, eta=1) mean" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedGompertz(f64).init(2.0, 1.0);
+    const theoretical_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n_samples = 5000;
+    for (0..n_samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n_samples));
+    try std.testing.expectApproxEqAbs(theoretical_mean, empirical_mean, theoretical_mean * 0.15);
+}
+
+test "ShiftedGompertz: pdf integration ≈ 1" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    const a: f64 = 0.0;
+    const b: f64 = 50.0;
+    const n: usize = 200;
+    const h_step = (b - a) / @as(f64, @floatFromInt(n));
+
+    var sum_odd: f64 = 0.0;
+    var sum_even: f64 = 0.0;
+
+    for (1..n) |i| {
+        const x = a + h_step * @as(f64, @floatFromInt(i));
+        const f = dist.pdf(x);
+        if (i % 2 == 1) {
+            sum_odd += f;
+        } else {
+            sum_even += f;
+        }
+    }
+
+    const f_a = dist.pdf(a);
+    const f_b = dist.pdf(b);
+    const integral = h_step / 3.0 * (f_a + 4.0 * sum_odd + 2.0 * sum_even + f_b);
+    try std.testing.expectApproxEqAbs(1.0, integral, 1e-3);
+}
+
+test "ShiftedGompertz: validate passes for valid parameters" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "ShiftedGompertz: validate rejects b=0" {
+    var dist = ShiftedGompertz(f64){ .b = 0.0, .eta = 1.0 };
+    const result = dist.validate();
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: validate rejects eta=-1" {
+    var dist = ShiftedGompertz(f64){ .b = 1.0, .eta = -1.0 };
+    const result = dist.validate();
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ShiftedGompertz: f32 type support" {
+    const dist = try ShiftedGompertz(f32).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), dist.b, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), dist.eta, 1e-6);
+    const p = dist.pdf(0.5);
+    try std.testing.expect(p > 0.0);
+}
