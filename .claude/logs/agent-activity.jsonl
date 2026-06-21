@@ -585,3 +585,5 @@
 {"timestamp":"2026-06-20T15:32:02Z","action":"subagent","agent_type":"zig-developer","task":"Implement ZipfMandelbrot distribution (102nd)","project":"zuda"}
 {"timestamp":"2026-06-21T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add concrete-value tests for BoundedPareto alpha=1 and DiscreteWeibull mode beta>1","project":"zuda"}
 {"timestamp":"2026-06-21T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for TruncatedExponential distribution (103rd, 82nd continuous)","project":"zuda"}
+{"timestamp":"2026-06-21T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for GeneralizedExponential distribution (104th)","project":"zuda"}
+{"timestamp":"2026-06-21T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedExponential distribution (104th)","project":"zuda"}

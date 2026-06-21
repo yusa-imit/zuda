@@ -59212,3 +59212,466 @@ test "TruncatedExponential: pdf is non-negative" {
         try std.testing.expect(dist.pdf(x) >= 0.0);
     }
 }
+
+// ============================================================================
+// GeneralizedExponential Distribution
+// ============================================================================
+// Also known as: Exponentiated Exponential (EE) Distribution
+// Reference: Gupta & Kundu (1999), "Generalized exponential distributions"
+// ============================================================================
+
+/// Generalized Exponential (Exponentiated Exponential) distribution.
+///
+/// If α=1, reduces to Exponential(λ).
+/// For integer α, represents the maximum of α iid Exp(λ) random variables.
+///
+/// Parameters:
+///   - alpha (α): shape parameter (α > 0)
+///   - lambda (λ): rate parameter (λ > 0)
+///
+/// Support: x ≥ 0
+/// Reference: Gupta & Kundu (1999)
+pub fn GeneralizedExponential(comptime T: type) type {
+    return struct {
+        alpha: T,
+        lambda: T,
+
+        const Self = @This();
+        const euler_mascheroni: T = 0.5772156649015328606065120900824024310421593359;
+
+        /// Initialize GeneralizedExponential distribution.
+        /// Requires alpha > 0, lambda > 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, lambda: T) DistributionError!Self {
+            if (!(alpha > 0.0) or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (!(lambda > 0.0) or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .lambda = lambda };
+        }
+
+        /// Probability density function.
+        ///
+        /// f(x) = α·λ·exp(-λx)·(1-exp(-λx))^(α-1)  for x ≥ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            if (x == 0.0) {
+                if (self.alpha > 1.0) return 0.0;
+                if (self.alpha == 1.0) return self.lambda;
+                return math.inf(T);
+            }
+            const em = @exp(-self.lambda * x);
+            const u = 1.0 - em;
+            return self.alpha * self.lambda * em * math.pow(T, u, self.alpha - 1.0);
+        }
+
+        /// Log probability density function (more numerically stable).
+        ///
+        /// log f(x) = ln(α) + ln(λ) - λx + (α-1)·ln(1-exp(-λx))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            if (x == 0.0) {
+                if (self.alpha > 1.0) return -math.inf(T);
+                if (self.alpha == 1.0) return @log(self.lambda);
+                return math.inf(T);
+            }
+            const lx = self.lambda * x;
+            // ln(1 - exp(-lx)) = log1p(-exp(-lx)); use -expm1(-lx) for stability
+            const log_u = @log(-math.expm1(-lx));
+            return @log(self.alpha) + @log(self.lambda) - lx + (self.alpha - 1.0) * log_u;
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// F(x) = (1 - exp(-λx))^α
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const u = -math.expm1(-self.lambda * x);  // 1 - exp(-λx) = -expm1(-λx)
+            return math.pow(T, u, self.alpha);
+        }
+
+        /// Survival function: P(X > x) = 1 - F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF).
+        ///
+        /// Q(p) = -ln(1 - p^(1/α)) / λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            const p1 = math.pow(T, p, 1.0 / self.alpha);
+            return -math.log1p(-p1) / self.lambda;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// E[X] = (ψ(α+1) - ψ(1)) / λ = (ψ(α+1) + γ_E) / λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (digamma(T, self.alpha + 1.0) + euler_mascheroni) / self.lambda;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var[X] = (π²/6 - ψ₁(α+1)) / λ²
+        ///
+        /// where ψ₁ is the trigamma function and π²/6 = trigamma(1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const pi2_over_6 = math.pi * math.pi / 6.0;
+            return (pi2_over_6 - trigamma(T, self.alpha + 1.0)) / (self.lambda * self.lambda);
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// mode = 0          for α ≤ 1
+        /// mode = ln(α) / λ  for α > 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha <= 1.0) return 0.0;
+            return @log(self.alpha) / self.lambda;
+        }
+
+        /// Differential entropy.
+        ///
+        /// H = 1 - 1/α - ln(αλ) + ψ(α+1) + γ_E
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 1.0 - 1.0 / self.alpha - @log(self.alpha * self.lambda) +
+                digamma(T, self.alpha + 1.0) + euler_mascheroni;
+        }
+
+        /// Generate a random sample using exact inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const p1 = math.pow(T, u, 1.0 / self.alpha);
+            return -math.log1p(-p1) / self.lambda;
+        }
+
+        /// Assert internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            std.debug.assert(self.alpha > 0.0);
+            std.debug.assert(self.lambda > 0.0);
+            std.debug.assert(math.isFinite(self.alpha));
+            std.debug.assert(math.isFinite(self.lambda));
+        }
+    };
+}
+
+// ============================================================================
+// GeneralizedExponential (Exponentiated Exponential) Distribution Tests
+// ============================================================================
+
+test "GeneralizedExponential: init with valid alpha and lambda" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    try std.testing.expect(dist.alpha == 2.0);
+    try std.testing.expect(dist.lambda == 1.0);
+}
+
+test "GeneralizedExponential: init with fractional alpha" {
+    const dist = try GeneralizedExponential(f64).init(0.5, 1.0);
+    try std.testing.expect(dist.alpha == 0.5);
+}
+
+test "GeneralizedExponential: init rejects alpha=0" {
+    const result = GeneralizedExponential(f64).init(0.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedExponential: init rejects negative alpha" {
+    const result = GeneralizedExponential(f64).init(-1.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedExponential: init rejects lambda=0" {
+    const result = GeneralizedExponential(f64).init(2.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedExponential: init rejects negative lambda" {
+    const result = GeneralizedExponential(f64).init(2.0, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedExponential: special case alpha=1 matches Exponential pdf at x=1" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const p = dist.pdf(1.0);
+    // exp(-1) ≈ 0.36788
+    try std.testing.expectApproxEqAbs(0.36788, p, 1e-5);
+}
+
+test "GeneralizedExponential: special case alpha=1 matches Exponential cdf at x=1" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const c = dist.cdf(1.0);
+    // 1 - exp(-1) ≈ 0.63212
+    try std.testing.expectApproxEqAbs(0.63212, c, 1e-5);
+}
+
+test "GeneralizedExponential: special case alpha=1 matches Exponential mean" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const m = dist.mean();
+    try std.testing.expectApproxEqAbs(1.0, m, 1e-8);
+}
+
+test "GeneralizedExponential: pdf at x=1.0 with alpha=2, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const p = dist.pdf(1.0);
+    // 2·exp(-1)·(1-exp(-1)) ≈ 2·0.36788·0.63212 ≈ 0.46534
+    try std.testing.expectApproxEqAbs(0.46534, p, 3e-4);
+}
+
+test "GeneralizedExponential: pdf at x=1.0 with alpha=3, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 1.0);
+    const p = dist.pdf(1.0);
+    // 3·exp(-1)·(1-exp(-1))^2 ≈ 3·0.36788·0.39940 ≈ 0.44090
+    try std.testing.expectApproxEqAbs(0.44090, p, 1e-4);
+}
+
+test "GeneralizedExponential: pdf at x=0 with alpha>1 is zero" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectEqual(0.0, p);
+}
+
+test "GeneralizedExponential: pdf is non-negative on [0,5] for alpha=2, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    var x: f64 = 0.0;
+    while (x <= 5.0) : (x += 0.5) {
+        const p = dist.pdf(x);
+        try std.testing.expect(p >= 0.0);
+    }
+}
+
+test "GeneralizedExponential: pdf at negative x returns 0" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try std.testing.expectEqual(0.0, p);
+}
+
+test "GeneralizedExponential: cdf at x=0 is zero" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const c = dist.cdf(0.0);
+    try std.testing.expectEqual(0.0, c);
+}
+
+test "GeneralizedExponential: cdf at x=1.0 with alpha=2, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const c = dist.cdf(1.0);
+    // (1-exp(-1))^2 ≈ 0.39940
+    try std.testing.expectApproxEqAbs(0.39940, c, 3e-4);
+}
+
+test "GeneralizedExponential: cdf at x=1.0 with alpha=3, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 1.0);
+    const c = dist.cdf(1.0);
+    // (1-exp(-1))^3 ≈ 0.25252
+    try std.testing.expectApproxEqAbs(0.25252, c, 1e-4);
+}
+
+test "GeneralizedExponential: cdf at large x approaches 1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const c = dist.cdf(100.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-8);
+}
+
+test "GeneralizedExponential: cdf is non-decreasing" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const c1 = dist.cdf(1.0);
+    const c2 = dist.cdf(2.0);
+    const c3 = dist.cdf(3.0);
+    try std.testing.expect(c1 <= c2);
+    try std.testing.expect(c2 <= c3);
+}
+
+test "GeneralizedExponential: quantile rejects p<0" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "GeneralizedExponential: quantile rejects p>1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "GeneralizedExponential: quantile at p=0 is zero" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-12);
+}
+
+test "GeneralizedExponential: cdf-quantile roundtrip at p=0.5" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.5);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "GeneralizedExponential: cdf-quantile roundtrip at p=0.1" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 2.0);
+    const q = try dist.quantile(0.1);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.1, c, 1e-10);
+}
+
+test "GeneralizedExponential: quantile is non-decreasing" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try std.testing.expect(q1 <= q2);
+    try std.testing.expect(q2 <= q3);
+}
+
+test "GeneralizedExponential: mean for alpha=1, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const m = dist.mean();
+    try std.testing.expectApproxEqAbs(1.0, m, 1e-8);
+}
+
+test "GeneralizedExponential: mean for alpha=2, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const m = dist.mean();
+    // 1.5
+    try std.testing.expectApproxEqAbs(1.5, m, 1e-8);
+}
+
+test "GeneralizedExponential: mean for alpha=3, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 1.0);
+    const m = dist.mean();
+    // 11/6 ≈ 1.83333
+    try std.testing.expectApproxEqAbs(11.0 / 6.0, m, 1e-6);
+}
+
+test "GeneralizedExponential: mean for alpha=2, lambda=2" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 2.0);
+    const m = dist.mean();
+    // 1.5 / 2 = 0.75
+    try std.testing.expectApproxEqAbs(0.75, m, 1e-8);
+}
+
+test "GeneralizedExponential: variance for alpha=1, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(1.0, v, 1e-8);
+}
+
+test "GeneralizedExponential: variance for alpha=2, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    // 1.25
+    try std.testing.expectApproxEqAbs(1.25, v, 1e-6);
+}
+
+test "GeneralizedExponential: variance for alpha=3, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 1.0);
+    const v = dist.variance();
+    // 49/36 ≈ 1.36111
+    try std.testing.expectApproxEqAbs(49.0 / 36.0, v, 1e-6);
+}
+
+test "GeneralizedExponential: mode for alpha=1, lambda=1 is zero" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const mode = dist.mode();
+    try std.testing.expectEqual(0.0, mode);
+}
+
+test "GeneralizedExponential: mode for alpha=0.5, lambda=1 is zero" {
+    const dist = try GeneralizedExponential(f64).init(0.5, 1.0);
+    const mode = dist.mode();
+    try std.testing.expectEqual(0.0, mode);
+}
+
+test "GeneralizedExponential: mode for alpha=2, lambda=1 is ln(2)" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const mode = dist.mode();
+    // ln(2) ≈ 0.69315
+    try std.testing.expectApproxEqAbs(@log(2.0), mode, 1e-6);
+}
+
+test "GeneralizedExponential: mode for alpha=3, lambda=1 is ln(3)" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 1.0);
+    const mode = dist.mode();
+    // ln(3) ≈ 1.09861
+    try std.testing.expectApproxEqAbs(@log(3.0), mode, 1e-6);
+}
+
+test "GeneralizedExponential: entropy for alpha=1, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(1.0, 1.0);
+    const e = dist.entropy();
+    try std.testing.expectApproxEqAbs(1.0, e, 1e-6);
+}
+
+test "GeneralizedExponential: entropy for alpha=2, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    const e = dist.entropy();
+    // 2 - ln(2) ≈ 1.30685
+    try std.testing.expectApproxEqAbs(2.0 - @log(2.0), e, 1e-5);
+}
+
+test "GeneralizedExponential: entropy for alpha=3, lambda=1" {
+    const dist = try GeneralizedExponential(f64).init(3.0, 1.0);
+    const e = dist.entropy();
+    // 5/2 - ln(3) ≈ 1.40139
+    try std.testing.expectApproxEqAbs(2.5 - @log(3.0), e, 1e-5);
+}
+
+test "GeneralizedExponential: validate passes for valid dist" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "GeneralizedExponential: sample produces non-negative values" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= 0.0);
+    }
+}
+
+test "GeneralizedExponential: empirical mean converges" {
+    const dist = try GeneralizedExponential(f64).init(2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try std.testing.expectApproxEqAbs(theoretical_mean, empirical_mean, 0.05);
+}
+
+test "GeneralizedExponential: f32 support" {
+    const dist = try GeneralizedExponential(f32).init(2.0, 1.0);
+    try dist.validate();
+    const p = dist.pdf(1.0);
+    try std.testing.expect(p > 0.0);
+}
