@@ -57464,6 +57464,45 @@ test "DiscreteWeibull: f32 type support" {
     try expectApproxEqAbs(@as(f32, 0.5), pmf_val, 1e-5);
 }
 
+test "DiscreteWeibull: variance q=0.5, beta=1.0 is 2.0 (Geometric property)" {
+    // DiscreteWeibull(q=0.5, beta=1) == Geometric(p=0.5) on {0,1,2,...}
+    // Var = q/(1-q)^2 = 0.5/0.25 = 2.0
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(2.0, v, 0.01);
+}
+
+test "DiscreteWeibull: variance positive for all valid params" {
+    const params = [_][2]f64{ .{ 0.3, 0.5 }, .{ 0.5, 1.0 }, .{ 0.7, 2.0 }, .{ 0.9, 0.5 } };
+    for (params) |p| {
+        const dist = try DiscreteWeibull(f64).init(p[0], p[1]);
+        try testing.expect(dist.variance() > 0.0);
+    }
+}
+
+test "DiscreteWeibull: entropy q=0.5, beta=1.0 equals 2*ln(2)" {
+    // DiscreteWeibull(q=0.5, beta=1) == Geometric(p=0.5); H = 2*ln(2) ≈ 1.3863
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    const h = dist.entropy();
+    const expected = 2.0 * @log(2.0);
+    try expectApproxEqAbs(expected, h, 1e-3);
+}
+
+test "DiscreteWeibull: entropy positive for all valid params" {
+    const params = [_][2]f64{ .{ 0.3, 0.5 }, .{ 0.5, 1.0 }, .{ 0.7, 2.0 }, .{ 0.9, 1.5 } };
+    for (params) |p| {
+        const dist = try DiscreteWeibull(f64).init(p[0], p[1]);
+        try testing.expect(dist.entropy() > 0.0);
+    }
+}
+
+test "DiscreteWeibull: entropy decreases as q decreases (more concentrated)" {
+    // Smaller q → more concentrated at k=0 → lower entropy
+    const dist_low = try DiscreteWeibull(f64).init(0.2, 1.0);
+    const dist_high = try DiscreteWeibull(f64).init(0.8, 1.0);
+    try testing.expect(dist_low.entropy() < dist_high.entropy());
+}
+
 // ============================================================================
 // BOUNDED PARETO DISTRIBUTION TESTS (100th distribution)
 // ============================================================================
@@ -57685,6 +57724,65 @@ test "BoundedPareto: alpha=1 special case" {
     // For alpha=1: mean = L * ln(H/L) / (1 - L/H) = ln(10) / 0.9 ≈ 2.5584
     const mean_val = dist.mean();
     try expectApproxEqAbs(2.5584, mean_val, 1e-3);
+}
+
+test "BoundedPareto: logpdf equals log(pdf) at x=2" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const x = 2.0;
+    const lp = dist.logpdf(x);
+    const p = dist.pdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-10);
+}
+
+test "BoundedPareto: logpdf returns -inf outside [L,H]" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.5)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(11.0)));
+}
+
+test "BoundedPareto: sf at x<lower is 1 and at x>=upper is 0" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // Below support: CDF = 0 → sf = 1
+    try expectApproxEqAbs(0.0, dist.cdf(0.5), 1e-10);
+    try expectApproxEqAbs(1.0, 1.0 - dist.cdf(0.5), 1e-10);
+    // Above support: CDF = 1 → sf = 0
+    try expectApproxEqAbs(1.0, dist.cdf(11.0), 1e-10);
+    try expectApproxEqAbs(0.0, 1.0 - dist.cdf(11.0), 1e-10);
+}
+
+test "BoundedPareto: sf + cdf = 1 at interior point" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const x = 3.0;
+    const c = dist.cdf(x);
+    const sf = 1.0 - c;
+    try expectApproxEqAbs(1.0, c + sf, 1e-12);
+}
+
+test "BoundedPareto: variance alpha=2 L=1 H=10 is approximately 1.346" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    // E[X^2] = 2*L^2*ln(H/L) / (1-(L/H)^2) = 2*ln(10)/0.99 ≈ 4.652
+    // mean = 2*0.9/0.99 ≈ 1.8182; variance ≈ 4.652 - 1.8182^2 ≈ 1.346
+    const v = dist.variance();
+    try expectApproxEqAbs(1.346, v, 0.01);
+}
+
+test "BoundedPareto: variance is positive for alpha>2" {
+    // For alpha > 2, variance is finite and positive
+    const dist = try BoundedPareto(f64).init(3.0, 1.0, 10.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "BoundedPareto: entropy is positive for alpha=2 L=1 H=10" {
+    const dist = try BoundedPareto(f64).init(2.0, 1.0, 10.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+    try testing.expect(e > 0.0);
+}
+
+test "BoundedPareto: entropy increases as upper increases (more spread)" {
+    const dist_narrow = try BoundedPareto(f64).init(2.0, 1.0, 5.0);
+    const dist_wide = try BoundedPareto(f64).init(2.0, 1.0, 100.0);
+    try testing.expect(dist_wide.entropy() > dist_narrow.entropy());
 }
 
 // ============================================================================

@@ -592,3 +592,4 @@
 {"timestamp":"2026-06-21T08:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for WrappedCauchy distribution (106th distribution)","project":"zuda"}
 {"timestamp":"2026-06-21T08:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement WrappedCauchy distribution in src/stats/distributions.zig","project":"zuda"}
 {"timestamp":"2026-06-21T21:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement WrappedCauchy distribution (105th total, 84th continuous)","project":"zuda"}
+{"timestamp":"2026-06-22T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"STABILIZATION: add variance/entropy/logpdf/sf tests for DiscreteWeibull and BoundedPareto","project":"zuda"}
