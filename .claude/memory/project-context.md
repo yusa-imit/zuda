@@ -1,3 +1,27 @@
+**Session 704 Update (2026-06-21) — FEATURE MODE [COMPLETED]:**
+
+✅ **WrappedCauchy Distribution** — 106th total, 85th continuous — commit 442a1a9
+- **Mode**: FEATURE MODE (counter: 704)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: WrappedCauchy(T) — circular distribution for directional statistics
+  * Parameters: μ (mean direction, any finite), ρ ∈ (0,1) (concentration)
+  * Support: θ ∈ [-π, π] (circular; -π and π are the same point)
+  * PDF: (1-ρ²)/(2π(1+ρ²-2ρcos(θ-μ))); pdf(-π)=pdf(π) (wrapping)
+  * CDF: Uses continuous antiderivative G*(x) = floor((x+π)/(2π)) + 0.5 + arctan(k·tan(x/2))/π
+    where k=(1+ρ)/(1-ρ); F(θ;μ,ρ) = G*(θ-μ) - G*(-π-μ)
+  * Quantile: Q(p) = μ + 2·arctan((1-ρ)/(1+ρ)·tan(π(p-0.5))) — exact O(1)
+  * circularMean: μ; circularVariance: 1-ρ; mode: μ; entropy: log(2π(1-ρ²))
+  * Sample: inverse CDF via exact quantile formula
+  * Relationship: as ρ→0 → Uniform(-π,π]; as ρ→1 → Dirac at μ
+  * Key values: pdf(0;0,0.5)=1.5/π≈0.47746; pdf(π;0,0.5)=1/(6π)≈0.05305
+  * cdf(0;0,0.5)=0.5; cdf(π/2;0,0.5)≈0.89758; quantile(0.75;0,0.5)≈0.64350
+  * entropy(ρ=0.5)=log(1.5π)≈1.5508 nats; PDF ratio mode/antipode=(1+ρ)²/(1-ρ)²=9
+  * CRITICAL: support is [-π,π] (both endpoints included; pdf(-π)=pdf(π) by wrapping)
+  * CRITICAL: CDF formula needs branch correction for μ≠0 — use contArctan helper
+- **Total tests**: 5,213 (was 5,159; +54 new WrappedCauchy tests)
+- **Distribution count**: 106 total (85 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Marchenko-Pastur, Biweight/Epanechnikov, or another distribution
+
 **Session 703 Update (2026-06-21) — FEATURE MODE [COMPLETED]:**
 
 ✅ **LogGamma Distribution** — 105th total, 84th continuous — commit ba5a845
