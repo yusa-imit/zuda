@@ -1,3 +1,27 @@
+**Session 706 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
+
+✅ **Epanechnikov Distribution** — 107th total, 86th continuous — commit bbcc97d
+- **Mode**: FEATURE MODE (counter: 706)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Epanechnikov(T) — bounded parabolic distribution (optimal KDE kernel)
+  * Parameters: μ (location), h (half-bandwidth, h > 0); support = [μ-h, μ+h]
+  * PDF: f(x) = 3/(4h)·(1-u²) where u=(x-μ)/h; mode at x=μ with f(μ)=3/(4h)
+  * CDF: F(x) = 0.5 + 0.75·u - 0.25·u³ for u∈[-1,1]
+  * Quantile: μ + h·2·cos(arccos(1-2p)/3 - 2π/3) — exact O(1) via trigonometric cubic
+    - Derived by solving depressed cubic u³-3u+(4p-2)=0 with trigonometric method (k=1 root)
+    - p=0→μ-h, p=0.5→μ, p=1→μ+h (verified at all boundary conditions)
+  * Mean: μ; Variance: h²/5; Mode: μ
+  * Entropy: log(h/3) + 5/3 nats — exact closed form
+    - Derived via Beta function derivative at a=1: ψ(5/2)-ψ(2) = 5/3-2ln2
+    - H(μ,h) = log(4/3) + (ψ(5/2)-ψ(2)) + log(h) = log(h/3) + 5/3
+    - For h=1: ≈ 0.5681 nats; For h=3: log(1)+5/3 = 5/3 ≈ 1.6667
+  * Sample: exact inverse CDF (quantile) with u clamped to [1e-14, 1-1e-14]
+  * Significance: statistically optimal kernel for KDE (minimizes mean integrated squared error)
+- **Total tests**: 5,289 (was 5,226; +63 new Epanechnikov tests)
+- **Distribution count**: 107 total (86 continuous + 21 discrete)
+- **Root.zig**: Updated doc comment to include WrappedCauchy and Epanechnikov — commit db082bf
+- **Next Priority**: Next FEATURE session — MarcenkoPastur, ShiftedGompertz, Benini, or another distribution
+
 **Session 704 Update (2026-06-21) — FEATURE MODE [COMPLETED]:**
 
 ✅ **WrappedCauchy Distribution** — 106th total, 85th continuous — commit 442a1a9
