@@ -60868,3 +60868,631 @@ test "WrappedCauchy: high concentration (rho near 1) becomes peaky" {
     const p_far = dist.pdf(2.0);
     try std.testing.expect(p_mode > 10.0 * p_far);
 }
+
+// ============================================================================
+// EPANECHNIKOV DISTRIBUTION
+// ============================================================================
+
+pub fn Epanechnikov(comptime T: type) type {
+    return struct {
+        mu: T,  // location parameter
+        h: T,   // half-bandwidth (h > 0)
+
+        const Self = @This();
+
+        /// Create an Epanechnikov distribution
+        ///
+        /// Parameters: mu (location), h (half-bandwidth, h > 0)
+        /// Support: [μ - h, μ + h]
+        ///
+        /// Errors: error.InvalidParameter if h ≤ 0, or if μ or h are non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, h: T) DistributionError!Self {
+            if (h <= 0.0 or !math.isFinite(h) or !math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .h = h };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (3 / (4h)) * (1 - u²)  where u = (x - μ) / h
+        /// Returns 0 if |u| > 1 (outside support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (@abs(u) > 1.0) return 0.0;
+            const one_minus_u2 = 1.0 - u * u;
+            return (3.0 / (4.0 * self.h)) * one_minus_u2;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(3/(4h)) + log(1 - u²)  where u = (x - μ) / h
+        /// Returns -∞ if |u| ≥ 1 (outside support or at boundary)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (@abs(u) > 1.0) return -math.inf(T);
+            const one_minus_u2 = 1.0 - u * u;
+            if (one_minus_u2 <= 0.0) return -math.inf(T);
+            return @log(3.0 / (4.0 * self.h)) + @log(one_minus_u2);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 0.5 + 0.75*u - 0.25*u³  where u = (x - μ) / h, |u| ≤ 1
+        /// Returns 0 if x < μ - h, and 1 if x > μ + h
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (u <= -1.0) return 0.0;
+            if (u >= 1.0) return 1.0;
+            return 0.5 + 0.75 * u - 0.25 * u * u * u;
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = μ + h * 2*cos(acos(1 - 2*p) / 3 - 2π/3)
+        ///
+        /// For p = 0: returns μ - h (exactly)
+        /// For p = 0.5: returns μ (exactly)
+        /// For p = 1: returns μ + h (exactly)
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.mu - self.h;
+            if (p == 1.0) return self.mu + self.h;
+            // For 0 < p < 1: use cubic quantile formula
+            const arg = 1.0 - 2.0 * p;
+            const acos_val = math.acos(arg);
+            const two_pi_over_3 = 2.0 * math.pi / 3.0;
+            const inner = (acos_val / 3.0) - two_pi_over_3;
+            const u = 2.0 * @cos(inner);
+            return self.mu + self.h * u;
+        }
+
+        /// Generate a random sample from this distribution using inverse CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            // Clamp to [1e-14, 1 - 1e-14] to avoid boundary quantile numerical issues
+            const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            const q = self.quantile(u_safe) catch unreachable;
+            return q;
+        }
+
+        /// Mean: μ (the location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance: h² / 5
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return (self.h * self.h) / 5.0;
+        }
+
+        /// Mode: μ (the location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Shannon differential entropy: log(h / 3) + 5/3 nats
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.h / 3.0) + 5.0 / 3.0;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.h <= 0.0 or !math.isFinite(self.h) or !math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// EPANECHNIKOV DISTRIBUTION TESTS
+// ============================================================================
+
+test "Epanechnikov: init with valid parameters (mu=0, h=1)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(1.0, dist.h, 1e-10);
+}
+
+test "Epanechnikov: init with valid parameters (mu=2, h=3)" {
+    const dist = try Epanechnikov(f64).init(2.0, 3.0);
+    try std.testing.expectApproxEqAbs(2.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(3.0, dist.h, 1e-10);
+}
+
+test "Epanechnikov: init with valid parameters (mu=-1, h=0.5)" {
+    const dist = try Epanechnikov(f64).init(-1.0, 0.5);
+    try std.testing.expectApproxEqAbs(-1.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(0.5, dist.h, 1e-10);
+}
+
+test "Epanechnikov: init rejects h=0" {
+    const result = Epanechnikov(f64).init(0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: init rejects h<0" {
+    const result = Epanechnikov(f64).init(0.0, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: init rejects h=NaN" {
+    const result = Epanechnikov(f64).init(0.0, std.math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: init rejects h=inf" {
+    const result = Epanechnikov(f64).init(0.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: init rejects mu=inf" {
+    const result = Epanechnikov(f64).init(math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: init rejects mu=-inf" {
+    const result = Epanechnikov(f64).init(-math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: init rejects mu=NaN" {
+    const result = Epanechnikov(f64).init(std.math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Epanechnikov: pdf at mode (mu=0, h=1) = 0.75" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(0.75, p, 1e-10);
+}
+
+test "Epanechnikov: pdf at x=0.5 (mu=0, h=1) = 0.5625" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    try std.testing.expectApproxEqAbs(0.5625, p, 1e-10);
+}
+
+test "Epanechnikov: pdf at boundary x=1 (mu=0, h=1) = 0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Epanechnikov: pdf at boundary x=-1 (mu=0, h=1) = 0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Epanechnikov: pdf outside support (x=1.5, mu=0, h=1) = 0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.5);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Epanechnikov: pdf outside support (x=-2, mu=0, h=1) = 0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p = dist.pdf(-2.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Epanechnikov: pdf is symmetric when mu=0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p_pos = dist.pdf(x);
+        const p_neg = dist.pdf(-x);
+        try std.testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+    }
+}
+
+test "Epanechnikov: pdf maximum at mode" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const p_mode = dist.pdf(0.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.1, 0.3, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(p <= p_mode + 1e-10);
+    }
+}
+
+test "Epanechnikov: pdf with h=2 at mode = 3/8 = 0.375" {
+    const dist = try Epanechnikov(f64).init(0.0, 2.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(0.375, p, 1e-10);
+}
+
+test "Epanechnikov: logpdf at mode (mu=0, h=1) ≈ log(0.75)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(0.75);
+    try std.testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "Epanechnikov: logpdf outside support = -inf" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.5);
+    try std.testing.expect(math.isNegativeInf(lp));
+}
+
+test "Epanechnikov: logpdf at boundary = -inf" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const lp_pos = dist.logpdf(1.0);
+    const lp_neg = dist.logpdf(-1.0);
+    try std.testing.expect(math.isNegativeInf(lp_pos));
+    try std.testing.expect(math.isNegativeInf(lp_neg));
+}
+
+test "Epanechnikov: logpdf consistency with pdf for interior points" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.3, 0.7 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        const lp = dist.logpdf(x);
+        const expected_lp = @log(p);
+        try std.testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "Epanechnikov: cdf at lower boundary = 0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try std.testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Epanechnikov: cdf at mode = 0.5" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "Epanechnikov: cdf at x=0.5 (mu=0, h=1) = 0.84375" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    try std.testing.expectApproxEqAbs(0.84375, c, 1e-10);
+}
+
+test "Epanechnikov: cdf at upper boundary = 1" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Epanechnikov: cdf below lower boundary = 0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const c = dist.cdf(-2.0);
+    try std.testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Epanechnikov: cdf above upper boundary = 1" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const c = dist.cdf(2.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Epanechnikov: cdf + sf = 1" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.5, 0.9 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try std.testing.expectApproxEqAbs(1.0, c + s, 1e-10);
+    }
+}
+
+test "Epanechnikov: sf at mode = 0.5" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "Epanechnikov: quantile at p=0 = mu - h" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(-1.0, q, 1e-10);
+}
+
+test "Epanechnikov: quantile at p=0.5 = mu" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "Epanechnikov: quantile at p=1 = mu + h" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "Epanechnikov: quantile rejects p<0" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Epanechnikov: quantile rejects p>1" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Epanechnikov: quantile rejects p=NaN" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const result = dist.quantile(std.math.nan(f64));
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Epanechnikov: quantile roundtrip cdf->quantile for p=0.3" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.3);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.3, c, 1e-8);
+}
+
+test "Epanechnikov: quantile roundtrip cdf->quantile for p=0.7" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.7);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.7, c, 1e-8);
+}
+
+test "Epanechnikov: mean = mu" {
+    const mu_vals = [_]f64{ 0.0, 2.0, -1.0, 5.5 };
+    for (mu_vals) |mu| {
+        const dist = try Epanechnikov(f64).init(mu, 1.0);
+        const m = dist.mean();
+        try std.testing.expectApproxEqAbs(mu, m, 1e-10);
+    }
+}
+
+test "Epanechnikov: mean independent of h" {
+    const dist1 = try Epanechnikov(f64).init(2.0, 1.0);
+    const dist2 = try Epanechnikov(f64).init(2.0, 3.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try std.testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "Epanechnikov: variance = h² / 5" {
+    const h_vals = [_]f64{ 1.0, 2.0, 0.5, 3.0 };
+    for (h_vals) |h| {
+        const dist = try Epanechnikov(f64).init(0.0, h);
+        const v = dist.variance();
+        const expected = (h * h) / 5.0;
+        try std.testing.expectApproxEqAbs(expected, v, 1e-10);
+    }
+}
+
+test "Epanechnikov: variance for h=0.5 = 0.05" {
+    const dist = try Epanechnikov(f64).init(0.0, 0.5);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(0.05, v, 1e-10);
+}
+
+test "Epanechnikov: variance for h=2 = 0.8" {
+    const dist = try Epanechnikov(f64).init(0.0, 2.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(0.8, v, 1e-10);
+}
+
+test "Epanechnikov: mode = mu" {
+    const dist = try Epanechnikov(f64).init(2.0, 3.0);
+    const m = dist.mode();
+    try std.testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "Epanechnikov: mode independent of h" {
+    const dist1 = try Epanechnikov(f64).init(-1.0, 1.0);
+    const dist2 = try Epanechnikov(f64).init(-1.0, 5.0);
+    const m1 = dist1.mode();
+    const m2 = dist2.mode();
+    try std.testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "Epanechnikov: entropy = log(h/3) + 5/3" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const ent = dist.entropy();
+    const expected = @log(1.0 / 3.0) + 5.0 / 3.0;
+    try std.testing.expectApproxEqAbs(expected, ent, 1e-10);
+}
+
+test "Epanechnikov: entropy for h=3 = log(1) + 5/3 = 5/3" {
+    const dist = try Epanechnikov(f64).init(2.0, 3.0);
+    const ent = dist.entropy();
+    const expected = @log(1.0) + 5.0 / 3.0;
+    try std.testing.expectApproxEqAbs(expected, ent, 1e-10);
+}
+
+test "Epanechnikov: entropy satisfies log property" {
+    const dist1 = try Epanechnikov(f64).init(0.0, 1.0);
+    const dist2 = try Epanechnikov(f64).init(0.0, 3.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    const diff = ent2 - ent1;
+    const expected_diff = @log(3.0);
+    try std.testing.expectApproxEqAbs(expected_diff, diff, 1e-10);
+}
+
+test "Epanechnikov: entropy independent of mu" {
+    const dist1 = try Epanechnikov(f64).init(0.0, 1.0);
+    const dist2 = try Epanechnikov(f64).init(5.0, 1.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try std.testing.expectApproxEqAbs(ent1, ent2, 1e-10);
+}
+
+test "Epanechnikov: sample returns finite values" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(math.isFinite(s));
+    }
+}
+
+test "Epanechnikov: sample within bounds [mu-h, mu+h]" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= -1.0 and s <= 1.0);
+    }
+}
+
+test "Epanechnikov: sample with mu=2, h=3 within bounds [-1, 5]" {
+    const dist = try Epanechnikov(f64).init(2.0, 3.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= -1.0 and s <= 5.0);
+    }
+}
+
+test "Epanechnikov: sample empirical mean converges to mu (N=5000)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try std.testing.expectApproxEqAbs(0.0, empirical_mean, 0.1);
+}
+
+test "Epanechnikov: validate accepts valid parameters (0, 1)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Epanechnikov: validate accepts various valid parameters" {
+    const mu_vals = [_]f64{ 0.0, 2.0, -1.0, 5.5 };
+    const h_vals = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (mu_vals) |mu| {
+        for (h_vals) |h| {
+            const dist = try Epanechnikov(f64).init(mu, h);
+            try dist.validate();
+        }
+    }
+}
+
+test "Epanechnikov: f32 support basic smoke test" {
+    const dist = try Epanechnikov(f32).init(0.0, 1.0);
+    try dist.validate();
+    const p = dist.pdf(0.0);
+    try std.testing.expect(p > 0.0);
+}
+
+test "Epanechnikov: f32 cdf and quantile" {
+    const dist = try Epanechnikov(f32).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), c, 1e-4);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), q, 1e-3);
+}
+
+test "Epanechnikov: f32 sample" {
+    const dist = try Epanechnikov(f32).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try std.testing.expect(math.isFinite(s));
+    try std.testing.expect(s >= -1.0 and s <= 1.0);
+}
+
+test "Epanechnikov: pdf symmetry when mu=0: pdf(x)=pdf(-x)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p_pos = dist.pdf(x);
+        const p_neg = dist.pdf(-x);
+        try std.testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+    }
+}
+
+test "Epanechnikov: cdf symmetry when mu=0: cdf(x) + cdf(-x) = 1" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.1, 0.5, 0.9 };
+    for (x_vals) |x| {
+        const c_pos = dist.cdf(x);
+        const c_neg = dist.cdf(-x);
+        try std.testing.expectApproxEqAbs(1.0, c_pos + c_neg, 1e-10);
+    }
+}
+
+test "Epanechnikov: pdf integrates to 1 over support [mu-h, mu+h] (200-pt Simpson)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const a = -1.0;
+    const b = 1.0;
+    const n = 200;
+    const h_step = (b - a) / @as(f64, @floatFromInt(n));
+    var sum_even: f64 = 0.0;
+    var sum_odd: f64 = 0.0;
+    var i: usize = 1;
+    while (i < n) : (i += 1) {
+        const x = a + @as(f64, @floatFromInt(i)) * h_step;
+        if (i % 2 == 0) {
+            sum_even += dist.pdf(x);
+        } else {
+            sum_odd += dist.pdf(x);
+        }
+    }
+    const f_a = dist.pdf(a);
+    const f_b = dist.pdf(b);
+    const integral = h_step / 3.0 * (f_a + 4.0 * sum_odd + 2.0 * sum_even + f_b);
+    try std.testing.expectApproxEqAbs(1.0, integral, 1e-4);
+}
+
+test "Epanechnikov: pdf maximum at mode (invariant)" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    const mode = dist.mode();
+    const p_mode = dist.pdf(mode);
+    const x_vals = [_]f64{ -0.99, -0.7, -0.3, 0.0, 0.3, 0.7, 0.99 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        if (x != mode) {
+            try std.testing.expect(p < p_mode + 1e-10);
+        }
+    }
+}
