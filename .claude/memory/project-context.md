@@ -1,3 +1,21 @@
+**Session 707 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
+
+✅ **ShiftedGompertz Distribution** — 108th total, 87th continuous — commit 26f327b
+- **Mode**: FEATURE MODE (counter: 707)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ShiftedGompertz(T) — Bass-Bemmaor marketing diffusion, survival analysis
+  * Parameters: b > 0 (hazard/scale), eta ≥ 0 (shift parameter); support = [0, ∞)
+  * Special case: eta=0 → Exponential(b)
+  * CDF: (1-e^{-bx})·e^{-eta·e^{-bx}}; PDF: b·e^{-bx}·e^{-eta·e^{-bx}}·(1+eta·(1-e^{-bx}))
+  * Mode closed-form: u* = ((eta+3)-sqrt(eta²+2eta+5))/(2eta); if u*≥1 → mode=0, else -log(u*)/b
+    - Threshold: eta=0.5 → u*=1.0 exactly (mode=0 for eta≤0.5)
+  * Quantile: bisection (100 iters, adaptive upper bound)
+  * Mean/Variance/Entropy: 200-pt Simpson on [0, 50/b]
+  * Key values: pdf(0;1,1)=e^{-1}≈0.3679; cdf(1;1,1)≈0.4375; mode(1,1)≈0.5343; mode(1,0.3)=0
+- **Total tests**: 5,336 (was 5,289; +47 new ShiftedGompertz tests)
+- **Distribution count**: 108 total (87 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Benini, MarcenkoPastur, or another distribution
+
 **Session 706 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Epanechnikov Distribution** — 107th total, 86th continuous — commit bbcc97d

@@ -595,3 +595,5 @@
 {"timestamp":"2026-06-22T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"STABILIZATION: add variance/entropy/logpdf/sf tests for DiscreteWeibull and BoundedPareto","project":"zuda"}
 {"timestamp": "2026-06-22T00:00:00Z", "action": "subagent", "agent_type": "test-writer", "task": "Write tests for Epanechnikov distribution (107th total, 86th continuous)", "project": "zuda"}
 {"timestamp":"2026-06-22T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Epanechnikov distribution (107th total, 86th continuous)","project":"zuda"}
+{"timestamp":"2026-06-22T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for ShiftedGompertz distribution","project":"zuda"}
+{"timestamp":"2026-06-22T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement ShiftedGompertz distribution (108th, 47 tests)","project":"zuda"}
