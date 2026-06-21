@@ -587,3 +587,5 @@
 {"timestamp":"2026-06-21T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for TruncatedExponential distribution (103rd, 82nd continuous)","project":"zuda"}
 {"timestamp":"2026-06-21T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for GeneralizedExponential distribution (104th)","project":"zuda"}
 {"timestamp":"2026-06-21T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedExponential distribution (104th)","project":"zuda"}
+{"timestamp":"2026-06-21T05:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for LogGamma distribution","project":"zuda"}
+{"timestamp":"2026-06-21T05:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement LogGamma distribution in distributions.zig","project":"zuda"}
