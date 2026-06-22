@@ -62691,3 +62691,681 @@ test "Benini: f32 type support" {
     const q = try dist.quantile(0.5);
     try std.testing.expect(q > 1.0);
 }
+
+// ============================================================================
+// Biweight Distribution (Quartic Kernel)
+// ============================================================================
+
+/// Biweight distribution — quartic KDE kernel on bounded support [μ-h, μ+h]
+///
+/// The biweight (also called quartic kernel) is a smooth, symmetric, bounded
+/// distribution used as a smoothing kernel in kernel density estimation (KDE).
+/// It offers higher-order smoothness than the Epanechnikov kernel.
+///
+/// Parameters:
+///   - mu: location parameter (center of support)
+///   - h:  half-bandwidth, h > 0 (support radius)
+///
+/// Support: [μ - h, μ + h]
+///
+/// PDF:  f(x) = (15/(16h)) · (1 - u²)²   where u = (x - μ)/h, |u| ≤ 1
+/// CDF:  F(x) = 1/2 + (15/16) · (u - (2/3)u³ + (1/5)u⁵)
+/// Mean: μ
+/// Var:  h²/7
+/// Mode: μ
+/// Entropy: ln(h/15) + 9/2   (exact closed form)
+///
+/// Time: O(1) for pdf/cdf/mean/variance/entropy; O(log(1/ε)) for quantile
+pub fn Biweight(comptime T: type) type {
+    return struct {
+        mu: T,
+        h: T,
+
+        const Self = @This();
+
+        /// Create a Biweight distribution with given location and half-bandwidth.
+        ///
+        /// Errors: error.InvalidParameter if h ≤ 0 or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, h: T) DistributionError!Self {
+            if (h <= 0.0 or !math.isFinite(h) or !math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .h = h };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (15 / (16h)) · (1 - u²)²   where u = (x - μ)/h
+        /// Returns 0 outside [μ-h, μ+h].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (@abs(u) > 1.0) return 0.0;
+            const t = 1.0 - u * u;
+            return (15.0 / (16.0 * self.h)) * t * t;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(15/(16h)) + 2·log(1 - u²)   where u = (x - μ)/h
+        /// Returns -∞ if x is outside (μ-h, μ+h) or at the boundary.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (@abs(u) >= 1.0) return -math.inf(T);
+            const t = 1.0 - u * u;
+            if (t <= 0.0) return -math.inf(T);
+            return @log(15.0 / (16.0 * self.h)) + 2.0 * @log(t);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1/2 + (15/16)·(u - (2/3)u³ + (1/5)u⁵)   for u = (x-μ)/h ∈ [-1,1]
+        /// Returns 0 for x < μ-h, 1 for x > μ+h.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (u <= -1.0) return 0.0;
+            if (u >= 1.0) return 1.0;
+            const usq = u * u;
+            const ucb = usq * u;
+            const uq5 = ucb * usq;
+            return 0.5 + (15.0 / 16.0) * (u - (2.0 / 3.0) * ucb + (1.0 / 5.0) * uq5);
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection on the CDF polynomial (64 iterations, ~1e-18 precision).
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or p is NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.mu - self.h;
+            if (p == 1.0) return self.mu + self.h;
+            var lo: T = self.mu - self.h;
+            var hi: T = self.mu + self.h;
+            var i: usize = 0;
+            while (i < 64) : (i += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Generate a random sample using the inverse CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            return self.quantile(u_safe) catch unreachable;
+        }
+
+        /// Mean: μ (the location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance: h² / 7
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return (self.h * self.h) / 7.0;
+        }
+
+        /// Mode: μ (the location parameter)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Shannon differential entropy: ln(h/15) + 9/2 nats
+        ///
+        /// Derived analytically: H = -∫f·ln(f)dx = ln(16h/15) - (32ln2-36)/8
+        ///                                         = ln(h/15) + 9/2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.h / 15.0) + 4.5;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.h <= 0.0 or !math.isFinite(self.h) or !math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// BIWEIGHT DISTRIBUTION TESTS
+// ============================================================================
+
+test "Biweight: init with valid parameters (mu=0, h=1)" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(1.0, dist.h, 1e-10);
+}
+
+test "Biweight: init with valid parameters (mu=2, h=3)" {
+    const dist = try Biweight(f64).init(2.0, 3.0);
+    try std.testing.expectApproxEqAbs(2.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(3.0, dist.h, 1e-10);
+}
+
+test "Biweight: init with valid parameters (mu=-1, h=0.5)" {
+    const dist = try Biweight(f64).init(-1.0, 0.5);
+    try std.testing.expectApproxEqAbs(-1.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(0.5, dist.h, 1e-10);
+}
+
+test "Biweight: init rejects h=0" {
+    const result = Biweight(f64).init(0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: init rejects h<0" {
+    const result = Biweight(f64).init(0.0, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: init rejects h=NaN" {
+    const result = Biweight(f64).init(0.0, std.math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: init rejects h=inf" {
+    const result = Biweight(f64).init(0.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: init rejects mu=inf" {
+    const result = Biweight(f64).init(math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: init rejects mu=-inf" {
+    const result = Biweight(f64).init(-math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: init rejects mu=NaN" {
+    const result = Biweight(f64).init(std.math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Biweight: pdf at mode (mu=0, h=1) = 15/16 = 0.9375" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(15.0 / 16.0, p, 1e-10);
+}
+
+test "Biweight: pdf at x=0.5 (mu=0, h=1)" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    // u=0.5: (15/16)*(1-0.25)^2 = (15/16)*0.5625
+    const expected = (15.0 / 16.0) * 0.5625;
+    try std.testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Biweight: pdf at boundary x=1 (mu=0, h=1) = 0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Biweight: pdf at boundary x=-1 (mu=0, h=1) = 0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Biweight: pdf outside support (x=1.5, mu=0, h=1) = 0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.5);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Biweight: pdf outside support (x=-2, mu=0, h=1) = 0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(-2.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Biweight: pdf is symmetric when mu=0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p_pos = dist.pdf(x);
+        const p_neg = dist.pdf(-x);
+        try std.testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+    }
+}
+
+test "Biweight: pdf maximum at mode" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p_mode = dist.pdf(0.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.1, 0.3, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(p <= p_mode + 1e-10);
+    }
+}
+
+test "Biweight: pdf with h=2 at mode = 15/32 = 0.46875" {
+    const dist = try Biweight(f64).init(0.0, 2.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(15.0 / 32.0, p, 1e-10);
+}
+
+test "Biweight: pdf is non-negative everywhere" {
+    const dist = try Biweight(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ -10.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(p >= 0.0);
+    }
+}
+
+test "Biweight: logpdf at mode (mu=0, h=1) ≈ log(15/16)" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(15.0 / 16.0);
+    try std.testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "Biweight: logpdf outside support = -inf" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.5);
+    try std.testing.expect(math.isNegativeInf(lp));
+}
+
+test "Biweight: logpdf at boundary = -inf" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const lp_pos = dist.logpdf(1.0);
+    const lp_neg = dist.logpdf(-1.0);
+    try std.testing.expect(math.isNegativeInf(lp_pos));
+    try std.testing.expect(math.isNegativeInf(lp_neg));
+}
+
+test "Biweight: logpdf consistency with pdf for interior points" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.3, 0.7 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        const lp = dist.logpdf(x);
+        const expected_lp = @log(p);
+        try std.testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "Biweight: cdf at lower boundary = 0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try std.testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Biweight: cdf at mode = 0.5" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "Biweight: cdf at x=0.5 (mu=0, h=1) ≈ 0.896484" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    // u=0.5: 0.5 + (15/16)*(0.5 - (2/3)*0.125 + (1/5)*0.03125)
+    // = 0.5 + (15/16)*0.422917 = 0.5 + 0.396484 = 0.896484
+    try std.testing.expectApproxEqAbs(0.896484375, c, 1e-6);
+}
+
+test "Biweight: cdf at upper boundary = 1" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Biweight: cdf below lower boundary = 0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(-2.0);
+    try std.testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Biweight: cdf above upper boundary = 1" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(2.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Biweight: cdf + sf = 1" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.5, 0.9 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try std.testing.expectApproxEqAbs(1.0, c + s, 1e-10);
+    }
+}
+
+test "Biweight: cdf is monotone increasing" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.99, -0.5, -0.1, 0.0, 0.1, 0.5, 0.99 };
+    for (0..x_vals.len - 1) |i| {
+        const c1 = dist.cdf(x_vals[i]);
+        const c2 = dist.cdf(x_vals[i + 1]);
+        try std.testing.expect(c1 <= c2 + 1e-10);
+    }
+}
+
+test "Biweight: sf at mode = 0.5" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "Biweight: quantile at p=0 = mu - h" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(-1.0, q, 1e-10);
+}
+
+test "Biweight: quantile at p=0.5 = mu" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "Biweight: quantile at p=1 = mu + h" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "Biweight: quantile rejects p<0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Biweight: quantile rejects p>1" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Biweight: quantile rejects p=NaN" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const result = dist.quantile(std.math.nan(f64));
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Biweight: quantile roundtrip cdf->quantile for p=0.25" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.25);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.25, c, 1e-9);
+}
+
+test "Biweight: quantile roundtrip cdf->quantile for p=0.75" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.75);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.75, c, 1e-9);
+}
+
+test "Biweight: quantile roundtrip cdf->quantile for p=0.1" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.1);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.1, c, 1e-9);
+}
+
+test "Biweight: quantile roundtrip cdf->quantile for p=0.9" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.9);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.9, c, 1e-9);
+}
+
+test "Biweight: quantile is monotone increasing" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const p_vals = [_]f64{ 0.01, 0.25, 0.5, 0.75, 0.99 };
+    for (0..p_vals.len - 1) |i| {
+        const q1 = try dist.quantile(p_vals[i]);
+        const q2 = try dist.quantile(p_vals[i + 1]);
+        try std.testing.expect(q1 <= q2 + 1e-10);
+    }
+}
+
+test "Biweight: mean = mu" {
+    const mu_vals = [_]f64{ 0.0, 2.0, -1.0, 5.5 };
+    for (mu_vals) |mu| {
+        const dist = try Biweight(f64).init(mu, 1.0);
+        const m = dist.mean();
+        try std.testing.expectApproxEqAbs(mu, m, 1e-10);
+    }
+}
+
+test "Biweight: mean independent of h" {
+    const dist1 = try Biweight(f64).init(2.0, 1.0);
+    const dist2 = try Biweight(f64).init(2.0, 3.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try std.testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "Biweight: variance = h² / 7" {
+    const h_vals = [_]f64{ 1.0, 2.0, 0.5, 3.0 };
+    for (h_vals) |h| {
+        const dist = try Biweight(f64).init(0.0, h);
+        const v = dist.variance();
+        const expected = (h * h) / 7.0;
+        try std.testing.expectApproxEqAbs(expected, v, 1e-10);
+    }
+}
+
+test "Biweight: variance for h=1 = 1/7 ≈ 0.142857" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(1.0 / 7.0, v, 1e-10);
+}
+
+test "Biweight: variance for h=3 = 9/7 ≈ 1.285714" {
+    const dist = try Biweight(f64).init(0.0, 3.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(9.0 / 7.0, v, 1e-10);
+}
+
+test "Biweight: mode = mu" {
+    const dist = try Biweight(f64).init(2.0, 3.0);
+    const m = dist.mode();
+    try std.testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "Biweight: mode independent of h" {
+    const dist1 = try Biweight(f64).init(-1.0, 1.0);
+    const dist2 = try Biweight(f64).init(-1.0, 5.0);
+    const m1 = dist1.mode();
+    const m2 = dist2.mode();
+    try std.testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "Biweight: entropy = log(h/15) + 9/2 for h=1" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    const ent = dist.entropy();
+    const expected = @log(1.0 / 15.0) + 4.5;
+    try std.testing.expectApproxEqAbs(expected, ent, 1e-10);
+}
+
+test "Biweight: entropy for h=2 = log(2/15) + 9/2" {
+    const dist = try Biweight(f64).init(0.0, 2.0);
+    const ent = dist.entropy();
+    const expected = @log(2.0 / 15.0) + 4.5;
+    try std.testing.expectApproxEqAbs(expected, ent, 1e-10);
+}
+
+test "Biweight: entropy increases with h" {
+    const dist1 = try Biweight(f64).init(0.0, 1.0);
+    const dist2 = try Biweight(f64).init(0.0, 3.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try std.testing.expect(ent2 > ent1);
+}
+
+test "Biweight: entropy satisfies log property" {
+    const dist1 = try Biweight(f64).init(0.0, 1.0);
+    const dist2 = try Biweight(f64).init(0.0, 3.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    const diff = ent2 - ent1;
+    const expected_diff = @log(3.0);
+    try std.testing.expectApproxEqAbs(expected_diff, diff, 1e-10);
+}
+
+test "Biweight: entropy independent of mu" {
+    const dist1 = try Biweight(f64).init(0.0, 1.0);
+    const dist2 = try Biweight(f64).init(5.0, 1.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try std.testing.expectApproxEqAbs(ent1, ent2, 1e-10);
+}
+
+test "Biweight: sample returns finite values" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(math.isFinite(s));
+    }
+}
+
+test "Biweight: sample within bounds [mu-h, mu+h]" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= -1.0 - 1e-10 and s <= 1.0 + 1e-10);
+    }
+}
+
+test "Biweight: sample mean converges to mu" {
+    const allocator = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Biweight(f64).init(2.5, 1.0);
+
+    var sum: f64 = 0.0;
+    const n = 8000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try std.testing.expectApproxEqAbs(2.5, sample_mean, 0.05);
+    _ = allocator;
+}
+
+test "Biweight: sample variance converges to h²/7" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Biweight(f64).init(0.0, 1.0);
+
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 8000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    const var_sample = (sum_sq / @as(f64, @floatFromInt(n))) - (mean * mean);
+    const expected_var = 1.0 / 7.0;
+    try std.testing.expectApproxEqAbs(expected_var, var_sample, 0.02);
+}
+
+test "Biweight: validate passes for valid params" {
+    const dist = try Biweight(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "Biweight: validate passes for negative mu" {
+    const dist = try Biweight(f64).init(-5.0, 2.0);
+    try dist.validate();
+}
+
+test "Biweight: validate rejects h=0" {
+    var dist = Biweight(f64){ .mu = 0.0, .h = 0.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Biweight: validate rejects h<0" {
+    var dist = Biweight(f64){ .mu = 0.0, .h = -1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Biweight: validate rejects h=NaN" {
+    var dist = Biweight(f64){ .mu = 0.0, .h = std.math.nan(f64) };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Biweight: validate rejects mu=inf" {
+    var dist = Biweight(f64){ .mu = math.inf(f64), .h = 1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Biweight: validate rejects mu=NaN" {
+    var dist = Biweight(f64){ .mu = std.math.nan(f64), .h = 1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Biweight: pdf integration over support ≈ 1.0" {
+    const dist = try Biweight(f64).init(0.0, 1.0);
+
+    // Use Riemann sum with 1000 points
+    const n_points = 1000;
+    const dx = 2.0 / @as(f64, @floatFromInt(n_points));
+    var sum: f64 = 0.0;
+    var i: i64 = 0;
+    while (i < n_points) : (i += 1) {
+        const x = -1.0 + @as(f64, @floatFromInt(i)) * dx;
+        sum += dist.pdf(x) * dx;
+    }
+    try std.testing.expectApproxEqAbs(1.0, sum, 0.001);
+}
+
+test "Biweight: f32 type support" {
+    const dist = try Biweight(f32).init(0.0, 1.0);
+    try std.testing.expect(math.isFinite(dist.pdf(0.0)));
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-5);
+}
