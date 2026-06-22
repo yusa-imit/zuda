@@ -62086,3 +62086,608 @@ test "ShiftedGompertz: f32 type support" {
     const p = dist.pdf(0.5);
     try std.testing.expect(p > 0.0);
 }
+
+// ============================================================================
+// BENINI DISTRIBUTION
+// ============================================================================
+
+/// Benini distribution with three parameters
+///
+/// Probability density function (PDF):
+///   f(x) = (α + 2β·ln(x/σ)) / x · exp(-α·ln(x/σ) - β·ln²(x/σ))  for x ≥ σ
+///   f(x) = 0  for x < σ
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = 1 - exp(-α·ln(x/σ) - β·ln²(x/σ))  for x ≥ σ
+///   F(x) = 0  for x < σ
+///
+/// Parameters:
+///   - alpha (α): Shape parameter (α ≥ 0, isFinite)
+///   - beta (β): Scale parameter (β > 0, isFinite)
+///   - sigma (σ): Lower bound (σ > 0, isFinite)
+///
+/// Support: [σ, ∞)
+///
+/// Time: O(1) for pdf/cdf/logpdf/mode/quantile/sample; O(200) for mean/variance/entropy
+pub fn Benini(comptime T: type) type {
+    return struct {
+        alpha: T,
+        beta: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a Benini distribution
+        ///
+        /// Parameters: alpha (α ≥ 0), beta (β > 0), sigma (σ > 0)
+        ///
+        /// Errors: error.InvalidParameter if alpha < 0, beta ≤ 0, sigma ≤ 0, or parameters are non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta: T, sigma: T) DistributionError!Self {
+            if (!(alpha >= 0.0) or !math.isFinite(alpha) or !(beta > 0.0) or !math.isFinite(beta) or !(sigma > 0.0) or !math.isFinite(sigma)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .alpha = alpha, .beta = beta, .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// Returns 0 if x < sigma; otherwise computes (α + 2β·y)/x · exp(-α·y - β·y²) where y = ln(x/σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.sigma) return 0.0;
+            const y = @log(x / self.sigma);
+            const inner = self.alpha + 2.0 * self.beta * y;
+            if (inner <= 0.0) return 0.0;
+            return (inner / x) * @exp(-self.alpha * y - self.beta * y * y);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Returns -∞ if x < sigma or inner ≤ 0; otherwise ln(α + 2β·y) - ln(x) - α·y - β·y²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.sigma) return -math.inf(T);
+            const y = @log(x / self.sigma);
+            const inner = self.alpha + 2.0 * self.beta * y;
+            if (inner <= 0.0) return -math.inf(T);
+            return @log(inner) - @log(x) - self.alpha * y - self.beta * y * y;
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// Returns 0 if x < sigma; otherwise 1 - exp(-α·y - β·y²) where y = ln(x/σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.sigma) return 0.0;
+            const y = @log(x / self.sigma);
+            return 1.0 - @exp(-self.alpha * y - self.beta * y * y);
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses exact closed form: σ·exp((-α + √(α² - 4β·ln(1-p))) / (2β))
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.sigma;
+            if (p == 1.0) return math.inf(T);
+
+            const log1mp = @log(1.0 - p); // ln(1-p)
+            const discriminant = self.alpha * self.alpha - 4.0 * self.beta * log1mp;
+            const y = (-self.alpha + @sqrt(discriminant)) / (2.0 * self.beta);
+            return self.sigma * @exp(y);
+        }
+
+        /// Generate a random sample from this distribution using inverse CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const u_safe = @max(@as(T, 1e-15), @min(@as(T, 1.0) - @as(T, 1e-15), u));
+            return self.quantile(u_safe) catch unreachable;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Computed as σ·exp(y*) where y* = (√(1 + 8β) - 1 - 2α) / (4β)
+        /// If y* ≤ 0, mode = σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const discriminant = 1.0 + 8.0 * self.beta;
+            const y_star = (@sqrt(discriminant) - 1.0 - 2.0 * self.alpha) / (4.0 * self.beta);
+            if (y_star <= 0.0) return self.sigma;
+            return self.sigma * @exp(y_star);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// Computed numerically via Simpson's rule integration in y-space:
+        /// E[X] = σ · ∫_0^{y_max} (α + 2β·y) · exp((1-α)·y - β·y²) dy
+        ///
+        /// Time: O(n) where n is number of integration points (200) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const y_max = @sqrt(40.0 / self.beta) + @abs(1.0 - self.alpha) / self.beta + 5.0;
+            const n: usize = 200;
+            const h = y_max / @as(T, @floatFromInt(n));
+
+            var sum_odd: T = 0.0;
+            var sum_even: T = 0.0;
+
+            for (1..n) |i| {
+                const y = h * @as(T, @floatFromInt(i));
+                const integrand = (self.alpha + 2.0 * self.beta * y) * @exp((1.0 - self.alpha) * y - self.beta * y * y);
+                if (i % 2 == 1) {
+                    sum_odd += integrand;
+                } else {
+                    sum_even += integrand;
+                }
+            }
+
+            const f_0 = self.alpha * @exp(0.0);
+            const f_max = (self.alpha + 2.0 * self.beta * y_max) * @exp((1.0 - self.alpha) * y_max - self.beta * y_max * y_max);
+            const integral = (h / 3.0) * (f_0 + 4.0 * sum_odd + 2.0 * sum_even + f_max);
+            return self.sigma * integral;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Computed numerically: Var = E[X²] - mean²
+        /// E[X²] = σ² · ∫_0^{y_max} (α + 2β·y) · exp((2-α)·y - β·y²) dy
+        ///
+        /// Time: O(n) where n is number of integration points (200) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            const y_max = @sqrt(40.0 / self.beta) + @abs(2.0 - self.alpha) / self.beta + 5.0;
+            const n: usize = 200;
+            const h = y_max / @as(T, @floatFromInt(n));
+
+            var sum_odd: T = 0.0;
+            var sum_even: T = 0.0;
+
+            for (1..n) |i| {
+                const y = h * @as(T, @floatFromInt(i));
+                const integrand = (self.alpha + 2.0 * self.beta * y) * @exp((2.0 - self.alpha) * y - self.beta * y * y);
+                if (i % 2 == 1) {
+                    sum_odd += integrand;
+                } else {
+                    sum_even += integrand;
+                }
+            }
+
+            const f_0 = self.alpha * @exp(0.0);
+            const f_max = (self.alpha + 2.0 * self.beta * y_max) * @exp((2.0 - self.alpha) * y_max - self.beta * y_max * y_max);
+            const integral = (h / 3.0) * (f_0 + 4.0 * sum_odd + 2.0 * sum_even + f_max);
+            const e_x2 = self.sigma * self.sigma * integral;
+            return e_x2 - m * m;
+        }
+
+        /// Shannon differential entropy
+        ///
+        /// Computed numerically via Simpson's rule integration of -f(x)·ln(f(x))
+        /// over [σ, σ·exp(8/√β)].
+        ///
+        /// Time: O(n) where n is number of integration points (200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const x_max = self.sigma * @exp(8.0 / @sqrt(self.beta));
+            const n: usize = 200;
+            const h = (x_max - self.sigma) / @as(T, @floatFromInt(n));
+
+            var sum_odd: T = 0.0;
+            var sum_even: T = 0.0;
+
+            for (1..n) |i| {
+                const x = self.sigma + h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+                if (f > 0.0) {
+                    const integrand = -f * @log(f);
+                    if (i % 2 == 1) {
+                        sum_odd += integrand;
+                    } else {
+                        sum_even += integrand;
+                    }
+                }
+            }
+
+            const f_left = self.pdf(self.sigma);
+            const f_right = self.pdf(x_max);
+            var integrand_left: T = 0.0;
+            var integrand_right: T = 0.0;
+
+            if (f_left > 0.0) integrand_left = -f_left * @log(f_left);
+            if (f_right > 0.0) integrand_right = -f_right * @log(f_right);
+
+            const integral = (h / 3.0) * (integrand_left + 4.0 * sum_odd + 2.0 * sum_even + integrand_right);
+            return integral;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha >= 0.0 and math.isFinite(self.alpha)) or !(self.beta > 0.0 and math.isFinite(self.beta)) or !(self.sigma > 0.0 and math.isFinite(self.sigma))) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// BENINI DISTRIBUTION TESTS
+// ============================================================================
+
+test "Benini: init with valid parameters (alpha=1, beta=1, sigma=1)" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.alpha, 1e-10);
+}
+
+test "Benini: init with alpha=0 is valid" {
+    _ = try Benini(f64).init(0.0, 1.0, 1.0);
+}
+
+test "Benini: init with alpha=2, beta=0.5, sigma=3" {
+    const dist = try Benini(f64).init(2.0, 0.5, 3.0);
+    try std.testing.expectApproxEqAbs(2.0, dist.alpha, 1e-10);
+}
+
+test "Benini: init fails when beta = 0" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(1.0, 0.0, 1.0));
+}
+
+test "Benini: init fails when beta < 0" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(1.0, -1.0, 1.0));
+}
+
+test "Benini: init fails when sigma = 0" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(1.0, 1.0, 0.0));
+}
+
+test "Benini: init fails when sigma < 0" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(1.0, 1.0, -1.0));
+}
+
+test "Benini: init fails when alpha < 0" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(-0.5, 1.0, 1.0));
+}
+
+test "Benini: init fails when alpha is NaN" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "Benini: init fails when beta is Inf" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(1.0, math.inf(f64), 1.0));
+}
+
+test "Benini: init fails when sigma is NaN" {
+    try std.testing.expectError(error.InvalidParameter, Benini(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+test "Benini: pdf at sigma is alpha/sigma for alpha>0" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.pdf(1.0), 1e-10);
+}
+
+test "Benini: pdf at sigma is 0 for alpha=0" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(1.0), 1e-10);
+}
+
+test "Benini: pdf at x=e (alpha=1, beta=1, sigma=1) ≈ 0.14936" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const expected = 3.0 * @exp(-3.0);
+    try std.testing.expectApproxEqAbs(expected, dist.pdf(math.e), 1e-10);
+}
+
+test "Benini: pdf at x=e (alpha=0, beta=1, sigma=1) ≈ 0.27067" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    const expected = 2.0 / (math.e * math.e);
+    try std.testing.expectApproxEqAbs(expected, dist.pdf(math.e), 1e-10);
+}
+
+test "Benini: pdf is 0 for x < sigma" {
+    const dist = try Benini(f64).init(1.0, 1.0, 2.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(1.0), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(0.0), 1e-10);
+}
+
+test "Benini: pdf is non-negative everywhere" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const xs = [_]f64{ 1.0, 1.5, 2.0, 5.0, 10.0 };
+    for (xs) |x| {
+        try std.testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "Benini: pdf at boundary (alpha=2, beta=1, sigma=2) = 1.0" {
+    const dist = try Benini(f64).init(2.0, 1.0, 2.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.pdf(2.0), 1e-10);
+}
+
+test "Benini: logpdf at sigma = ln(alpha/sigma) for alpha>0" {
+    const dist = try Benini(f64).init(2.0, 1.0, 3.0);
+    const expected = @log(2.0 / 3.0);
+    try std.testing.expectApproxEqAbs(expected, dist.logpdf(3.0), 1e-10);
+}
+
+test "Benini: logpdf is -inf for x < sigma" {
+    const dist = try Benini(f64).init(1.0, 1.0, 2.0);
+    try std.testing.expect(math.isInf(dist.logpdf(1.0)));
+    try std.testing.expect(dist.logpdf(1.0) < 0);
+}
+
+test "Benini: logpdf = log(pdf) at interior" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const x = 2.5;
+    try std.testing.expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+}
+
+test "Benini: logpdf is -inf for alpha=0 at x=sigma" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(math.isInf(dist.logpdf(1.0)));
+}
+
+test "Benini: cdf at sigma = 0" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(1.0), 1e-10);
+}
+
+test "Benini: cdf(e) = 1 - e^{-2} for (alpha=1, beta=1, sigma=1)" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const expected = 1.0 - @exp(-2.0);
+    try std.testing.expectApproxEqAbs(expected, dist.cdf(math.e), 1e-10);
+}
+
+test "Benini: cdf(e) = 1 - e^{-1} for (alpha=0, beta=1, sigma=1)" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    const expected = 1.0 - @exp(-1.0);
+    try std.testing.expectApproxEqAbs(expected, dist.cdf(math.e), 1e-10);
+}
+
+test "Benini: cdf is 0 for x < sigma" {
+    const dist = try Benini(f64).init(1.0, 1.0, 2.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(1.0), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(0.5), 1e-10);
+}
+
+test "Benini: cdf is monotone increasing" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.cdf(1.5) < dist.cdf(2.0));
+    try std.testing.expect(dist.cdf(2.0) < dist.cdf(5.0));
+}
+
+test "Benini: cdf approaches 1 for large x" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.cdf(1000.0), 1e-6);
+}
+
+test "Benini: sf + cdf = 1" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const x = 3.0;
+    try std.testing.expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-10);
+}
+
+test "Benini: quantile(0) = sigma" {
+    const dist = try Benini(f64).init(1.0, 1.0, 2.5);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(2.5, q, 1e-10);
+}
+
+test "Benini: quantile(1) = +inf" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expect(math.isInf(q));
+}
+
+test "Benini: quantile error for p < 0" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Benini: quantile error for p > 1" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Benini: quantile error for NaN" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Benini: quantile(0.5) ≈ 1.6020 for (alpha=1, beta=1, sigma=1)" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(1.6020, q, 1e-3);
+}
+
+test "Benini: quantile roundtrip CDF(Q(p)) ≈ p for p=0.25" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.25);
+    try std.testing.expectApproxEqAbs(0.25, dist.cdf(q), 1e-10);
+}
+
+test "Benini: quantile roundtrip CDF(Q(p)) ≈ p for p=0.75" {
+    const dist = try Benini(f64).init(1.0, 2.0, 1.0);
+    const q = try dist.quantile(0.75);
+    try std.testing.expectApproxEqAbs(0.75, dist.cdf(q), 1e-10);
+}
+
+test "Benini: quantile roundtrip CDF(Q(p)) ≈ p for p=0.9" {
+    const dist = try Benini(f64).init(0.5, 1.5, 2.0);
+    const q = try dist.quantile(0.9);
+    try std.testing.expectApproxEqAbs(0.9, dist.cdf(q), 1e-10);
+}
+
+test "Benini: mode is sigma for boundary case (alpha=1, beta=1, sigma=1)" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.mode(), 1e-10);
+}
+
+test "Benini: mode > sigma for interior case (alpha=0.5, beta=1, sigma=1)" {
+    const dist = try Benini(f64).init(0.5, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(@exp(0.25), dist.mode(), 1e-5);
+}
+
+test "Benini: mode for alpha=0, beta=1, sigma=1 ≈ 1.6487" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(@exp(0.5), dist.mode(), 1e-5);
+}
+
+test "Benini: mode is sigma for large alpha (alpha=2, beta=1, sigma=2)" {
+    const dist = try Benini(f64).init(2.0, 1.0, 2.0);
+    try std.testing.expectApproxEqAbs(2.0, dist.mode(), 1e-10);
+}
+
+test "Benini: mode is >= sigma always" {
+    const params = [_][3]f64{ .{1.0, 1.0, 1.0}, .{0.5, 2.0, 1.5}, .{0.0, 0.5, 3.0} };
+    for (params) |p| {
+        const dist = try Benini(f64).init(p[0], p[1], p[2]);
+        try std.testing.expect(dist.mode() >= dist.sigma);
+    }
+}
+
+test "Benini: mean is finite and > sigma" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mean();
+    try std.testing.expect(math.isFinite(m));
+    try std.testing.expect(m > 1.0);
+}
+
+test "Benini: mean is positive for alpha=0" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.mean() > 0.0);
+}
+
+test "Benini: mean scales with sigma" {
+    const dist1 = try Benini(f64).init(1.0, 1.0, 1.0);
+    const dist2 = try Benini(f64).init(1.0, 1.0, 2.0);
+    try std.testing.expectApproxEqAbs(2.0 * dist1.mean(), dist2.mean(), 0.01);
+}
+
+test "Benini: variance is positive and finite" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const v = dist.variance();
+    try std.testing.expect(math.isFinite(v));
+    try std.testing.expect(v > 0.0);
+}
+
+test "Benini: variance scales quadratically with sigma" {
+    const dist1 = try Benini(f64).init(1.0, 1.0, 1.0);
+    const dist2 = try Benini(f64).init(1.0, 1.0, 3.0);
+    try std.testing.expectApproxEqAbs(9.0 * dist1.variance(), dist2.variance(), 0.1);
+}
+
+test "Benini: entropy is finite" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "Benini: entropy increases with sigma" {
+    const dist1 = try Benini(f64).init(1.0, 1.0, 1.0);
+    const dist2 = try Benini(f64).init(1.0, 1.0, 2.0);
+    try std.testing.expect(dist2.entropy() > dist1.entropy());
+}
+
+test "Benini: sample is >= sigma" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Benini(f64).init(1.0, 1.0, 2.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= 2.0);
+    }
+}
+
+test "Benini: sample is finite" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    for (0..100) |_| {
+        try std.testing.expect(math.isFinite(dist.sample(rng)));
+    }
+}
+
+test "Benini: sample mean convergence (alpha=1, beta=1, sigma=1)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    const theoretical_mean = dist.mean();
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical = sum / 5000.0;
+    try std.testing.expectApproxEqAbs(theoretical_mean, empirical, theoretical_mean * 0.10);
+}
+
+test "Benini: sample mean convergence (alpha=0, beta=2, sigma=1)" {
+    var prng = std.Random.DefaultPrng.init(99);
+    const rng = prng.random();
+    const dist = try Benini(f64).init(0.0, 2.0, 1.0);
+    const theoretical_mean = dist.mean();
+    var sum: f64 = 0.0;
+    for (0..5000) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical = sum / 5000.0;
+    try std.testing.expectApproxEqAbs(theoretical_mean, empirical, theoretical_mean * 0.10);
+}
+
+test "Benini: validate passes for valid params" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Benini: validate passes for alpha=0" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Benini: validate rejects beta=0" {
+    var dist = Benini(f64){ .alpha = 1.0, .beta = 0.0, .sigma = 1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Benini: validate rejects sigma=0" {
+    var dist = Benini(f64){ .alpha = 1.0, .beta = 1.0, .sigma = 0.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Benini: pdf is valid over support" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    // PDF should be positive, finite, and decreasing at interior points
+    const f_sigma = dist.pdf(1.0);
+    const f_mid = dist.pdf(5.0);
+    const f_large = dist.pdf(100.0);
+    try std.testing.expect(f_sigma >= 0.0 and math.isFinite(f_sigma));
+    try std.testing.expect(f_mid >= 0.0 and math.isFinite(f_mid));
+    try std.testing.expect(f_large >= 0.0 and math.isFinite(f_large));
+    try std.testing.expect(f_sigma >= f_mid); // Generally decreasing
+}
+
+test "Benini: cdf(sigma*exp(10)) > 0.99" {
+    const dist = try Benini(f64).init(0.0, 1.0, 1.0);
+    const x_far = dist.sigma * @exp(10.0);
+    try std.testing.expect(dist.cdf(x_far) > 0.99);
+}
+
+test "Benini: f32 type support" {
+    const dist = try Benini(f32).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.pdf(1.5) > 0.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expect(q > 1.0);
+}
