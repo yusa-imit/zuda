@@ -1,3 +1,29 @@
+**Session 709 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
+
+✅ **Biweight Distribution** — 110th total, 89th continuous — commit 29fac42
+- **Mode**: FEATURE MODE (counter: 709)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Biweight(T) — quartic KDE kernel on bounded support [μ-h, μ+h]
+  * Parameters: μ (location), h > 0 (half-bandwidth)
+  * Support: [μ-h, μ+h]; bounded, symmetric distribution
+  * PDF: (15/(16h))·(1-u²)² where u=(x-μ)/h; degree-4 polynomial in u
+    - Maximum at center: pdf(μ)=15/(16h)
+  * CDF: 0.5 + (15/16)·(u - (2/3)u³ + (1/5)u⁵) — exact degree-5 polynomial, O(1)
+    - F(μ±h)=0/1 (exact); F(μ)=0.5 (odd polynomial symmetry)
+    - F(μ+h/2) = 0.5 + (15/16)·0.422917 ≈ 0.896484
+  * Quantile: 64-iteration bisection on CDF (~1e-18 precision) — no closed form
+  * Mean: μ (exact); Variance: h²/7 (exact)
+  * Mode: μ; logpdf returns -∞ at boundaries u=±1 and outside support
+  * Entropy: ln(h/15) + 9/2 nats — exact closed form
+    - Derived: H = ln(16h/15) - (15/8)·(32ln2-36)/15 = ln(h/15) + 9/2
+    - h=1: -ln(15)+4.5 ≈ 1.7919 nats; h=2: ln(2/15)+4.5 ≈ 2.4850 nats
+  * Sample: inverse CDF (quantile) with u clamped to [1e-14, 1-1e-14]
+  * Zig gotcha: `u2`, `u3`, `u5` shadow Zig integer primitives — use `usq`, `ucb`, `uq5`
+  * Significance: quartic kernel with higher smoothness than Epanechnikov; commonly used in KDE
+- **Total tests**: 5,466 (was 5,397; +69 new Biweight tests)
+- **Distribution count**: 110 total (89 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Marchenko-Pastur, Triweight kernel, or another distribution
+
 **Session 708 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Benini Distribution** — 109th total, 88th continuous — commits fefbd22, 3022de3
