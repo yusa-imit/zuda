@@ -1,3 +1,31 @@
+**Session 708 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
+
+✅ **Benini Distribution** — 109th total, 88th continuous — commits fefbd22, 3022de3
+- **Mode**: FEATURE MODE (counter: 708)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Benini(α, β, σ) — Benini (1932) income/size distribution, log-quadratic hazard
+  * Parameters: α ≥ 0 (shape, α=0 allowed), β > 0 (shape), σ > 0 (scale/lower bound)
+  * Support: [σ, ∞); named after Roberto Benini, used in economic size distributions
+  * PDF: (α + 2β·y)/x · exp(-α·y - β·y²) where y = ln(x/σ)
+    - f(σ)=α/σ for α>0; f(σ)=0 for α=0 (mode interior)
+  * CDF: 1 - exp(-α·y - β·y²); smooth, no special cases needed
+  * Quantile: EXACT closed form O(1): σ·exp((-α + √(α²-4β·ln(1-p)))/(2β))
+    - discriminant α²-4β·ln(1-p) ≥ 0 always (ln(1-p) ≤ 0, β > 0)
+    - p=0 → σ exactly; Q is monotone → O(1) sampling
+  * Mode: y* = (√(1+8β) - 1 - 2α)/(4β); mode=σ·exp(y*) if y*>0, else σ
+    - Boundary mode when 2β ≤ α(1+α)
+    - Benini(1,1,1): y*=0 → mode=σ=1; Benini(0,1,1): y*=0.5 → mode≈1.649
+  * Mean: numerical 200-pt Simpson in y-space: σ·∫_0^{y_max}(α+2β·y)·exp((1-α)y-β·y²)dy
+    - y_max = √(40/β) + |1-α|/β + 5 (covers Gaussian peak + tails)
+  * Variance: E[X²]-mean² with E[X²] using (2-α) vs (1-α) in exponent
+  * Entropy: numerical Simpson on [σ, σ·exp(8/√β)]
+  * Sample: exact inverse CDF O(1) — clamp u to [1e-15, 1-1e-15]
+  * Key values: pdf(1;1,1,1)=1.0; pdf(e;1,1,1)=3e^{-3}≈0.1494; cdf(e;1,1,1)=1-e^{-2}≈0.8647
+  * Key values: quantile(0.5;1,1,1)≈1.602; mode(1,1,1)=1=σ; mode(0.5,1,1)≈1.284
+- **Total tests**: 5,397 (was 5,336; +61 new Benini tests)
+- **Distribution count**: 109 total (88 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Marchenko-Pastur, or Sichel, or another distribution
+
 **Session 707 Update (2026-06-22) — FEATURE MODE [COMPLETED]:**
 
 ✅ **ShiftedGompertz Distribution** — 108th total, 87th continuous — commit 26f327b
