@@ -60869,6 +60869,26 @@ test "WrappedCauchy: high concentration (rho near 1) becomes peaky" {
     try std.testing.expect(p_mode > 10.0 * p_far);
 }
 
+test "WrappedCauchy: empirical circular variance converges to 1 - rho (N=5000)" {
+    // Circular variance = 1 - R̄ where R̄ = mean resultant length
+    // For WC(mu=0, rho=0.5): theoretical circular variance = 1 - 0.5 = 0.5
+    const dist = try WrappedCauchy(f64).init(0.0, 0.5);
+    var prng = std.Random.DefaultPrng.init(99);
+    const rng = prng.random();
+    var cos_sum: f64 = 0.0;
+    var sin_sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const theta = dist.sample(rng);
+        cos_sum += @cos(theta);
+        sin_sum += @sin(theta);
+    }
+    const n_f = @as(f64, @floatFromInt(n));
+    const r_bar = @sqrt((cos_sum / n_f) * (cos_sum / n_f) + (sin_sum / n_f) * (sin_sum / n_f));
+    const empirical_circular_variance = 1.0 - r_bar;
+    try std.testing.expectApproxEqAbs(0.5, empirical_circular_variance, 0.15);
+}
+
 // ============================================================================
 // EPANECHNIKOV DISTRIBUTION
 // ============================================================================
@@ -61497,6 +61517,25 @@ test "Epanechnikov: pdf maximum at mode (invariant)" {
     }
 }
 
+test "Epanechnikov: sample variance converges to h²/5 (N=5000)" {
+    // Epanechnikov(mu=0, h=1): theoretical variance = h²/5 = 0.2
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const n_f = @as(f64, @floatFromInt(n));
+    const empirical_mean = sum / n_f;
+    const empirical_var = sum_sq / n_f - empirical_mean * empirical_mean;
+    try std.testing.expectApproxEqAbs(0.2, empirical_var, 0.05);
+}
+
 // ============================================================================
 // SHIFTED GOMPERTZ DISTRIBUTION
 // ============================================================================
@@ -62085,6 +62124,39 @@ test "ShiftedGompertz: f32 type support" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), dist.eta, 1e-6);
     const p = dist.pdf(0.5);
     try std.testing.expect(p > 0.0);
+}
+
+test "ShiftedGompertz: mean = 1/b for Exponential special case (eta=0)" {
+    // eta=0 reduces to Exponential(b), exact mean = 1/b
+    const dist = try ShiftedGompertz(f64).init(2.0, 0.0);
+    const m = dist.mean();
+    try std.testing.expectApproxEqAbs(0.5, m, 1e-3);
+}
+
+test "ShiftedGompertz: variance = 1/b² for Exponential special case (eta=0)" {
+    // eta=0 reduces to Exponential(b), exact variance = 1/b²
+    const dist = try ShiftedGompertz(f64).init(2.0, 0.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(0.25, v, 1e-3);
+}
+
+test "ShiftedGompertz: sample variance converges to theoretical (b=1, eta=1, N=5000)" {
+    const dist = try ShiftedGompertz(f64).init(1.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(88);
+    const rng = prng.random();
+    const theoretical_var = dist.variance();
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const n_f = @as(f64, @floatFromInt(n));
+    const empirical_mean = sum / n_f;
+    const empirical_var = sum_sq / n_f - empirical_mean * empirical_mean;
+    try std.testing.expectApproxEqAbs(theoretical_var, empirical_var, theoretical_var * 0.25);
 }
 
 // ============================================================================
@@ -62690,6 +62762,25 @@ test "Benini: f32 type support" {
     try std.testing.expect(dist.pdf(1.5) > 0.0);
     const q = try dist.quantile(0.5);
     try std.testing.expect(q > 1.0);
+}
+
+test "Benini: sample variance converges to theoretical (alpha=1, beta=1, sigma=1, N=5000)" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(66);
+    const rng = prng.random();
+    const theoretical_var = dist.variance();
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+        sum_sq += x * x;
+    }
+    const n_f = @as(f64, @floatFromInt(n));
+    const empirical_mean = sum / n_f;
+    const empirical_var = sum_sq / n_f - empirical_mean * empirical_mean;
+    try std.testing.expectApproxEqAbs(theoretical_var, empirical_var, theoretical_var * 0.3);
 }
 
 // ============================================================================
