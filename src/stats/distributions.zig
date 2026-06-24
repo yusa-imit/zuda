@@ -63460,3 +63460,685 @@ test "Biweight: f32 type support" {
     const q = try dist.quantile(0.5);
     try std.testing.expectApproxEqAbs(0.0, q, 1e-5);
 }
+
+// ============================================================================
+// Triweight Distribution
+// ============================================================================
+
+/// Triweight kernel distribution — degree-6 polynomial KDE kernel
+///
+/// The Triweight is the third in the polynomial kernel family after Epanechnikov
+/// and Biweight:
+///   f(x) = (35/(32h)) · (1 - u²)³   where u = (x - μ)/h
+///
+/// Support: [μ-h, μ+h]. Symmetric, unimodal, bounded.
+///
+/// Parameters:
+///   - μ: location (any finite value)
+///   - h: half-bandwidth (h > 0)
+///
+/// Time: O(1) for pdf/cdf/quantile/sample
+pub fn Triweight(comptime T: type) type {
+    return struct {
+        mu: T,
+        h: T,
+
+        const Self = @This();
+
+        /// Create a Triweight distribution with given location and half-bandwidth.
+        ///
+        /// Errors: error.InvalidParameter if h ≤ 0 or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, h: T) DistributionError!Self {
+            if (h <= 0.0 or !math.isFinite(h) or !math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .h = h };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (35 / (32h)) · (1 - u²)³   where u = (x - μ)/h
+        /// Returns 0 outside [μ-h, μ+h].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (@abs(u) > 1.0) return 0.0;
+            const t = 1.0 - u * u;
+            return (35.0 / (32.0 * self.h)) * t * t * t;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = log(35/(32h)) + 3·log(1 - u²)   where u = (x - μ)/h
+        /// Returns -∞ if x is at or outside the boundary (|u| ≥ 1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (@abs(u) >= 1.0) return -math.inf(T);
+            const t = 1.0 - u * u;
+            if (t <= 0.0) return -math.inf(T);
+            return @log(35.0 / (32.0 * self.h)) + 3.0 * @log(t);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1/2 + (35/32)·(u - u³ + (3/5)u⁵ - (1/7)u⁷)  for u = (x-μ)/h ∈ [-1,1]
+        /// Returns 0 for x < μ-h, 1 for x > μ+h.
+        ///
+        /// Derived by integrating the PDF and applying boundary normalization.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.h;
+            if (u <= -1.0) return 0.0;
+            if (u >= 1.0) return 1.0;
+            const usq = u * u;
+            const ucb = usq * u;
+            const uq5 = ucb * usq;
+            const uq7 = uq5 * usq;
+            return 0.5 + (35.0 / 32.0) * (u - ucb + (3.0 / 5.0) * uq5 - (1.0 / 7.0) * uq7);
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection on the CDF polynomial (64 iterations, ~1e-18 precision).
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or p is NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.mu - self.h;
+            if (p == 1.0) return self.mu + self.h;
+            var lo: T = self.mu - self.h;
+            var hi: T = self.mu + self.h;
+            var i: usize = 0;
+            while (i < 64) : (i += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Generate a random sample using the inverse CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            return self.quantile(u_safe) catch unreachable;
+        }
+
+        /// Mean: μ (the location parameter)
+        ///
+        /// Exact by symmetry of the bounded distribution about μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance: h² / 9
+        ///
+        /// Derived: E[U²] = (35/32)·2∫₀¹ u²(1-u²)³ du = 1/9
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return (self.h * self.h) / 9.0;
+        }
+
+        /// Mode: μ (the location parameter, center of bounded support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Shannon differential entropy: ln(h/70) + 319/70 nats
+        ///
+        /// Exact closed form via Beta function derivative identity:
+        ///   H = ln(32h/35) + 319/70 - 6·ln(2) = ln(h/70) + 319/70
+        ///
+        /// For h=1: ≈ 0.30864 nats; for h=2: ≈ 1.00179 nats.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.h / 70.0) + 319.0 / 70.0;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.h <= 0.0 or !math.isFinite(self.h) or !math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// TRIWEIGHT DISTRIBUTION TESTS
+// ============================================================================
+
+test "Triweight: init with valid parameters (mu=0, h=1)" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(1.0, dist.h, 1e-10);
+}
+
+test "Triweight: init with valid parameters (mu=2, h=3)" {
+    const dist = try Triweight(f64).init(2.0, 3.0);
+    try std.testing.expectApproxEqAbs(2.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(3.0, dist.h, 1e-10);
+}
+
+test "Triweight: init with valid parameters (mu=-1, h=0.5)" {
+    const dist = try Triweight(f64).init(-1.0, 0.5);
+    try std.testing.expectApproxEqAbs(-1.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(0.5, dist.h, 1e-10);
+}
+
+test "Triweight: init rejects h=0" {
+    const result = Triweight(f64).init(0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: init rejects h<0" {
+    const result = Triweight(f64).init(0.0, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: init rejects h=NaN" {
+    const result = Triweight(f64).init(0.0, std.math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: init rejects h=inf" {
+    const result = Triweight(f64).init(0.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: init rejects mu=inf" {
+    const result = Triweight(f64).init(math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: init rejects mu=-inf" {
+    const result = Triweight(f64).init(-math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: init rejects mu=NaN" {
+    const result = Triweight(f64).init(std.math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "Triweight: pdf at mode (mu=0, h=1) = 35/32 = 1.09375" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(35.0 / 32.0, p, 1e-10);
+}
+
+test "Triweight: pdf at x=0.5 (mu=0, h=1) ≈ 0.461426" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    // u=0.5: (35/32)*(1-0.25)^3 = (35/32)*0.421875
+    const expected = (35.0 / 32.0) * 0.421875;
+    try std.testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "Triweight: pdf at boundary x=1 (mu=0, h=1) = 0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Triweight: pdf at boundary x=-1 (mu=0, h=1) = 0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Triweight: pdf outside support (x=1.5, mu=0, h=1) = 0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(1.5);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Triweight: pdf outside support (x=-2, mu=0, h=1) = 0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p = dist.pdf(-2.0);
+    try std.testing.expectApproxEqAbs(0.0, p, 1e-10);
+}
+
+test "Triweight: pdf is symmetric when mu=0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p_pos = dist.pdf(x);
+        const p_neg = dist.pdf(-x);
+        try std.testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+    }
+}
+
+test "Triweight: pdf maximum at mode" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p_mode = dist.pdf(0.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.1, 0.3, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(p <= p_mode + 1e-10);
+    }
+}
+
+test "Triweight: pdf with h=2 at mode = 35/64 = 0.546875" {
+    const dist = try Triweight(f64).init(0.0, 2.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(35.0 / 64.0, p, 1e-10);
+}
+
+test "Triweight: pdf is non-negative everywhere" {
+    const dist = try Triweight(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ -10.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(p >= 0.0);
+    }
+}
+
+test "Triweight: logpdf at mode (mu=0, h=1) ≈ log(35/32)" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(35.0 / 32.0);
+    try std.testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "Triweight: logpdf outside support = -inf" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const lp = dist.logpdf(1.5);
+    try std.testing.expect(math.isNegativeInf(lp));
+}
+
+test "Triweight: logpdf at boundary = -inf" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const lp_pos = dist.logpdf(1.0);
+    const lp_neg = dist.logpdf(-1.0);
+    try std.testing.expect(math.isNegativeInf(lp_pos));
+    try std.testing.expect(math.isNegativeInf(lp_neg));
+}
+
+test "Triweight: logpdf consistency with pdf for interior points" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.3, 0.7 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        const lp = dist.logpdf(x);
+        const expected_lp = @log(p);
+        try std.testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+    }
+}
+
+test "Triweight: cdf at lower boundary = 0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try std.testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Triweight: cdf at mode = 0.5" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "Triweight: cdf at x=0.5 (mu=0, h=1) ≈ 0.929443" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.5);
+    // u=0.5: 0.5 + (35/32)*(1/2 - 1/8 + 3/160 - 1/896) = 0.5 + (35/32)*(1759/4480) = 26649/28672
+    // ≈ 0.929443359375
+    try std.testing.expectApproxEqAbs(0.929443359375, c, 1e-9);
+}
+
+test "Triweight: cdf at upper boundary = 1" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Triweight: cdf below lower boundary = 0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(-2.0);
+    try std.testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "Triweight: cdf above upper boundary = 1" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const c = dist.cdf(2.0);
+    try std.testing.expectApproxEqAbs(1.0, c, 1e-10);
+}
+
+test "Triweight: cdf + sf = 1" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.9, -0.5, -0.1, 0.0, 0.1, 0.5, 0.9 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try std.testing.expectApproxEqAbs(1.0, c + s, 1e-10);
+    }
+}
+
+test "Triweight: cdf is monotone increasing" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const x_vals = [_]f64{ -0.99, -0.5, -0.1, 0.0, 0.1, 0.5, 0.99 };
+    for (0..x_vals.len - 1) |i| {
+        const c1 = dist.cdf(x_vals[i]);
+        const c2 = dist.cdf(x_vals[i + 1]);
+        try std.testing.expect(c1 <= c2 + 1e-10);
+    }
+}
+
+test "Triweight: sf at mode = 0.5" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const s = dist.sf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, s, 1e-10);
+}
+
+test "Triweight: quantile at p=0 = mu - h" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(-1.0, q, 1e-10);
+}
+
+test "Triweight: quantile at p=0.5 = mu" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "Triweight: quantile at p=1 = mu + h" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expectApproxEqAbs(1.0, q, 1e-10);
+}
+
+test "Triweight: quantile rejects p<0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Triweight: quantile rejects p>1" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Triweight: quantile rejects p=NaN" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const result = dist.quantile(std.math.nan(f64));
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "Triweight: quantile roundtrip cdf->quantile for p=0.25" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.25);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.25, c, 1e-9);
+}
+
+test "Triweight: quantile roundtrip cdf->quantile for p=0.75" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.75);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.75, c, 1e-9);
+}
+
+test "Triweight: quantile roundtrip cdf->quantile for p=0.1" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.1);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.1, c, 1e-9);
+}
+
+test "Triweight: quantile roundtrip cdf->quantile for p=0.9" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.9);
+    const c = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(0.9, c, 1e-9);
+}
+
+test "Triweight: quantile is monotone increasing" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const p_vals = [_]f64{ 0.01, 0.25, 0.5, 0.75, 0.99 };
+    for (0..p_vals.len - 1) |i| {
+        const q1 = try dist.quantile(p_vals[i]);
+        const q2 = try dist.quantile(p_vals[i + 1]);
+        try std.testing.expect(q1 <= q2 + 1e-10);
+    }
+}
+
+test "Triweight: mean = mu" {
+    const mu_vals = [_]f64{ 0.0, 2.0, -1.0, 5.5 };
+    for (mu_vals) |mu| {
+        const dist = try Triweight(f64).init(mu, 1.0);
+        const m = dist.mean();
+        try std.testing.expectApproxEqAbs(mu, m, 1e-10);
+    }
+}
+
+test "Triweight: mean independent of h" {
+    const dist1 = try Triweight(f64).init(2.0, 1.0);
+    const dist2 = try Triweight(f64).init(2.0, 3.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try std.testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "Triweight: variance = h² / 9" {
+    const h_vals = [_]f64{ 1.0, 2.0, 0.5, 3.0 };
+    for (h_vals) |h| {
+        const dist = try Triweight(f64).init(0.0, h);
+        const v = dist.variance();
+        const expected = (h * h) / 9.0;
+        try std.testing.expectApproxEqAbs(expected, v, 1e-10);
+    }
+}
+
+test "Triweight: variance for h=1 = 1/9 ≈ 0.111111" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(1.0 / 9.0, v, 1e-10);
+}
+
+test "Triweight: variance for h=3 = 9/9 = 1.0" {
+    const dist = try Triweight(f64).init(0.0, 3.0);
+    const v = dist.variance();
+    try std.testing.expectApproxEqAbs(1.0, v, 1e-10);
+}
+
+test "Triweight: mode = mu" {
+    const dist = try Triweight(f64).init(2.0, 3.0);
+    const m = dist.mode();
+    try std.testing.expectApproxEqAbs(2.0, m, 1e-10);
+}
+
+test "Triweight: mode independent of h" {
+    const dist1 = try Triweight(f64).init(-1.0, 1.0);
+    const dist2 = try Triweight(f64).init(-1.0, 5.0);
+    const m1 = dist1.mode();
+    const m2 = dist2.mode();
+    try std.testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "Triweight: entropy for h=1 ≈ 0.30864" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    const ent = dist.entropy();
+    // ln(1/70) + 319/70 ≈ -4.24850 + 4.55714 ≈ 0.30864
+    const expected = @log(1.0 / 70.0) + 319.0 / 70.0;
+    try std.testing.expectApproxEqAbs(expected, ent, 1e-5);
+}
+
+test "Triweight: entropy for h=2 ≈ 1.00179" {
+    const dist = try Triweight(f64).init(0.0, 2.0);
+    const ent = dist.entropy();
+    // ln(2/70) + 319/70 = ln(1/35) + 319/70 ≈ -3.55535 + 4.55714 ≈ 1.00179
+    const expected = @log(2.0 / 70.0) + 319.0 / 70.0;
+    try std.testing.expectApproxEqAbs(expected, ent, 1e-5);
+}
+
+test "Triweight: entropy increases with h" {
+    const dist1 = try Triweight(f64).init(0.0, 1.0);
+    const dist2 = try Triweight(f64).init(0.0, 3.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try std.testing.expect(ent2 > ent1);
+}
+
+test "Triweight: entropy satisfies log property" {
+    const dist1 = try Triweight(f64).init(0.0, 1.0);
+    const dist2 = try Triweight(f64).init(0.0, 2.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    const diff = ent2 - ent1;
+    const expected_diff = @log(2.0);
+    try std.testing.expectApproxEqAbs(expected_diff, diff, 1e-10);
+}
+
+test "Triweight: entropy independent of mu" {
+    const dist1 = try Triweight(f64).init(0.0, 1.0);
+    const dist2 = try Triweight(f64).init(5.0, 1.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    try std.testing.expectApproxEqAbs(ent1, ent2, 1e-10);
+}
+
+test "Triweight: sample returns finite values" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(math.isFinite(s));
+    }
+}
+
+test "Triweight: sample within bounds [mu-h, mu+h]" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        const s = dist.sample(rng);
+        try std.testing.expect(s >= -1.0 - 1e-10 and s <= 1.0 + 1e-10);
+    }
+}
+
+test "Triweight: sample mean converges to mu" {
+    const allocator = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Triweight(f64).init(2.5, 1.0);
+
+    var sum: f64 = 0.0;
+    const n = 8000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try std.testing.expectApproxEqAbs(2.5, sample_mean, 0.05);
+    _ = allocator;
+}
+
+test "Triweight: sample variance converges to h²/9" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Triweight(f64).init(0.0, 1.0);
+
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 8000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const mean = sum / @as(f64, @floatFromInt(n));
+    const var_sample = (sum_sq / @as(f64, @floatFromInt(n))) - (mean * mean);
+    const expected_var = 1.0 / 9.0;
+    try std.testing.expectApproxEqAbs(expected_var, var_sample, 0.02);
+}
+
+test "Triweight: validate passes for valid params" {
+    const dist = try Triweight(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "Triweight: validate passes for negative mu" {
+    const dist = try Triweight(f64).init(-5.0, 2.0);
+    try dist.validate();
+}
+
+test "Triweight: validate rejects h=0" {
+    var dist = Triweight(f64){ .mu = 0.0, .h = 0.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Triweight: validate rejects h<0" {
+    var dist = Triweight(f64){ .mu = 0.0, .h = -1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Triweight: validate rejects h=NaN" {
+    var dist = Triweight(f64){ .mu = 0.0, .h = std.math.nan(f64) };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Triweight: validate rejects mu=inf" {
+    var dist = Triweight(f64){ .mu = math.inf(f64), .h = 1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Triweight: validate rejects mu=NaN" {
+    var dist = Triweight(f64){ .mu = std.math.nan(f64), .h = 1.0 };
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Triweight: pdf integration over support ≈ 1.0" {
+    const dist = try Triweight(f64).init(0.0, 1.0);
+
+    // Use Riemann sum with 1000 points
+    const n_points = 1000;
+    const dx = 2.0 / @as(f64, @floatFromInt(n_points));
+    var sum: f64 = 0.0;
+    var i: i64 = 0;
+    while (i < n_points) : (i += 1) {
+        const x = -1.0 + @as(f64, @floatFromInt(i)) * dx;
+        sum += dist.pdf(x) * dx;
+    }
+    try std.testing.expectApproxEqAbs(1.0, sum, 0.001);
+}
+
+test "Triweight: f32 type support" {
+    const dist = try Triweight(f32).init(0.0, 1.0);
+    try std.testing.expect(math.isFinite(dist.pdf(0.0)));
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-5);
+}
