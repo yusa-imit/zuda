@@ -600,3 +600,5 @@
 {"timestamp":"2026-06-22T12:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for Benini distribution (109th total, 88th continuous)","project":"zuda"}
 {"timestamp":"2026-06-22T12:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Benini distribution (109th total, 88th continuous, 61 tests)","project":"zuda"}
 {"timestamp":"2026-06-22T05:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write TDD tests for Biweight distribution","project":"zuda"}
+{"timestamp":"2026-06-25T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Triweight distribution (111th total, 90th continuous)","project":"zuda"}
+{"timestamp":"2026-06-25T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Triweight distribution (111th total, 90th continuous)","project":"zuda"}

@@ -1,3 +1,30 @@
+**Session 711 Update (2026-06-25) — FEATURE MODE [COMPLETED]:**
+
+✅ **Triweight Distribution** — 111th total, 90th continuous — commit f0e7008
+- **Mode**: FEATURE MODE (counter: 711)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Triweight(T) — degree-6 polynomial KDE kernel on bounded support [μ-h, μ+h]
+  * Parameters: μ (location), h > 0 (half-bandwidth)
+  * Support: [μ-h, μ+h]; bounded, symmetric, third in kernel family (Epanechnikov → Biweight → Triweight)
+  * PDF: (35/(32h))·(1-u²)³ where u=(x-μ)/h; peak at center: pdf(μ)=35/(32h)=1.09375/h
+  * CDF: 0.5 + (35/32)·(u - u³ + (3/5)u⁵ - (1/7)u⁷) — exact degree-7 antiderivative, O(1)
+    - F(μ±h)=0/1 (exact); F(μ)=0.5 (odd polynomial symmetry)
+    - F(μ+h/2) = 26649/28672 ≈ 0.929443359375 (EXACT — test-writer wrote 0.929693, corrected to 0.929443)
+  * Quantile: 64-iteration bisection on CDF (~1e-18 precision) — no closed form
+  * Mean: μ (exact); Variance: h²/9 (exact: E[U²] = (35/32)·2∫₀¹u²(1-u²)³du = 1/9)
+  * Mode: μ; logpdf returns -∞ at boundaries u=±1 and outside support
+  * Entropy: ln(h/70) + 319/70 nats — exact closed form via Beta function derivatives
+    - Derived: H = ln(32h/35) + 319/70 - 6ln2 = ln(h/70) + 319/70
+    - h=1: -ln(70)+319/70 ≈ 0.30864 nats; h=2: ln(2/70)+319/70 ≈ 1.00179 nats
+  * Sample: inverse CDF (quantile) with u clamped to [1e-14, 1-1e-14]
+  * Zig gotcha: `u2`, `u3`, `u5`, `u7` shadow Zig integer primitives — use `usq`, `ucb`, `uq5`, `uq7`
+  * Significance: sextic kernel with highest smoothness in the Epanechnikov family; KDE applications
+- **Total tests**: ~5,541 (was ~5,472; +69 new Triweight tests)
+- **Distribution count**: 111 total (90 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Marchenko-Pastur, or another distribution
+
+---
+
 **Session 710 Update (2026-06-25) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **Test Quality Audit** — +6 tests for 4 distributions — commit 34b603d
