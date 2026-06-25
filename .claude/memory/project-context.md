@@ -1,3 +1,33 @@
+**Session 716 Update (2026-06-26) — FEATURE MODE [COMPLETED]:**
+
+✅ **ExponentiatedWeibull Distribution** — 115th total, 94th continuous — commit 8c48ef4
+- **Mode**: FEATURE MODE (counter: 716)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ExponentiatedWeibull(α, λ, k) — extends Weibull via CDF exponentiation
+  * Parameters: alpha > 0 (exponent shape), scale > 0 (λ), shape > 0 (k)
+  * Support: (0, ∞)
+  * CDF: [1-exp(-(x/λ)^k)]^α — exact O(1)
+  * Quantile: λ·(-ln(1-p^{1/α}))^{1/k} — exact O(1) closed form
+  * PDF: (αk/λ)·(x/λ)^{k-1}·exp(-(x/λ)^k)·[1-exp(-(x/λ)^k)]^{α-1}
+  * Mean: via generalized binomial series E[X]=αλΓ(1+1/k)·Σ(-1)^j·C(α-1,j)/(j+1)^{1+1/k}
+    - α=1: reduces to Weibull mean λ·Γ(1+1/k) (series terminates in 1 term)
+    - α=2,k=1: exact 3λ/2 = 1.5 (series terminates in 2 terms)
+  * Variance: E[X²]-E[X]² via same series with r=2
+  * Mode: 0 if αk≤1; bisection on h(u)=(k-1)-ku+(α-1)ku·e^{-u}/(1-e^{-u}) for αk>1
+    - Special cases: k=1 → mode=λ·ln(α); α=1 → Weibull mode λ·((k-1)/k)^{1/k}
+  * Entropy: 500-point midpoint quadrature via -Σ logpdf(Q(p_i))/500
+  * Sample: inverse CDF (exact)
+  * Key values: pdf(1;α=2,λ=1,k=2)≈0.93018, cdf(1;α=2,λ=1,k=2)≈0.39958
+    mean(α=2,λ=1,k=1)=1.5, var(α=1,λ=1,k=2)=1-π/4≈0.21460
+    mode(α=2,λ=1,k=1)=ln(2)≈0.69315, mode(α=1,λ=1,k=2)=1/√2≈0.70711
+  * Zig note: momentR helper uses convergent binomial series with early termination
+    |term| < 1e-14·|sum| + 1e-300; terminates in O(α) terms for integer α
+- **Total tests**: 5,764 (was 5,714; +50 new ExponentiatedWeibull tests)
+- **Distribution count**: 115 total (94 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Generalized Rayleigh, or another distribution
+
+---
+
 **Session 713 Update (2026-06-25) — FEATURE MODE [COMPLETED]:**
 
 ✅ **InverseChiSquared Distribution** — 113th total, 92nd continuous — commit 04c29ee

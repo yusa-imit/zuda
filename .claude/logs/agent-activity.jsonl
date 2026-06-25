@@ -604,3 +604,4 @@
 {"timestamp":"2026-06-25T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Triweight distribution (111th total, 90th continuous)","project":"zuda"}
 {"timestamp":"2026-06-25T04:30:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for Lomax distribution (113th, Pareto Type II)","project":"zuda"}
 {"timestamp":"2026-06-25T04:35:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement InverseChiSquared distribution (113th, Pareto Type II already existed)","project":"zuda"}
+{"timestamp":"2026-06-26T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for ExponentiatedWeibull distribution (115th total)","project":"zuda"}
