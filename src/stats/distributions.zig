@@ -64142,3 +64142,646 @@ test "Triweight: f32 type support" {
     const q = try dist.quantile(0.5);
     try std.testing.expectApproxEqAbs(0.0, q, 1e-5);
 }
+
+// Marchenko-Pastur Distribution
+/// Marchenko-Pastur distribution — limiting eigenvalue distribution of large random matrices.
+///
+/// Describes the asymptotic distribution of eigenvalues of (1/n)X·Xᵀ where X is a p×n matrix
+/// with i.i.d. entries of mean 0 and variance σ².
+///
+/// Parameters:
+///   c     — aspect ratio p/n ∈ (0, 1]
+///   sigma — scale σ > 0
+///
+/// Support: [λ₋, λ₊] where λ± = σ²(1 ± √c)²
+/// PDF:     f(x) = √((λ₊−x)(x−λ₋)) / (2π·c·σ²·x)
+/// CDF:     closed form — see cdf() implementation
+/// Mean:    σ²  |  Variance: c·σ⁴  |  Mode: σ²(1−c)²/(1+c) for c<1; 0 for c=1
+pub fn MarchenkoPastur(comptime T: type) type {
+    return struct {
+        c: T,
+        sigma: T,
+        lambda_minus: T,
+        lambda_plus: T,
+
+        const Self = @This();
+
+        /// Create a Marchenko-Pastur distribution.
+        ///
+        /// Errors: error.InvalidParameter if c ∉ (0,1], σ ≤ 0, or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(c: T, sigma: T) DistributionError!Self {
+            if (!(c > 0.0 and c <= 1.0) or !math.isFinite(c)) return error.InvalidParameter;
+            if (!(sigma > 0.0) or !math.isFinite(sigma)) return error.InvalidParameter;
+            const k = @sqrt(c);
+            const sigma_sq = sigma * sigma;
+            return Self{
+                .c = c,
+                .sigma = sigma,
+                .lambda_minus = sigma_sq * (1.0 - k) * (1.0 - k),
+                .lambda_plus = sigma_sq * (1.0 + k) * (1.0 + k),
+            };
+        }
+
+        /// Probability density function (PDF) at x.
+        ///
+        /// f(x) = √((λ₊−x)(x−λ₋)) / (2π·c·σ²·x)   for x ∈ (λ₋, λ₊)
+        /// Returns 0 at and outside [λ₋, λ₊].
+        /// For c=1: f has integrable singularity at x=0; returned as 0 at the endpoint.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= self.lambda_minus or x >= self.lambda_plus) return 0.0;
+            const num = @sqrt((self.lambda_plus - x) * (x - self.lambda_minus));
+            const denom = 2.0 * math.pi * self.c * self.sigma * self.sigma * x;
+            return num / denom;
+        }
+
+        /// Log probability density function at x.
+        ///
+        /// Returns −∞ outside the open support (λ₋, λ₊).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.lambda_minus or x >= self.lambda_plus) return -math.inf(T);
+            const num = @sqrt((self.lambda_plus - x) * (x - self.lambda_minus));
+            const denom = 2.0 * math.pi * self.c * self.sigma * self.sigma * x;
+            return @log(num / denom);
+        }
+
+        /// Cumulative distribution function — closed-form derivation via trigonometric substitution.
+        ///
+        /// F(x) = [(1+c)/c]·arcsin(s)/π + √((x−λ₋)(λ₊−x))/(2πcσ²) − [(1-c)/c]·arctan(R·w)/π
+        ///
+        /// where s = √((x−λ₋)/(λ₊−λ₋)),  w = √((x−λ₋)/(λ₊−x)),  R = (1+√c)/(1−√c)
+        ///
+        /// The third term vanishes when c = 1 (coefficient 1−c = 0).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.lambda_minus) return 0.0;
+            if (x >= self.lambda_plus) return 1.0;
+            const la = self.lambda_minus;
+            const lb = self.lambda_plus;
+            const s = @sqrt((x - la) / (lb - la));
+            const term1 = (1.0 + self.c) / (math.pi * self.c) * math.asin(s);
+            const term2 = @sqrt((x - la) * (lb - x)) / (2.0 * math.pi * self.c * self.sigma * self.sigma);
+            const term3: T = if (self.c >= 1.0 - @as(T, 1e-12)) 0.0 else blk: {
+                const k = @sqrt(self.c);
+                const ratio = (1.0 + k) / (1.0 - k);
+                const w = @sqrt((x - la) / (lb - x));
+                break :blk (1.0 - self.c) / (math.pi * self.c) * math.atan(ratio * w);
+            };
+            return term1 + term2 - term3;
+        }
+
+        /// Survival function: 1 − CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p.
+        ///
+        /// Uses 64-iteration bisection on the closed-form CDF.
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0,1] or p is NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.lambda_minus;
+            if (p == 1.0) return self.lambda_plus;
+            var lo: T = self.lambda_minus;
+            var hi: T = self.lambda_plus;
+            var i: usize = 0;
+            while (i < 64) : (i += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) lo = mid else hi = mid;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Generate a random sample using the inverse CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            return self.quantile(u_safe) catch unreachable;
+        }
+
+        /// Mean: σ²
+        ///
+        /// Exact: E[X] = σ² for all c ∈ (0,1].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.sigma * self.sigma;
+        }
+
+        /// Variance: c·σ⁴
+        ///
+        /// Exact: Var[X] = c·σ⁴ from E[X²] = σ⁴(1+c).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.c * self.sigma * self.sigma * self.sigma * self.sigma;
+        }
+
+        /// Mode: σ²(1−c)²/(1+c) for c < 1; λ₋ for c = 1.
+        ///
+        /// Derived: df/dx = 0 gives x* = 2λ₋λ₊/(λ₋+λ₊) = σ²(1−c)²/(1+c).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.c >= 1.0) return self.lambda_minus;
+            const sigma_sq = self.sigma * self.sigma;
+            return sigma_sq * (1.0 - self.c) * (1.0 - self.c) / (1.0 + self.c);
+        }
+
+        /// Shannon differential entropy (nats) — computed numerically via 500-point midpoint rule.
+        ///
+        /// H = −∫ f(x) ln f(x) dx over (λ₋, λ₊).
+        /// Midpoint rule avoids the integrable singularity at λ₋ = 0 when c = 1.
+        ///
+        /// Satisfies: entropy(c, aσ) = entropy(c, σ) + 2·ln(a).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n: usize = 500;
+            const la = self.lambda_minus;
+            const lb = self.lambda_plus;
+            const range = lb - la;
+            const h = range / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const x = la + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const fx = self.pdf(x);
+                if (fx > 0.0) {
+                    sum -= fx * @log(fx);
+                }
+            }
+            return sum * h;
+        }
+
+        /// Validate that distribution parameters are in range.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.c > 0.0 and self.c <= 1.0) or !math.isFinite(self.c)) {
+                return error.InvalidParameter;
+            }
+            if (!(self.sigma > 0.0) or !math.isFinite(self.sigma)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// MarchenkoPastur Tests
+test "MarchenkoPastur: init with valid c=0.5 sigma=1" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    try testing.expect(math.isFinite(dist.lambda_minus));
+    try testing.expect(math.isFinite(dist.lambda_plus));
+    try testing.expect(dist.lambda_minus >= 0.0);
+    try testing.expect(dist.lambda_plus > dist.lambda_minus);
+}
+
+test "MarchenkoPastur: init with c=1 sigma=1" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    try testing.expectApproxEqAbs(0.0, dist.lambda_minus, 1e-15);
+    try testing.expectApproxEqAbs(4.0, dist.lambda_plus, 1e-10);
+}
+
+test "MarchenkoPastur: init with c=0.25 sigma=1" {
+    const dist = try MarchenkoPastur(f64).init(0.25, 1.0);
+    try testing.expectApproxEqAbs(0.25, dist.lambda_minus, 1e-10);
+    try testing.expectApproxEqAbs(2.25, dist.lambda_plus, 1e-10);
+}
+
+test "MarchenkoPastur: init with c=0.25 sigma=2" {
+    const dist = try MarchenkoPastur(f64).init(0.25, 2.0);
+    try testing.expectApproxEqAbs(1.0, dist.lambda_minus, 1e-10);
+    try testing.expectApproxEqAbs(9.0, dist.lambda_plus, 1e-10);
+}
+
+test "MarchenkoPastur: init with c=0.1 sigma=1" {
+    const dist = try MarchenkoPastur(f64).init(0.1, 1.0);
+    const sqrt_c = std.math.sqrt(0.1);
+    const expected_minus = (1.0 - sqrt_c) * (1.0 - sqrt_c);
+    const expected_plus = (1.0 + sqrt_c) * (1.0 + sqrt_c);
+    try testing.expectApproxEqAbs(expected_minus, dist.lambda_minus, 1e-10);
+    try testing.expectApproxEqAbs(expected_plus, dist.lambda_plus, 1e-10);
+}
+
+test "MarchenkoPastur: init with c=0.9 sigma=0.5" {
+    const dist = try MarchenkoPastur(f64).init(0.9, 0.5);
+    const sigma_sq = 0.25;
+    const sqrt_c = std.math.sqrt(0.9);
+    const expected_minus = sigma_sq * (1.0 - sqrt_c) * (1.0 - sqrt_c);
+    const expected_plus = sigma_sq * (1.0 + sqrt_c) * (1.0 + sqrt_c);
+    try testing.expectApproxEqAbs(expected_minus, dist.lambda_minus, 1e-10);
+    try testing.expectApproxEqAbs(expected_plus, dist.lambda_plus, 1e-10);
+}
+
+test "MarchenkoPastur: init rejects c=0" {
+    const result = MarchenkoPastur(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects c>1" {
+    const result = MarchenkoPastur(f64).init(1.1, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects sigma=0" {
+    const result = MarchenkoPastur(f64).init(0.5, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects sigma<0" {
+    const result = MarchenkoPastur(f64).init(0.5, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects c=NaN" {
+    const result = MarchenkoPastur(f64).init(std.math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects c=Inf" {
+    const result = MarchenkoPastur(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects sigma=NaN" {
+    const result = MarchenkoPastur(f64).init(0.5, std.math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: init rejects sigma=Inf" {
+    const result = MarchenkoPastur(f64).init(0.5, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "MarchenkoPastur: pdf at boundary x=lambda_minus returns 0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const p = dist.pdf(dist.lambda_minus);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "MarchenkoPastur: pdf at boundary x=lambda_plus returns 0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const p = dist.pdf(dist.lambda_plus);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "MarchenkoPastur: pdf below support returns 0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const p = dist.pdf(dist.lambda_minus - 0.5);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "MarchenkoPastur: pdf above support returns 0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const p = dist.pdf(dist.lambda_plus + 0.5);
+    try testing.expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "MarchenkoPastur: pdf is non-negative everywhere" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const x_vals = [_]f64{ -10.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 10.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= -1e-15);
+    }
+}
+
+test "MarchenkoPastur: pdf(1.0) for c=1 sigma=1 ≈ √3/(2π)" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const p = dist.pdf(1.0);
+    const expected = std.math.sqrt(3.0) / (2.0 * std.math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "MarchenkoPastur: pdf(2.0) for c=1 sigma=1 ≈ 1/(2π)" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const p = dist.pdf(2.0);
+    const expected = 1.0 / (2.0 * std.math.pi);
+    try testing.expectApproxEqAbs(expected, p, 1e-10);
+}
+
+test "MarchenkoPastur: pdf(1.25) for c=0.25 sigma=1 ≈ 0.50930" {
+    const dist = try MarchenkoPastur(f64).init(0.25, 1.0);
+    const p = dist.pdf(1.25);
+    const expected = 0.50930;
+    try testing.expectApproxEqAbs(expected, p, 1e-4);
+}
+
+test "MarchenkoPastur: pdf at mode >= pdf at midpoint" {
+    // 1/x in the denominator skews density left; mode is near λ₋, not at midpoint.
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const m = dist.mode();
+    const mid = (dist.lambda_minus + dist.lambda_plus) / 2.0;
+    const p_mode = dist.pdf(m + 1e-9);
+    const p_mid = dist.pdf(mid);
+    try testing.expect(p_mode >= p_mid - 1e-10);
+    try testing.expect(p_mid > 0.0);
+}
+
+test "MarchenkoPastur: logpdf inside support = log(pdf)" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const x = (dist.lambda_minus + dist.lambda_plus) / 2.0;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    const expected_lp = @log(p);
+    try testing.expectApproxEqAbs(expected_lp, lp, 1e-9);
+}
+
+test "MarchenkoPastur: logpdf at boundary = -inf" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const lp_minus = dist.logpdf(dist.lambda_minus);
+    const lp_plus = dist.logpdf(dist.lambda_plus);
+    try testing.expect(math.isNegativeInf(lp_minus));
+    try testing.expect(math.isNegativeInf(lp_plus));
+}
+
+test "MarchenkoPastur: logpdf outside support = -inf" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const lp_below = dist.logpdf(dist.lambda_minus - 1.0);
+    const lp_above = dist.logpdf(dist.lambda_plus + 1.0);
+    try testing.expect(math.isNegativeInf(lp_below));
+    try testing.expect(math.isNegativeInf(lp_above));
+}
+
+test "MarchenkoPastur: cdf at lower boundary = 0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const c = dist.cdf(dist.lambda_minus);
+    try testing.expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "MarchenkoPastur: cdf at upper boundary = 1" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const c = dist.cdf(dist.lambda_plus);
+    try testing.expectApproxEqAbs(1.0, c, 1e-15);
+}
+
+test "MarchenkoPastur: cdf(1.0) for c=1 sigma=1 ≈ 0.6090" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const c = dist.cdf(1.0);
+    const expected = 1.0 / 3.0 + std.math.sqrt(3.0) / (2.0 * std.math.pi);
+    try testing.expectApproxEqAbs(expected, c, 1e-4);
+}
+
+test "MarchenkoPastur: cdf(2.0) for c=1 sigma=1 ≈ 0.8183" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const c = dist.cdf(2.0);
+    const expected = 0.5 + 1.0 / std.math.pi;
+    try testing.expectApproxEqAbs(expected, c, 1e-4);
+}
+
+test "MarchenkoPastur: cdf(3.0) for c=1 sigma=1 ≈ 0.9423" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const c = dist.cdf(3.0);
+    const expected = 2.0 / 3.0 + std.math.sqrt(3.0) / (2.0 * std.math.pi);
+    try testing.expectApproxEqAbs(expected, c, 1e-4);
+}
+
+test "MarchenkoPastur: cdf is monotone increasing" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const x_vals = [_]f64{ dist.lambda_minus + 0.001, dist.lambda_minus + 0.1, dist.lambda_minus + 0.3, dist.lambda_plus - 0.3, dist.lambda_plus - 0.1, dist.lambda_plus - 0.001 };
+    for (0..x_vals.len - 1) |i| {
+        const c1 = dist.cdf(x_vals[i]);
+        const c2 = dist.cdf(x_vals[i + 1]);
+        try testing.expect(c1 <= c2 + 1e-10);
+    }
+}
+
+test "MarchenkoPastur: sf=1-cdf" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const x = (dist.lambda_minus + dist.lambda_plus) / 2.0;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0, c + s, 1e-14);
+}
+
+test "MarchenkoPastur: sf at lower boundary = 1" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const s = dist.sf(dist.lambda_minus);
+    try testing.expectApproxEqAbs(1.0, s, 1e-15);
+}
+
+test "MarchenkoPastur: sf at upper boundary = 0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const s = dist.sf(dist.lambda_plus);
+    try testing.expectApproxEqAbs(0.0, s, 1e-15);
+}
+
+test "MarchenkoPastur: quantile at p=0 = lambda_minus" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(dist.lambda_minus, q, 1e-10);
+}
+
+test "MarchenkoPastur: quantile at p=1 = lambda_plus" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(dist.lambda_plus, q, 1e-10);
+}
+
+test "MarchenkoPastur: quantile at p=0.5" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > dist.lambda_minus);
+    try testing.expect(q < dist.lambda_plus);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.5, c, 1e-10);
+}
+
+test "MarchenkoPastur: quantile roundtrip for p=0.25" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const q = try dist.quantile(0.25);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.25, c, 1e-9);
+}
+
+test "MarchenkoPastur: quantile roundtrip for p=0.75" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const q = try dist.quantile(0.75);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(0.75, c, 1e-9);
+}
+
+test "MarchenkoPastur: quantile is monotone increasing" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const p_vals = [_]f64{ 0.01, 0.25, 0.5, 0.75, 0.99 };
+    for (0..p_vals.len - 1) |i| {
+        const q1 = try dist.quantile(p_vals[i]);
+        const q2 = try dist.quantile(p_vals[i + 1]);
+        try testing.expect(q1 <= q2 + 1e-10);
+    }
+}
+
+test "MarchenkoPastur: quantile rejects p<0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "MarchenkoPastur: quantile rejects p>1" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "MarchenkoPastur: quantile rejects p=NaN" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const result = dist.quantile(std.math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "MarchenkoPastur: mean = sigma²" {
+    const sigma_vals = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (sigma_vals) |sigma| {
+        const dist = try MarchenkoPastur(f64).init(0.5, sigma);
+        const m = dist.mean();
+        const expected = sigma * sigma;
+        try testing.expectApproxEqAbs(expected, m, 1e-10);
+    }
+}
+
+test "MarchenkoPastur: mean independent of c" {
+    const sigma = 1.5;
+    const dist1 = try MarchenkoPastur(f64).init(0.25, sigma);
+    const dist2 = try MarchenkoPastur(f64).init(0.75, sigma);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try testing.expectApproxEqAbs(m1, m2, 1e-10);
+}
+
+test "MarchenkoPastur: variance = c*sigma⁴" {
+    const c_vals = [_]f64{ 0.25, 0.5, 0.75, 1.0 };
+    for (c_vals) |c| {
+        const dist = try MarchenkoPastur(f64).init(c, 1.0);
+        const v = dist.variance();
+        const expected = c * 1.0;
+        try testing.expectApproxEqAbs(expected, v, 1e-10);
+    }
+}
+
+test "MarchenkoPastur: variance for c=0.25 sigma=1 = 0.25" {
+    const dist = try MarchenkoPastur(f64).init(0.25, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(0.25, v, 1e-10);
+}
+
+test "MarchenkoPastur: variance for c=1 sigma=1 = 1.0" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(1.0, v, 1e-10);
+}
+
+test "MarchenkoPastur: variance scales with sigma⁴" {
+    const dist1 = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const dist2 = try MarchenkoPastur(f64).init(0.5, 2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try testing.expectApproxEqAbs(16.0 * v1, v2, 1e-10);
+}
+
+test "MarchenkoPastur: mode for c<1 = σ²(1-c)²/(1+c)" {
+    const dist = try MarchenkoPastur(f64).init(0.25, 1.0);
+    const mode = dist.mode();
+    // mode = σ²(1-c)²/(1+c) = (1-0.25)²/(1+0.25) = 0.5625/1.25 = 0.45
+    const expected = (1.0 - 0.25) * (1.0 - 0.25) / (1.0 + 0.25);
+    try testing.expectApproxEqAbs(expected, mode, 1e-10);
+}
+
+test "MarchenkoPastur: mode for c=1 = 0" {
+    const dist = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode, 1e-15);
+}
+
+test "MarchenkoPastur: mode for c=0.5 sigma=1 ≈ 0.16667" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const mode = dist.mode();
+    const expected = 1.0 / 6.0;
+    try testing.expectApproxEqAbs(expected, mode, 1e-5);
+}
+
+test "MarchenkoPastur: entropy is positive" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const ent = dist.entropy();
+    try testing.expect(ent > 0.0);
+}
+
+test "MarchenkoPastur: entropy scaling property" {
+    const dist1 = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const dist2 = try MarchenkoPastur(f64).init(0.5, 2.0);
+    const ent1 = dist1.entropy();
+    const ent2 = dist2.entropy();
+    const expected_diff = 2.0 * @log(2.0);
+    try testing.expectApproxEqAbs(expected_diff, ent2 - ent1, 1e-3);
+}
+
+test "MarchenkoPastur: entropy for c=1 > entropy for c=0.25" {
+    const dist_narrow = try MarchenkoPastur(f64).init(0.25, 1.0);
+    const dist_wide = try MarchenkoPastur(f64).init(1.0, 1.0);
+    const ent_narrow = dist_narrow.entropy();
+    const ent_wide = dist_wide.entropy();
+    try testing.expect(ent_wide > ent_narrow - 1e-10);
+}
+
+test "MarchenkoPastur: pdf integration ≈ 1.0" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    const n_points = 500;
+    const dx = (dist.lambda_plus - dist.lambda_minus) / @as(f64, @floatFromInt(n_points));
+    var sum: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n_points) : (i += 1) {
+        const x = dist.lambda_minus + @as(f64, @floatFromInt(i)) * dx;
+        sum += dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 0.01);
+}
+
+test "MarchenkoPastur: sample returns value in support" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= dist.lambda_minus - 1e-10);
+        try testing.expect(sample <= dist.lambda_plus + 1e-10);
+    }
+}
+
+test "MarchenkoPastur: sample convergence to mean" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const expected_mean = dist.mean();
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.05);
+}
+
+test "MarchenkoPastur: validate passes for valid params" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    try dist.validate();
+}
+
+test "MarchenkoPastur: f32 type support" {
+    const dist = try MarchenkoPastur(f32).init(0.5, 1.0);
+    try testing.expect(math.isFinite(dist.pdf(1.0)));
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > dist.lambda_minus);
+    try testing.expect(q < dist.lambda_plus);
+}
