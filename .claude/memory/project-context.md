@@ -1,3 +1,30 @@
+**Session 713 Update (2026-06-25) — FEATURE MODE [COMPLETED]:**
+
+✅ **InverseChiSquared Distribution** — 113th total, 92nd continuous — commit 04c29ee
+- **Mode**: FEATURE MODE (counter: 713)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: InverseChiSquared(T) — Bayesian conjugate prior for normal variance
+  * Parameters: ν > 0 (degrees of freedom, float, can be non-integer)
+  * Support: (0, ∞)
+  * Mathematically: InverseChiSquared(ν) = InverseGamma(ν/2, 1/2)
+  * Design: stores `inv_gamma: InverseGamma(T)` and delegates pdf/logpdf/cdf/quantile/sample/entropy
+  * PDF: (1/2)^(ν/2) / Γ(ν/2) · x^(-ν/2-1) · exp(-1/(2x))
+  * CDF: 1 - P(ν/2, 1/(2x)) via regularized lower incomplete gamma
+  * Quantile: bisection (no closed form)
+  * Mode: 1/(ν+2) — exact O(1) [InverseGamma mode β/(α+1) = 0.5/(ν/2+1)]
+  * Mean: 1/(ν-2) for ν > 2; math.inf(T) otherwise
+  * Variance: 2/((ν-2)²(ν-4)) for ν > 4; math.inf(T) otherwise
+  * Entropy: delegates to inv_gamma.entropy() = ν/2 - ln(2) + logΓ(ν/2) - (1+ν/2)·ψ(ν/2)
+  * Key values: pdf(1;ν=2)≈0.30327, cdf(1;ν=2)≈0.60653, mode(ν=2)=0.25, mean(ν=4)=0.5, var(ν=6)=0.0625
+  * entropy(ν=2)≈1.461285, entropy(ν=4)≈0.038501
+  * Use case: Bayesian posterior for σ² of normal distribution
+  * NOTE: Lomax was assumed to be missing but was already implemented (#39); InverseChiSquared chosen instead
+- **Total tests**: 5,642 (was 5,602; +40 new InverseChiSquared tests)
+- **Distribution count**: 113 total (92 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — another distribution (e.g., Scaled Inverse Chi-Squared, Generalized Rayleigh, Exponentiated Weibull, or similar)
+
+---
+
 **Session 711 Update (2026-06-25) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Triweight Distribution** — 111th total, 90th continuous — commit f0e7008
