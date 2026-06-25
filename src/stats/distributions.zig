@@ -65838,3 +65838,524 @@ test "ScaledInverseChiSquared: f32 type support" {
     try testing.expect(math.isFinite(m));
     try testing.expect(m > 0);
 }
+
+// ============================================================================
+// Exponentiated Weibull Distribution
+// ============================================================================
+
+/// Exponentiated Weibull distribution EW(α, λ, k)
+///
+/// CDF: F(x) = [1 − exp(−(x/λ)^k)]^α for x > 0
+///
+/// Parameters:
+///   - alpha (α): Exponent shape parameter (α > 0)
+///   - scale (λ): Scale parameter (λ > 0)
+///   - shape (k): Weibull shape parameter (k > 0)
+///
+/// Support: (0, ∞)
+///
+/// Mean: α·λ·Γ(1+1/k) · Σ_{j≥0} (−1)^j·C(α−1,j)/(j+1)^{1+1/k}
+/// Mode: 0 if αk ≤ 1; λ·u*^{1/k} where u* solves (k−1)−ku+(α−1)ku·e^{−u}/(1−e^{−u})=0
+///
+/// Time: O(1) for pdf/cdf/quantile/sample | O(N) for mean/variance/entropy
+pub fn ExponentiatedWeibull(comptime T: type) type {
+    return struct {
+        alpha: T,
+        scale: T,
+        shape: T,
+
+        const Self = @This();
+
+        /// Create an ExponentiatedWeibull distribution.
+        ///
+        /// Errors: any parameter ≤ 0 or non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, scale: T, shape: T) DistributionError!Self {
+            if (!(alpha > 0.0) or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (!(scale > 0.0) or !math.isFinite(scale)) return error.InvalidParameter;
+            if (!(shape > 0.0) or !math.isFinite(shape)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .scale = scale, .shape = shape };
+        }
+
+        /// Log probability density function at x.
+        ///
+        /// log f(x) = log(αk/λ) + (k−1)·log(x/λ) − (x/λ)^k + (α−1)·log(1−e^{−(x/λ)^k})
+        ///
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const scaled = x / self.scale;
+            const uk = math.pow(T, scaled, self.shape);
+            const g = 1.0 - @exp(-uk);
+            if (g <= 0.0) return -math.inf(T);
+            return @log(self.alpha) + @log(self.shape) - @log(self.scale) +
+                (self.shape - 1.0) * @log(scaled) - uk +
+                (self.alpha - 1.0) * @log(g);
+        }
+
+        /// Probability density function at x.
+        ///
+        /// f(x) = (αk/λ)·(x/λ)^{k−1}·exp(−(x/λ)^k)·[1−exp(−(x/λ)^k)]^{α−1}
+        ///
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Cumulative distribution function at x.
+        ///
+        /// F(x) = [1 − exp(−(x/λ)^k)]^α
+        ///
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const uk = math.pow(T, x / self.scale, self.shape);
+            const g = 1.0 - @exp(-uk);
+            if (g <= 0.0) return 0.0;
+            return math.pow(T, g, self.alpha);
+        }
+
+        /// Survival function: P(X > x) = 1 − F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function: Q(p) = λ·[−ln(1 − p^{1/α})]^{1/k}.
+        ///
+        /// Q(0) = 0, Q(1) = +∞.
+        ///
+        /// Errors: !(p ≥ 0 ∧ p ≤ 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            return self.quantileRaw(p);
+        }
+
+        fn quantileRaw(self: Self, p: T) T {
+            if (p <= 0.0) return 0.0;
+            if (p >= 1.0) return math.inf(T);
+            const p1a = math.pow(T, p, 1.0 / self.alpha);
+            const inner = -@log(1.0 - p1a);
+            return self.scale * math.pow(T, inner, 1.0 / self.shape);
+        }
+
+        // E[X^r] via convergent binomial series:
+        // E[X^r] = α·λ^r·Γ(1+r/k) · Σ_{j≥0} (−1)^j·C(α−1,j)/(j+1)^{1+r/k}
+        // b_0=1, b_{j+1} = b_j·(α−1−j)/(j+1)
+        fn momentR(self: Self, r: T) T {
+            const s = 1.0 + r / self.shape;
+            const gs = @exp(logGamma(s));
+            var sum: T = 0.0;
+            var b: T = 1.0;
+            var j: usize = 0;
+            while (j < 500) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const denom = math.pow(T, jf + 1.0, s);
+                if (!math.isFinite(denom) or denom == 0.0) break;
+                const sign: T = if (j % 2 == 0) 1.0 else -1.0;
+                const term = sign * b / denom;
+                sum += term;
+                if (@abs(term) < 1e-14 * @abs(sum) + 1e-300) break;
+                b = b * (self.alpha - 1.0 - jf) / (jf + 1.0);
+            }
+            return self.alpha * math.pow(T, self.scale, r) * gs * sum;
+        }
+
+        /// Mean of the distribution via generalized binomial series.
+        ///
+        /// E[X] = α·λ·Γ(1+1/k) · Σ_{j≥0} (−1)^j·C(α−1,j)/(j+1)^{1+1/k}
+        ///
+        /// Time: O(α) for integer α, O(500) worst case | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.momentR(1.0);
+        }
+
+        /// Variance of the distribution: E[X²] − E[X]².
+        ///
+        /// Time: O(α) for integer α, O(500) worst case | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ex = self.mean();
+            const ex2 = self.momentR(2.0);
+            return @max(0.0, ex2 - ex * ex);
+        }
+
+        // h(u) for mode bisection: (k−1) − k·u + (α−1)·k·u·e^{−u}/(1−e^{−u})
+        // h(0+) = αk−1 > 0 (when αk > 1), h(∞) → −∞
+        fn hMode(alpha_: T, shape_: T, u: T) T {
+            const eu = @exp(-u);
+            const g = 1.0 - eu;
+            if (g < 1e-300) return alpha_ * shape_ - 1.0;
+            return (shape_ - 1.0) - shape_ * u + (alpha_ - 1.0) * shape_ * u * eu / g;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// Returns 0 if α·k ≤ 1 (PDF decreasing from origin or pole at origin).
+        /// Otherwise bisects h(u) = (k−1)−ku+(α−1)ku·e^{−u}/(1−e^{−u}) = 0 for u*,
+        /// then mode = λ·u*^{1/k}.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha * self.shape <= 1.0) return 0.0;
+            var lo: T = 1e-10;
+            var hi: T = 1000.0;
+            var guard: usize = 0;
+            while (hMode(self.alpha, self.shape, hi) >= 0.0 and guard < 50) : (guard += 1) {
+                hi *= 2.0;
+            }
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-10) break;
+                if (hMode(self.alpha, self.shape, mid) > 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return self.scale * math.pow(T, (lo + hi) / 2.0, 1.0 / self.shape);
+        }
+
+        /// Differential entropy estimated via 500-point midpoint quadrature.
+        ///
+        /// H ≈ −(1/500)·Σ_i logpdf(Q((i+0.5)/500))
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                const x = self.quantileRaw(p);
+                sum -= self.logpdf(x);
+            }
+            return sum / Nf;
+        }
+
+        /// Generate a random sample via inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantileRaw(rng.float(T));
+        }
+
+        /// Validate parameters: α > 0, λ > 0, k > 0, all finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0.0) or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (!(self.scale > 0.0) or !math.isFinite(self.scale)) return error.InvalidParameter;
+            if (!(self.shape > 0.0) or !math.isFinite(self.shape)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for display.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("EW(α={d:.4}, λ={d:.4}, k={d:.4})", .{ self.alpha, self.scale, self.shape });
+        }
+    };
+}
+
+// Exponentiated Weibull Distribution Tests
+
+test "ExponentiatedWeibull: init with valid parameters" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 1.0);
+    try expectEqual(@as(f64, 2.0), dist.alpha);
+    try expectEqual(@as(f64, 1.0), dist.scale);
+    try expectEqual(@as(f64, 1.0), dist.shape);
+}
+
+test "ExponentiatedWeibull: init with various valid parameters" {
+    _ = try ExponentiatedWeibull(f64).init(0.5, 2.5, 3.0);
+    _ = try ExponentiatedWeibull(f64).init(5.0, 0.1, 0.5);
+    _ = try ExponentiatedWeibull(f64).init(1.0, 1.0, 1.0);
+}
+
+test "ExponentiatedWeibull: init rejects alpha = 0" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(0.0, 1.0, 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects negative alpha" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(-1.0, 1.0, 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects NaN alpha" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects inf alpha" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(math.inf(f64), 1.0, 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects scale = 0" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, 0.0, 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects negative scale" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, -1.0, 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects NaN scale" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, math.nan(f64), 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects inf scale" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, math.inf(f64), 1.0));
+}
+
+test "ExponentiatedWeibull: init rejects shape = 0" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, 1.0, 0.0));
+}
+
+test "ExponentiatedWeibull: init rejects negative shape" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, 1.0, -1.0));
+}
+
+test "ExponentiatedWeibull: init rejects NaN shape" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+test "ExponentiatedWeibull: init rejects inf shape" {
+    try expectError(error.InvalidParameter, ExponentiatedWeibull(f64).init(1.0, 1.0, math.inf(f64)));
+}
+
+test "ExponentiatedWeibull: pdf returns 0 for x <= 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+}
+
+test "ExponentiatedWeibull: pdf positive for x > 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(dist.pdf(0.5) > 0.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.pdf(2.0) > 0.0);
+}
+
+test "ExponentiatedWeibull: pdf exact value at x=1 with alpha=2, scale=1, shape=2" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    // f = 4·e^{-1}·(1-e^{-1}) = 4·e^{-1}·e^{-1}/(e^{-1}... = 4(e^{-1}-e^{-2}) ≈ 0.93018
+    try expectApproxEqAbs(@as(f64, 0.93018), dist.pdf(1.0), 0.001);
+}
+
+test "ExponentiatedWeibull: pdf monotone decreasing for alpha*shape < 1" {
+    // alpha=0.5, shape=1: alpha*shape=0.5 < 1 → PDF decreases from infinity at origin
+    const dist = try ExponentiatedWeibull(f64).init(0.5, 1.0, 1.0);
+    try expect(dist.pdf(0.01) > dist.pdf(0.1));
+    try expect(dist.pdf(0.1) > dist.pdf(1.0));
+}
+
+test "ExponentiatedWeibull: logpdf returns -inf for x <= 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(dist.logpdf(0.0) == -math.inf(f64));
+    try expect(dist.logpdf(-1.0) == -math.inf(f64));
+}
+
+test "ExponentiatedWeibull: logpdf equals log(pdf) for x > 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const x = 0.75;
+    try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+}
+
+test "ExponentiatedWeibull: cdf returns 0 at x <= 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "ExponentiatedWeibull: cdf exact value at x=1 with alpha=2, scale=1, shape=2" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    // F = (1-e^{-1})^2 ≈ 0.39958
+    try expectApproxEqAbs(@as(f64, 0.39958), dist.cdf(1.0), 0.0001);
+}
+
+test "ExponentiatedWeibull: cdf is monotone increasing" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(dist.cdf(0.5) < dist.cdf(1.0));
+    try expect(dist.cdf(1.0) < dist.cdf(2.0));
+    try expect(dist.cdf(2.0) < dist.cdf(5.0));
+}
+
+test "ExponentiatedWeibull: cdf approaches 1 for large x" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(dist.cdf(100.0) > 0.999);
+}
+
+test "ExponentiatedWeibull: cdf + sf = 1" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const x = 0.75;
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(x) + dist.sf(x), 1e-14);
+}
+
+test "ExponentiatedWeibull: sf returns 1 at x = 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "ExponentiatedWeibull: quantile Q(0) = 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "ExponentiatedWeibull: quantile Q(1) = +inf" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(try dist.quantile(1.0) == math.inf(f64));
+}
+
+test "ExponentiatedWeibull: quantile rejects p < 0" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ExponentiatedWeibull: quantile rejects p > 1" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ExponentiatedWeibull: quantile rejects NaN" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "ExponentiatedWeibull: quantile roundtrip cdf(Q(p)) = p at p=0.25" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const q = try dist.quantile(0.25);
+    try expectApproxEqAbs(@as(f64, 0.25), dist.cdf(q), 1e-10);
+}
+
+test "ExponentiatedWeibull: quantile roundtrip cdf(Q(p)) = p at p=0.5" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(@as(f64, 0.5), dist.cdf(q), 1e-10);
+}
+
+test "ExponentiatedWeibull: quantile roundtrip cdf(Q(p)) = p at p=0.75" {
+    const dist = try ExponentiatedWeibull(f64).init(3.0, 2.0, 1.5);
+    const q = try dist.quantile(0.75);
+    try expectApproxEqAbs(@as(f64, 0.75), dist.cdf(q), 1e-10);
+}
+
+test "ExponentiatedWeibull: mean = 1.5 for alpha=2, scale=1, shape=1" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 1.0);
+    // Exact: 2·Γ(2)·(1/1^2 - 1/2^2) = 2·1·(1-0.25) = 1.5
+    try expectApproxEqAbs(@as(f64, 1.5), dist.mean(), 1e-6);
+}
+
+test "ExponentiatedWeibull: mean = scale*Gamma(1+1/shape) for alpha=1 (Weibull special case)" {
+    const dist = try ExponentiatedWeibull(f64).init(1.0, 2.0, 3.0);
+    // E[X] = 2·Γ(4/3) ≈ 2·0.89298 ≈ 1.78596
+    try expectApproxEqAbs(@as(f64, 2.0 * 0.89298), dist.mean(), 0.001);
+}
+
+test "ExponentiatedWeibull: mean increases with scale" {
+    const dist1 = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const dist2 = try ExponentiatedWeibull(f64).init(2.0, 2.0, 2.0);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "ExponentiatedWeibull: variance positive for valid params" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(dist.variance() > 0.0);
+}
+
+test "ExponentiatedWeibull: variance matches Weibull for alpha=1, scale=1, shape=2" {
+    const dist = try ExponentiatedWeibull(f64).init(1.0, 1.0, 2.0);
+    // Weibull(k=2,λ=1) variance = Γ(2) - Γ(3/2)^2 = 1 - π/4 ≈ 0.21460
+    try expectApproxEqAbs(@as(f64, 1.0 - math.pi / 4.0), dist.variance(), 1e-5);
+}
+
+test "ExponentiatedWeibull: mode = 0 when alpha*shape <= 1" {
+    const dist = try ExponentiatedWeibull(f64).init(0.5, 1.0, 1.0);
+    try expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "ExponentiatedWeibull: mode = 0 when alpha*shape = 1 exactly" {
+    const dist = try ExponentiatedWeibull(f64).init(1.0, 1.0, 1.0);
+    try expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "ExponentiatedWeibull: mode = ln(2) for alpha=2, scale=1, shape=1" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 1.0);
+    // k=1: u* = ln(alpha) = ln(2), mode = scale * ln(2)^(1/1)
+    try expectApproxEqAbs(@log(@as(f64, 2.0)), dist.mode(), 1e-4);
+}
+
+test "ExponentiatedWeibull: mode = 1/sqrt(2) for alpha=1, scale=1, shape=2" {
+    const dist = try ExponentiatedWeibull(f64).init(1.0, 1.0, 2.0);
+    // Weibull(k=2,λ=1) mode = ((k-1)/k)^(1/k) = (1/2)^(1/2) = 1/sqrt(2)
+    try expectApproxEqAbs(@as(f64, 1.0 / @sqrt(2.0)), dist.mode(), 1e-4);
+}
+
+test "ExponentiatedWeibull: mode scales with scale parameter" {
+    const dist1 = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const dist2 = try ExponentiatedWeibull(f64).init(2.0, 3.0, 2.0);
+    try expectApproxEqAbs(@as(f64, 3.0) * dist1.mode(), dist2.mode(), 1e-8);
+}
+
+test "ExponentiatedWeibull: entropy is finite for valid params" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try expect(math.isFinite(dist.entropy()));
+}
+
+test "ExponentiatedWeibull: entropy increases with scale" {
+    const dist1 = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const dist2 = try ExponentiatedWeibull(f64).init(2.0, 2.0, 2.0);
+    // Larger scale → larger entropy (H_λ = H_1 + ln(λ))
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "ExponentiatedWeibull: sample generates positive values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0.0 and math.isFinite(s));
+    }
+}
+
+test "ExponentiatedWeibull: sample mean converges to distribution mean" {
+    var prng = std.Random.DefaultPrng.init(99);
+    const rng = prng.random();
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    const expected_mean = dist.mean();
+    var sum: f64 = 0.0;
+    const n: usize = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    try expectApproxEqAbs(expected_mean, sum / @as(f64, @floatFromInt(n)), 0.1);
+}
+
+test "ExponentiatedWeibull: validate passes for valid params" {
+    const dist = try ExponentiatedWeibull(f64).init(2.0, 1.0, 2.0);
+    try dist.validate();
+}
+
+test "ExponentiatedWeibull: f32 type support" {
+    const dist = try ExponentiatedWeibull(f32).init(2.0, 1.0, 2.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(q > 0.0 and math.isFinite(q));
+    try expect(math.isFinite(dist.mean()));
+    try dist.validate();
+}
