@@ -2279,14 +2279,143 @@ test "Normal distribution: f32 precision" {
     try expectApproxEqRel(@as(f32, 0.5), dist.cdf(0.0), 1e-5);
 }
 
+test "Normal distribution: validate passes for valid params" {
+    const dist = try Normal(f64).init(0.0, 1.0);
+    try dist.validate();
+    const dist2 = try Normal(f64).init(-5.0, 2.0);
+    try dist2.validate();
+}
+
+test "Normal distribution: logpdf exact value at mean" {
+    const dist = try Normal(f64).init(0.0, 1.0);
+    // logpdf(0) = -log(sqrt(2π)) ≈ -0.9189385332046727
+    try expectApproxEqRel(-0.9189385332046727, dist.logpdf(0.0), 1e-10);
+}
+
+test "Normal distribution: logpdf exact value at mu+sigma" {
+    const dist = try Normal(f64).init(0.0, 1.0);
+    // logpdf(1) = -log(sqrt(2π)) - 0.5 ≈ -1.4189385332046727
+    try expectApproxEqRel(-1.4189385332046727, dist.logpdf(1.0), 1e-10);
+}
+
+test "Normal distribution: logpdf matches log of pdf" {
+    const dist = try Normal(f64).init(2.0, 3.0);
+    // At multiple points, verify logpdf = log(pdf)
+    const points = [_]f64{ -5.0, 0.0, 2.0, 5.0, 10.0 };
+    for (points) |x| {
+        try expectApproxEqRel(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+    }
+}
+
+test "Normal distribution: sf exact value at sigma" {
+    const dist = try Normal(f64).init(0.0, 1.0);
+    // sf(1) = 1 - Φ(1) ≈ 0.15865525393145707
+    try expectApproxEqRel(0.15865525393145707, dist.sf(1.0), 1e-5);
+}
+
+test "Normal distribution: sf + cdf = 1" {
+    const dist = try Normal(f64).init(0.0, 1.0);
+    const points = [_]f64{ -3.0, -1.0, 0.0, 1.0, 3.0 };
+    for (points) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-14);
+    }
+}
+
 test "Uniform distribution: f32 precision" {
     const dist = try Uniform(f32).init(0.0, 4.0);
     try expectEqual(@as(f32, 0.25), dist.pdf(2.0));
 }
 
+test "Uniform distribution: validate passes for valid params" {
+    const dist = try Uniform(f64).init(0.0, 1.0);
+    try dist.validate();
+    const dist2 = try Uniform(f64).init(-3.0, 10.0);
+    try dist2.validate();
+}
+
+test "Uniform distribution: init rejects NaN for b" {
+    try expectError(error.InvalidParameter, Uniform(f64).init(0.0, math.nan(f64)));
+}
+
+test "Uniform distribution: logpdf exact value inside support" {
+    const dist = try Uniform(f64).init(0.0, 4.0);
+    // logpdf(2) = -log(4) ≈ -1.3862943611198906
+    try expectApproxEqRel(-1.3862943611198906, dist.logpdf(2.0), 1e-10);
+}
+
+test "Uniform distribution: logpdf is -inf outside support" {
+    const dist = try Uniform(f64).init(0.0, 4.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(5.0)));
+}
+
+test "Uniform distribution: logpdf is constant inside support" {
+    const dist = try Uniform(f64).init(0.0, 4.0);
+    // All interior points have same logpdf
+    try expectApproxEqRel(dist.logpdf(0.5), dist.logpdf(1.5), 1e-15);
+    try expectApproxEqRel(dist.logpdf(1.5), dist.logpdf(3.0), 1e-15);
+}
+
+test "Uniform distribution: sf numerical values" {
+    const dist = try Uniform(f64).init(0.0, 4.0);
+    try expectEqual(1.0, dist.sf(-1.0)); // before range
+    try expectEqual(0.5, dist.sf(2.0)); // midpoint
+    try expectApproxEqRel(0.25, dist.sf(3.0), 1e-15);
+    try expectEqual(0.0, dist.sf(4.0)); // at upper bound
+    try expectEqual(0.0, dist.sf(5.0)); // after range
+}
+
 test "Exponential distribution: f32 precision" {
     const dist = try Exponential(f32).init(2.0);
     try expectEqual(@as(f32, 2.0), dist.pdf(0.0));
+}
+
+test "Exponential distribution: validate passes for valid params" {
+    const dist = try Exponential(f64).init(2.0);
+    try dist.validate();
+    const dist2 = try Exponential(f64).init(0.001);
+    try dist2.validate();
+}
+
+test "Exponential distribution: init rejects NaN rate" {
+    try expectError(error.InvalidParameter, Exponential(f64).init(math.nan(f64)));
+}
+
+test "Exponential distribution: logpdf exact value at x=0" {
+    const dist = try Exponential(f64).init(2.0);
+    // logpdf(0) = log(λ) - λ*0 = log(2) ≈ 0.6931471805599453
+    try expectApproxEqRel(0.6931471805599453, dist.logpdf(0.0), 1e-10);
+}
+
+test "Exponential distribution: logpdf exact value at x=0.5" {
+    const dist = try Exponential(f64).init(2.0);
+    // logpdf(0.5) = log(2) - 2*0.5 = log(2) - 1 ≈ -0.3068528194400547
+    try expectApproxEqRel(-0.3068528194400547, dist.logpdf(0.5), 1e-10);
+}
+
+test "Exponential distribution: logpdf is -inf for x<0" {
+    const dist = try Exponential(f64).init(2.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "Exponential distribution: sf exact values" {
+    const dist = try Exponential(f64).init(2.0);
+    // sf(0) = 1 (memoryless property starting point)
+    try expectEqual(1.0, dist.sf(0.0));
+    // sf(0.5) = exp(-2*0.5) = exp(-1) ≈ 0.36787944117144233
+    try expectApproxEqRel(0.36787944117144233, dist.sf(0.5), 1e-10);
+    // sf(1) = exp(-2) ≈ 0.13533528323661270
+    try expectApproxEqRel(0.13533528323661270, dist.sf(1.0), 1e-10);
+    // sf(x<0) = 1
+    try expectEqual(1.0, dist.sf(-1.0));
+}
+
+test "Exponential distribution: sf + cdf = 1" {
+    const dist = try Exponential(f64).init(2.0);
+    const points = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (points) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-14);
+    }
 }
 
 test "Gamma distribution: init" {
@@ -2680,6 +2809,46 @@ test "Poisson distribution: mean and variance" {
 
     // Variance = λ = 5.0
     try expectEqual(5.0, dist.variance());
+}
+
+test "Poisson distribution: validate passes for valid params" {
+    const dist = try Poisson(f64).init(3.0);
+    try dist.validate();
+    const dist2 = try Poisson(f64).init(0.1);
+    try dist2.validate();
+}
+
+test "Poisson distribution: init rejects NaN rate" {
+    try expectError(error.InvalidParameter, Poisson(f64).init(math.nan(f64)));
+}
+
+test "Poisson distribution: logpmf exact value at k=0" {
+    const dist = try Poisson(f64).init(3.0);
+    // logpmf(0) = 0*log(3) - 3 - log(0!) = -3
+    try expectApproxEqRel(-3.0, dist.logpmf(0), 1e-10);
+}
+
+test "Poisson distribution: logpmf exact value at k=1" {
+    const dist = try Poisson(f64).init(3.0);
+    // logpmf(1) = log(3) - 3 ≈ 1.0986122886681098 - 3 = -1.9013877113318902
+    try expectApproxEqRel(-1.9013877113318902, dist.logpmf(1), 1e-10);
+}
+
+test "Poisson distribution: logpmf matches log of pmf" {
+    const dist = try Poisson(f64).init(3.0);
+    for ([_]u64{ 0, 1, 2, 3, 5, 8 }) |k| {
+        try expectApproxEqRel(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "Poisson distribution: mean equals rate" {
+    const dist = try Poisson(f64).init(7.5);
+    try expectEqual(7.5, dist.mean());
+}
+
+test "Poisson distribution: variance equals rate" {
+    const dist = try Poisson(f64).init(7.5);
+    try expectEqual(7.5, dist.variance());
 }
 
 test "Binomial distribution: init" {
