@@ -64785,3 +64785,424 @@ test "MarchenkoPastur: f32 type support" {
     try testing.expect(q > dist.lambda_minus);
     try testing.expect(q < dist.lambda_plus);
 }
+
+// ============================================================================
+// Inverse Chi-Squared Distribution
+// ============================================================================
+
+/// Inverse chi-squared distribution Inv-χ²(ν)
+///
+/// Probability density function (PDF):
+///   f(x; ν) = (1/2)^(ν/2) / Γ(ν/2) · x^(-ν/2-1) · exp(-1/(2x))  for x > 0
+///
+/// Cumulative distribution function (CDF):
+///   F(x; ν) = 1 - P(ν/2, 1/(2x))  where P is the regularized lower incomplete gamma
+///   Computed via InverseGamma(ν/2, 1/2)
+///
+/// Parameters:
+///   - nu (ν): Degrees of freedom (ν > 0, may be non-integer)
+///
+/// Properties:
+///   - Support: (0, ∞)
+///   - Equivalent to InverseGamma(ν/2, 1/2)
+///   - Bayesian conjugate prior for the variance σ² of a normal distribution
+///   - Mean = 1/(ν-2) for ν > 2; ∞ otherwise
+///   - Variance = 2/((ν-2)²(ν-4)) for ν > 4; ∞ otherwise
+///   - Mode = 1/(ν+2)
+///
+/// Use cases:
+///   - Bayesian statistics: conjugate prior for normal precision
+///   - Posterior distribution for variance given normally-distributed data
+///   - Hypothesis testing for variance
+pub fn InverseChiSquared(comptime T: type) type {
+    return struct {
+        nu: T,
+        inv_gamma: InverseGamma(T),
+
+        const Self = @This();
+
+        /// Create an InverseChiSquared distribution with ν degrees of freedom.
+        ///
+        /// Errors: ν ≤ 0, or non-finite ν.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(nu: T) DistributionError!Self {
+            if (nu <= 0.0 or !math.isFinite(nu)) return error.InvalidParameter;
+            return Self{
+                .nu = nu,
+                .inv_gamma = try InverseGamma(T).init(nu / 2.0, 0.5),
+            };
+        }
+
+        /// Probability density function at x.
+        ///
+        /// f(x; ν) = (1/2)^(ν/2) / Γ(ν/2) · x^(-ν/2-1) · exp(-1/(2x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return self.inv_gamma.pdf(x);
+        }
+
+        /// Log probability density function at x.
+        ///
+        /// log f(x) = -(ν/2)·ln(2) - logΓ(ν/2) - (ν/2+1)·ln(x) - 1/(2x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            return self.inv_gamma.logpdf(x);
+        }
+
+        /// Cumulative distribution function at x.
+        ///
+        /// F(x; ν) = 1 - P(ν/2, 1/(2x)) via regularized lower incomplete gamma
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            return self.inv_gamma.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): x such that P(X ≤ x) = p.
+        ///
+        /// No closed form — uses bisection via InverseGamma(ν/2, 1/2).
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            return self.inv_gamma.quantile(p);
+        }
+
+        /// Mode of the distribution: 1/(ν+2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return 1.0 / (self.nu + 2.0);
+        }
+
+        /// Mean of the distribution: 1/(ν-2) for ν > 2, else +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.nu <= 2.0) return math.inf(T);
+            return 1.0 / (self.nu - 2.0);
+        }
+
+        /// Variance of the distribution: 2/((ν-2)²(ν-4)) for ν > 4, else +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.nu <= 4.0) return math.inf(T);
+            const d = self.nu - 2.0;
+            return 2.0 / (d * d * (self.nu - 4.0));
+        }
+
+        /// Differential entropy: ν/2 - ln(2) + logΓ(ν/2) - (1+ν/2)·ψ(ν/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return self.inv_gamma.entropy();
+        }
+
+        /// Generate a random sample from this distribution.
+        ///
+        /// Uses X = 1/Y where Y ~ Gamma(ν/2, rate=1/2) (Marsaglia-Tsang).
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.inv_gamma.sample(rng);
+        }
+
+        /// Validate distribution parameters: ν > 0, finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.nu <= 0.0 or !math.isFinite(self.nu)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for display.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("InvChiSq(ν={d:.4})", .{self.nu});
+        }
+    };
+}
+
+// Inverse Chi-Squared Distribution Tests
+
+test "InverseChiSquared: init with nu=2" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    try testing.expectApproxEqAbs(2.0, dist.nu, 1e-10);
+}
+
+test "InverseChiSquared: init with nu=4" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    try testing.expectApproxEqAbs(4.0, dist.nu, 1e-10);
+}
+
+test "InverseChiSquared: init with nu=0.5" {
+    const dist = try InverseChiSquared(f64).init(0.5);
+    try testing.expectApproxEqAbs(0.5, dist.nu, 1e-10);
+}
+
+test "InverseChiSquared: init rejects nu=0" {
+    const result = InverseChiSquared(f64).init(0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "InverseChiSquared: init rejects negative nu" {
+    const result = InverseChiSquared(f64).init(-1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "InverseChiSquared: init rejects NaN" {
+    const result = InverseChiSquared(f64).init(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "InverseChiSquared: init rejects positive infinity" {
+    const result = InverseChiSquared(f64).init(math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "InverseChiSquared: pdf at x=1, nu=2" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const p = dist.pdf(1.0);
+    // pdf(1; nu=2) = 0.5 * exp(-0.5) ≈ 0.30327
+    try testing.expectApproxEqAbs(0.30327, p, 0.0001);
+}
+
+test "InverseChiSquared: pdf at x=0.5, nu=4" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const p = dist.pdf(0.5);
+    // pdf(0.5; nu=4) = 2 * exp(-1) ≈ 0.73576
+    try testing.expectApproxEqAbs(0.73576, p, 0.0001);
+}
+
+test "InverseChiSquared: pdf at x <= 0 is 0" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    try testing.expectApproxEqAbs(0.0, dist.pdf(0.0), 1e-10);
+    try testing.expectApproxEqAbs(0.0, dist.pdf(-1.0), 1e-10);
+}
+
+test "InverseChiSquared: pdf decreases for large x" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const p1 = dist.pdf(1.0);
+    const p2 = dist.pdf(10.0);
+    const p3 = dist.pdf(100.0);
+    try testing.expect(p1 > p2);
+    try testing.expect(p2 > p3);
+    try testing.expect(p3 > 0);
+}
+
+test "InverseChiSquared: logpdf matches log(pdf)" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const x = 1.5;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    const expected = @log(p);
+    try testing.expectApproxEqAbs(expected, lp, 1e-10);
+}
+
+test "InverseChiSquared: logpdf at x <= 0" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(lp < -1e6 or !math.isFinite(lp));
+}
+
+test "InverseChiSquared: cdf at x=0 is 0" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-10);
+}
+
+test "InverseChiSquared: cdf at x=1, nu=2" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const c = dist.cdf(1.0);
+    // 1 - regularizedGammaP(1, 0.5) ≈ 0.60653
+    try testing.expectApproxEqAbs(0.60653, c, 0.0001);
+}
+
+test "InverseChiSquared: cdf is monotone increasing" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const c1 = dist.cdf(0.5);
+    const c2 = dist.cdf(1.0);
+    const c3 = dist.cdf(2.0);
+    const c4 = dist.cdf(5.0);
+    try testing.expect(c1 <= c2);
+    try testing.expect(c2 <= c3);
+    try testing.expect(c3 <= c4);
+}
+
+test "InverseChiSquared: cdf approaches 1 for large x" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const c = dist.cdf(1000.0);
+    try testing.expect(c > 0.99);
+}
+
+test "InverseChiSquared: quantile at p=0 is 0" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "InverseChiSquared: quantile at p=1 is infinity" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(q == math.inf(f64));
+}
+
+test "InverseChiSquared: quantile roundtrip with cdf" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "InverseChiSquared: quantile roundtrip for p=0.25" {
+    const dist = try InverseChiSquared(f64).init(6.0);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "InverseChiSquared: quantile roundtrip for p=0.75" {
+    const dist = try InverseChiSquared(f64).init(6.0);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "InverseChiSquared: quantile rejects p < 0" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "InverseChiSquared: quantile rejects p > 1" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "InverseChiSquared: mode for nu=2" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const m = dist.mode();
+    // mode = 1/(nu+2) = 1/4 = 0.25
+    try testing.expectApproxEqAbs(0.25, m, 1e-10);
+}
+
+test "InverseChiSquared: mode for nu=4" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const m = dist.mode();
+    // mode = 1/(4+2) = 1/6 ≈ 0.16667
+    try testing.expectApproxEqAbs(1.0 / 6.0, m, 1e-10);
+}
+
+test "InverseChiSquared: mode for nu=10" {
+    const dist = try InverseChiSquared(f64).init(10.0);
+    const m = dist.mode();
+    // mode = 1/(10+2) = 1/12 ≈ 0.08333
+    try testing.expectApproxEqAbs(1.0 / 12.0, m, 1e-10);
+}
+
+test "InverseChiSquared: mean for nu=4" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const mn = dist.mean();
+    // mean = 1/(nu-2) = 1/2 = 0.5
+    try testing.expectApproxEqAbs(0.5, mn, 1e-10);
+}
+
+test "InverseChiSquared: mean for nu=3" {
+    const dist = try InverseChiSquared(f64).init(3.0);
+    const mn = dist.mean();
+    // mean = 1/(nu-2) = 1.0
+    try testing.expectApproxEqAbs(1.0, mn, 1e-10);
+}
+
+test "InverseChiSquared: mean for nu <= 2 is infinity" {
+    const dist_nu2 = try InverseChiSquared(f64).init(2.0);
+    try testing.expect(dist_nu2.mean() == math.inf(f64));
+    const dist_nu1 = try InverseChiSquared(f64).init(1.0);
+    try testing.expect(dist_nu1.mean() == math.inf(f64));
+}
+
+test "InverseChiSquared: variance for nu=6" {
+    const dist = try InverseChiSquared(f64).init(6.0);
+    const v = dist.variance();
+    // variance = 2/((nu-2)^2 * (nu-4)) = 2/(16*2) = 0.0625
+    try testing.expectApproxEqAbs(0.0625, v, 1e-10);
+}
+
+test "InverseChiSquared: variance for nu=8" {
+    const dist = try InverseChiSquared(f64).init(8.0);
+    const v = dist.variance();
+    // variance = 2/((8-2)^2 * (8-4)) = 2/(36*4) ≈ 0.013889
+    try testing.expectApproxEqAbs(2.0 / 144.0, v, 1e-6);
+}
+
+test "InverseChiSquared: variance for nu <= 4 is infinity" {
+    const dist_nu4 = try InverseChiSquared(f64).init(4.0);
+    try testing.expect(dist_nu4.variance() == math.inf(f64));
+    const dist_nu2 = try InverseChiSquared(f64).init(2.0);
+    try testing.expect(dist_nu2.variance() == math.inf(f64));
+}
+
+test "InverseChiSquared: entropy for nu=2" {
+    const dist = try InverseChiSquared(f64).init(2.0);
+    const ent = dist.entropy();
+    // entropy ≈ 1.461285 (from inv_gamma entropy)
+    try testing.expectApproxEqAbs(1.461285, ent, 0.001);
+}
+
+test "InverseChiSquared: entropy for nu=4" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    const ent = dist.entropy();
+    // entropy ≈ 0.038501 (from inv_gamma entropy)
+    try testing.expectApproxEqAbs(0.038501, ent, 0.001);
+}
+
+test "InverseChiSquared: entropy is finite" {
+    const dist = try InverseChiSquared(f64).init(6.0);
+    const ent = dist.entropy();
+    try testing.expect(math.isFinite(ent));
+}
+
+test "InverseChiSquared: sample returns positive values" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try InverseChiSquared(f64).init(4.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0);
+    }
+}
+
+test "InverseChiSquared: sample convergence to mean" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try InverseChiSquared(f64).init(6.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const expected_mean = dist.mean();
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.05);
+}
+
+test "InverseChiSquared: validate passes for valid params" {
+    const dist = try InverseChiSquared(f64).init(4.0);
+    try dist.validate();
+}
+
+test "InverseChiSquared: f32 type support" {
+    const dist = try InverseChiSquared(f32).init(2.0);
+    try testing.expect(math.isFinite(dist.pdf(1.0)));
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0);
+}
