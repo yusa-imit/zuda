@@ -66359,3 +66359,415 @@ test "ExponentiatedWeibull: f32 type support" {
     try expect(math.isFinite(dist.mean()));
     try dist.validate();
 }
+
+// ============================================================================
+// U-Quadratic Distribution
+// ============================================================================
+
+/// U-Quadratic distribution on a bounded interval [a, b].
+///
+/// The PDF is a upward-opening parabola:
+///   f(x) = α·(x − β)²   for x ∈ [a, b]
+///
+/// where β = (a+b)/2 (midpoint) and α = 12/(b−a)³ (normalising constant).
+///
+/// The density is zero at the centre (antimode) and maximum 3/(b−a) at both
+/// endpoints, giving the characteristic U-shape from which the distribution
+/// takes its name.
+///
+/// Parameters:
+///   a — lower bound (finite)
+///   b — upper bound (finite, b > a)
+///
+/// Key properties (exact closed forms):
+///   CDF:      F(x) = 4/(b−a)³ · [(x−β)³ + ((b−a)/2)³]
+///   Quantile: Q(p) = β + (b−a)/2 · ∛(2p−1)
+///   Mean:     β = (a+b)/2
+///   Variance: 3(b−a)²/20
+///   Entropy:  ln((b−a)/3) + 2/3  nats
+///
+/// Mode: bimodal — modes at both a and b; antimode at β.
+///   mode() returns the lower mode a.
+///
+/// Time: O(1) for all operations
+pub fn UQuadratic(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Create a UQuadratic distribution on [a, b].
+        ///
+        /// Errors: a ≥ b, or either parameter non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (!math.isFinite(a) or !math.isFinite(b)) return error.InvalidParameter;
+            if (!(b > a)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b };
+        }
+
+        /// Log probability density function at x.
+        ///
+        /// log f(x) = log(α) + 2·log|x − β|   for x ∈ (a, b), x ≠ β
+        /// Returns −∞ outside [a, b] and at x = β (antimode).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return -math.inf(T);
+            const beta = (self.a + self.b) / 2.0;
+            const dx = x - beta;
+            if (dx == 0.0) return -math.inf(T);
+            const span = self.b - self.a;
+            const log_alpha = @log(@as(T, 12.0)) - 3.0 * @log(span);
+            return log_alpha + 2.0 * @log(@abs(dx));
+        }
+
+        /// Probability density function at x.
+        ///
+        /// f(x) = 12/(b−a)³ · (x−β)²   for x ∈ [a, b]
+        /// Returns 0 outside [a, b].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.a or x > self.b) return 0.0;
+            const beta = (self.a + self.b) / 2.0;
+            const span = self.b - self.a;
+            const alpha = 12.0 / (span * span * span);
+            const dx = x - beta;
+            return alpha * dx * dx;
+        }
+
+        /// Cumulative distribution function at x.
+        ///
+        /// F(x) = 4/(b−a)³ · [(x−β)³ + ((b−a)/2)³]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.a) return 0.0;
+            if (x >= self.b) return 1.0;
+            const beta = (self.a + self.b) / 2.0;
+            const span = self.b - self.a;
+            const half = span / 2.0;
+            const dx = x - beta;
+            return 4.0 / (span * span * span) * (dx * dx * dx + half * half * half);
+        }
+
+        /// Quantile function (inverse CDF).
+        ///
+        /// Q(p) = β + (b−a)/2 · ∛(2p−1)   — exact closed form
+        ///
+        /// Errors: p outside [0, 1] or NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.a;
+            if (p == 1.0) return self.b;
+            const beta = (self.a + self.b) / 2.0;
+            const half = (self.b - self.a) / 2.0;
+            return beta + half * math.cbrt(2.0 * p - 1.0);
+        }
+
+        /// Sample a value from the distribution using the inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable;
+        }
+
+        /// Mean of the distribution: β = (a+b)/2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (self.a + self.b) / 2.0;
+        }
+
+        /// Variance of the distribution: 3(b−a)²/20.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const span = self.b - self.a;
+            return 3.0 * span * span / 20.0;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// The U-quadratic is bimodal with modes at both a and b (the endpoints)
+        /// and an antimode (minimum) at β = (a+b)/2.
+        /// Returns the lower mode a.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.a;
+        }
+
+        /// Shannon differential entropy in nats: ln((b−a)/3) + 2/3.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log((self.b - self.a) / 3.0) + 2.0 / 3.0;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.a) or !math.isFinite(self.b)) return error.InvalidParameter;
+            if (!(self.b > self.a)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("UQuadratic(a={d}, b={d})", .{ self.a, self.b });
+        }
+    };
+}
+
+test "UQuadratic: init rejects a >= b" {
+    try expectError(error.InvalidParameter, UQuadratic(f64).init(1.0, 0.0));
+    try expectError(error.InvalidParameter, UQuadratic(f64).init(1.0, 1.0));
+}
+
+test "UQuadratic: init rejects non-finite parameters" {
+    try expectError(error.InvalidParameter, UQuadratic(f64).init(math.inf(f64), 1.0));
+    try expectError(error.InvalidParameter, UQuadratic(f64).init(0.0, math.nan(f64)));
+}
+
+test "UQuadratic: pdf is zero outside support" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.1));
+    try expectEqual(@as(f64, 0.0), dist.pdf(2.1));
+}
+
+test "UQuadratic: pdf at boundaries equals 3/(b-a)" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // pdf(a) = pdf(b) = 3/(b-a) = 3/2 = 1.5
+    try expectApproxEqAbs(@as(f64, 1.5), dist.pdf(0.0), 1e-14);
+    try expectApproxEqAbs(@as(f64, 1.5), dist.pdf(2.0), 1e-14);
+}
+
+test "UQuadratic: pdf at antimode (centre) is zero" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(1.0));
+}
+
+test "UQuadratic: pdf at interior point" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // pdf(1.5) = (3/2)·(0.5)² = 3/8 = 0.375
+    try expectApproxEqAbs(@as(f64, 0.375), dist.pdf(1.5), 1e-14);
+    // Symmetric: pdf(0.5) = pdf(1.5)
+    try expectApproxEqAbs(@as(f64, 0.375), dist.pdf(0.5), 1e-14);
+}
+
+test "UQuadratic: pdf on [0,1] at boundaries equals 3" {
+    const dist = try UQuadratic(f64).init(0.0, 1.0);
+    try expectApproxEqAbs(@as(f64, 3.0), dist.pdf(0.0), 1e-14);
+    try expectApproxEqAbs(@as(f64, 3.0), dist.pdf(1.0), 1e-14);
+}
+
+test "UQuadratic: logpdf matches log(pdf) at interior points" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    for ([_]f64{ 0.1, 0.5, 1.5, 1.9 }) |x| {
+        const lp = dist.logpdf(x);
+        const p = dist.pdf(x);
+        try expectApproxEqAbs(@log(p), lp, 1e-12);
+    }
+}
+
+test "UQuadratic: logpdf is -inf outside support" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(-math.inf(f64), dist.logpdf(-1.0));
+    try expectEqual(-math.inf(f64), dist.logpdf(3.0));
+}
+
+test "UQuadratic: logpdf is -inf at antimode" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(-math.inf(f64), dist.logpdf(1.0));
+}
+
+test "UQuadratic: cdf at bounds" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+    try expectEqual(@as(f64, 1.0), dist.cdf(2.0));
+    try expectEqual(@as(f64, 1.0), dist.cdf(3.0));
+}
+
+test "UQuadratic: cdf at midpoint is 0.5" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectApproxEqAbs(@as(f64, 0.5), dist.cdf(1.0), 1e-14);
+}
+
+test "UQuadratic: cdf exact value at x=1.5" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // F(1.5) = 4/8·[(0.5)^3 + 1^3] = 0.5·1.125 = 0.5625
+    try expectApproxEqAbs(@as(f64, 0.5625), dist.cdf(1.5), 1e-14);
+}
+
+test "UQuadratic: cdf is symmetric about midpoint" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // F(β+t) + F(β-t) = 1 for all t
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(1.5) + dist.cdf(0.5), 1e-14);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(1.8) + dist.cdf(0.2), 1e-14);
+}
+
+test "UQuadratic: cdf is monotone non-decreasing" {
+    const dist = try UQuadratic(f64).init(-1.0, 3.0);
+    var prev: f64 = 0.0;
+    var x: f64 = -1.0;
+    while (x <= 3.0) : (x += 0.1) {
+        const c = dist.cdf(x);
+        try expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "UQuadratic: quantile rejects invalid p" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "UQuadratic: quantile at boundary probabilities" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+    try expectEqual(@as(f64, 2.0), try dist.quantile(1.0));
+}
+
+test "UQuadratic: quantile at p=0.5 equals midpoint" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectApproxEqAbs(@as(f64, 1.0), try dist.quantile(0.5), 1e-14);
+}
+
+test "UQuadratic: quantile exact at p=0.5625" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // Q(0.5625) = 1 + 1·∛(0.125) = 1.5
+    try expectApproxEqAbs(@as(f64, 1.5), try dist.quantile(0.5625), 1e-13);
+}
+
+test "UQuadratic: cdf(quantile(p)) = p roundtrip" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    for ([_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 }) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-13);
+    }
+}
+
+test "UQuadratic: mean equals midpoint" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.mean(), 1e-14);
+}
+
+test "UQuadratic: mean for asymmetric interval" {
+    const dist = try UQuadratic(f64).init(-3.0, 5.0);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.mean(), 1e-14);
+}
+
+test "UQuadratic: variance = 3*(b-a)^2/20" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // Var = 3*4/20 = 0.6
+    try expectApproxEqAbs(@as(f64, 0.6), dist.variance(), 1e-14);
+}
+
+test "UQuadratic: variance on [0,1] = 3/20" {
+    const dist = try UQuadratic(f64).init(0.0, 1.0);
+    try expectApproxEqAbs(@as(f64, 0.15), dist.variance(), 1e-14);
+}
+
+test "UQuadratic: variance scales as (b-a)^2" {
+    const dist1 = try UQuadratic(f64).init(0.0, 1.0);
+    const dist2 = try UQuadratic(f64).init(0.0, 2.0);
+    // doubling width → 4× variance
+    try expectApproxEqAbs(4.0 * dist1.variance(), dist2.variance(), 1e-13);
+}
+
+test "UQuadratic: mode returns lower bound" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    try expectEqual(@as(f64, 0.0), dist.mode());
+}
+
+test "UQuadratic: entropy = ln((b-a)/3) + 2/3" {
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    // ln(2/3) + 2/3 ≈ -0.405465 + 0.666667 ≈ 0.261202
+    const expected = @log(@as(f64, 2.0 / 3.0)) + 2.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-14);
+}
+
+test "UQuadratic: entropy on [0,1] = ln(1/3) + 2/3" {
+    const dist = try UQuadratic(f64).init(0.0, 1.0);
+    const expected = @log(@as(f64, 1.0 / 3.0)) + 2.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-14);
+}
+
+test "UQuadratic: entropy increases with width" {
+    const dist1 = try UQuadratic(f64).init(0.0, 1.0);
+    const dist2 = try UQuadratic(f64).init(0.0, 4.0);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "UQuadratic: sample stays within support" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    var i: usize = 0;
+    while (i < 500) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0.0 and s <= 2.0);
+    }
+}
+
+test "UQuadratic: sample mean converges to theoretical mean" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    var sum: f64 = 0.0;
+    const n: usize = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    // mean = 1.0; allow ±0.1 at n=5000
+    try expectApproxEqAbs(@as(f64, 1.0), sum / @as(f64, @floatFromInt(n)), 0.1);
+}
+
+test "UQuadratic: sample variance converges to theoretical variance" {
+    var prng = std.Random.DefaultPrng.init(777);
+    const rng = prng.random();
+    const dist = try UQuadratic(f64).init(0.0, 2.0);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n: usize = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const nf = @as(f64, @floatFromInt(n));
+    const sample_var = sum_sq / nf - (sum / nf) * (sum / nf);
+    // Var = 0.6; allow ±0.05 at n=5000
+    try expectApproxEqAbs(@as(f64, 0.6), sample_var, 0.05);
+}
+
+test "UQuadratic: validate passes for valid params" {
+    const dist = try UQuadratic(f64).init(-2.0, 5.0);
+    try dist.validate();
+}
+
+test "UQuadratic: f32 type support" {
+    const dist = try UQuadratic(f32).init(0.0, 2.0);
+    try expect(dist.pdf(1.5) > 0.0);
+    try expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(@as(f32, 1.0), q, 1e-6);
+    try expect(math.isFinite(dist.mean()));
+    try expect(math.isFinite(dist.variance()));
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
