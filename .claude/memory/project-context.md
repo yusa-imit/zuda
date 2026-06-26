@@ -1,3 +1,33 @@
+**Session 717 Update (2026-06-27) — FEATURE MODE [COMPLETED]:**
+
+✅ **UQuadratic Distribution** — 116th total, 95th continuous — commit 6614cff
+- **Mode**: FEATURE MODE (counter: 717)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: UQuadratic(a, b) — bounded U-shaped distribution on [a, b]
+  * Parameters: a < b (both finite lower/upper bounds)
+  * Derived: β = (a+b)/2 (midpoint/center), α = 12/(b-a)³ (normalizing constant)
+  * Support: [a, b]; PDF = 0 at center β (antimode), maximum 3/(b-a) at both endpoints
+  * PDF: α(x-β)² — O(1) exact
+  * CDF: 4/(b-a)³·[(x-β)³ + ((b-a)/2)³] — O(1) exact
+  * Quantile: β + (b-a)/2·∛(2p-1) — EXACT closed form O(1)
+    - Q(0)=a, Q(0.5)=β (median=mean), Q(1)=b
+    - Q(0.5625; a=0,b=2) = 1.5 exactly
+  * Mean: β = (a+b)/2 (exact by symmetry)
+  * Variance: 3(b-a)²/20 — exact
+  * Mode: bimodal at endpoints a and b; mode() returns a (lower mode)
+  * Entropy: ln((b-a)/3) + 2/3 — exact closed form
+  * Sample: exact inverse CDF via quantile
+  * Key test values (a=0, b=2):
+    - pdf(0)=pdf(2)=1.5; pdf(1)=0; pdf(1.5)=0.375
+    - cdf(0)=0, cdf(1)=0.5, cdf(1.5)=0.5625, cdf(2)=1
+    - mean=1.0, var=0.6, entropy=ln(2/3)+2/3≈0.2612
+  * Zig note: quantile uses math.cbrt (cube root), direct closed form
+- **Total tests**: 5,798 (was 5,764; +34 new UQuadratic tests)
+- **Distribution count**: 116 total (95 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — another bounded or circular distribution
+
+---
+
 **Session 716 Update (2026-06-26) — FEATURE MODE [COMPLETED]:**
 
 ✅ **ExponentiatedWeibull Distribution** — 115th total, 94th continuous — commit 8c48ef4
