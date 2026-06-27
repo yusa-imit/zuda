@@ -68494,3 +68494,576 @@ test "FlorySchulz: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+
+// ============================================================================
+// Crystal Ball Distribution
+// ============================================================================
+
+/// Crystal Ball distribution — continuous, support ℝ.
+///
+/// A probability distribution with a Gaussian core and a power-law tail, widely
+/// used in particle physics (HEP) to model detector resolution effects.
+///
+/// Parameters:
+///   alpha > 0  — transition point from Gaussian to power-law (in σ units)
+///   n > 1      — power-law exponent (n > 2 for finite variance)
+///   mu         — location (peak of Gaussian core)
+///   sigma > 0  — scale
+///
+/// References: Crystal Ball function, ARGUS Collaboration (1992)
+pub fn CrystalBall(comptime T: type) type {
+    return struct {
+        alpha: T,
+        n: T,
+        mu: T,
+        sigma: T,
+        // Pre-computed constants
+        big_a: T,   // (n/alpha)^n × exp(-alpha²/2)
+        big_b: T,   // n/alpha - alpha
+        big_c: T,   // (n/alpha) × exp(-alpha²/2) / (n-1)
+        big_d: T,   // sqrt(2π) × Φ(alpha)
+        norm: T,    // 1/(C+D)
+        threshold: T,  // norm × C = CDF at transition point
+
+        const Self = @This();
+
+        /// Initialize a Crystal Ball distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, n: T, mu: T, sigma: T) DistributionError!Self {
+            if (!(alpha > 0) or !(n > 1) or !(sigma > 0) or !math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            const a = alpha;
+            const exp_half_a2 = @exp(-a * a / 2.0);
+            const n_over_a = n / a;
+            const big_a = math.pow(T, n_over_a, n) * exp_half_a2;
+            const big_b = n_over_a - a;
+            const big_c = n_over_a * exp_half_a2 / (n - 1.0);
+            // D = sqrt(2π) × Φ(alpha) = sqrt(π/2) × (1 + erf(alpha/sqrt(2)))
+            const big_d = @sqrt(math.pi / 2.0) * (1.0 + erf(a / @sqrt(2.0)));
+            const norm = 1.0 / (big_c + big_d);
+            return Self{
+                .alpha = a,
+                .n = n,
+                .mu = mu,
+                .sigma = sigma,
+                .big_a = big_a,
+                .big_b = big_b,
+                .big_c = big_c,
+                .big_d = big_d,
+                .norm = norm,
+                .threshold = norm * big_c,
+            };
+        }
+
+        /// Probability density function.
+        ///
+        /// f(x) = N/σ × exp(-u²/2)          if u > -α  (Gaussian core)
+        /// f(x) = N/σ × A × (B-u)^(-n)      if u ≤ -α  (power-law tail)
+        /// where u = (x-μ)/σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.sigma;
+            const n_over_sigma = self.norm / self.sigma;
+            if (u > -self.alpha) {
+                return n_over_sigma * @exp(-u * u / 2.0);
+            } else {
+                return n_over_sigma * self.big_a * math.pow(T, self.big_b - u, -self.n);
+            }
+        }
+
+        /// Log probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.sigma;
+            const log_n_over_sigma = @log(self.norm) - @log(self.sigma);
+            if (u > -self.alpha) {
+                return log_n_over_sigma - u * u / 2.0;
+            } else {
+                return log_n_over_sigma + @log(self.big_a) - self.n * @log(self.big_b - u);
+            }
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const u = (x - self.mu) / self.sigma;
+            if (u <= -self.alpha) {
+                // Power-law region
+                return self.norm * self.big_a * math.pow(T, self.big_b - u, 1.0 - self.n) / (self.n - 1.0);
+            } else {
+                // Gaussian region: norm × (C + sqrt(2π) × (Φ(u) - Φ(-α)))
+                const sqrt_2pi = @sqrt(2.0 * math.pi);
+                const phi_u = (1.0 + erf(u / @sqrt(2.0))) / 2.0;
+                const phi_neg_alpha = (1.0 - erf(self.alpha / @sqrt(2.0))) / 2.0;
+                return self.norm * (self.big_c + sqrt_2pi * (phi_u - phi_neg_alpha));
+            }
+        }
+
+        /// Survival function: 1 - CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF).
+        ///
+        /// Returns error.InvalidParameter if p ∉ (0, 1) (open interval).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p > 0.0 and p < 1.0)) return error.InvalidParameter;
+            if (p <= self.threshold) {
+                // Power-law region: solve norm × A × (B-u)^(1-n)/(n-1) = p
+                const val = p * (self.n - 1.0) / (self.norm * self.big_a);
+                const u = self.big_b - math.pow(T, val, 1.0 / (1.0 - self.n));
+                return self.mu + self.sigma * u;
+            } else {
+                // Gaussian region
+                const sqrt_2pi = @sqrt(2.0 * math.pi);
+                const phi_neg_alpha = (1.0 - erf(self.alpha / @sqrt(2.0))) / 2.0;
+                const phi_u_val = (p / self.norm - self.big_c) / sqrt_2pi + phi_neg_alpha;
+                const u = @sqrt(2.0) * erfInv(2.0 * phi_u_val - 1.0);
+                return self.mu + self.sigma * u;
+            }
+        }
+
+        /// Mode of the distribution — the Gaussian peak at x = μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Mean of the distribution (finite only for n > 2).
+        ///
+        /// Computed via 500-point numerical integration.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return numericalMean(self, 500);
+        }
+
+        fn numericalMean(self: Self, comptime pts: usize) T {
+            // Integrate x·f(x) over ℝ using quantile-based quadrature on (0,1)
+            // E[X] = ∫ quantile(p) dp over p ∈ (0,1)
+            var sum: T = 0.0;
+            const h: T = 1.0 / @as(T, pts + 1);
+            var i: usize = 1;
+            while (i <= pts) : (i += 1) {
+                const p = @as(T, @floatFromInt(i)) * h;
+                const q = self.quantile(p) catch 0.0;
+                sum += q;
+            }
+            return sum * h;
+        }
+
+        /// Variance of the distribution (finite only for n > 3).
+        ///
+        /// Computed via 500-point numerical integration.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mu_val = self.mean();
+            var sum: T = 0.0;
+            const pts: usize = 500;
+            const h: T = 1.0 / @as(T, pts + 1);
+            var i: usize = 1;
+            while (i <= pts) : (i += 1) {
+                const p = @as(T, @floatFromInt(i)) * h;
+                const q = self.quantile(p) catch 0.0;
+                const dev = q - mu_val;
+                sum += dev * dev;
+            }
+            return sum * h;
+        }
+
+        /// Differential entropy.
+        ///
+        /// Computed via 500-point numerical integration: H = -∫ f(x) log(f(x)) dx
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            const pts: usize = 500;
+            const h: T = 1.0 / @as(T, pts + 1);
+            var i: usize = 1;
+            while (i <= pts) : (i += 1) {
+                const p = @as(T, @floatFromInt(i)) * h;
+                const x = self.quantile(p) catch continue;
+                const lp = self.logpdf(x);
+                if (math.isFinite(lp)) {
+                    sum -= lp; // -log(f(x)) weighted by dp = -∫f(x)log(f(x))dx
+                }
+            }
+            return sum * h;
+        }
+
+        /// Sample a random value using the inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.mu;
+        }
+
+        /// Validate distribution invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0) or !(self.n > 1) or !(self.sigma > 0) or !math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+            if (!(self.norm > 0) or !math.isFinite(self.norm)) {
+                return error.InvalidParameter;
+            }
+            if (!(self.threshold > 0) or !(self.threshold < 1)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format the distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("CrystalBall(α={d}, n={d}, μ={d}, σ={d})", .{ self.alpha, self.n, self.mu, self.sigma });
+        }
+    };
+}
+
+// ============================================================================
+// CrystalBall Distribution Tests
+// ============================================================================
+
+test "CrystalBall: init with valid f64 params (1,2,0,1)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "CrystalBall: init with valid f64 params (2,3,5,2)" {
+    const dist = try CrystalBall(f64).init(2.0, 3.0, 5.0, 2.0);
+    try dist.validate();
+}
+
+test "CrystalBall: init with valid f64 params (0.5,1.5,-1,0.5)" {
+    const dist = try CrystalBall(f64).init(0.5, 1.5, -1.0, 0.5);
+    try dist.validate();
+}
+
+test "CrystalBall: init with valid f32 type" {
+    const dist = try CrystalBall(f32).init(1.0, 2.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "CrystalBall: init fails for alpha=0" {
+    const result = CrystalBall(f64).init(0.0, 2.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for alpha negative" {
+    const result = CrystalBall(f64).init(-1.0, 2.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for alpha NaN" {
+    const result = CrystalBall(f64).init(math.nan(f64), 2.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for n=1 (boundary)" {
+    const result = CrystalBall(f64).init(1.0, 1.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for n<1" {
+    const result = CrystalBall(f64).init(1.0, 0.5, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for n negative" {
+    const result = CrystalBall(f64).init(1.0, -2.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for n NaN" {
+    const result = CrystalBall(f64).init(1.0, math.nan(f64), 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for sigma=0" {
+    const result = CrystalBall(f64).init(1.0, 2.0, 0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for sigma negative" {
+    const result = CrystalBall(f64).init(1.0, 2.0, 0.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for sigma NaN" {
+    const result = CrystalBall(f64).init(1.0, 2.0, 0.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: init fails for mu NaN" {
+    const result = CrystalBall(f64).init(1.0, 2.0, math.nan(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: pdf exact value at x=0 (alpha=1, n=2, mu=0, sigma=1)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const expected: f64 = 0.30097;
+    try expectApproxEqAbs(expected, dist.pdf(0.0), 1e-4);
+}
+
+test "CrystalBall: pdf exact value at transition x=-1 (alpha=1, n=2, mu=0, sigma=1)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const expected: f64 = 0.18253;
+    try expectApproxEqAbs(expected, dist.pdf(-1.0), 1e-4);
+}
+
+test "CrystalBall: pdf exact value in power-law region x=-2 (alpha=1, n=2, mu=0, sigma=1)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const expected: f64 = 0.08112;
+    try expectApproxEqAbs(expected, dist.pdf(-2.0), 1e-4);
+}
+
+test "CrystalBall: pdf exact value at x=0 (alpha=1, n=4, mu=0, sigma=1)" {
+    const dist = try CrystalBall(f64).init(1.0, 4.0, 0.0, 1.0);
+    const expected: f64 = 0.34265;
+    try expectApproxEqAbs(expected, dist.pdf(0.0), 1e-4);
+}
+
+test "CrystalBall: pdf positive for all x in Gaussian region" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    try expect(dist.pdf(0.0) > 0.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.pdf(-0.5) > 0.0);
+}
+
+test "CrystalBall: pdf positive for all x in power-law region" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    try expect(dist.pdf(-2.0) > 0.0);
+    try expect(dist.pdf(-5.0) > 0.0);
+    try expect(dist.pdf(-100.0) > 0.0);
+}
+
+test "CrystalBall: pdf decreases as x -> -infinity" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const p1 = dist.pdf(-2.0);
+    const p2 = dist.pdf(-5.0);
+    const p3 = dist.pdf(-10.0);
+    try expect(p1 > p2);
+    try expect(p2 > p3);
+}
+
+test "CrystalBall: logpdf consistent with pdf (Gaussian region)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = 0.0;
+    const expected = @log(dist.pdf(x));
+    try expectApproxEqAbs(expected, dist.logpdf(x), 1e-6);
+}
+
+test "CrystalBall: logpdf consistent with pdf (transition point)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = -1.0;
+    const expected = @log(dist.pdf(x));
+    try expectApproxEqAbs(expected, dist.logpdf(x), 1e-6);
+}
+
+test "CrystalBall: logpdf consistent with pdf (power-law region)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = -3.0;
+    const expected = @log(dist.pdf(x));
+    try expectApproxEqAbs(expected, dist.logpdf(x), 1e-6);
+}
+
+test "CrystalBall: cdf exact value at transition x=-1 (alpha=1, n=2, mu=0, sigma=1)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const expected: f64 = 0.36513;
+    try expectApproxEqAbs(expected, dist.cdf(-1.0), 1e-4);
+}
+
+test "CrystalBall: cdf exact value at x=0 (alpha=1, n=2, mu=0, sigma=1)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const expected: f64 = 0.62270;
+    try expectApproxEqAbs(expected, dist.cdf(0.0), 1e-4);
+}
+
+test "CrystalBall: cdf monotonically increasing" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const c1 = dist.cdf(-5.0);
+    const c2 = dist.cdf(-2.0);
+    const c3 = dist.cdf(-1.0);
+    const c4 = dist.cdf(0.0);
+    const c5 = dist.cdf(2.0);
+    try expect(c1 < c2);
+    try expect(c2 < c3);
+    try expect(c3 < c4);
+    try expect(c4 < c5);
+}
+
+test "CrystalBall: cdf + sf = 1 at x=0" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = 0.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try expectApproxEqAbs(1.0, sum, 1e-10);
+}
+
+test "CrystalBall: cdf + sf = 1 at x=-1" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = -1.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try expectApproxEqAbs(1.0, sum, 1e-10);
+}
+
+test "CrystalBall: cdf + sf = 1 at x=3" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = 3.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try expectApproxEqAbs(1.0, sum, 1e-10);
+}
+
+test "CrystalBall: quantile roundtrip from cdf at x=-1" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = -1.0;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x, x_recovered, 1e-6);
+}
+
+test "CrystalBall: quantile roundtrip from cdf at x=0" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = 0.0;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x, x_recovered, 1e-6);
+}
+
+test "CrystalBall: quantile roundtrip from cdf at x=2" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const x = 2.0;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x, x_recovered, 1e-6);
+}
+
+test "CrystalBall: quantile fails for p=0" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const result = dist.quantile(0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: quantile fails for p=1" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const result = dist.quantile(1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: quantile fails for p<0" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: quantile fails for p>1" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "CrystalBall: quantile in Gaussian region (p>threshold)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const q = try dist.quantile(0.6);
+    try expect(math.isFinite(q));
+    try expect(q > -1.0); // above transition
+}
+
+test "CrystalBall: quantile in power-law region (p<threshold)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const q = try dist.quantile(0.2);
+    try expect(math.isFinite(q));
+    try expect(q < -1.0); // below transition
+}
+
+test "CrystalBall: mode equals mu (alpha=1, n=2, mu=0)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.mode(), 1e-6);
+}
+
+test "CrystalBall: mode equals mu (alpha=1, n=2, mu=5)" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 5.0, 1.0);
+    const expected: f64 = 5.0;
+    try expectApproxEqAbs(expected, dist.mode(), 1e-6);
+}
+
+test "CrystalBall: mean is finite for n>2" {
+    const dist = try CrystalBall(f64).init(1.0, 3.0, 0.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+}
+
+test "CrystalBall: variance is positive for n>2" {
+    const dist = try CrystalBall(f64).init(1.0, 3.0, 0.0, 1.0);
+    const v = dist.variance();
+    try expect(v > 0.0);
+}
+
+test "CrystalBall: entropy is finite" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+}
+
+test "CrystalBall: sample produces finite values" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng.random());
+        try expect(math.isFinite(s));
+    }
+}
+
+test "CrystalBall: sample empirical mean close to theoretical (alpha=1, n=3)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try CrystalBall(f64).init(1.0, 3.0, 0.0, 1.0);
+    const theoretical_mean = dist.mean();
+    var sum: f64 = 0.0;
+    const n = 3000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, n);
+    const tolerance = @abs(theoretical_mean) * 0.1 + 0.5;
+    try expectApproxEqAbs(theoretical_mean, sample_mean, tolerance);
+}
+
+test "CrystalBall: validate passes for valid params" {
+    const dist = try CrystalBall(f64).init(1.0, 2.0, 0.0, 1.0);
+    try dist.validate();
+
+    const dist2 = try CrystalBall(f64).init(2.0, 3.0, 5.0, 2.0);
+    try dist2.validate();
+
+    const dist3 = try CrystalBall(f64).init(0.5, 1.5, -1.0, 0.5);
+    try dist3.validate();
+}
+
+test "CrystalBall: f32 type support" {
+    const dist = try CrystalBall(f32).init(1.0, 2.0, 0.0, 1.0);
+    try expect(dist.pdf(0.0) > 0.0);
+    try expect(dist.cdf(0.0) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q));
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-5);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
