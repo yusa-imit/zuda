@@ -1,3 +1,32 @@
+**Session 721 Update (2026-06-28) — FEATURE MODE [COMPLETED]:**
+
+✅ **FlorySchulz Distribution** — 119th total, 22nd discrete — commit 1767314
+- **Mode**: FEATURE MODE (counter: 721)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: FlorySchulz(a) — Schulz-Flory polymer chain length distribution
+  * Parameter: a ∈ (0,1) — persistence parameter (related to reaction probability)
+  * Support: k = 1, 2, 3, ... (1-indexed positive integers)
+  * PMF: P(X=k) = (1−a)² · k · a^(k−1)
+  * logPMF: 2·log(1−a) + log(k) + (k−1)·log(a)
+  * CDF: F(k) = 1 − a^k · (1 + k·(1−a)) — exact closed form O(1)
+  * SF: a^k · (1 + k·(1−a))
+  * Quantile: doubling + binary search using closed-form CDF
+  * Mean: (1+a)/(1−a) — exact O(1)
+  * Variance: 2a/(1−a)² — exact O(1)
+  * Mode: sequential search for FP robustness (PMF(k+1)/PMF(k) = a(k+1)/k ≤ 1)
+    - Used ceil(a/(1-a)) initially but FP issue: 1.0-0.9 ≠ 0.1 so 0.9/(1-0.9) > 9 → ceil=10
+    - Fixed with: a*(k+1) ≤ k + 1e-9 sequential search → always correct
+  * Entropy: numerical truncated sum (Σ −p·log(p) until p < 1e-15)
+  * Sample: inverse CDF via quantile
+  * Key values: CDF(2; a=0.5) = 0.5 exactly; mean(0.9) = 19.0; var(0.5) = 4.0
+  * Connection: equivalent to 1-indexed NegativeBinomial(r=2, p=1−a)
+  * 58 tests passing
+- **Total tests**: 5,946 (was 5,888; +58 new FlorySchulz tests)
+- **Distribution count**: 119 total (97 continuous + 22 discrete)
+- **Next Priority**: Next FEATURE session — Landau, Davis, or another new distribution
+
+---
+
 **Session 719 Update (2026-06-27) — FEATURE MODE [COMPLETED]:**
 
 ✅ **ARGUS Distribution** — 118th total, 97th continuous — commit 3483873
