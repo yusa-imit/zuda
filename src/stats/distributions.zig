@@ -69067,3 +69067,508 @@ test "CrystalBall: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+
+// ============================================================================
+// Trapezoidal Distribution
+// ============================================================================
+
+/// Trapezoidal distribution — continuous, support [a, d].
+///
+/// A piecewise-linear distribution with a linear rising slope on [a, b],
+/// a flat plateau on [b, c], and a linear falling slope on [c, d].
+///
+/// Special cases:
+///   b = a, c = d → Uniform(a, d)
+///   b = c        → Triangular(a, b, d)
+///   b = a        → right-angle left edge (no rising ramp)
+///   c = d        → right-angle right edge (no falling ramp)
+///
+/// Parameters:
+///   a ≤ b ≤ c ≤ d, with a < d
+///
+/// References: Kotz & van Dorp (2004) "Beyond Beta", Chapter 2.
+pub fn Trapezoidal(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+        c: T,
+        d: T,
+        h: T,  // normalizing height: 2 / (c + d - a - b)
+        p1: T, // CDF at x = b (area of left triangle)
+        p2: T, // CDF at x = c (= 1 - area of right triangle)
+
+        const Self = @This();
+
+        /// Initialize a Trapezoidal distribution.
+        ///
+        /// Requires a ≤ b ≤ c ≤ d and a < d.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T, c: T, d: T) DistributionError!Self {
+            if (!math.isFinite(a) or !math.isFinite(b) or
+                !math.isFinite(c) or !math.isFinite(d))
+            {
+                return error.InvalidParameter;
+            }
+            if (!(a <= b) or !(b <= c) or !(c <= d) or !(a < d)) {
+                return error.InvalidParameter;
+            }
+            const h = 2.0 / (c + d - a - b);
+            const p1 = h * (b - a) / 2.0;
+            const p2 = 1.0 - h * (d - c) / 2.0;
+            return Self{ .a = a, .b = b, .c = c, .d = d, .h = h, .p1 = p1, .p2 = p2 };
+        }
+
+        /// Probability density function.
+        ///
+        /// f(x) = h(x-a)/(b-a)  for x ∈ [a, b)  (rising slope)
+        /// f(x) = h              for x ∈ [b, c]  (plateau)
+        /// f(x) = h(d-x)/(d-c)  for x ∈ (c, d]  (falling slope)
+        /// f(x) = 0              otherwise
+        ///
+        /// where h = 2/(c+d-a-b).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.a or x > self.d) return 0.0;
+            if (x < self.b) return self.h * (x - self.a) / (self.b - self.a);
+            if (x <= self.c) return self.h;
+            if (self.d > self.c) return self.h * (self.d - x) / (self.d - self.c);
+            return self.h;
+        }
+
+        /// Log probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// F(x) = h(x-a)²/(2(b-a))       for x ∈ [a, b)
+        /// F(x) = p1 + h(x-b)             for x ∈ [b, c]
+        /// F(x) = 1 - h(d-x)²/(2(d-c))   for x ∈ (c, d]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.a) return 0.0;
+            if (x >= self.d) return 1.0;
+            if (x < self.b) {
+                const dx = x - self.a;
+                return self.h * dx * dx / (2.0 * (self.b - self.a));
+            }
+            if (x <= self.c) {
+                return self.p1 + self.h * (x - self.b);
+            }
+            const dx = self.d - x;
+            return 1.0 - self.h * dx * dx / (2.0 * (self.d - self.c));
+        }
+
+        /// Survival function: 1 - CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) — exact piecewise formula.
+        ///
+        ///   p ≤ p1:      x = a + √(2p(b-a)/h)
+        ///   p1 < p ≤ p2: x = b + (p-p1)/h
+        ///   p > p2:      x = d - √(2(1-p)(d-c)/h)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.a;
+            if (p == 1.0) return self.d;
+            if (p <= self.p1) {
+                return self.a + @sqrt(2.0 * p * (self.b - self.a) / self.h);
+            }
+            if (p <= self.p2) {
+                return self.b + (p - self.p1) / self.h;
+            }
+            return self.d - @sqrt(2.0 * (1.0 - p) * (self.d - self.c) / self.h);
+        }
+
+        /// Mode — the midpoint of the plateau [b, c].
+        ///
+        /// Any x ∈ [b, c] is a mode; the midpoint is returned as a canonical value.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return (self.b + self.c) / 2.0;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// Exact: (d²+cd+c²-a²-ab-b²) / (3(c+d-a-b))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const a = self.a;
+            const b = self.b;
+            const c = self.c;
+            const d = self.d;
+            const num = d * d + c * d + c * c - a * a - a * b - b * b;
+            const den = 3.0 * (c + d - a - b);
+            return num / den;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Computed from exact piecewise integrals: Var = E[X²] - mean²
+        ///   E[X²] = h × (I_rise + I_flat + I_fall)
+        ///   I_rise = (b-a)³/4 + 2a(b-a)²/3 + a²(b-a)/2
+        ///   I_flat = (c³-b³)/3
+        ///   I_fall = d²(d-c)/2 - 2d(d-c)²/3 + (d-c)³/4
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const a = self.a;
+            const b = self.b;
+            const c = self.c;
+            const d = self.d;
+            var ex2: T = 0.0;
+            if (b > a) {
+                const l = b - a;
+                ex2 += l * l * l / 4.0 + 2.0 * a * l * l / 3.0 + a * a * l / 2.0;
+            }
+            ex2 += (c * c * c - b * b * b) / 3.0;
+            if (d > c) {
+                const l = d - c;
+                ex2 += d * d * l / 2.0 - 2.0 * d * l * l / 3.0 + l * l * l / 4.0;
+            }
+            ex2 *= self.h;
+            const mu = self.mean();
+            return ex2 - mu * mu;
+        }
+
+        /// Differential entropy.
+        ///
+        /// Exact: (b-a+d-c)/(2(c+d-a-b)) + ln((c+d-a-b)/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const s = self.c + self.d - self.a - self.b;
+            const slopes = (self.b - self.a) + (self.d - self.c);
+            return slopes / (2.0 * s) + @log(s / 2.0);
+        }
+
+        /// Generate a random sample using the inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.a;
+        }
+
+        /// Validate distribution invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.a) or !math.isFinite(self.b) or
+                !math.isFinite(self.c) or !math.isFinite(self.d))
+            {
+                return error.InvalidParameter;
+            }
+            if (!(self.a <= self.b) or !(self.b <= self.c) or
+                !(self.c <= self.d) or !(self.a < self.d))
+            {
+                return error.InvalidParameter;
+            }
+            if (!(self.h > 0) or !math.isFinite(self.h)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format the distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Trapezoidal(a={d}, b={d}, c={d}, d={d})", .{ self.a, self.b, self.c, self.d });
+        }
+    };
+}
+
+// ============================================================================
+// Trapezoidal Distribution Tests
+// ============================================================================
+
+test "Trapezoidal: init valid symmetric (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try dist.validate();
+}
+
+test "Trapezoidal: init valid uniform-like (0,0,1,1)" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Trapezoidal: init valid triangular-like (0,0.5,0.5,1)" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.5, 0.5, 1.0);
+    try dist.validate();
+}
+
+test "Trapezoidal: init valid f32 type" {
+    const dist = try Trapezoidal(f32).init(0.0, 1.0, 2.0, 3.0);
+    try dist.validate();
+}
+
+test "Trapezoidal: init fails when a > b" {
+    const result = Trapezoidal(f64).init(1.0, 0.0, 2.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Trapezoidal: init fails when b > c" {
+    const result = Trapezoidal(f64).init(0.0, 2.0, 1.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Trapezoidal: init fails when c > d" {
+    const result = Trapezoidal(f64).init(0.0, 1.0, 3.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Trapezoidal: init fails when a = d (degenerate)" {
+    const result = Trapezoidal(f64).init(1.0, 1.0, 1.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Trapezoidal: init fails for NaN a" {
+    const result = Trapezoidal(f64).init(math.nan(f64), 1.0, 2.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Trapezoidal: init fails for NaN d" {
+    const result = Trapezoidal(f64).init(0.0, 1.0, 2.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Trapezoidal: pdf plateau value for (0,1,2,3) — h=0.5" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(0.5, dist.pdf(1.5), 1e-12);
+    try expectApproxEqAbs(0.5, dist.pdf(1.0), 1e-12);
+    try expectApproxEqAbs(0.5, dist.pdf(2.0), 1e-12);
+}
+
+test "Trapezoidal: pdf rising slope at x=0.5 for (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    // f(0.5) = 0.5 * 0.5 / 1 = 0.25
+    try expectApproxEqAbs(0.25, dist.pdf(0.5), 1e-12);
+}
+
+test "Trapezoidal: pdf falling slope at x=2.5 for (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    // f(2.5) = 0.5 * (3-2.5) / 1 = 0.25
+    try expectApproxEqAbs(0.25, dist.pdf(2.5), 1e-12);
+}
+
+test "Trapezoidal: pdf = 0 outside support for (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(0.0, dist.pdf(-0.1), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(3.1), 1e-12);
+}
+
+test "Trapezoidal: pdf uniform case (0,0,1,1) — h=1" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    try expectApproxEqAbs(1.0, dist.pdf(0.0), 1e-12);
+    try expectApproxEqAbs(1.0, dist.pdf(0.5), 1e-12);
+    try expectApproxEqAbs(1.0, dist.pdf(1.0), 1e-12);
+}
+
+test "Trapezoidal: pdf triangular case (0,0.5,0.5,1) peak = 2" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.5, 0.5, 1.0);
+    // h = 2/(0.5+1-0-0.5) = 2
+    try expectApproxEqAbs(2.0, dist.pdf(0.5), 1e-12);
+}
+
+test "Trapezoidal: logpdf consistent with log(pdf) on plateau" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    const x = 1.5;
+    try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-12);
+}
+
+test "Trapezoidal: logpdf = -inf outside support" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expect(dist.logpdf(-1.0) == -math.inf(f64));
+    try expect(dist.logpdf(4.0) == -math.inf(f64));
+}
+
+test "Trapezoidal: cdf at left boundary = 0" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-12);
+    try expectApproxEqAbs(0.0, dist.cdf(-1.0), 1e-12);
+}
+
+test "Trapezoidal: cdf at right boundary = 1" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(1.0, dist.cdf(3.0), 1e-12);
+    try expectApproxEqAbs(1.0, dist.cdf(4.0), 1e-12);
+}
+
+test "Trapezoidal: cdf exact values for (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(0.0625, dist.cdf(0.5), 1e-12);
+    try expectApproxEqAbs(0.25, dist.cdf(1.0), 1e-12);
+    try expectApproxEqAbs(0.5, dist.cdf(1.5), 1e-12);
+    try expectApproxEqAbs(0.75, dist.cdf(2.0), 1e-12);
+    try expectApproxEqAbs(0.9375, dist.cdf(2.5), 1e-12);
+}
+
+test "Trapezoidal: cdf uniform case (0,0,1,1)" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    try expectApproxEqAbs(0.5, dist.cdf(0.5), 1e-12);
+    try expectApproxEqAbs(0.25, dist.cdf(0.25), 1e-12);
+    try expectApproxEqAbs(0.75, dist.cdf(0.75), 1e-12);
+}
+
+test "Trapezoidal: cdf monotonically increasing (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    const xs = [_]f64{ -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5 };
+    var prev = dist.cdf(xs[0]);
+    for (xs[1..]) |x| {
+        const cur = dist.cdf(x);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "Trapezoidal: cdf + sf = 1 at all regions (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    for ([_]f64{ 0.5, 1.0, 1.5, 2.0, 2.5 }) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "Trapezoidal: quantile exact values for (0,1,2,3)" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(0.5, try dist.quantile(0.0625), 1e-10);
+    try expectApproxEqAbs(1.5, try dist.quantile(0.5), 1e-10);
+    try expectApproxEqAbs(2.5, try dist.quantile(0.9375), 1e-10);
+}
+
+test "Trapezoidal: quantile returns a for p=0 and d for p=1" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(0.0, try dist.quantile(0.0), 1e-12);
+    try expectApproxEqAbs(3.0, try dist.quantile(1.0), 1e-12);
+}
+
+test "Trapezoidal: quantile fails for p < 0" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Trapezoidal: quantile fails for p > 1" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Trapezoidal: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    for ([_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 }) |p| {
+        const x = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(x), 1e-10);
+    }
+}
+
+test "Trapezoidal: quantile roundtrip uniform case" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const x = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(x), 1e-10);
+    }
+}
+
+test "Trapezoidal: mean exact for (0,1,2,3) — symmetric gives 1.5" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(1.5, dist.mean(), 1e-12);
+}
+
+test "Trapezoidal: mean exact for uniform (0,0,1,1) — gives 0.5" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    try expectApproxEqAbs(0.5, dist.mean(), 1e-12);
+}
+
+test "Trapezoidal: mean exact for triangular (0,0.5,0.5,1) — gives 0.5" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.5, 0.5, 1.0);
+    try expectApproxEqAbs(0.5, dist.mean(), 1e-12);
+}
+
+test "Trapezoidal: variance exact for (0,1,2,3) — gives 5/12" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(5.0 / 12.0, dist.variance(), 1e-10);
+}
+
+test "Trapezoidal: variance exact for uniform (0,0,1,1) — gives 1/12" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    try expectApproxEqAbs(1.0 / 12.0, dist.variance(), 1e-10);
+}
+
+test "Trapezoidal: variance exact for triangular (0,0.5,0.5,1) — gives 1/24" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.5, 0.5, 1.0);
+    try expectApproxEqAbs(1.0 / 24.0, dist.variance(), 1e-10);
+}
+
+test "Trapezoidal: entropy for (0,1,2,3) — exact formula" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    // H = (1+1)/(2*4) + ln(4/2) = 0.25 + ln(2)
+    const expected = 0.25 + @log(2.0);
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-12);
+}
+
+test "Trapezoidal: entropy for uniform (0,0,1,1) — gives ln(1)=0" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.0, 1.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.entropy(), 1e-12);
+}
+
+test "Trapezoidal: entropy for triangular (0,0.5,0.5,1) — gives 0.5-ln(2)" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.5, 0.5, 1.0);
+    const expected = 0.5 + @log(0.5);
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-12);
+}
+
+test "Trapezoidal: mode = midpoint of plateau" {
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    try expectApproxEqAbs(1.5, dist.mode(), 1e-12);
+}
+
+test "Trapezoidal: mode for triangular = 0.5" {
+    const dist = try Trapezoidal(f64).init(0.0, 0.5, 0.5, 1.0);
+    try expectApproxEqAbs(0.5, dist.mode(), 1e-12);
+}
+
+test "Trapezoidal: sample is in support" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng.random());
+        try expect(s >= 0.0 and s <= 3.0);
+    }
+}
+
+test "Trapezoidal: sample empirical mean close to 1.5 for (0,1,2,3)" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try Trapezoidal(f64).init(0.0, 1.0, 2.0, 3.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng.random());
+    }
+    try expectApproxEqAbs(1.5, sum / n, 0.05);
+}
+
+test "Trapezoidal: f32 type support" {
+    const dist = try Trapezoidal(f32).init(0.0, 1.0, 2.0, 3.0);
+    try expect(dist.pdf(1.5) > 0.0);
+    try expectApproxEqAbs(@as(f32, 0.5), dist.cdf(1.5), 1e-5);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(@as(f32, 1.5), q, 1e-5);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
