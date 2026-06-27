@@ -66771,3 +66771,471 @@ test "UQuadratic: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+
+// Generalized Rayleigh Distribution (Burr Type X / Two-Parameter Rayleigh)
+/// Generalized Rayleigh distribution GR(α, β) — exponentiated Rayleigh with two parameters.
+/// Also known as Burr Type X distribution or two-parameter Rayleigh distribution.
+///
+/// Parameters: α > 0 (scale), β > 0 (shape)
+/// Support: (0, ∞)
+/// CDF:  F(x) = (1 − exp(−αx²))^β
+/// PDF:  f(x) = 2αβx · exp(−αx²) · (1 − exp(−αx²))^(β−1)
+///
+/// Special cases: β=1 → Rayleigh with σ = 1/√(2α)
+pub fn GeneralizedRayleigh(comptime T: type) type {
+    return struct {
+        alpha: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a GeneralizedRayleigh(α, β) distribution.
+        ///
+        /// Errors: α ≤ 0, β ≤ 0, or non-finite parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta: T) DistributionError!Self {
+            if (!math.isFinite(alpha) or !math.isFinite(beta)) return error.InvalidParameter;
+            if (!(alpha > 0.0) or !(beta > 0.0)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta = beta };
+        }
+
+        /// Log probability density function at x.
+        ///
+        /// log f(x) = log(2αβ) + log(x) − αx² + (β−1)·log(1 − exp(−αx²))
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const ax2 = self.alpha * x * x;
+            const em = @exp(-ax2);
+            const u = 1.0 - em;
+            if (u <= 0.0) return -math.inf(T);
+            return @log(2.0 * self.alpha * self.beta) + @log(x) - ax2 + (self.beta - 1.0) * @log(u);
+        }
+
+        /// Probability density function at x.
+        ///
+        /// f(x) = 2αβx · exp(−αx²) · (1 − exp(−αx²))^(β−1)
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Cumulative distribution function at x.
+        ///
+        /// F(x) = (1 − exp(−αx²))^β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const u = 1.0 - @exp(-self.alpha * x * x);
+            if (u <= 0.0) return 0.0;
+            return math.pow(T, u, self.beta);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) — exact closed form.
+        ///
+        /// Q(p) = √(−ln(1 − p^(1/β)) / α)
+        ///
+        /// Errors: p outside [0, 1] or NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            const pb = math.pow(T, p, 1.0 / self.beta);
+            return @sqrt(-@log(1.0 - pb) / self.alpha);
+        }
+
+        /// Sample a value from the distribution using the inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// For β ≤ 1/2: returns 0 (PDF unbounded near origin).
+        /// For β > 1/2: unique interior mode x* = √(t*/α), where t* satisfies
+        ///   2t(1 − β·e^{−t}) / (1 − e^{−t}) = 1   (solved by bisection).
+        ///
+        /// Special case β=1: t*=1/2, so mode = √(1/(2α)).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.beta <= 0.5) return 0.0;
+            // h(t) = 2t(1-β·e^{-t})/(1-e^{-t}) - 1; h<0 near 0, h→+∞ as t→∞
+            var lo: T = 1e-9;
+            var hi: T = @max(100.0, 4.0 * @log(self.beta + 2.0));
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const t = (lo + hi) / 2.0;
+                const et = @exp(-t);
+                const h = 2.0 * t * (1.0 - self.beta * et) / (1.0 - et) - 1.0;
+                if (@abs(h) < 1e-12 or (hi - lo) < 1e-12) break;
+                if (h < 0.0) { lo = t; } else { hi = t; }
+            }
+            return @sqrt((lo + hi) / 2.0 / self.alpha);
+        }
+
+        /// Mean of the distribution (numerical integration).
+        ///
+        /// E[X] = ∫₀^1 Q(p) dp via 500-point midpoint quadrature.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const N = 500;
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                sum += q;
+            }
+            return sum / @as(T, @floatFromInt(N));
+        }
+
+        /// Variance of the distribution (numerical integration).
+        ///
+        /// Var[X] = E[X²] − (E[X])² via 500-point midpoint quadrature.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const N = 500;
+            var sum1: T = 0.0;
+            var sum2: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                sum1 += q;
+                sum2 += q * q;
+            }
+            const n: T = @floatFromInt(N);
+            const ex = sum1 / n;
+            return sum2 / n - ex * ex;
+        }
+
+        /// Shannon differential entropy (numerical integration).
+        ///
+        /// H = −∫₀^1 logpdf(Q(p)) dp via 500-point midpoint quadrature.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N = 500;
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                const lp = self.logpdf(q);
+                if (math.isFinite(lp)) sum += lp;
+            }
+            return -sum / @as(T, @floatFromInt(N));
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.alpha) or !math.isFinite(self.beta)) return error.InvalidParameter;
+            if (!(self.alpha > 0.0) or !(self.beta > 0.0)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("GeneralizedRayleigh(α={d}, β={d})", .{ self.alpha, self.beta });
+        }
+    };
+}
+
+test "GeneralizedRayleigh: init with valid parameters" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectEqual(@as(f64, 1.0), dist.alpha);
+    try expectEqual(@as(f64, 1.0), dist.beta);
+}
+
+test "GeneralizedRayleigh: init with various valid parameters" {
+    _ = try GeneralizedRayleigh(f64).init(0.5, 2.0);
+    _ = try GeneralizedRayleigh(f64).init(2.0, 0.5);
+    _ = try GeneralizedRayleigh(f64).init(10.0, 5.0);
+    _ = try GeneralizedRayleigh(f64).init(0.01, 100.0);
+}
+
+test "GeneralizedRayleigh: init rejects alpha = 0" {
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(0.0, 1.0));
+}
+
+test "GeneralizedRayleigh: init rejects negative alpha" {
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(-1.0, 1.0));
+}
+
+test "GeneralizedRayleigh: init rejects beta = 0" {
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(1.0, 0.0));
+}
+
+test "GeneralizedRayleigh: init rejects negative beta" {
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(1.0, -0.5));
+}
+
+test "GeneralizedRayleigh: init rejects non-finite alpha" {
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(math.inf(f64), 1.0));
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(math.nan(f64), 1.0));
+}
+
+test "GeneralizedRayleigh: init rejects non-finite beta" {
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(1.0, math.inf(f64)));
+    try expectError(error.InvalidParameter, GeneralizedRayleigh(f64).init(1.0, math.nan(f64)));
+}
+
+test "GeneralizedRayleigh: pdf is zero for x <= 0" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.001));
+}
+
+test "GeneralizedRayleigh: logpdf is -inf for x <= 0" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "GeneralizedRayleigh: pdf exact value at x=1 (alpha=1, beta=1)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    // f(1) = 2·1·1·1·e^{-1}·1 = 2/e ≈ 0.73576
+    try expectApproxEqAbs(@as(f64, 2.0 / std.math.e), dist.pdf(1.0), 1e-10);
+}
+
+test "GeneralizedRayleigh: pdf exact value at x=1 (alpha=1, beta=2)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    // f(1) = 4·e^{-1}·(1-e^{-1}) ≈ 0.93018
+    const expected: f64 = 4.0 * @exp(-1.0) * (1.0 - @exp(-1.0));
+    try expectApproxEqAbs(expected, dist.pdf(1.0), 1e-10);
+}
+
+test "GeneralizedRayleigh: pdf equals exp(logpdf)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.5, 2.5);
+    const xs = [_]f64{ 0.5, 1.0, 1.5, 2.0, 3.0 };
+    for (xs) |x| {
+        try expectApproxEqAbs(@exp(dist.logpdf(x)), dist.pdf(x), 1e-12);
+    }
+}
+
+test "GeneralizedRayleigh: pdf at alpha=2, beta=1, x=1" {
+    const dist = try GeneralizedRayleigh(f64).init(2.0, 1.0);
+    // f(1) = 2·2·1·1·e^{-2}·1 = 4·e^{-2} ≈ 0.54134
+    try expectApproxEqAbs(@as(f64, 4.0 * @exp(-2.0)), dist.pdf(1.0), 1e-10);
+}
+
+test "GeneralizedRayleigh: cdf is 0 at x=0" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+    try expectEqual(@as(f64, 0.0), dist.cdf(-5.0));
+}
+
+test "GeneralizedRayleigh: cdf approaches 1 for large x" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(100.0), 1e-12);
+}
+
+test "GeneralizedRayleigh: cdf exact at x=1 (alpha=1, beta=1)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    // F(1) = 1 - e^{-1} ≈ 0.63212
+    try expectApproxEqAbs(@as(f64, 1.0 - @exp(-1.0)), dist.cdf(1.0), 1e-12);
+}
+
+test "GeneralizedRayleigh: cdf exact at x=1 (alpha=1, beta=2)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    // F(1) = (1-e^{-1})^2 ≈ 0.39958
+    const u = 1.0 - @exp(-1.0);
+    try expectApproxEqAbs(@as(f64, u * u), dist.cdf(1.0), 1e-12);
+}
+
+test "GeneralizedRayleigh: cdf exact at x=1 (alpha=2, beta=1)" {
+    const dist = try GeneralizedRayleigh(f64).init(2.0, 1.0);
+    // F(1) = 1 - e^{-2} ≈ 0.86466
+    try expectApproxEqAbs(@as(f64, 1.0 - @exp(-2.0)), dist.cdf(1.0), 1e-12);
+}
+
+test "GeneralizedRayleigh: cdf + sf = 1" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (xs) |x| {
+        try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(x) + dist.sf(x), 1e-14);
+    }
+}
+
+test "GeneralizedRayleigh: quantile at boundary values" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+    try expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "GeneralizedRayleigh: quantile rejects invalid probability" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "GeneralizedRayleigh: quantile exact at p=0.5 (alpha=1, beta=1)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    // Q(0.5) = sqrt(-ln(1-0.5)/1) = sqrt(ln(2)) ≈ 0.83256
+    const expected: f64 = @sqrt(@log(2.0));
+    try expectApproxEqAbs(expected, try dist.quantile(0.5), 1e-12);
+}
+
+test "GeneralizedRayleigh: quantile exact at p=0.5 (alpha=1, beta=2)" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    // Q(0.5) = sqrt(-ln(1-sqrt(0.5))) ≈ 1.10749
+    const pb = @sqrt(@as(f64, 0.5));
+    const expected: f64 = @sqrt(-@log(1.0 - pb));
+    try expectApproxEqAbs(expected, try dist.quantile(0.5), 1e-12);
+}
+
+test "GeneralizedRayleigh: cdf(quantile(p)) = p roundtrip" {
+    const dist = try GeneralizedRayleigh(f64).init(1.5, 2.5);
+    const ps = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (ps) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-10);
+    }
+}
+
+test "GeneralizedRayleigh: mode is 0 for beta <= 0.5" {
+    const d1 = try GeneralizedRayleigh(f64).init(1.0, 0.5);
+    try expectEqual(@as(f64, 0.0), d1.mode());
+    const d2 = try GeneralizedRayleigh(f64).init(1.0, 0.3);
+    try expectEqual(@as(f64, 0.0), d2.mode());
+    const d3 = try GeneralizedRayleigh(f64).init(1.0, 0.1);
+    try expectEqual(@as(f64, 0.0), d3.mode());
+}
+
+test "GeneralizedRayleigh: mode for beta=1 equals 1/sqrt(2*alpha)" {
+    // For β=1: t*=0.5 → mode = sqrt(0.5/α) = 1/sqrt(2α)
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(@as(f64, 1.0 / @sqrt(2.0)), dist.mode(), 1e-8);
+}
+
+test "GeneralizedRayleigh: mode for beta=1 alpha=2 equals 0.5" {
+    const dist = try GeneralizedRayleigh(f64).init(2.0, 1.0);
+    // mode = 1/sqrt(2·2) = 1/2 = 0.5
+    try expectApproxEqAbs(@as(f64, 0.5), dist.mode(), 1e-8);
+}
+
+test "GeneralizedRayleigh: mode is interior for beta=2" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    const m = dist.mode();
+    try expect(m > 0.0);
+    // mode should be around 1.03; PDF at mode is local maximum
+    try expect(dist.pdf(m) >= dist.pdf(m - 0.1));
+    try expect(dist.pdf(m) >= dist.pdf(m + 0.1));
+}
+
+test "GeneralizedRayleigh: mode maximizes PDF for beta=5" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 5.0);
+    const m = dist.mode();
+    try expect(m > 0.0);
+    try expect(dist.pdf(m) >= dist.pdf(m - 0.05));
+    try expect(dist.pdf(m) >= dist.pdf(m + 0.05));
+}
+
+test "GeneralizedRayleigh: mean for beta=1 matches Rayleigh mean" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    // β=1: Rayleigh(σ=1/√2), mean = σ√(π/2) = (1/√2)·√(π/2) = √π/2
+    const expected: f64 = @sqrt(std.math.pi) / 2.0;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-3);
+}
+
+test "GeneralizedRayleigh: variance for beta=1 matches Rayleigh variance" {
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    // β=1: Rayleigh(σ=1/√2), var = σ²(4-π)/2 = (1/2)(4-π)/2 = (4-π)/4 = 1 - π/4
+    const expected: f64 = 1.0 - std.math.pi / 4.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-3);
+}
+
+test "GeneralizedRayleigh: mean scales with 1/sqrt(alpha)" {
+    // E[X;α,β] = E[X;1,β] / sqrt(α) by change of variables
+    const d1 = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    const d2 = try GeneralizedRayleigh(f64).init(4.0, 2.0);
+    try expectApproxEqAbs(d1.mean() / 2.0, d2.mean(), 1e-3);
+}
+
+test "GeneralizedRayleigh: variance is positive" {
+    const configs = [_][2]f64{ .{ 1.0, 1.0 }, .{ 1.0, 2.0 }, .{ 0.5, 3.0 }, .{ 2.0, 0.5 } };
+    for (configs) |cfg| {
+        const dist = try GeneralizedRayleigh(f64).init(cfg[0], cfg[1]);
+        try expect(dist.variance() > 0.0);
+    }
+}
+
+test "GeneralizedRayleigh: entropy is finite and positive" {
+    const configs = [_][2]f64{ .{ 1.0, 1.0 }, .{ 1.0, 2.0 }, .{ 2.0, 0.5 }, .{ 0.5, 3.0 } };
+    for (configs) |cfg| {
+        const dist = try GeneralizedRayleigh(f64).init(cfg[0], cfg[1]);
+        const h = dist.entropy();
+        try expect(math.isFinite(h));
+    }
+}
+
+test "GeneralizedRayleigh: sample produces values in support" {
+    var prng = std.Random.DefaultPrng.init(0xABCDEF);
+    const rng = prng.random();
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 2.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s > 0.0);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "GeneralizedRayleigh: sample statistics match mean" {
+    var prng = std.Random.DefaultPrng.init(0x12345678);
+    const rng = prng.random();
+    const dist = try GeneralizedRayleigh(f64).init(1.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, n);
+    // E[X] = √π/2 ≈ 0.886; allow ±0.05 at n=5000
+    try expectApproxEqAbs(@as(f64, @sqrt(std.math.pi) / 2.0), sample_mean, 0.05);
+}
+
+test "GeneralizedRayleigh: validate passes for valid params" {
+    const dist = try GeneralizedRayleigh(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "GeneralizedRayleigh: f32 type support" {
+    const dist = try GeneralizedRayleigh(f32).init(1.0, 2.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(q > 0.0 and math.isFinite(q));
+    try expect(math.isFinite(dist.mean()));
+    try expect(dist.variance() > 0.0);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
