@@ -1,3 +1,30 @@
+**Session 719 Update (2026-06-27) — FEATURE MODE [COMPLETED]:**
+
+✅ **ARGUS Distribution** — 118th total, 97th continuous — commit 3483873
+- **Mode**: FEATURE MODE (counter: 719)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: ARGUS(χ, c) — bounded particle physics distribution (ARGUS experiment at DESY)
+  * Parameters: χ > 0 (shape/cut), c > 0 (upper cutoff/upper bound)
+  * Support: (0, c); PDF = 0 at both endpoints
+  * Helper: Ψ(z) = erf(z/√2)/2 − z·exp(−z²/2)/√(2π) — ARGUS normalization function
+    Ψ(0) = 0; Ψ monotone increasing; stored pre-computed as psi_chi
+  * M(χ) = χ³/(√(2π)·Ψ(χ)) — normalization constant; stored as log_norm = log M
+  * PDF: M(χ)·(x/c²)·√(1−(x/c)²)·exp(−χ²(1−(x/c)²)/2)
+  * CDF: 1 − Ψ(χ·√(1−(x/c)²))/Ψ(χ) — exact closed form O(1)
+    F(0)=0 (Ψ(χ)/Ψ(χ)=1); F(c)=1 (Ψ(0)=0)
+  * Quantile: bisection on CDF over (0, c); 64 iterations
+  * Mode: c·√v where v = (χ²−2+√(χ⁴+4))/(2χ²)
+    χ=1: v = (−1+√5)/2 (golden ratio minus 1) ≈ 0.618034, mode ≈ 0.78615·c
+    χ→0: mode→c/√2; χ→∞: mode→c
+  * Mean/Variance/Entropy: 500-pt midpoint quadrature via quantile
+  * Sample: inverse CDF via quantile()
+  * 37 tests passing
+- **Total tests**: 5,874 (was 5,837; +37 new ARGUS tests)
+- **Distribution count**: 118 total (97 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — Landau, Flory-Schulz, Davis, or another (check list first)
+
+---
+
 **Session 718 Update (2026-06-27) — FEATURE MODE [COMPLETED]:**
 
 ✅ **GeneralizedRayleigh Distribution** — 117th total, 96th continuous — commit a31eb58
