@@ -67911,3 +67911,586 @@ test "ARGUS: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+
+// ============================================================================
+// FlorySchulz Distribution (Schulz-Flory)
+// ============================================================================
+
+/// Flory-Schulz discrete distribution.
+///
+/// Models polymer chain length distribution in step-growth polymerization.
+/// Equivalent to a 1-indexed NegativeBinomial(r=2, p=1−a) distribution.
+///
+/// PMF:  P(X=k) = (1−a)² · k · a^(k−1),        k = 1, 2, 3, ...
+/// CDF:  F(k)   = 1 − a^k · (1 + k·(1−a))        (exact closed form)
+///
+/// Parameters:
+///   a ∈ (0,1) — persistence parameter
+///
+/// Properties:
+///   Mean     = (1+a) / (1−a)
+///   Variance = 2a / (1−a)²
+///   Mode     = max(1, floor(a/(1−a)))
+///
+/// Time: O(1) for pmf/cdf/quantile/mean/variance/mode | O(K) for entropy/sample
+pub fn FlorySchulz(comptime T: type) type {
+    return struct {
+        a: T,
+        log_1ma: T,  // log(1-a), cached
+        log_a: T,    // log(a), cached
+
+        const Self = @This();
+
+        /// Initialize FlorySchulz(a).
+        /// Requires: a ∈ (0, 1).
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T) DistributionError!Self {
+            if (!(a > 0 and a < 1) or !math.isFinite(a)) return error.InvalidParameter;
+            return Self{
+                .a = a,
+                .log_1ma = @log(1 - a),
+                .log_a = @log(a),
+            };
+        }
+
+        /// Log probability mass function.
+        /// logPMF(k) = 2·log(1−a) + log(k) + (k−1)·log(a), −∞ for k=0
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            return 2 * self.log_1ma + @log(kf) + (kf - 1) * self.log_a;
+        }
+
+        /// Probability mass function.
+        /// PMF(k) = (1−a)² · k · a^(k−1)
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Cumulative distribution function.
+        /// CDF(k) = 1 − a^k · (1 + k·(1−a))
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0;
+            const kf: T = @floatFromInt(k);
+            const ak = @exp(kf * self.log_a);
+            return 1 - ak * (1 + kf * (1 - self.a));
+        }
+
+        /// Survival function: P(X > k) = a^k · (1 + k·(1−a))
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            if (k == 0) return 1;
+            const kf: T = @floatFromInt(k);
+            const ak = @exp(kf * self.log_a);
+            return ak * (1 + kf * (1 - self.a));
+        }
+
+        /// Quantile function: smallest k such that CDF(k) ≥ p.
+        /// Time: O(log k) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0 and p <= 1) or math.isNan(p)) return error.InvalidProbability;
+            if (p <= 0) return 1;
+            if (p >= 1) {
+                // Find largest meaningful k
+                var k: u64 = 1;
+                while (self.cdf(k) < 1.0 - 1e-14 and k < 1_000_000) : (k *= 2) {}
+                return k;
+            }
+            // Double hi until cdf(hi) >= p
+            var hi: u64 = 1;
+            while (self.cdf(hi) < p) {
+                if (hi > 1_000_000) break;
+                hi *= 2;
+            }
+            // Binary search in [1, hi]
+            var lo: u64 = 1;
+            while (lo < hi) {
+                const mid = lo + (hi - lo) / 2;
+                if (self.cdf(mid) < p) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo;
+        }
+
+        /// Mean = (1+a)/(1−a).
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (1 + self.a) / (1 - self.a);
+        }
+
+        /// Variance = 2a/(1−a)².
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const one_minus_a = 1 - self.a;
+            return 2 * self.a / (one_minus_a * one_minus_a);
+        }
+
+        /// Mode: smallest k where PMF(k+1)/PMF(k) = a·(k+1)/k ≤ 1.
+        /// Equivalent to max(1, ceil(a/(1−a))); computed via sequential search for FP robustness.
+        /// Time: O(mode) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var k: u64 = 1;
+            while (k < 1_000_000) : (k += 1) {
+                const kf: T = @floatFromInt(k);
+                // PMF(k+1) ≤ PMF(k) when a·(k+1) ≤ k; use 1e-9 tolerance for FP integer ratios
+                if (self.a * (kf + 1) <= kf + 1e-9) break;
+            }
+            return k;
+        }
+
+        /// Shannon entropy in nats: −Σ P(k)·log P(k), truncated.
+        /// Time: O(K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var h: T = 0;
+            var k: u64 = 1;
+            while (k <= 1_000_000) : (k += 1) {
+                const lp = self.logpmf(k);
+                const pk = @exp(lp);
+                if (pk < 1e-15) break;
+                h -= pk * lp;
+            }
+            return h;
+        }
+
+        /// Draw a random sample via inverse CDF.
+        /// Time: O(log k) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 1;
+        }
+
+        /// Validate internal invariants.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.a > 0 and self.a < 1) or !math.isFinite(self.a)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("FlorySchulz(a={d})", .{self.a});
+        }
+    };
+}
+
+test "FlorySchulz: init with valid parameter a=0.5" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    try expect(dist.a > 0.0 and dist.a < 1.0);
+    try expect(!math.isNan(dist.a));
+}
+
+test "FlorySchulz: init with valid parameter a=0.1" {
+    const dist = try FlorySchulz(f64).init(0.1);
+    try expect(dist.a > 0.0 and dist.a < 1.0);
+}
+
+test "FlorySchulz: init with valid parameter a=0.99" {
+    const dist = try FlorySchulz(f64).init(0.99);
+    try expect(dist.a > 0.0 and dist.a < 1.0);
+}
+
+test "FlorySchulz: init with a=0 returns error" {
+    const result = FlorySchulz(f64).init(0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: init with a=1 returns error" {
+    const result = FlorySchulz(f64).init(1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: init with a<0 returns error" {
+    const result = FlorySchulz(f64).init(-0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: init with a>1 returns error" {
+    const result = FlorySchulz(f64).init(1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: init with NaN parameter returns error" {
+    const result = FlorySchulz(f64).init(math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: init with Inf parameter returns error" {
+    const result = FlorySchulz(f64).init(math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: init with -Inf parameter returns error" {
+    const result = FlorySchulz(f64).init(-math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: pmf(1, a=0.5) = 0.25 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqAbs(0.25, pmf_val, 1e-10);
+}
+
+test "FlorySchulz: pmf(2, a=0.5) = 0.25 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const pmf_val = dist.pmf(2);
+    try expectApproxEqAbs(0.25, pmf_val, 1e-10);
+}
+
+test "FlorySchulz: pmf(3, a=0.5) = 0.1875 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const pmf_val = dist.pmf(3);
+    try expectApproxEqAbs(0.1875, pmf_val, 1e-10);
+}
+
+test "FlorySchulz: pmf(4, a=0.5) = 0.125 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const pmf_val = dist.pmf(4);
+    try expectApproxEqAbs(0.125, pmf_val, 1e-10);
+}
+
+test "FlorySchulz: pmf(1, a=0.9) = 0.01 exactly" {
+    const dist = try FlorySchulz(f64).init(0.9);
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqAbs(0.01, pmf_val, 1e-10);
+}
+
+test "FlorySchulz: pmf(0) is zero (outside support)" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const pmf_val = dist.pmf(0);
+    try expectApproxEqAbs(0.0, pmf_val, 1e-15);
+}
+
+test "FlorySchulz: pmf is non-negative for all k" {
+    const dist = try FlorySchulz(f64).init(0.7);
+    for (1..20) |k| {
+        const pmf_val = dist.pmf(@intCast(k));
+        try expect(pmf_val >= 0.0);
+    }
+}
+
+test "FlorySchulz: pmf sum over large range approaches 1" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    var sum: f64 = 0.0;
+    for (1..500) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-3);
+}
+
+test "FlorySchulz: logpmf(1, a=0.5) = 2*log(0.5)" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const logpmf_val = dist.logpmf(1);
+    const expected = 2.0 * @log(@as(f64, 0.5));
+    try expectApproxEqAbs(expected, logpmf_val, 1e-10);
+}
+
+test "FlorySchulz: logpmf(0) = -inf (outside support)" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const logpmf_val = dist.logpmf(0);
+    try expect(math.isInf(logpmf_val) and logpmf_val < 0.0);
+}
+
+test "FlorySchulz: exp(logpmf(k)) = pmf(k) for multiple k" {
+    const dist = try FlorySchulz(f64).init(0.6);
+    for (1..10) |k| {
+        const pmf_val = dist.pmf(@intCast(k));
+        const logpmf_val = dist.logpmf(@intCast(k));
+        const exp_logpmf = math.exp(logpmf_val);
+        try expectApproxEqRel(pmf_val, exp_logpmf, 1e-10);
+    }
+}
+
+test "FlorySchulz: cdf(1, a=0.5) = 0.25 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const cdf_val = dist.cdf(1);
+    try expectApproxEqAbs(0.25, cdf_val, 1e-10);
+}
+
+test "FlorySchulz: cdf(2, a=0.5) = 0.5 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const cdf_val = dist.cdf(2);
+    try expectApproxEqAbs(0.5, cdf_val, 1e-10);
+}
+
+test "FlorySchulz: cdf(3, a=0.5) = 0.6875 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const cdf_val = dist.cdf(3);
+    try expectApproxEqAbs(0.6875, cdf_val, 1e-10);
+}
+
+test "FlorySchulz: cdf(5, a=0.5) = 0.890625 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const cdf_val = dist.cdf(5);
+    try expectApproxEqAbs(0.890625, cdf_val, 1e-10);
+}
+
+test "FlorySchulz: cdf(0) = 0" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const cdf_val = dist.cdf(0);
+    try expectApproxEqAbs(0.0, cdf_val, 1e-15);
+}
+
+test "FlorySchulz: cdf is monotonically non-decreasing" {
+    const dist = try FlorySchulz(f64).init(0.7);
+    var prev_cdf: f64 = 0.0;
+    for (1..50) |k| {
+        const cdf_val = dist.cdf(@intCast(k));
+        try expect(cdf_val >= prev_cdf);
+        prev_cdf = cdf_val;
+    }
+}
+
+test "FlorySchulz: cdf is in [0,1]" {
+    const dist = try FlorySchulz(f64).init(0.6);
+    for (0..100) |k| {
+        const cdf_val = dist.cdf(@intCast(k));
+        try expect(cdf_val >= 0.0 and cdf_val <= 1.0);
+    }
+}
+
+test "FlorySchulz: cdf approaches 1 for large k" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const cdf_large = dist.cdf(1000);
+    try expectApproxEqAbs(1.0, cdf_large, 1e-6);
+}
+
+test "FlorySchulz: sf(k) = 1 - cdf(k)" {
+    const dist = try FlorySchulz(f64).init(0.6);
+    for (1..30) |k| {
+        const cdf_val = dist.cdf(@intCast(k));
+        const sf_val = dist.sf(@intCast(k));
+        try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-10);
+    }
+}
+
+test "FlorySchulz: sf(0) = 1" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const sf_val = dist.sf(0);
+    try expectApproxEqAbs(1.0, sf_val, 1e-15);
+}
+
+test "FlorySchulz: sf decreases with k" {
+    const dist = try FlorySchulz(f64).init(0.7);
+    var prev_sf: f64 = 1.0;
+    for (1..50) |k| {
+        const sf_val = dist.sf(@intCast(k));
+        try expect(sf_val <= prev_sf);
+        prev_sf = sf_val;
+    }
+}
+
+test "FlorySchulz: quantile(0, a=0.5) >= 1 (minimum)" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const q = try dist.quantile(0.0);
+    try expect(q >= 1.0);
+}
+
+test "FlorySchulz: quantile(0.25, a=0.5) = 1" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const q = try dist.quantile(0.25);
+    try expect(q == 1.0);
+}
+
+test "FlorySchulz: quantile(0.5, a=0.5) = 2" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const q = try dist.quantile(0.5);
+    try expect(q == 2.0);
+}
+
+test "FlorySchulz: quantile(0.5, a=0.9) = 16" {
+    const dist = try FlorySchulz(f64).init(0.9);
+    const q = try dist.quantile(0.5);
+    try expect(q == 16.0);
+}
+
+test "FlorySchulz: quantile is non-decreasing in p" {
+    const dist = try FlorySchulz(f64).init(0.6);
+    const p_vals = [_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    var prev_q: u64 = 0;
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        try expect(q >= prev_q);
+        prev_q = q;
+    }
+}
+
+test "FlorySchulz: quantile rejects p < 0" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(-1.0));
+}
+
+test "FlorySchulz: quantile rejects p > 1" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(2.0));
+}
+
+test "FlorySchulz: quantile rejects NaN probability" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "FlorySchulz: mean(0.5) = 3.0 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(3.0, mean_val, 1e-10);
+}
+
+test "FlorySchulz: mean(0.9) = 19.0 exactly" {
+    const dist = try FlorySchulz(f64).init(0.9);
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(19.0, mean_val, 1e-10);
+}
+
+test "FlorySchulz: mean is positive for all valid a" {
+    const a_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.99 };
+    for (a_vals) |a| {
+        const dist = try FlorySchulz(f64).init(a);
+        const mean_val = dist.mean();
+        try expect(mean_val > 0.0);
+    }
+}
+
+test "FlorySchulz: variance(0.5) = 4.0 exactly" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(4.0, var_val, 1e-10);
+}
+
+test "FlorySchulz: variance(0.9) = 180.0 exactly" {
+    const dist = try FlorySchulz(f64).init(0.9);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(180.0, var_val, 1e-10);
+}
+
+test "FlorySchulz: variance is positive for all valid a" {
+    const a_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.99 };
+    for (a_vals) |a| {
+        const dist = try FlorySchulz(f64).init(a);
+        const var_val = dist.variance();
+        try expect(var_val > 0.0);
+    }
+}
+
+test "FlorySchulz: mode(0.5) = 1" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const mode_val = dist.mode();
+    try expectEqual(@as(u64, 1), mode_val);
+}
+
+test "FlorySchulz: mode(0.9) = 9" {
+    const dist = try FlorySchulz(f64).init(0.9);
+    const mode_val = dist.mode();
+    try expectEqual(@as(u64, 9), mode_val);
+}
+
+test "FlorySchulz: mode >= 1 for all valid a" {
+    const a_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.99 };
+    for (a_vals) |a| {
+        const dist = try FlorySchulz(f64).init(a);
+        const mode_val = dist.mode();
+        try expect(mode_val >= 1);
+    }
+}
+
+test "FlorySchulz: pmf(mode) >= pmf(mode+1)" {
+    const a_vals = [_]f64{ 0.3, 0.5, 0.7, 0.9 };
+    for (a_vals) |a| {
+        const dist = try FlorySchulz(f64).init(a);
+        const m = dist.mode();
+        const pmf_mode = dist.pmf(m);
+        const pmf_next = dist.pmf(m + 1);
+        try expect(pmf_mode >= pmf_next);
+    }
+}
+
+test "FlorySchulz: entropy is finite and positive" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    const h = dist.entropy();
+    try expect(math.isFinite(h) and h > 0.0);
+
+    const dist2 = try FlorySchulz(f64).init(0.9);
+    const h2 = dist2.entropy();
+    try expect(math.isFinite(h2) and h2 > 0.0);
+}
+
+test "FlorySchulz: entropy increases with a" {
+    const dist1 = try FlorySchulz(f64).init(0.3);
+    const dist2 = try FlorySchulz(f64).init(0.7);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    // More spread in the distribution for larger a
+    try expect(h2 > h1);
+}
+
+test "FlorySchulz: sample produces values >= 1" {
+    var prng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const rng = prng.random();
+
+    const dist = try FlorySchulz(f64).init(0.5);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 1.0);
+    }
+}
+
+test "FlorySchulz: sample mean converges to theoretical mean" {
+    var prng = std.Random.DefaultPrng.init(0xCAFEBABE);
+    const rng = prng.random();
+
+    const dist = try FlorySchulz(f64).init(0.5);
+    const theoretical_mean = dist.mean();
+    var sum: f64 = 0.0;
+    const n = 2000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @floatFromInt(dist.sample(rng));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Allow ±5% tolerance at n=2000
+    const tolerance = theoretical_mean * 0.05;
+    try expectApproxEqAbs(theoretical_mean, sample_mean, tolerance);
+}
+
+test "FlorySchulz: validate passes for valid params" {
+    const dist = try FlorySchulz(f64).init(0.5);
+    try dist.validate();
+
+    const dist2 = try FlorySchulz(f64).init(0.9);
+    try dist2.validate();
+
+    const dist3 = try FlorySchulz(f64).init(0.1);
+    try dist3.validate();
+}
+
+test "FlorySchulz: validate fails for a=0" {
+    const result = FlorySchulz(f64).init(0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: validate fails for a=1" {
+    const result = FlorySchulz(f64).init(1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FlorySchulz: f32 type support" {
+    const dist = try FlorySchulz(f32).init(0.5);
+    try expect(dist.pmf(1) > 0.0);
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 1.0);
+    try expect(dist.mode() >= 1);
+    try expect(math.isFinite(dist.mean()));
+    try expect(dist.variance() > 0.0);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
