@@ -1,4 +1,21 @@
-## Latest Session (Session 465, 2026-05-05) — STABILIZATION MODE
+## Latest Session (Session 722, 2026-06-28) — FEATURE MODE [COMPLETED]
+- **Status**: ✅ CrystalBall distribution added — commit ebd6b84
+- **Distribution**: CrystalBall(alpha, n, mu, sigma) — 120th total; Gaussian core + power-law tail
+  * Parameters: alpha>0 (transition point), n>1 (exponent), mu (location), sigma>0 (scale)
+  * PDF: N/σ × exp(-u²/2) for u>-α; N/σ × A×(B-u)^(-n) for u≤-α (u=(x-μ)/σ)
+  * CDF: exact closed form using erf for Gaussian region; power-law region O(1)
+  * Quantile: closed form O(1) in power-law; erfInv in Gaussian (p∈(0,1) open interval)
+  * Mode: μ; Mean/Var/Entropy: 500-pt quadrature
+  * 49 tests passing; implementation + minor test syntax fixes (0.0/0.0 → math.nan(f64))
+- **Total**: 120 distributions (98 continuous + 22 discrete); 5,995 tests
+- **Next Priority**: Landau, Davis, or another new distribution
+
+## Previous Session (Session 721, 2026-06-28) — FEATURE MODE [COMPLETED]
+- **Status**: ✅ FlorySchulz distribution added — commit 1767314
+- **Distribution**: FlorySchulz(a) — 119th total, 22nd discrete; Schulz-Flory polymer chain length
+- **Total**: 119 distributions (97 continuous + 21 discrete); 5,946 tests (was 5,888)
+
+## Session 465 (2026-05-05) — STABILIZATION MODE
 - **Mode**: Stabilization (Session 465, every 5th session)
 - **Status**: ✅ ALL SYSTEMS GREEN
 - **CI Status**: Last run on main - SUCCESS (2026-05-04T23:06:32Z)
