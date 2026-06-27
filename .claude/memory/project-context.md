@@ -1,3 +1,29 @@
+**Session 718 Update (2026-06-27) — FEATURE MODE [COMPLETED]:**
+
+✅ **GeneralizedRayleigh Distribution** — 117th total, 96th continuous — commit a31eb58
+- **Mode**: FEATURE MODE (counter: 718)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: GeneralizedRayleigh(α, β) — Burr Type X / Two-Parameter Rayleigh / Exponentiated Rayleigh
+  * Parameters: α > 0 (scale), β > 0 (shape)
+  * Support: (0, ∞)
+  * CDF: (1−exp(−αx²))^β — exact O(1)
+  * PDF: 2αβx·exp(−αx²)·(1−exp(−αx²))^(β−1) — via logpdf
+  * Quantile: Q(p) = √(−ln(1−p^{1/β})/α) — exact closed form O(1)
+  * Mode: 0 for β≤1/2; bisection on 2t(1−βe^{-t})/(1−e^{-t})=1 for β>1/2
+    Special case β=1: t*=1/2 → mode=1/√(2α); bisection avoids 0/0 at t→0
+  * Mean/Variance: 500-point midpoint quadrature via E[X]=∫₀¹Q(p)dp
+  * Entropy: −∫₀¹logpdf(Q(p))dp numerical (500 points)
+  * Special case β=1: Rayleigh(σ=1/√(2α)); α=1,β=1 → mean=√π/2, var=1−π/4
+  * Scale: mean(α,β) = mean(1,β)/√α (verified by tests)
+  * Key values: pdf(1;α=1,β=1)=2/e≈0.73576; cdf(1;α=1,β=2)=(1−1/e)²≈0.39958
+    Q(0.5;α=1,β=1)=√(ln2)≈0.83256; mode(α=1,β=1)=1/√2≈0.70711
+  * 39 tests passing
+- **Total tests**: 5,837 (was 5,798; +39 new GeneralizedRayleigh tests)
+- **Distribution count**: 117 total (96 continuous + 21 discrete)
+- **Next Priority**: Next FEATURE session — another distribution (e.g., ARGUS, Landau, Gompertz-Makeham variants, or other)
+
+---
+
 **Session 717 Update (2026-06-27) — FEATURE MODE [COMPLETED]:**
 
 ✅ **UQuadratic Distribution** — 116th total, 95th continuous — commit 6614cff
