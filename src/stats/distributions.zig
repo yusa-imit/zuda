@@ -2584,6 +2584,42 @@ test "Gamma distribution: f32 precision" {
     try expectEqual(@as(f32, 2.0), dist.mean());
 }
 
+test "Gamma distribution: init rejects NaN" {
+    try expectError(error.InvalidParameter, Gamma(f64).init(math.nan(f64), 1.0));
+    try expectError(error.InvalidParameter, Gamma(f64).init(1.0, math.nan(f64)));
+}
+
+test "Gamma distribution: validate passes for valid params" {
+    const dist = try Gamma(f64).init(2.0, 3.0);
+    try dist.validate();
+
+    const dist2 = try Gamma(f64).init(0.5, 0.5);
+    try dist2.validate();
+}
+
+test "Gamma distribution: cdf exact for Exponential special case" {
+    // Gamma(1, λ) is Exponential(λ): CDF(x) = 1 - e^(-λx)
+    // Gamma(1, 2).cdf(1) = 1 - e^(-2) ≈ 0.86466
+    const dist = try Gamma(f64).init(1.0, 2.0);
+    const expected = 1.0 - @exp(-2.0);
+    try expectApproxEqRel(expected, dist.cdf(1.0), 1e-8);
+}
+
+test "Gamma distribution: cdf exact for shape=2" {
+    // Gamma(2, 1).cdf(2) = 1 - 3e^(-2) ≈ 0.59399
+    const dist = try Gamma(f64).init(2.0, 1.0);
+    const expected = 1.0 - 3.0 * @exp(-2.0);
+    try expectApproxEqRel(expected, dist.cdf(2.0), 1e-5);
+}
+
+test "Gamma distribution: cdf + (1-cdf) = 1" {
+    const dist = try Gamma(f64).init(2.0, 3.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + (1.0 - dist.cdf(x)), 1e-14);
+    }
+}
+
 test "Beta distribution: init" {
     const dist = try Beta(f64).init(2.0, 5.0);
     try expectEqual(2.0, dist.alpha);
@@ -2721,6 +2757,40 @@ test "Beta distribution: f32 precision" {
 
     // pdf(0.5) ≈ 0.9375
     try expectApproxEqRel(@as(f32, 0.9375), dist.pdf(0.5), 1e-3);
+}
+
+test "Beta distribution: validate passes for valid params" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+    try dist.validate();
+
+    const dist2 = try Beta(f64).init(0.5, 0.5);
+    try dist2.validate();
+
+    const dist3 = try Beta(f64).init(10.0, 1.0);
+    try dist3.validate();
+}
+
+test "Beta distribution: exact cdf at x=0.5 for Beta(2,5)" {
+    // CDF(0.5) = ∫_0^{0.5} 30x(1-x)^4 dx = 57/64 = 0.890625 (exact)
+    const dist = try Beta(f64).init(2.0, 5.0);
+    try expectApproxEqAbs(57.0 / 64.0, dist.cdf(0.5), 1e-8);
+}
+
+test "Beta distribution: cdf is strictly increasing" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+    var prev = dist.cdf(0.1);
+    const x_vals = [_]f64{ 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8 };
+    for (x_vals) |x| {
+        const curr = dist.cdf(x);
+        try testing.expect(curr > prev);
+        prev = curr;
+    }
+}
+
+test "Beta distribution: logpdf is -inf outside support" {
+    const dist = try Beta(f64).init(2.0, 5.0);
+    try expectEqual(-math.inf(f64), dist.logpdf(-0.1));
+    try expectEqual(-math.inf(f64), dist.logpdf(1.1));
 }
 
 test "Poisson distribution: init" {
@@ -2969,6 +3039,55 @@ test "Poisson distribution: f32 precision" {
 test "Binomial distribution: f32 precision" {
     const dist = try Binomial(f32).init(10, 0.5);
     try expectApproxEqRel(@as(f32, 0.2461), dist.pmf(5), 1e-3);
+}
+
+test "Binomial distribution: validate passes for valid params" {
+    const dist = try Binomial(f64).init(10, 0.5);
+    try dist.validate();
+
+    const dist2 = try Binomial(f64).init(1, 0.0);
+    try dist2.validate();
+
+    const dist3 = try Binomial(f64).init(100, 1.0);
+    try dist3.validate();
+}
+
+test "Binomial distribution: validate fails for n=0" {
+    const dist = Binomial(f64){ .n = 0, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Binomial distribution: logpmf exact value" {
+    const dist = try Binomial(f64).init(10, 0.5);
+    // logpmf(5) = log(pmf(5)) = log(0.24609375)
+    const expected = @log(0.24609375);
+    try expectApproxEqAbs(expected, dist.logpmf(5), 1e-10);
+}
+
+test "Binomial distribution: logpmf equals log of pmf" {
+    const dist = try Binomial(f64).init(10, 0.3);
+    for ([_]u64{ 0, 2, 5, 8, 10 }) |k| {
+        const pmf_val = dist.pmf(k);
+        if (pmf_val > 0.0) {
+            try expectApproxEqRel(@log(pmf_val), dist.logpmf(k), 1e-10);
+        }
+    }
+}
+
+test "Binomial distribution: logpmf edge cases" {
+    const dist = try Binomial(f64).init(10, 0.5);
+    // k > n → logpmf = -inf
+    try expectEqual(-math.inf(f64), dist.logpmf(11));
+
+    // p=0: logpmf(0) = 0, logpmf(k>0) = -inf
+    const dist_p0 = try Binomial(f64).init(10, 0.0);
+    try expectEqual(0.0, dist_p0.logpmf(0));
+    try expectEqual(-math.inf(f64), dist_p0.logpmf(3));
+
+    // p=1: logpmf(n) = 0, logpmf(k<n) = -inf
+    const dist_p1 = try Binomial(f64).init(10, 1.0);
+    try expectEqual(0.0, dist_p1.logpmf(10));
+    try expectEqual(-math.inf(f64), dist_p1.logpmf(5));
 }
 
 test "ChiSquared distribution: init" {
