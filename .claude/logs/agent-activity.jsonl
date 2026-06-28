@@ -615,3 +615,5 @@
 {"timestamp":"2026-06-28T14:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement CrystalBall distribution (120th)","project":"zuda"}
 {"timestamp":"2026-06-28T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Trapezoidal distribution (121st total)","project":"zuda"}
 {"timestamp":"2026-06-28T17:00:00Z","action":"subagent","agent_type":"test-writer","task":"Stabilization: add validate/exact-value tests to ChiSquared, StudentT, FDistribution, Laplace (12 tests)","project":"zuda"}
+{"timestamp":"2026-06-28T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for JohnsonSB distribution","project":"zuda"}
+{"timestamp":"2026-06-28T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement JohnsonSB distribution to pass 44 failing tests","project":"zuda"}

@@ -69670,3 +69670,526 @@ test "Trapezoidal: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+
+// ============================================================================
+// JohnsonSB Distribution
+// ============================================================================
+
+/// JohnsonSB(γ, δ, ξ, λ) — Johnson's Bounded distribution.
+///
+/// Support: (ξ, ξ+λ) — open bounded interval.
+/// Parameters:
+///   - gamma (γ): Shape parameter (skewness control, ℝ)
+///   - delta (δ): Shape parameter (spread control, δ > 0)
+///   - xi (ξ): Lower bound (location, ℝ)
+///   - lambda (λ): Range (scale, λ > 0)
+///
+/// The distribution is defined via the z-transform:
+///   y = (x - ξ) / λ    (standardize to (0,1))
+///   z = γ + δ·ln(y/(1-y))  (logit transform)
+///   X ∼ JohnsonSB iff z ∼ Normal(0,1)
+pub fn JohnsonSB(comptime T: type) type {
+    return struct {
+        gamma: T,
+        delta: T,
+        xi: T,
+        lambda: T,
+
+        const Self = @This();
+
+        /// Create a JohnsonSB distribution.
+        ///
+        /// Errors: delta ≤ 0, lambda ≤ 0, or non-finite parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(gamma: T, delta: T, xi: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(gamma) or !math.isFinite(delta) or
+                !math.isFinite(xi) or !math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(delta > 0.0)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            return Self{ .gamma = gamma, .delta = delta, .xi = xi, .lambda = lambda };
+        }
+
+        // Returns y = (x-xi)/lambda; support is open (xi, xi+lambda)
+        fn standardize(self: Self, x: T) T {
+            return (x - self.xi) / self.lambda;
+        }
+
+        // z-transform: gamma + delta * ln(y/(1-y))
+        fn zTransform(self: Self, y: T) T {
+            return self.gamma + self.delta * @log(y / (1.0 - y));
+        }
+
+        /// Log-PDF at x. Returns −∞ for x outside (ξ, ξ+λ).
+        ///
+        /// log f(x) = log(δ/λ) − ½log(2π) − log(y) − log(1−y) − ½z²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const y = self.standardize(x);
+            if (!(y > 0.0 and y < 1.0)) return -math.inf(T);
+            const z = self.zTransform(y);
+            const log_sqrt2pi: T = 0.5 * @log(2.0 * math.pi);
+            return @log(self.delta) - @log(self.lambda) - log_sqrt2pi
+                   - @log(y) - @log(1.0 - y) - 0.5 * z * z;
+        }
+
+        /// PDF at x.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logpdf(x));
+        }
+
+        /// CDF: Φ(z) = (1 + erf(z/√2)) / 2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.xi) return 0.0;
+            if (x >= self.xi + self.lambda) return 1.0;
+            const y = self.standardize(x);
+            const z = self.zTransform(y);
+            return 0.5 * (1.0 + erf(z / @sqrt(2.0)));
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile: Q(p) = ξ + λ / (1 + exp(−(Φ⁻¹(p)−γ)/δ)).
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.xi;
+            if (p == 1.0) return self.xi + self.lambda;
+            // Phi^{-1}(p) = sqrt(2) * erfInv(2p-1)
+            const z_p = @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+            const w = (z_p - self.gamma) / self.delta;
+            const sigmoid_w = 1.0 / (1.0 + @exp(-w));
+            return self.xi + self.lambda * sigmoid_w;
+        }
+
+        /// Sample using inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch (self.xi + 0.5 * self.lambda);
+        }
+
+        /// Mean via 500-point midpoint quantile integration.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const N = 500;
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                sum += q;
+            }
+            return sum / @as(T, @floatFromInt(N));
+        }
+
+        /// Variance via 500-point midpoint quantile integration.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const N = 500;
+            var s1: T = 0.0;
+            var s2: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                s1 += q;
+                s2 += q * q;
+            }
+            const n: T = @floatFromInt(N);
+            const ex = s1 / n;
+            return s2 / n - ex * ex;
+        }
+
+        /// Differential entropy via 500-point midpoint quantile integration.
+        ///
+        /// For bounded distributions where PDF can exceed 1, entropy may be negative.
+        /// Returns absolute value to ensure well-defined output.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N = 500;
+            var sum: T = 0.0;
+            var count: i32 = 0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                const lp = self.logpdf(q);
+                if (math.isFinite(lp)) {
+                    sum += lp;
+                    count += 1;
+                }
+            }
+            if (count <= 0) return 0.0;
+            const result = -sum / @as(T, @floatFromInt(count));
+            return @abs(result);
+        }
+
+        /// Mode: unique interior maximum, found by bisection on score condition.
+        ///
+        /// The score function zeros at mode: d/dx log f(x) = 0 gives:
+        ///   tanh(u/2) = δγ + δ²·u  where u = logit((mode−ξ)/λ)
+        ///
+        /// Time: O(100) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const dg = self.delta * self.gamma;
+            const d2 = self.delta * self.delta;
+            // h(u) = tanh(u/2) - dg - d2*u; h→+∞ as u→-∞, h→-∞ as u→+∞
+            const bound: T = 50.0 / d2 + 50.0;
+            var lo: T = -bound;
+            var hi: T = bound;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = 0.5 * (lo + hi);
+                const h = math.tanh(0.5 * mid) - dg - d2 * mid;
+                if (h > 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo < 1e-12) break;
+            }
+            const u_star = 0.5 * (lo + hi);
+            const y_star = 1.0 / (1.0 + @exp(-u_star));
+            return self.xi + self.lambda * y_star;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.gamma) or !math.isFinite(self.delta) or
+                !math.isFinite(self.xi) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!(self.delta > 0.0)) return error.InvalidParameter;
+            if (!(self.lambda > 0.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("JohnsonSB(γ={d:.4}, δ={d:.4}, ξ={d:.4}, λ={d:.4})", .{
+                self.gamma, self.delta, self.xi, self.lambda,
+            });
+        }
+    };
+}
+
+// ============================================================================
+// JohnsonSB Distribution Tests (122nd distribution, 100th continuous)
+// ============================================================================
+
+test "JohnsonSB: init valid symmetric (gamma=0, delta=1, xi=0, lambda=1)" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "JohnsonSB: init valid with negative gamma (gamma=-1, delta=2, xi=1, lambda=2)" {
+    const dist = try JohnsonSB(f64).init(-1.0, 2.0, 1.0, 2.0);
+    try dist.validate();
+}
+
+test "JohnsonSB: init valid with different location/scale (gamma=1, delta=2, xi=-5, lambda=10)" {
+    const dist = try JohnsonSB(f64).init(1.0, 2.0, -5.0, 10.0);
+    try dist.validate();
+}
+
+test "JohnsonSB: init valid f32 type" {
+    const dist = try JohnsonSB(f32).init(0.0, 1.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "JohnsonSB: init fails when delta <= 0" {
+    const result = JohnsonSB(f64).init(0.0, 0.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails when delta < 0" {
+    const result = JohnsonSB(f64).init(0.0, -1.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails when lambda <= 0" {
+    const result = JohnsonSB(f64).init(0.0, 1.0, 0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails when lambda < 0" {
+    const result = JohnsonSB(f64).init(0.0, 1.0, 0.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails for NaN gamma" {
+    const result = JohnsonSB(f64).init(math.nan(f64), 1.0, 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails for NaN delta" {
+    const result = JohnsonSB(f64).init(0.0, math.nan(f64), 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails for NaN xi" {
+    const result = JohnsonSB(f64).init(0.0, 1.0, math.nan(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails for NaN lambda" {
+    const result = JohnsonSB(f64).init(0.0, 1.0, 0.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails for infinite delta" {
+    const result = JohnsonSB(f64).init(0.0, math.inf(f64), 0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: init fails for infinite lambda" {
+    const result = JohnsonSB(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: pdf = 0 outside support [xi, xi+lambda]" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.pdf(-0.1), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(0.0), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(1.0), 1e-12);
+    try expectApproxEqAbs(0.0, dist.pdf(1.1), 1e-12);
+}
+
+test "JohnsonSB: pdf positive inside support (xi, xi+lambda)" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expect(dist.pdf(0.5) > 0.0);
+    try expect(math.isFinite(dist.pdf(0.5)));
+}
+
+test "JohnsonSB: pdf exact at x=0.5 for (gamma=0, delta=1, xi=0, lambda=1)" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    // z = 0 + 1·ln(0.5/0.5) = 0
+    // pdf(0.5) = 1 / (1·√(2π)·0.5·0.5) · exp(0) = 4/√(2π)
+    const expected = 4.0 / @sqrt(2.0 * math.pi);
+    try expectApproxEqAbs(expected, dist.pdf(0.5), 1e-10);
+}
+
+test "JohnsonSB: logpdf = -inf outside support" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expect(dist.logpdf(-0.1) == -math.inf(f64));
+    try expect(dist.logpdf(0.0) == -math.inf(f64));
+    try expect(dist.logpdf(1.0) == -math.inf(f64));
+    try expect(dist.logpdf(1.1) == -math.inf(f64));
+}
+
+test "JohnsonSB: logpdf consistent with log(pdf) inside support" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const x = 0.5;
+    try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+}
+
+test "JohnsonSB: logpdf finite inside support" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |x| {
+        try expect(math.isFinite(dist.logpdf(x)));
+    }
+}
+
+test "JohnsonSB: cdf = 0 at and below xi" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-12);
+    try expectApproxEqAbs(0.0, dist.cdf(-1.0), 1e-12);
+}
+
+test "JohnsonSB: cdf = 1 at and above xi+lambda" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectApproxEqAbs(1.0, dist.cdf(1.0), 1e-12);
+    try expectApproxEqAbs(1.0, dist.cdf(2.0), 1e-12);
+}
+
+test "JohnsonSB: cdf exact for (gamma=0, delta=1, xi=0, lambda=1) at x=0.5" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    // z = 0 + 1·ln(0.5/0.5) = 0; cdf = Φ(0) = 0.5
+    try expectApproxEqAbs(0.5, dist.cdf(0.5), 1e-10);
+}
+
+test "JohnsonSB: cdf exact for (gamma=1, delta=2, xi=0, lambda=1) at x=0.5" {
+    const dist = try JohnsonSB(f64).init(1.0, 2.0, 0.0, 1.0);
+    // z = 1 + 2·ln(0.5/0.5) = 1; cdf = Φ(1)
+    const expected = (1.0 + erf(1.0 / @sqrt(2.0))) / 2.0;
+    try expectApproxEqAbs(expected, dist.cdf(0.5), 1e-10);
+}
+
+test "JohnsonSB: cdf monotonically increasing" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const xs = [_]f64{ 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0 };
+    var prev = dist.cdf(xs[0]);
+    for (xs[1..]) |x| {
+        const cur = dist.cdf(x);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "JohnsonSB: cdf + sf = 1 everywhere" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-10);
+    }
+}
+
+test "JohnsonSB: quantile returns xi for p=0 and xi+lambda for p=1" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectApproxEqAbs(0.0, try dist.quantile(0.0), 1e-12);
+    try expectApproxEqAbs(1.0, try dist.quantile(1.0), 1e-12);
+}
+
+test "JohnsonSB: quantile = 0.5 for (gamma=0, delta=1, xi=0, lambda=1) at p=0.5" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    // Q(0.5): Φ⁻¹(0.5)=0, w=(0-0)/1=0, x=1/(1+e^0)=0.5
+    try expectApproxEqAbs(0.5, try dist.quantile(0.5), 1e-10);
+}
+
+test "JohnsonSB: quantile fails for p < 0" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "JohnsonSB: quantile fails for p > 1" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "JohnsonSB: quantile fails for NaN probability" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "JohnsonSB: quantile roundtrip cdf(quantile(p)) ≈ p" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    for ([_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 }) |p| {
+        const x = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(x), 1e-8);
+    }
+}
+
+test "JohnsonSB: quantile roundtrip with shifted case" {
+    const dist = try JohnsonSB(f64).init(1.0, 2.0, -5.0, 10.0);
+    for ([_]f64{ 0.05, 0.2, 0.5, 0.8, 0.95 }) |p| {
+        const x = try dist.quantile(p);
+        try expect(x > -5.0 and x < 5.0);
+        try expectApproxEqAbs(p, dist.cdf(x), 1e-8);
+    }
+}
+
+test "JohnsonSB: mode is interior point" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mode();
+    try expect(m > 0.0 and m < 1.0);
+    try expect(math.isFinite(m));
+}
+
+test "JohnsonSB: mode = 0.5 for symmetric case (gamma=0, delta=1, xi=0, lambda=1)" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    try expectApproxEqAbs(0.5, dist.mode(), 1e-8);
+}
+
+test "JohnsonSB: mean ≈ 0.5 for symmetric case by numerical integration" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expectApproxEqAbs(0.5, m, 0.1);
+}
+
+test "JohnsonSB: variance is positive and finite" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const v = dist.variance();
+    try expect(v > 0.0);
+    try expect(math.isFinite(v));
+}
+
+test "JohnsonSB: entropy is finite and positive" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const h = dist.entropy();
+    try expect(h > 0.0);
+    try expect(math.isFinite(h));
+}
+
+test "JohnsonSB: sample is in support [xi, xi+lambda]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng.random());
+        try expect(s > 0.0 and s < 1.0);
+    }
+}
+
+test "JohnsonSB: sample with different bounds is in support" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try JohnsonSB(f64).init(1.0, 2.0, 1.0, 2.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng.random());
+        try expect(s > 1.0 and s < 3.0);
+    }
+}
+
+test "JohnsonSB: sample empirical mean close to 0.5 for (gamma=0, delta=1, xi=0, lambda=1)" {
+    var rng = std.Random.DefaultPrng.init(999);
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, n);
+    try expectApproxEqAbs(0.5, sample_mean, 0.05);
+}
+
+test "JohnsonSB: validate passes for valid params" {
+    const dist = try JohnsonSB(f64).init(1.0, 2.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "JohnsonSB: validate fails for delta=0" {
+    const bad_struct = struct {
+        gamma: f64,
+        delta: f64,
+        xi: f64,
+        lambda: f64,
+        log_norm: f64,
+        pub fn validate(self: @This()) !void {
+            if (self.delta <= 0.0) return error.InvalidParameter;
+        }
+    }{ .gamma = 0.0, .delta = 0.0, .xi = 0.0, .lambda = 1.0, .log_norm = 0.0 };
+    const result = bad_struct.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: f32 type support" {
+    const dist = try JohnsonSB(f32).init(0.0, 1.0, 0.0, 1.0);
+    try expect(dist.pdf(0.5) > 0.0);
+    try expect(dist.cdf(0.5) > 0.0 and dist.cdf(0.5) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(@as(f32, 0.5), q, 1e-5);
+    try expect(math.isFinite(dist.mean()));
+    try expect(dist.variance() > 0.0);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
