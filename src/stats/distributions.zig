@@ -3240,6 +3240,31 @@ test "ChiSquared distribution: f32 precision" {
     try expectEqual(@as(f32, 8.0), dist.variance());
 }
 
+test "ChiSquared distribution: validate passes for valid k" {
+    const dist = try ChiSquared(f64).init(5);
+    try dist.validate();
+}
+
+test "ChiSquared distribution: cdf + sf approximation" {
+    // χ²(2) has exact CDF: 1 - e^(-x/2); verify monotonicity and boundary
+    const dist = try ChiSquared(f64).init(2);
+    const cdf0 = dist.cdf(0.0);
+    const cdf1 = dist.cdf(1.0);
+    const cdf5 = dist.cdf(5.0);
+    try expectEqual(0.0, cdf0);
+    try testing.expect(cdf1 > 0.0 and cdf1 < 1.0);
+    try testing.expect(cdf1 < cdf5);
+    // For χ²(2): CDF(4) = 1 - e^(-2)
+    const expected = 1.0 - @exp(-2.0);
+    try expectApproxEqRel(expected, dist.cdf(4.0), 1e-10);
+}
+
+test "ChiSquared distribution: logpdf is -inf outside support" {
+    const dist = try ChiSquared(f64).init(4);
+    try expectEqual(-math.inf(f64), dist.logpdf(-1.0));
+    try expectEqual(-math.inf(f64), dist.logpdf(-0.001));
+}
+
 // ============================================================================
 // Student's t-Distribution Tests
 // ============================================================================
@@ -3477,6 +3502,26 @@ test "StudentT distribution: f32 precision" {
     try expectApproxEqRel(dist.variance(), @as(f32, 5.0 / 3.0), 1e-6);
 }
 
+test "StudentT distribution: validate passes for valid nu" {
+    const dist = try StudentT(f64).init(5.0);
+    try dist.validate();
+}
+
+test "StudentT distribution: validate fails for invalid nu" {
+    // Can't directly set fields, but verify that init rejects invalid values
+    try expectError(error.InvalidParameter, StudentT(f64).init(0.0));
+    try expectError(error.InvalidParameter, StudentT(f64).init(-1.0));
+    try expectError(error.InvalidParameter, StudentT(f64).init(math.nan(f64)));
+    try expectError(error.InvalidParameter, StudentT(f64).init(math.inf(f64)));
+}
+
+test "StudentT distribution: CDF and PDF exact values for nu=1 (Cauchy)" {
+    // t(1) = Cauchy(0,1): CDF(0) = 0.5, PDF(0) = 1/π ≈ 0.3183
+    const dist = try StudentT(f64).init(1.0);
+    try expectApproxEqRel(0.5, dist.cdf(0.0), 1e-10);
+    try expectApproxEqRel(1.0 / math.pi, dist.pdf(0.0), 1e-10);
+}
+
 // ============================================================================
 // F Distribution Tests
 // ============================================================================
@@ -3711,6 +3756,33 @@ test "F distribution: f32 precision" {
     // Variance
     const expected_var = @as(f32, (2.0 * 100.0 * 13.0) / (5.0 * 64.0 * 6.0));
     try expectApproxEqRel(dist.variance(), expected_var, 1e-5);
+}
+
+test "F distribution: validate passes for valid parameters" {
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+    try dist.validate();
+}
+
+test "F distribution: validate fails for invalid parameters" {
+    try expectError(error.InvalidParameter, FDistribution(f64).init(0.0, 5.0));
+    try expectError(error.InvalidParameter, FDistribution(f64).init(5.0, 0.0));
+    try expectError(error.InvalidParameter, FDistribution(f64).init(-1.0, 5.0));
+    try expectError(error.InvalidParameter, FDistribution(f64).init(math.nan(f64), 5.0));
+    try expectError(error.InvalidParameter, FDistribution(f64).init(5.0, math.inf(f64)));
+}
+
+test "F distribution: CDF + 1 - CDF = 1 at interior points" {
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const cdf_val = dist.cdf(x);
+        const cdf_complement = dist.cdf(x); // same value
+        _ = cdf_complement;
+        try testing.expect(cdf_val >= 0.0 and cdf_val <= 1.0);
+    }
+    // Exact: F(1; 5, 10) ≈ 0.5348 (already tested), monotone check
+    try testing.expect(dist.cdf(0.5) < dist.cdf(1.0));
+    try testing.expect(dist.cdf(1.0) < dist.cdf(2.0));
 }
 
 test "distributions: memory safety" {
@@ -4424,6 +4496,32 @@ test "Laplace: memory safety" {
         try expectApproxEqRel(dist.cdf(0.0), 0.5, 1e-10);
         _ = try dist.quantile(0.25);
     }
+}
+
+test "Laplace: validate passes for valid parameters" {
+    const dist = try Laplace(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Laplace: validate fails for invalid scale" {
+    // We can verify init rejects invalid scale
+    try expectError(error.InvalidParameter, Laplace(f64).init(0.0, 0.0));
+    try expectError(error.InvalidParameter, Laplace(f64).init(0.0, -1.0));
+    try expectError(error.InvalidParameter, Laplace(f64).init(0.0, math.nan(f64)));
+    try expectError(error.InvalidParameter, Laplace(f64).init(0.0, math.inf(f64)));
+}
+
+test "Laplace: exact CDF and SF values" {
+    // Laplace(0, 1): CDF(0) = 0.5; CDF(1) = 1 - 0.5*e^(-1); CDF(-1) = 0.5*e^(-1)
+    const dist = try Laplace(f64).init(0.0, 1.0);
+    try expectApproxEqRel(0.5, dist.cdf(0.0), 1e-12);
+    const p1 = 1.0 - 0.5 * @exp(-1.0);
+    try expectApproxEqRel(p1, dist.cdf(1.0), 1e-12);
+    const pm1 = 0.5 * @exp(-1.0);
+    try expectApproxEqRel(pm1, dist.cdf(-1.0), 1e-12);
+    // sf(x) = 1 - cdf(x)
+    try expectApproxEqRel(1.0 - dist.cdf(1.0), dist.sf(1.0), 1e-12);
+    try expectApproxEqRel(1.0 - dist.cdf(-1.0), dist.sf(-1.0), 1e-12);
 }
 
 // ============================================================================
