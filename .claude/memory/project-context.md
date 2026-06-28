@@ -1,3 +1,26 @@
+**Session 726 Update (2026-06-28) — FEATURE MODE [COMPLETED]:**
+
+✅ **JohnsonSB Distribution** — 122nd total, 100th continuous — commit 16b98ed
+- **Mode**: FEATURE MODE (counter: 726)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: JohnsonSB(γ, δ, ξ, λ) — Johnson's Bounded distribution
+  * Parameters: γ ∈ ℝ (shape/skewness), δ > 0 (spread), ξ ∈ ℝ (lower bound), λ > 0 (range)
+  * Support: (ξ, ξ+λ) — open bounded interval; standardized y = (x−ξ)/λ ∈ (0,1)
+  * z-transform: z = γ + δ·logit(y) = γ + δ·ln(y/(1−y)) — maps to ℝ
+  * PDF: δ/(λ·√(2π)·y·(1−y)) · exp(−z²/2); CDF: Φ(z) exact O(1)
+  * Quantile: Q(p) = ξ + λ/(1+exp(−(Φ⁻¹(p)−γ)/δ)) — exact O(1) via erfInv
+  * Mode: bisection on tanh(u/2) = δγ + δ²·u (score=0 condition), O(100)
+  * Mean/Variance/Entropy: 500-pt midpoint quantile integration O(500)
+  * Sample: inverse CDF via uniform draw
+  * Key values: (γ=0,δ=1,ξ=0,λ=1) → CDF(0.5)=0.5, PDF(0.5)=4/√(2π), mode=0.5, mean=0.5
+  * (γ=1,δ=2,ξ=0,λ=1) → CDF(0.5)=Φ(1)≈0.84134, Q(0.5)=1/(1+e^0.5)≈0.37754
+  * 44 tests passing
+- **Total tests**: 6,095 (was 6,051; +44 new JohnsonSB tests)
+- **Distribution count**: 122 total (100 continuous + 22 discrete)
+- **Next Priority**: Next FEATURE session — Landau, Davis, JohnsonSU, or another new distribution
+
+---
+
 **Session 721 Update (2026-06-28) — FEATURE MODE [COMPLETED]:**
 
 ✅ **FlorySchulz Distribution** — 119th total, 22nd discrete — commit 1767314
