@@ -70193,6 +70193,52 @@ test "JohnsonSB: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+
+test "JohnsonSB: validate fails for lambda=0" {
+    const bad_struct = struct {
+        gamma: f64,
+        delta: f64,
+        xi: f64,
+        lambda: f64,
+        log_norm: f64,
+        pub fn validate(self: @This()) !void {
+            if (self.lambda <= 0.0) return error.InvalidParameter;
+        }
+    }{ .gamma = 0.0, .delta = 1.0, .xi = 0.0, .lambda = 0.0, .log_norm = 0.0 };
+    const result = bad_struct.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JohnsonSB: pdf integrates to approximately 1 for symmetric case" {
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    const N = 500;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < N) : (i += 1) {
+        const x = 0.001 + (@as(f64, @floatFromInt(i)) + 0.5) * 0.998 / @as(f64, N);
+        sum += dist.pdf(x);
+    }
+    sum *= 0.998 / @as(f64, N);
+    try expectApproxEqAbs(1.0, sum, 0.01);
+}
+
+test "JohnsonSB: sample variance is in valid range for symmetric case" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const dist = try JohnsonSB(f64).init(0.0, 1.0, 0.0, 1.0);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(prng.random());
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    try expect(v > 0.01 and v < 0.30);
+}
+
 // ============================================================================
 // HalfStudentT
 // ============================================================================
@@ -71362,4 +71408,33 @@ test "Borel: f32 type support" {
     try expect(q >= 1);
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
+}
+
+test "Borel: variance = 100.0 for mu=0.8" {
+    const dist = try Borel(f64).init(0.8);
+    try expectApproxEqAbs(100.0, dist.variance(), 1e-10);
+}
+
+test "Borel: pmf(2) exact for mu=0.8" {
+    const dist = try Borel(f64).init(0.8);
+    const expected = 0.8 * @exp(-1.6);
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-10);
+}
+
+test "Borel: sample empirical variance close to theoretical for mu=0.5" {
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+    const dist = try Borel(f64).init(0.5);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    try expectApproxEqAbs(4.0, v, 0.5);
 }

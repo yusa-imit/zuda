@@ -620,3 +620,4 @@
 {"timestamp":"2026-06-29T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for HalfStudentT distribution (124th)","project":"zuda"}
 {"timestamp":"2026-06-29T00:01:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement HalfStudentT distribution (124th)","project":"zuda"}
 {"timestamp":"2026-06-30T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Borel distribution (124th total, 23rd discrete) in distributions.zig","project":"zuda"}
+{"timestamp":"2026-06-30T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add validate/integration/variance tests for JohnsonSB and Borel (stabilization session 735)","project":"zuda"}
