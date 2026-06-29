@@ -71438,3 +71438,357 @@ test "Borel: sample empirical variance close to theoretical for mu=0.5" {
     const v = sum_sq / @as(f64, n) - m * m;
     try expectApproxEqAbs(4.0, v, 0.5);
 }
+
+/// Two-sided geometric distribution over all integers ℤ.
+/// Discrete analogue of the Laplace distribution; arises in differential privacy.
+/// PMF(k; p) = (1−p)/(1+p) · p^|k|  for k ∈ ℤ, p ∈ (0, 1).
+pub fn DiscreteLaplace(comptime T: type) type {
+    return struct {
+        p: T,
+        log_p: T,
+
+        const Self = @This();
+
+        /// Initialize DiscreteLaplace(p).
+        /// Requires: p ∈ (0, 1).
+        /// Time: O(1) | Space: O(1)
+        pub fn init(p: T) DistributionError!Self {
+            if (!(p > 0 and p < 1) or !math.isFinite(p)) return error.InvalidParameter;
+            return Self{ .p = p, .log_p = @log(p) };
+        }
+
+        /// Log probability mass function.
+        /// logPMF(k) = log(1−p) − log(1+p) + |k|·log(p)
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: i64) T {
+            const absk: T = @floatFromInt(if (k >= 0) k else -k);
+            return @log(1 - self.p) - @log(1 + self.p) + absk * self.log_p;
+        }
+
+        /// Probability mass function.
+        /// PMF(k) = (1−p)/(1+p) · p^|k|
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: i64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Cumulative distribution function.
+        /// CDF(k) = p^{−k}/(1+p) for k < 0;  1 − p^{k+1}/(1+p) for k ≥ 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            const one_plus_p = 1 + self.p;
+            if (k < 0) {
+                const neg_k: T = @floatFromInt(-k);
+                return @exp(neg_k * self.log_p) / one_plus_p;
+            } else {
+                const kp1: T = @floatFromInt(k + 1);
+                return 1 - @exp(kp1 * self.log_p) / one_plus_p;
+            }
+        }
+
+        /// Survival function: P(K > k) = 1 − CDF(k).
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            return 1 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k ∈ ℤ such that CDF(k) ≥ u.
+        /// Exact closed-form via logarithm and ceiling.
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, u: T) DistributionError!i64 {
+            if (!(u >= 0 and u <= 1) or math.isNan(u)) return error.InvalidProbability;
+            if (u <= 0) return -1_000_000;
+            if (u >= 1) return 1_000_000;
+            const one_plus_p = 1 + self.p;
+            if (u * one_plus_p <= 1.0) {
+                // k ≤ 0: k = ceil(−log(u·(1+p)) / log(p))
+                const k_float = -@log(u * one_plus_p) / self.log_p;
+                return @intFromFloat(math.ceil(k_float));
+            } else {
+                // k > 0: k = ceil(log((1−u)·(1+p)) / log(p) − 1)
+                const k_float = @log((1 - u) * one_plus_p) / self.log_p - 1;
+                return @intFromFloat(math.ceil(k_float));
+            }
+        }
+
+        /// Mean = 0 (symmetric about 0).
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0;
+        }
+
+        /// Variance = 2p/(1−p)².
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const one_minus_p = 1 - self.p;
+            return 2 * self.p / (one_minus_p * one_minus_p);
+        }
+
+        /// Mode = 0 (PMF is maximized at k=0 for all p ∈ (0,1)).
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) i64 {
+            _ = self;
+            return 0;
+        }
+
+        /// Shannon entropy in nats: log((1+p)/(1−p)) − 2p·log(p)/((1+p)·(1−p)).
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const one_plus_p = 1 + self.p;
+            const one_minus_p = 1 - self.p;
+            return @log(one_plus_p / one_minus_p) - 2 * self.p * self.log_p / (one_plus_p * one_minus_p);
+        }
+
+        /// Draw a random sample via inverse CDF.
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) i64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 0;
+        }
+
+        /// Validate internal invariants.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.p > 0 and self.p < 1) or !math.isFinite(self.p)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("DiscreteLaplace(p={d})", .{self.p});
+        }
+    };
+}
+
+test "DiscreteLaplace: init valid p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try expect(dist.p == 0.5);
+}
+
+test "DiscreteLaplace: init invalid p=0" {
+    try expectError(error.InvalidParameter, DiscreteLaplace(f64).init(0.0));
+}
+
+test "DiscreteLaplace: init invalid p=1" {
+    try expectError(error.InvalidParameter, DiscreteLaplace(f64).init(1.0));
+}
+
+test "DiscreteLaplace: init invalid p<0" {
+    try expectError(error.InvalidParameter, DiscreteLaplace(f64).init(-0.1));
+}
+
+test "DiscreteLaplace: init invalid NaN" {
+    try expectError(error.InvalidParameter, DiscreteLaplace(f64).init(std.math.nan(f64)));
+}
+
+test "DiscreteLaplace: pmf(0) = 1/3 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 1.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-10);
+}
+
+test "DiscreteLaplace: pmf(1) = 1/6 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 1.0 / 6.0;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-10);
+}
+
+test "DiscreteLaplace: pmf(-1) = 1/6 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 1.0 / 6.0;
+    try expectApproxEqAbs(expected, dist.pmf(-1), 1e-10);
+}
+
+test "DiscreteLaplace: pmf(2) = 1/12 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 1.0 / 12.0;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-10);
+}
+
+test "DiscreteLaplace: pmf symmetry pmf(k) == pmf(-k)" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    for (1..6) |uk| {
+        const k: i64 = @intCast(uk);
+        try expectApproxEqAbs(dist.pmf(k), dist.pmf(-k), 1e-10);
+    }
+}
+
+test "DiscreteLaplace: logpmf = log(pmf)" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const k: i64 = 2;
+    const pmf_val = dist.pmf(k);
+    const logpmf_val = dist.logpmf(k);
+    try expectApproxEqAbs(@log(pmf_val), logpmf_val, 1e-10);
+}
+
+test "DiscreteLaplace: cdf(-2) = 1/6 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 1.0 / 6.0;
+    try expectApproxEqAbs(expected, dist.cdf(-2), 1e-10);
+}
+
+test "DiscreteLaplace: cdf(-1) = 1/3 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 1.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.cdf(-1), 1e-10);
+}
+
+test "DiscreteLaplace: cdf(0) = 2/3 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 2.0 / 3.0;
+    try expectApproxEqAbs(expected, dist.cdf(0), 1e-10);
+}
+
+test "DiscreteLaplace: cdf(1) = 5/6 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 5.0 / 6.0;
+    try expectApproxEqAbs(expected, dist.cdf(1), 1e-10);
+}
+
+test "DiscreteLaplace: cdf monotonically non-decreasing" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const cdf_m3 = dist.cdf(-3);
+    const cdf_m1 = dist.cdf(-1);
+    const cdf_0 = dist.cdf(0);
+    const cdf_1 = dist.cdf(1);
+    const cdf_3 = dist.cdf(3);
+    try expect(cdf_m3 < cdf_m1);
+    try expect(cdf_m1 < cdf_0);
+    try expect(cdf_0 < cdf_1);
+    try expect(cdf_1 < cdf_3);
+}
+
+test "DiscreteLaplace: sf = 1 - cdf" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const sf_val = dist.sf(0);
+    const cdf_val = dist.cdf(0);
+    try expectApproxEqAbs(1.0, sf_val + cdf_val, 1e-10);
+}
+
+test "DiscreteLaplace: mean = 0" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+}
+
+test "DiscreteLaplace: variance = 4 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const expected = 4.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "DiscreteLaplace: mode = 0" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try expect(dist.mode() == 0);
+}
+
+test "DiscreteLaplace: entropy > 0 and finite" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const h = dist.entropy();
+    try expect(h > 0.0);
+    try expect(math.isFinite(h));
+}
+
+test "DiscreteLaplace: quantile invalid u < 0" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "DiscreteLaplace: quantile invalid u > 1" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "DiscreteLaplace: quantile invalid NaN" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(std.math.nan(f64)));
+}
+
+test "DiscreteLaplace: quantile(1/3) = -1 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const q = try dist.quantile(1.0 / 3.0);
+    try expect(q == -1);
+}
+
+test "DiscreteLaplace: quantile(2/3) = 0 for p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const q = try dist.quantile(2.0 / 3.0);
+    try expect(q == 0);
+}
+
+test "DiscreteLaplace: quantile roundtrip cdf(quantile(p)) >= p" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const probs = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_val = dist.cdf(q);
+        try expect(cdf_val >= p - 1e-10);
+    }
+}
+
+test "DiscreteLaplace: validate passes for valid p=0.5" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    try dist.validate();
+}
+
+test "DiscreteLaplace: validate fails for p=0" {
+    var dist = try DiscreteLaplace(f64).init(0.5);
+    dist.p = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DiscreteLaplace: validate fails for p=1" {
+    var dist = try DiscreteLaplace(f64).init(0.5);
+    dist.p = 1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DiscreteLaplace: validate fails for NaN p" {
+    var dist = try DiscreteLaplace(f64).init(0.5);
+    dist.p = std.math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DiscreteLaplace: sample returns finite i64" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    const s = dist.sample(rng);
+    try expect(@as(i64, s) == s);
+}
+
+test "DiscreteLaplace: sample empirical mean close to 0" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+    }
+    const m = sum / @as(f64, n);
+    try expect(@abs(m) < 0.5);
+}
+
+test "DiscreteLaplace: f32 type support" {
+    const dist = try DiscreteLaplace(f32).init(0.5);
+    try expect(dist.pmf(0) > 0.0);
+    try expect(dist.cdf(0) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= -1 and q <= 1);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
+
+test "DiscreteLaplace: pmf sums to 1 approximately" {
+    const dist = try DiscreteLaplace(f64).init(0.5);
+    var sum: f64 = 0.0;
+    var k: i64 = -50;
+    while (k <= 50) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expect(sum > 0.99);
+}
