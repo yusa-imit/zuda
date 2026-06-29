@@ -1,3 +1,20 @@
+**Session 735 Update (2026-06-30) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **Test Quality Audit + Cross-Compile** — commit 7edebbe
+- **Mode**: STABILIZATION MODE (counter: 735)
+- **CI Status**: GREEN; 0 open issues
+- **Cross-Compilation**: ✅ All 6 targets pass (x86_64/aarch64 linux/macos, x86_64-windows, wasm32-wasi)
+- **Tests Audited**: JohnsonSB, Borel (added since session 725 stabilization)
+- **Test additions** (targeting coverage gaps):
+  * JohnsonSB (+3): validate fails for lambda=0 (was only delta=0 tested); pdf integrates to ≈1 via 500-pt Riemann sum; sample variance ∈ (0.01, 0.30) for symmetric case
+  * Borel (+3): exact variance(μ=0.8)=100 (formula μ/(1-μ)³); exact pmf(2;0.8)=0.8·e^{-1.6} at 1e-10 tol; sample variance convergence to 4.0 (theoretical) with N=5000, tol=0.5
+- **Key new exact values**: var(Borel;μ=0.8)=100, PMF(2;Borel;μ=0.8)=0.8·e^{-1.6}≈0.16152, JohnsonSB(0,1,0,1) PDF integrates to 1 within 0.01
+- **Total tests**: 6,146 (was 6,140; +6 quality improvements)
+- **Distribution count**: 124 total (101 continuous + 23 discrete) — no new distributions
+- **Next Priority**: Next FEATURE session — Landau, Davis, GeneralizedInverseGaussian, or Discrete Laplace
+
+---
+
 **Session 734 Update (2026-06-30) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Borel Distribution** — 124th total, 23rd discrete — commit 1d4b572
