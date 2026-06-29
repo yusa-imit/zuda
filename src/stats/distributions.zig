@@ -70193,3 +70193,743 @@ test "JohnsonSB: f32 type support" {
     try expect(math.isFinite(dist.entropy()));
     try dist.validate();
 }
+// ============================================================================
+// HalfStudentT
+// ============================================================================
+/// Half Student-t distribution with ν degrees of freedom and scale σ.
+///
+/// Obtained by folding the symmetric Student-t distribution about zero.
+/// Equivalent to X = |Y|·σ where Y ~ StudentT(ν).
+///
+/// Special cases: ν=1 → HalfCauchy(σ); ν→∞ → HalfNormal(σ).
+pub fn HalfStudentT(comptime T: type) type {
+    return struct {
+        nu: T,
+        sigma: T,
+
+        const Self = @This();
+
+        /// Create a HalfStudentT distribution with ν degrees of freedom and scale σ.
+        ///
+        /// Errors: ν ≤ 0, σ ≤ 0, or non-finite parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(nu: T, sigma: T) DistributionError!Self {
+            if (!(nu > 0.0) or !math.isFinite(nu)) return error.InvalidParameter;
+            if (!(sigma > 0.0) or !math.isFinite(sigma)) return error.InvalidParameter;
+            return Self{ .nu = nu, .sigma = sigma };
+        }
+
+        /// Probability density function (PDF) at x.
+        ///
+        /// f(x; ν, σ) = 2/σ · t(x/σ; ν) for x ≥ 0, 0 for x < 0
+        ///
+        /// where t(·; ν) is the standard Student-t PDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const z = x / self.sigma;
+            const log_val = logGamma((self.nu + 1.0) / 2.0)
+                - logGamma(self.nu / 2.0)
+                - 0.5 * @log(self.nu * math.pi)
+                + @log(2.0)
+                - @log(self.sigma)
+                - (self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
+            return @exp(log_val);
+        }
+
+        /// Log probability density function (log PDF) at x.
+        ///
+        /// log f(x; ν, σ) = log(2) − log(σ) + log t(x/σ; ν) for x ≥ 0, −∞ for x < 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const z = x / self.sigma;
+            return logGamma((self.nu + 1.0) / 2.0)
+                - logGamma(self.nu / 2.0)
+                - 0.5 * @log(self.nu * math.pi)
+                + @log(2.0)
+                - @log(self.sigma)
+                - (self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
+        }
+
+        /// Cumulative distribution function (CDF) at x.
+        ///
+        /// F(x; ν, σ) = 2·Φ_t(x/σ; ν) − 1 for x ≥ 0, 0 for x < 0
+        ///
+        /// where Φ_t(·; ν) is the Student-t CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const z = x / self.sigma;
+
+            // Special case: nu=1 (Cauchy) uses exact formula for precision
+            // T_1(x) = 0.5 + atan(x)/π, so HalfStudentT CDF(x) = 2*T_1(x) - 1 = 2*atan(x)/π
+            const nu_diff = self.nu - 1.0;
+            if (nu_diff > -1e-10 and nu_diff < 1e-10) {
+                return 2.0 * math.atan(z) / math.pi;
+            }
+
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            return 2.0 * t_dist.cdf(z) - 1.0;
+        }
+
+        /// Survival function (SF) at x: P(X > x).
+        ///
+        /// S(x; ν, σ) = 2·(1 − Φ_t(x/σ; ν)) for x ≥ 0, 1 for x ≤ 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p.
+        ///
+        /// Q(p; ν, σ) = σ · Φ_t⁻¹((1+p)/2; ν)
+        ///
+        /// Errors: p < 0, p > 1, or p is NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            const t_q = t_dist.quantile((1.0 + p) / 2.0) catch unreachable;
+            return self.sigma * t_q;
+        }
+
+        /// Mode of the distribution (always 0).
+        ///
+        /// The half-t PDF is maximized at x = 0 and decreasing on [0, ∞).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Mean (expected value) of the distribution.
+        ///
+        /// E[X; ν, σ] = σ · √(ν/π) · Γ((ν−1)/2) / Γ(ν/2) for ν > 1, NaN for ν ≤ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.nu <= 1.0) return math.nan(T);
+            const log_mu = 0.5 * @log(self.nu / math.pi)
+                + logGamma((self.nu - 1.0) / 2.0)
+                - logGamma(self.nu / 2.0);
+            return self.sigma * @exp(log_mu);
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var(X; ν, σ) = σ² · (ν/(ν−2) − (E[X]/σ)²) for ν > 2
+        /// Infinite for 1 < ν ≤ 2, undefined (NaN) for ν ≤ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.nu <= 1.0) return math.nan(T);
+            if (self.nu <= 2.0) return math.inf(T);
+            const log_mu = 0.5 * @log(self.nu / math.pi)
+                + logGamma((self.nu - 1.0) / 2.0)
+                - logGamma(self.nu / 2.0);
+            const mu_unit = @exp(log_mu);
+            return self.sigma * self.sigma * (self.nu / (self.nu - 2.0) - mu_unit * mu_unit);
+        }
+
+        /// Differential entropy via 500-point midpoint quantile integration.
+        ///
+        /// H ≈ −(1/N) · Σᵢ log f(Q(pᵢ)) where pᵢ = (i + 0.5)/N
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N = 500;
+            var sum: T = 0.0;
+            var count: i32 = 0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N));
+                const q = self.quantile(p) catch continue;
+                const lp = self.logpdf(q);
+                if (math.isFinite(lp)) {
+                    sum += lp;
+                    count += 1;
+                }
+            }
+            if (count <= 0) return 0.0;
+            return -sum / @as(T, @floatFromInt(count));
+        }
+
+        /// Generate a random sample from this distribution.
+        ///
+        /// Samples |T|·σ where T ~ StudentT(ν).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            return @abs(t_dist.sample(rng)) * self.sigma;
+        }
+
+        /// Validate distribution parameters.
+        ///
+        /// Returns error.InvalidParameter if ν ≤ 0, σ ≤ 0, or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.nu > 0.0) or !math.isFinite(self.nu)) return error.InvalidParameter;
+            if (!(self.sigma > 0.0) or !math.isFinite(self.sigma)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// HalfStudentT Distribution Tests (123rd distribution, 102nd continuous)
+// ============================================================================
+
+// ---- init Tests ----
+
+test "HalfStudentT: init valid with nu=1, sigma=1" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "HalfStudentT: init valid with nu=2, sigma=1" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "HalfStudentT: init valid with nu=30, sigma=1" {
+    const dist = try HalfStudentT(f64).init(30.0, 1.0);
+    try dist.validate();
+}
+
+test "HalfStudentT: init valid with nu=2, sigma=2.5" {
+    const dist = try HalfStudentT(f64).init(2.0, 2.5);
+    try dist.validate();
+}
+
+test "HalfStudentT: init valid f32 type" {
+    const dist = try HalfStudentT(f32).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "HalfStudentT: init fails when nu <= 0 (nu=0)" {
+    const result = HalfStudentT(f64).init(0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails when nu <= 0 (nu=-1)" {
+    const result = HalfStudentT(f64).init(-1.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails when sigma <= 0 (sigma=0)" {
+    const result = HalfStudentT(f64).init(2.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails when sigma <= 0 (sigma=-1)" {
+    const result = HalfStudentT(f64).init(2.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails for NaN nu" {
+    const result = HalfStudentT(f64).init(math.nan(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails for NaN sigma" {
+    const result = HalfStudentT(f64).init(2.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails for infinite nu" {
+    const result = HalfStudentT(f64).init(math.inf(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: init fails for infinite sigma" {
+    const result = HalfStudentT(f64).init(2.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+// ---- PDF Tests ----
+
+test "HalfStudentT: pdf(0; nu=1, sigma=1) = 2/pi ≈ 0.6366" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 2.0 / math.pi;
+    try expectApproxEqAbs(expected, p, 1e-8);
+}
+
+test "HalfStudentT: pdf(0; nu=2, sigma=1) > 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const p = dist.pdf(0.0);
+    try expect(p > 0.0);
+}
+
+test "HalfStudentT: pdf(negative) = 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "HalfStudentT: pdf(negative_large) = 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const p = dist.pdf(-1e6);
+    try expectApproxEqAbs(0.0, p, 1e-15);
+}
+
+test "HalfStudentT: pdf decreases as x increases from 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const p0 = dist.pdf(0.0);
+    const p1 = dist.pdf(0.5);
+    const p2 = dist.pdf(1.0);
+    try expect(p0 > p1);
+    try expect(p1 > p2);
+}
+
+test "HalfStudentT: pdf(large_x) approaches 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const p = dist.pdf(1e6);
+    try expect(p < 1e-12);
+}
+
+// ---- Log-PDF Tests ----
+
+test "HalfStudentT: logpdf(0; nu=1, sigma=1) = log(2/pi)" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const expected = @log(2.0 / math.pi);
+    try expectApproxEqAbs(expected, lp, 1e-8);
+}
+
+test "HalfStudentT: logpdf(negative) = -inf" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const lp = dist.logpdf(-1.0);
+    try expect(math.isNegativeInf(lp));
+}
+
+test "HalfStudentT: logpdf(0) ≈ log(pdf(0))" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    const p = dist.pdf(0.0);
+    const expected = @log(p);
+    try expectApproxEqAbs(expected, lp, 1e-6);
+}
+
+test "HalfStudentT: logpdf(0.5) ≈ log(pdf(0.5))" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const lp = dist.logpdf(0.5);
+    const p = dist.pdf(0.5);
+    const expected = @log(p);
+    try expectApproxEqAbs(expected, lp, 1e-6);
+}
+
+test "HalfStudentT: logpdf(1.0) ≈ log(pdf(1.0))" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const lp = dist.logpdf(1.0);
+    const p = dist.pdf(1.0);
+    const expected = @log(p);
+    try expectApproxEqAbs(expected, lp, 1e-6);
+}
+
+test "HalfStudentT: logpdf(2.0) ≈ log(pdf(2.0))" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const lp = dist.logpdf(2.0);
+    const p = dist.pdf(2.0);
+    const expected = @log(p);
+    try expectApproxEqAbs(expected, lp, 1e-6);
+}
+
+// ---- CDF Tests ----
+
+test "HalfStudentT: cdf(0) = 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "HalfStudentT: cdf(-1) = 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(0.0, c, 1e-15);
+}
+
+test "HalfStudentT: cdf is monotonically increasing" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c0 = dist.cdf(0.0);
+    const c1 = dist.cdf(0.5);
+    const c2 = dist.cdf(1.0);
+    const c3 = dist.cdf(2.0);
+    try expect(c0 <= c1);
+    try expect(c1 <= c2);
+    try expect(c2 <= c3);
+}
+
+test "HalfStudentT: cdf approaches 1 for large x" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(1000.0);
+    try expect(c > 0.999);
+}
+
+test "HalfStudentT: cdf(1; nu=1, sigma=1) = 0.5 [exact HalfCauchy]" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(0.5, c, 1e-8);
+}
+
+test "HalfStudentT: cdf(1; nu=2, sigma=1) = 1/sqrt(3) ≈ 0.57735 [exact]" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(1.0);
+    const expected = 1.0 / @sqrt(3.0);
+    try expectApproxEqAbs(expected, c, 1e-6);
+}
+
+// ---- Survival Function Tests ----
+
+test "HalfStudentT: sf(0) = 1" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const s = dist.sf(0.0);
+    try expectApproxEqAbs(1.0, s, 1e-15);
+}
+
+test "HalfStudentT: sf(x) + cdf(x) ≈ 1 for x=0.1" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(0.1);
+    const s = dist.sf(0.1);
+    try expectApproxEqAbs(1.0, c + s, 1e-10);
+}
+
+test "HalfStudentT: sf(x) + cdf(x) ≈ 1 for x=0.5" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(0.5);
+    const s = dist.sf(0.5);
+    try expectApproxEqAbs(1.0, c + s, 1e-10);
+}
+
+test "HalfStudentT: sf(x) + cdf(x) ≈ 1 for x=1.0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(1.0);
+    const s = dist.sf(1.0);
+    try expectApproxEqAbs(1.0, c + s, 1e-10);
+}
+
+test "HalfStudentT: sf(x) + cdf(x) ≈ 1 for x=2.0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const c = dist.cdf(2.0);
+    const s = dist.sf(2.0);
+    try expectApproxEqAbs(1.0, c + s, 1e-10);
+}
+
+// ---- Quantile Tests ----
+
+test "HalfStudentT: quantile(0) = 0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "HalfStudentT: quantile(1) = +inf" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isPositiveInf(q));
+}
+
+test "HalfStudentT: quantile(0.5; nu=1, sigma=1) = 1.0 [exact]" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(1.0, q, 1e-6);
+}
+
+test "HalfStudentT: quantile error for p<0" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "HalfStudentT: quantile error for p>1" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "HalfStudentT: quantile error for NaN" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try expectError(error.InvalidProbability, result);
+}
+
+test "HalfStudentT: quantile inverts cdf for p=0.1" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.1);
+    const c = dist.cdf(q);
+    try expectApproxEqAbs(0.1, c, 1e-5);
+}
+
+test "HalfStudentT: quantile inverts cdf for p=0.3" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.3);
+    const c = dist.cdf(q);
+    try expectApproxEqAbs(0.3, c, 1e-5);
+}
+
+test "HalfStudentT: quantile inverts cdf for p=0.5" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.5);
+    const c = dist.cdf(q);
+    try expectApproxEqAbs(0.5, c, 1e-5);
+}
+
+test "HalfStudentT: quantile inverts cdf for p=0.7" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.7);
+    const c = dist.cdf(q);
+    try expectApproxEqAbs(0.7, c, 1e-5);
+}
+
+test "HalfStudentT: quantile inverts cdf for p=0.9" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.9);
+    const c = dist.cdf(q);
+    try expectApproxEqAbs(0.9, c, 1e-5);
+}
+
+// ---- Mode Tests ----
+
+test "HalfStudentT: mode always 0" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-15);
+}
+
+test "HalfStudentT: mode always 0 (nu=2)" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-15);
+}
+
+test "HalfStudentT: mode always 0 (nu=30, sigma=2)" {
+    const dist = try HalfStudentT(f64).init(30.0, 2.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-15);
+}
+
+// ---- Mean Tests ----
+
+test "HalfStudentT: mean(nu=2, sigma=1) = sqrt(2) ≈ 1.41421 [exact]" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const m = dist.mean();
+    const expected = @sqrt(2.0);
+    try expectApproxEqAbs(expected, m, 1e-8);
+}
+
+test "HalfStudentT: mean = NaN for nu=1" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "HalfStudentT: mean = NaN for nu=0.5" {
+    const dist = try HalfStudentT(f64).init(0.5, 1.0);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "HalfStudentT: mean > 0 for nu>1" {
+    const dist = try HalfStudentT(f64).init(3.0, 1.0);
+    const m = dist.mean();
+    try expect(m > 0.0 and math.isFinite(m));
+}
+
+test "HalfStudentT: mean scales linearly with sigma" {
+    const dist1 = try HalfStudentT(f64).init(3.0, 1.0);
+    const dist2 = try HalfStudentT(f64).init(3.0, 2.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    try expectApproxEqAbs(2.0 * m1, m2, 1e-8);
+}
+
+// ---- Variance Tests ----
+
+test "HalfStudentT: variance = inf for nu=2 (boundary)" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isPositiveInf(v));
+}
+
+test "HalfStudentT: variance = NaN for nu=1" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "HalfStudentT: variance = NaN for nu=0.5" {
+    const dist = try HalfStudentT(f64).init(0.5, 1.0);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "HalfStudentT: variance > 0 and finite for nu=3" {
+    const dist = try HalfStudentT(f64).init(3.0, 1.0);
+    const v = dist.variance();
+    try expect(v > 0.0 and math.isFinite(v));
+}
+
+test "HalfStudentT: variance > 0 and finite for nu=30" {
+    const dist = try HalfStudentT(f64).init(30.0, 1.0);
+    const v = dist.variance();
+    try expect(v > 0.0 and math.isFinite(v));
+}
+
+test "HalfStudentT: variance scales with sigma² for nu=3" {
+    const dist1 = try HalfStudentT(f64).init(3.0, 1.0);
+    const dist2 = try HalfStudentT(f64).init(3.0, 2.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try expectApproxEqAbs(4.0 * v1, v2, 1e-6);
+}
+
+// ---- Entropy Tests ----
+
+test "HalfStudentT: entropy is finite for nu=2" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const e = dist.entropy();
+    try expect(math.isFinite(e));
+}
+
+test "HalfStudentT: entropy is finite for nu=30" {
+    const dist = try HalfStudentT(f64).init(30.0, 1.0);
+    const e = dist.entropy();
+    try expect(math.isFinite(e));
+}
+
+test "HalfStudentT: entropy increases with sigma" {
+    const dist1 = try HalfStudentT(f64).init(2.0, 1.0);
+    const dist2 = try HalfStudentT(f64).init(2.0, 2.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    try expect(e2 > e1);
+}
+
+test "HalfStudentT: entropy is positive" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    const e = dist.entropy();
+    try expect(e > 0.0);
+}
+
+// ---- Sample Tests ----
+
+test "HalfStudentT: sample always >= 0 (100 samples)" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0.0);
+    }
+}
+
+test "HalfStudentT: sample range reasonable (nu=1)" {
+    const dist = try HalfStudentT(f64).init(1.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var count_in_range: usize = 0;
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        if (s >= 0.0 and s < 100.0) count_in_range += 1;
+    }
+    try expect(count_in_range > 50); // Most should be in reasonable range
+}
+
+test "HalfStudentT: sample range reasonable (nu=30)" {
+    const dist = try HalfStudentT(f64).init(30.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    var count_in_range: usize = 0;
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        if (s >= 0.0 and s < 10.0) count_in_range += 1;
+    }
+    try expect(count_in_range > 50); // Most should be concentrated
+}
+
+// ---- Validate Tests ----
+
+test "HalfStudentT: validate passes for valid (nu=2, sigma=1)" {
+    const dist = try HalfStudentT(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "HalfStudentT: validate passes for valid (nu=30, sigma=2.5)" {
+    const dist = try HalfStudentT(f64).init(30.0, 2.5);
+    try dist.validate();
+}
+
+test "HalfStudentT: validate fails for nu=0 (created unsafe)" {
+    // Manually create with invalid nu to test validate
+    const dist = HalfStudentT(f64){ .nu = 0.0, .sigma = 1.0 };
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: validate fails for sigma=0 (created unsafe)" {
+    const dist = HalfStudentT(f64){ .nu = 2.0, .sigma = 0.0 };
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: validate fails for NaN nu (created unsafe)" {
+    const dist = HalfStudentT(f64){ .nu = math.nan(f64), .sigma = 1.0 };
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HalfStudentT: validate fails for NaN sigma (created unsafe)" {
+    const dist = HalfStudentT(f64){ .nu = 2.0, .sigma = math.nan(f64) };
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+// ---- f32 Type Support Tests ----
+
+test "HalfStudentT: f32 init and pdf work" {
+    const dist = try HalfStudentT(f32).init(2.0, 1.0);
+    const p = dist.pdf(0.5);
+    try expect(p > 0.0);
+}
+
+test "HalfStudentT: f32 cdf works" {
+    const dist = try HalfStudentT(f32).init(2.0, 1.0);
+    const c = dist.cdf(0.5);
+    try expect(c > 0.0 and c < 1.0);
+}
+
+test "HalfStudentT: f32 quantile works" {
+    const dist = try HalfStudentT(f32).init(2.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(q > 0.0);
+}
+
+test "HalfStudentT: f32 mean works" {
+    const dist = try HalfStudentT(f32).init(2.0, 1.0);
+    const m = dist.mean();
+    try expect(m > 0.0);
+}
+
+test "HalfStudentT: f32 variance works" {
+    const dist = try HalfStudentT(f32).init(3.0, 1.0);
+    const v = dist.variance();
+    try expect(v > 0.0);
+}
+
+test "HalfStudentT: f32 entropy works" {
+    const dist = try HalfStudentT(f32).init(2.0, 1.0);
+    const e = dist.entropy();
+    try expect(math.isFinite(e));
+}
