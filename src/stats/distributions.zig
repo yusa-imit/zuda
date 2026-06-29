@@ -70933,3 +70933,433 @@ test "HalfStudentT: f32 entropy works" {
     const e = dist.entropy();
     try expect(math.isFinite(e));
 }
+
+
+// ============================================================================
+// Borel Distribution (124th distribution, 23rd discrete)
+// ============================================================================
+/// Borel distribution — discrete distribution arising in branching processes
+/// and queueing theory (single-server Poisson queue busy periods).
+///
+/// For a Poisson process with rate μ ∈ (0,1], the total progeny of a
+/// Galton-Watson process has this distribution.
+///
+/// Parameters:
+///   μ ∈ (0, 1]  — offspring rate (criticality parameter)
+///
+/// Support: k = 1, 2, 3, ...
+///
+/// PMF: P(X=k) = e^{-kμ} · (kμ)^{k-1} / k!
+///
+/// Special case: μ→0 → degenerate at k=1
+/// Special case: μ=1 → critical process (mean = ∞)
+pub fn Borel(comptime T: type) type {
+    return struct {
+        mu: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a Borel distribution.
+        ///
+        /// Errors: mu ≤ 0, mu > 1, or non-finite mu.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(mu > 0.0 and mu <= 1.0)) return error.InvalidParameter;
+            return Self{ .mu = mu };
+        }
+
+        /// Log-PMF at k. Returns −∞ for k < 1.
+        ///
+        /// log P(k) = −kμ + (k−1)·log(kμ) − logΓ(k+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            const kmu = kf * self.mu;
+            if (k == 1) return -self.mu;
+            return -kmu + (kf - 1.0) * @log(kmu) - logGamma(kf + 1.0);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            var sum: T = 0.0;
+            var j: u64 = 1;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p = self.pmf(j);
+                sum += p;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 1;
+            var cumsum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= p) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 1;
+        }
+
+        /// Mean: 1/(1−μ) for μ < 1; +∞ for μ=1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.mu >= 1.0) return math.inf(T);
+            return 1.0 / (1.0 - self.mu);
+        }
+
+        /// Variance: μ/(1−μ)³ for μ < 1; +∞ for μ=1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.mu >= 1.0) return math.inf(T);
+            const om = 1.0 - self.mu;
+            return self.mu / (om * om * om);
+        }
+
+        /// Mode: always 1 (PMF(k+1)/PMF(k) < 1 for all k ≥ 1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p < 1e-300) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!(self.mu > 0.0 and self.mu <= 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Borel(μ={d:.4})", .{self.mu});
+        }
+    };
+}
+
+// ============================================================================
+// Borel Distribution Tests (124th distribution, 23rd discrete)
+// ============================================================================
+
+test "Borel: init valid mu=0.5" {
+    const dist = try Borel(f64).init(0.5);
+    try dist.validate();
+}
+
+test "Borel: init valid mu=1.0 (critical)" {
+    const dist = try Borel(f64).init(1.0);
+    try dist.validate();
+}
+
+test "Borel: init valid mu=0.1" {
+    const dist = try Borel(f64).init(0.1);
+    try dist.validate();
+}
+
+test "Borel: init valid f32 type" {
+    const dist = try Borel(f32).init(0.5);
+    try dist.validate();
+}
+
+test "Borel: init fails for mu=0" {
+    const result = Borel(f64).init(0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Borel: init fails for mu < 0" {
+    const result = Borel(f64).init(-0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Borel: init fails for mu > 1" {
+    const result = Borel(f64).init(1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Borel: init fails for NaN mu" {
+    const result = Borel(f64).init(math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Borel: init fails for infinite mu" {
+    const result = Borel(f64).init(math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Borel: pmf(0) = 0 (outside support)" {
+    const dist = try Borel(f64).init(0.5);
+    try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+}
+
+test "Borel: pmf(1) = exp(-mu) for any mu" {
+    const dist = try Borel(f64).init(0.5);
+    // PMF(1) = e^{-1·μ}·(μ)^0/1! = e^{-μ}
+    try expectApproxEqAbs(@exp(-0.5), dist.pmf(1), 1e-12);
+}
+
+test "Borel: pmf(1) = exp(-1) for mu=1" {
+    const dist = try Borel(f64).init(1.0);
+    try expectApproxEqAbs(@exp(-1.0), dist.pmf(1), 1e-12);
+}
+
+test "Borel: pmf(2) = mu*exp(-2*mu) for mu=0.5" {
+    const dist = try Borel(f64).init(0.5);
+    // PMF(2) = e^{-2μ}·(2μ)^1/2! = e^{-1}·1/2 = e^{-1}/2
+    const expected = @exp(-1.0) / 2.0;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-12);
+}
+
+test "Borel: pmf(2) exact for mu=1" {
+    const dist = try Borel(f64).init(1.0);
+    // PMF(2;1) = e^{-2}·2^1/2! = e^{-2}
+    try expectApproxEqAbs(@exp(-2.0), dist.pmf(2), 1e-12);
+}
+
+test "Borel: pmf sums to 1 for mu=0.5 (truncated)" {
+    const dist = try Borel(f64).init(0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 500) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "Borel: pmf positive for k >= 1" {
+    const dist = try Borel(f64).init(0.5);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "Borel: logpmf = log(pmf)" {
+    const dist = try Borel(f64).init(0.5);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "Borel: logpmf(0) = -inf" {
+    const dist = try Borel(f64).init(0.5);
+    try expect(dist.logpmf(0) == -math.inf(f64));
+}
+
+test "Borel: cdf(0) = 0" {
+    const dist = try Borel(f64).init(0.5);
+    try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+}
+
+test "Borel: cdf(1) = exp(-mu) for mu=0.5" {
+    const dist = try Borel(f64).init(0.5);
+    try expectApproxEqAbs(@exp(-0.5), dist.cdf(1), 1e-12);
+}
+
+test "Borel: cdf is monotonically non-decreasing" {
+    const dist = try Borel(f64).init(0.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "Borel: cdf approaches 1 for large k" {
+    const dist = try Borel(f64).init(0.5);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "Borel: quantile(0) = 1" {
+    const dist = try Borel(f64).init(0.5);
+    try expect(try dist.quantile(0.0) == 1);
+}
+
+test "Borel: quantile(1) is defined" {
+    const dist = try Borel(f64).init(0.5);
+    const q = try dist.quantile(1.0);
+    try expect(q >= 1);
+}
+
+test "Borel: quantile fails for p < 0" {
+    const dist = try Borel(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Borel: quantile fails for p > 1" {
+    const dist = try Borel(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Borel: quantile fails for NaN" {
+    const dist = try Borel(f64).init(0.5);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Borel: cdf(quantile(p)) >= p" {
+    const dist = try Borel(f64).init(0.5);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "Borel: mode always 1" {
+    const dist = try Borel(f64).init(0.5);
+    try expect(dist.mode() == 1);
+}
+
+test "Borel: mode always 1 for mu=0.9" {
+    const dist = try Borel(f64).init(0.9);
+    try expect(dist.mode() == 1);
+}
+
+test "Borel: mean = 1/(1-mu) for mu=0.5" {
+    const dist = try Borel(f64).init(0.5);
+    try expectApproxEqAbs(2.0, dist.mean(), 1e-10);
+}
+
+test "Borel: mean = 1/(1-mu) for mu=0.8" {
+    const dist = try Borel(f64).init(0.8);
+    try expectApproxEqAbs(5.0, dist.mean(), 1e-10);
+}
+
+test "Borel: mean = inf for mu=1 (critical)" {
+    const dist = try Borel(f64).init(1.0);
+    try expect(math.isPositiveInf(dist.mean()));
+}
+
+test "Borel: variance = mu/(1-mu)^3 for mu=0.5" {
+    const dist = try Borel(f64).init(0.5);
+    // var = 0.5/(0.5^3) = 0.5/0.125 = 4
+    try expectApproxEqAbs(4.0, dist.variance(), 1e-10);
+}
+
+test "Borel: variance = inf for mu=1" {
+    const dist = try Borel(f64).init(1.0);
+    try expect(math.isPositiveInf(dist.variance()));
+}
+
+test "Borel: entropy is positive and finite for mu=0.5" {
+    const dist = try Borel(f64).init(0.5);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "Borel: entropy is positive and finite for mu=0.9" {
+    const dist = try Borel(f64).init(0.9);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "Borel: entropy increases with mu (more uncertain near criticality)" {
+    const dist1 = try Borel(f64).init(0.3);
+    const dist2 = try Borel(f64).init(0.7);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "Borel: sample is in support (k >= 1)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Borel(f64).init(0.5);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 1);
+    }
+}
+
+test "Borel: sample empirical mean close to theoretical for mu=0.5" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Borel(f64).init(0.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 1/(1-0.5) = 2
+    try expectApproxEqAbs(2.0, sample_mean, 0.15);
+}
+
+test "Borel: validate passes for valid mu" {
+    const dist = try Borel(f64).init(0.5);
+    try dist.validate();
+}
+
+test "Borel: validate fails for mu=0 (unsafe struct)" {
+    const dist = Borel(f64){ .mu = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Borel: validate fails for mu>1 (unsafe struct)" {
+    const dist = Borel(f64){ .mu = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Borel: validate fails for NaN mu (unsafe struct)" {
+    const dist = Borel(f64){ .mu = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Borel: f32 type support" {
+    const dist = try Borel(f32).init(0.5);
+    try expect(dist.pmf(1) > 0.0);
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 1);
+    try expect(math.isFinite(dist.entropy()));
+    try dist.validate();
+}
