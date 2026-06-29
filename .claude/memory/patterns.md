@@ -1,5 +1,30 @@
 # zuda Code Patterns
 
+## Duplicate Distribution Detection Pattern (Session 734)
+Before implementing a new distribution, always grep for an existing implementation:
+```bash
+grep "pub fn DistributionName" src/stats/distributions.zig
+```
+JohnsonSU was already at line 38522 but not in the MEMORY.md "latest session" list — the list only goes back ~10 sessions. Always grep the file, not just memory.
+
+## Borel Distribution Sampling Pattern (Session 734)
+For discrete distributions with power-law-like tails (Borel, Zeta, Zipf), use linear scan inverse CDF
+rather than binary search — it avoids precomputing the CDF table and is simpler for unbounded support:
+```zig
+pub fn quantile(self: Self, p: T) DistributionError!u64 {
+    if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+    if (p == 0.0) return 1;
+    var cumsum: T = 0.0;
+    var k: u64 = 1;
+    while (k <= MAX_K) : (k += 1) {
+        cumsum += self.pmf(k);
+        if (cumsum >= p) return k;
+    }
+    return MAX_K;
+}
+```
+Use MAX_K = 50000 as a safety cap. Break early when p is small (most samples hit k=1 quickly for μ≪1).
+
 ## Random NDArray Factory Pattern (Session 528)
 Create random arrays with seeded PRNGs for reproducibility:
 
@@ -1016,3 +1041,88 @@ pub fn fftCached(comptime T: type, allocator: Allocator, input: []const Complex(
 - Don't assume identical floating-point results (minor rounding differences OK within 1e-6)
 - Don't forget to defer/free twiddle allocation
 - Don't pre-compute all exp(-j*2π*k/N) naively in the butterfly loop (defeats purpose)
+
+## Heavy-Tailed Distribution Testing Pattern (Landau, Session 726+)
+
+For distributions with non-closed-form PDFs (Schorr approximation, Spence-Dirichlet, etc.):
+
+**Test categories**:
+
+1. **Parameter Validation (6 tests)**:
+   - Valid init with various param combinations
+   - Invalid scale (c ≤ 0) — boundary and strictly negative
+   - NaN/Inf for location and scale parameters
+   - f32 type support
+
+2. **PDF Properties (6 tests)**:
+   - Positive everywhere on support (check at multiple x)
+   - Tail behavior: decay to ~0 far negative, monotone decrease positive
+   - Reference values from tables (CERN/ROOT): pdf(-1), pdf(0), pdf(1) within 1e-3
+   - logpdf = log(pdf) for finite positive pdf
+   - logpdf finite everywhere
+
+3. **CDF Properties (7 tests)**:
+   - Monotone increasing (test 7+ points)
+   - CDF limits: F(-100) ≈ 0, F(+100) ≈ 1
+   - CDF + SF = 1 at multiple points (tolerance 1e-10)
+   - Known quantile: median ≈ 0.765 (within 0.01 for standard Landau)
+
+4. **Quantile (Inverse CDF) (8 tests)**:
+   - Monotone increasing in p
+   - Roundtrip: cdf(quantile(p)) ≈ p for p in [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
+   - Error for p < 0, p > 1, NaN → error.InvalidProbability
+   - Tolerance: 1e-4 for roundtrip (numerical inversion via bisection)
+
+5. **Mode (Peak) Properties (2 tests)**:
+   - Mode ≈ -0.222 for standard Landau (within 0.01)
+   - Mode is finite; PDF at mode > PDF at nearby points
+
+6. **Scale Properties (3 tests)**:
+   - Location shift: pdf(x; μ, c) = (1/c) * pdf((x-μ)/c; 0, 1)
+   - Scale invariance: pdf(x; μ, c) scales as 1/c
+   - CDF location shift: F(x; μ, c) = F((x-μ)/c; 0, 1)
+
+7. **Moments (3 tests)**:
+   - Mean/variance/entropy all finite and positive
+   - Larger scale → larger variance
+   - Location shift doesn't change variance
+
+8. **Sampling (2 tests)**:
+   - Sample returns finite values (100+ iterations)
+   - Empirical mean ≈ analytical mean (tolerance 0.5 for 1000 samples)
+
+9. **Supplementary CDF Checks (2 tests)**:
+   - CDF reaches 0.25 before median
+   - CDF reaches 0.75 after median
+   - SF at median ≈ 0.5
+
+**Key numerical facts for standard Landau (μ=0, c=1)**:
+- Mode: x_m ≈ -0.2224
+- Median: x_0.5 ≈ 0.7650
+- PDF(-1.0) ≈ 0.1791
+- PDF(0.0) ≈ 0.1800
+- PDF(1.0) ≈ 0.0848
+- Mean: does not exist (heavy tail)
+- Variance: does not exist
+- Support: (-∞, +∞)
+
+**Implementation hints**:
+- Use Schorr approximation (polynomial fit + numerical methods)
+- CDF via numerical integration or asymptotic expansions (fit to tables)
+- Quantile via bisection (O(log(1/ε)) iterations, e.g., 64 iterations)
+- Mode via bisection on score condition (d log pdf / dx = 0)
+- Mean/variance/entropy via 500-point numerical quadrature
+- Sample via inverse-CDF transform
+
+**Tolerance guidelines**:
+- PDF exact values: 1e-3 (table-based approximation error)
+- CDF/SF: 1e-4 (numerical integration error)
+- Quantile roundtrip: 1e-4 (bisection error)
+- Moments (mean/var): 0.5 (empirical estimate, 1000 samples)
+
+**Pitfalls**:
+- Don't assume mean/variance exist — Landau has infinite tails
+- Don't use direct FFT for CDF inversion — use bisection or Spence expansion
+- Don't hardcode reference values in expected calculations — use actual computed values
+- Don't forget mode can be found via bisection, not closed form
+- Don't assume CDF follows Normal-like S-curve — Landau is skewed left (peak negative)

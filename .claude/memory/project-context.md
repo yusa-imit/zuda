@@ -1,3 +1,29 @@
+**Session 734 Update (2026-06-30) — FEATURE MODE [COMPLETED]:**
+
+✅ **Borel Distribution** — 124th total, 23rd discrete — commit 1d4b572
+- **Mode**: FEATURE MODE (counter: 734)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Borel(μ) — discrete branching process / Poisson queue total progeny distribution
+  * Parameter: μ ∈ (0, 1] — offspring rate (criticality parameter); μ=1 → critical process
+  * Support: k = 1, 2, 3, ... (positive integers)
+  * PMF: P(X=k) = e^{-kμ}·(kμ)^{k-1}/k!; logPMF: -kμ+(k-1)·log(kμ)-logΓ(k+1)
+  * PMF(1)=e^{-μ}, PMF(2)=μ·e^{-2μ}/1; mode always 1 (PMF(k+1)/PMF(k) ≤ e^{-1} < 1)
+  * CDF: partial sum up to MAX_K=50000 (adaptive break at cumsum≥1-1e-15)
+  * Quantile: linear scan from k=1 upward until cumsum≥p
+  * Mean: 1/(1-μ) for μ<1; +∞ for μ=1 (exact O(1))
+  * Variance: μ/(1-μ)³ for μ<1; +∞ for μ=1 (exact O(1))
+  * Entropy: truncated sum -Σ P(k)·logP(k) until P(k)<1e-300
+  * Sample: inverse CDF via uniform draw
+  * Applications: Galton-Watson branching processes, M/D/1 queue busy periods, random tree sizes
+  * Key values: PMF(1;0.5)=e^{-0.5}; PMF(2;0.5)=e^{-1}/2; mean(0.5)=2; var(0.5)=4; mean(0.8)=5
+  * NOTE: JohnsonSU already existed at line 38522 — detected on first attempt, chose Borel instead
+  * 45 tests passing
+- **Total tests**: 6,140 (was 6,095; +45 new Borel tests)
+- **Distribution count**: 124 total (101 continuous + 23 discrete)
+- **Next Priority**: Next FEATURE session — Landau, Davis, GeneralizedInverseGaussian, or Discrete Laplace
+
+---
+
 **Session 726 Update (2026-06-28) — FEATURE MODE [COMPLETED]:**
 
 ✅ **JohnsonSB Distribution** — 122nd total, 100th continuous — commit 16b98ed
