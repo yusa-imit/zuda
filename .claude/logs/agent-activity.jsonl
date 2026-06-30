@@ -622,3 +622,5 @@
 {"timestamp":"2026-06-30T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Borel distribution (124th total, 23rd discrete) in distributions.zig","project":"zuda"}
 {"timestamp":"2026-06-30T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add validate/integration/variance tests for JohnsonSB and Borel (stabilization session 735)","project":"zuda"}
 {"timestamp":"2026-06-30T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write DiscreteLaplace(p) tests — 125th distribution","project":"zuda"}
+{"timestamp":"2026-06-30T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Landau distribution (126th total, 102nd continuous)","project":"zuda"}
+{"timestamp":"2026-06-30T00:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement Landau distribution (126th total, 102nd continuous) in src/stats/distributions.zig","project":"zuda"}

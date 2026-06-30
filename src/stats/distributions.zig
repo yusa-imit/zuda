@@ -71792,3 +71792,582 @@ test "DiscreteLaplace: pmf sums to 1 approximately" {
     }
     try expect(sum > 0.99);
 }
+
+// Landau Distribution (126th total, 102nd continuous)
+// ============================================================================
+
+/// Landau distribution — ionization energy loss in thin absorbers (Bethe-Bloch / Landau-Vavilov theory).
+///
+/// The Landau distribution arises as the distribution of energy loss of charged
+/// particles passing through thin layers of matter. It is a Lévy α-stable
+/// distribution with α=1, β=1 (maximally right-skewed).
+///
+/// PDF via Fourier integral:
+///   φ_L(λ) = (1/π) ∫₀^∞ exp(-t) cos(tλ + (2t/π)·ln(t)) dt
+///   f(x; μ, c) = (1/c) · φ_L((x-μ)/c)
+///
+/// Parameters:
+///   - mu: Location parameter (ℝ); mode is at approximately μ - 0.2224·c
+///   - c:  Scale parameter (c > 0)
+///
+/// Support: (-∞, +∞); heavy right tail
+///
+/// Mean:     undefined (diverges to +∞)
+/// Variance: undefined (diverges to +∞)
+/// Mode:     μ + c · (-0.2224)  [approximate standard Landau mode offset]
+///
+/// Time: O(PDF_N) for pdf/logpdf | O(CDF_N · PDF_N) for cdf/sf | O(60 · CDF_N · PDF_N) for quantile
+pub fn Landau(comptime T: type) type {
+    return struct {
+        mu: T,
+        c: T,
+
+        const Self = @This();
+
+        // Standard Landau mode offset: argmax φ_L ≈ -0.2224
+        const MODE_OFFSET: T = -0.2224;
+        // Midpoint rule parameters for the Fourier integral of stdPdf
+        const PDF_N: usize = 256;
+        const PDF_T_MAX: T = 30.0;
+        const PDF_EPS: T = 1e-7;
+        // CDF integration: midpoint rule from LAM_LOW to lambda
+        const CDF_N: usize = 500;
+        const LAM_LOW: T = -8.0;
+
+        /// Initialize Landau(mu, c).
+        /// Requires: c > 0, mu and c both finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, c: T) DistributionError!Self {
+            if (!(c > 0) or !math.isFinite(mu) or !math.isFinite(c)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .c = c };
+        }
+
+        // Standard Landau PDF φ_L(λ) via 128-point midpoint rule on [PDF_EPS, PDF_T_MAX].
+        //
+        // φ_L(λ) = (1/π) ∫₀^∞ exp(-t) cos(tλ + 2t·ln(t)/π) dt
+        //
+        // Clamps to [0, ∞) to avoid numerical negatives from truncation error.
+        //
+        // Time: O(PDF_N)
+        fn stdPdf(lambda: T) T {
+            const h: T = (PDF_T_MAX - PDF_EPS) / @as(T, @floatFromInt(PDF_N));
+            var sum: T = 0;
+            var i: usize = 0;
+            while (i < PDF_N) : (i += 1) {
+                const t: T = PDF_EPS + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const phase: T = t * lambda + 2.0 * t * @log(t) / math.pi;
+                sum += @exp(-t) * @cos(phase);
+            }
+            return @max(0.0, sum * h / math.pi);
+        }
+
+        // Standard Landau CDF via CDF_N-point midpoint rule of stdPdf from LAM_LOW to lambda.
+        // Returns 0 for lambda ≤ LAM_LOW, clamped to [0, 1].
+        //
+        // Time: O(CDF_N * PDF_N)
+        fn stdCdf(lambda: T) T {
+            if (lambda <= LAM_LOW) return 0.0;
+            const h: T = (lambda - LAM_LOW) / @as(T, @floatFromInt(CDF_N));
+            var sum: T = 0;
+            var i: usize = 0;
+            while (i < CDF_N) : (i += 1) {
+                const lam: T = LAM_LOW + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                sum += stdPdf(lam);
+            }
+            return @min(1.0, @max(0.0, sum * h));
+        }
+
+        /// Probability density function: f(x) = (1/c) · φ_L((x-μ)/c).
+        ///
+        /// Time: O(128) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const lambda = (x - self.mu) / self.c;
+            return stdPdf(lambda) / self.c;
+        }
+
+        /// Log probability density function.
+        ///
+        /// Time: O(128) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (!(p > 0)) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function via numerical integration of the PDF.
+        ///
+        /// Time: O(200 · 128) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const lambda = (x - self.mu) / self.c;
+            return stdCdf(lambda);
+        }
+
+        /// Survival function: 1 - CDF(x).
+        ///
+        /// Time: O(200 · 128) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function via bisection on the standard CDF.
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN.
+        ///
+        /// Time: O(60 · 200 · 128) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0) or math.isNan(p)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            // Bisect on the standard CDF
+            var lo: T = LAM_LOW;
+            var hi: T = 50.0;
+            // Expand hi if needed
+            while (stdCdf(hi) < p) hi *= 2.0;
+            var iter: usize = 0;
+            while (iter < 80) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (stdCdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo < 1e-7) break;
+            }
+            return self.mu + self.c * ((lo + hi) / 2.0);
+        }
+
+        /// Mode of the distribution (approximate): μ + c · (-0.2224).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu + self.c * MODE_OFFSET;
+        }
+
+        /// Mean is undefined (diverges to +∞). Returns +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Variance is undefined (diverges to +∞). Returns +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Differential entropy (nats) via numerical integration.
+        ///
+        /// H = -∫ f(x) log(f(x)) dx = log(c) + H_standard
+        /// where H_standard = -∫ φ_L(λ) log(φ_L(λ)) dλ  (300-point midpoint, λ ∈ [-5, 60])
+        ///
+        /// Time: O(300 · 128) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const lam_lo: T = -5.0;
+            const lam_hi: T = 60.0;
+            const N: usize = 300;
+            const h: T = (lam_hi - lam_lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const lam: T = lam_lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const p = stdPdf(lam);
+                if (p > 0) sum -= p * @log(p);
+            }
+            return @log(self.c) + sum * h;
+        }
+
+        /// Draw a random sample using the inverse-CDF method.
+        ///
+        /// Time: O(quantile) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.mode();
+        }
+
+        /// Validate distribution invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.c > 0) or !math.isFinite(self.mu) or !math.isFinite(self.c)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Landau(μ={d}, c={d})", .{ self.mu, self.c });
+        }
+    };
+}
+
+// Landau Distribution Tests
+// ============================================================================
+
+test "Landau: init valid mu=0 c=1" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    try expect(dist.mu == 0.0);
+    try expect(dist.c == 1.0);
+}
+
+test "Landau: init valid mu=2 c=3" {
+    const dist = try Landau(f64).init(2.0, 3.0);
+    try expect(dist.mu == 2.0);
+    try expect(dist.c == 3.0);
+}
+
+test "Landau: init valid negative mu=-5 c=0.5" {
+    const dist = try Landau(f64).init(-5.0, 0.5);
+    try expect(dist.mu == -5.0);
+    try expect(dist.c == 0.5);
+}
+
+test "Landau: init fails for c=0" {
+    try expectError(error.InvalidParameter, Landau(f64).init(0.0, 0.0));
+}
+
+test "Landau: init fails for c negative" {
+    try expectError(error.InvalidParameter, Landau(f64).init(0.0, -1.0));
+}
+
+test "Landau: init fails for c NaN" {
+    try expectError(error.InvalidParameter, Landau(f64).init(0.0, math.nan(f64)));
+}
+
+test "Landau: init fails for c Inf" {
+    try expectError(error.InvalidParameter, Landau(f64).init(0.0, math.inf(f64)));
+}
+
+test "Landau: init fails for mu NaN" {
+    try expectError(error.InvalidParameter, Landau(f64).init(math.nan(f64), 1.0));
+}
+
+test "Landau: init fails for mu Inf" {
+    try expectError(error.InvalidParameter, Landau(f64).init(math.inf(f64), 1.0));
+}
+
+test "Landau: pdf peak near mode (-0.2224 for mu=0 c=1)" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const pdf_at_mode = dist.pdf(-0.2224);
+    try expectApproxEqAbs(0.2778, pdf_at_mode, 0.005);
+}
+
+test "Landau: pdf near-peak value at x=0 (mu=0 c=1)" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try expectApproxEqAbs(0.2620, pdf_val, 0.01);
+}
+
+test "Landau: pdf positive everywhere" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    try expect(dist.pdf(-10.0) >= 0.0);
+    try expect(dist.pdf(-0.2224) > 0.0);
+    try expect(dist.pdf(0.0) > 0.0);
+    try expect(dist.pdf(10.0) > 0.0);
+    try expect(dist.pdf(100.0) >= 0.0);
+}
+
+test "Landau: pdf decreases in right tail" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const p1 = dist.pdf(5.0);
+    const p2 = dist.pdf(10.0);
+    const p3 = dist.pdf(20.0);
+    try expect(p1 > p2);
+    try expect(p2 > p3);
+}
+
+test "Landau: pdf approximate integral to 1 (midpoint rule)" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    var x: f64 = -5.0;
+    const dx = 65.0 / 300.0;
+    var i: usize = 0;
+    while (i < 300) : (i += 1) {
+        sum += dist.pdf(x) * dx;
+        x += dx;
+    }
+    try expect(sum > 0.95 and sum < 1.05);
+}
+
+test "Landau: pdf scale invariance f(x; mu, c) = (1/c)*f((x-mu)/c; 0, 1)" {
+    const dist1 = try Landau(f64).init(0.0, 1.0);
+    const dist2 = try Landau(f64).init(2.0, 3.0);
+    const x = 5.0;
+    const pdf1 = dist1.pdf((x - 2.0) / 3.0);
+    const pdf2 = dist2.pdf(x) * 3.0;
+    try expectApproxEqAbs(pdf1, pdf2, 1e-10);
+}
+
+test "Landau: logpdf = log(pdf)" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    try expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "Landau: logpdf several points" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const xs = [_]f64{ -0.2224, 0.0, 1.0, 5.0 };
+    for (xs) |x| {
+        const expected = @log(dist.pdf(x));
+        const actual = dist.logpdf(x);
+        try expectApproxEqAbs(expected, actual, 1e-10);
+    }
+}
+
+test "Landau: cdf left tail approaches 0" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const cdf_neg5 = dist.cdf(-5.0);
+    try expect(cdf_neg5 < 0.001);
+}
+
+test "Landau: cdf right tail approaches 1" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const cdf_pos50 = dist.cdf(50.0);
+    try expect(cdf_pos50 > 0.98);
+}
+
+test "Landau: cdf monotonically non-decreasing" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const xs = [_]f64{ -5.0, -1.0, -0.2224, 0.0, 1.0, 5.0, 10.0 };
+    var i: usize = 0;
+    while (i + 1 < xs.len) : (i += 1) {
+        const cdf1 = dist.cdf(xs[i]);
+        const cdf2 = dist.cdf(xs[i + 1]);
+        try expect(cdf1 <= cdf2);
+    }
+}
+
+test "Landau: cdf at mode is less than 0.5 (right-skewed)" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const mode = dist.mode();
+    const cdf_at_mode = dist.cdf(mode);
+    try expect(cdf_at_mode < 0.5);
+}
+
+test "Landau: sf = 1 - cdf" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const x = 2.0;
+    const sf = dist.sf(x);
+    const cdf = dist.cdf(x);
+    try expectApproxEqAbs(1.0, sf + cdf, 1e-10);
+}
+
+test "Landau: sf several points" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const xs = [_]f64{ -5.0, 0.0, 1.0, 10.0 };
+    for (xs) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqAbs(1.0, sf_val + cdf_val, 1e-10);
+    }
+}
+
+test "Landau: mode mu=0 c=1 approximately -0.2224" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try expectApproxEqAbs(-0.2224, m, 0.05);
+}
+
+test "Landau: mode mu=2 c=3 approximately 2 + 3*(-0.2224) = 1.3328" {
+    const dist = try Landau(f64).init(2.0, 3.0);
+    const m = dist.mode();
+    const expected = 2.0 + 3.0 * (-0.2224);
+    try expectApproxEqAbs(expected, m, 0.1);
+}
+
+test "Landau: mode location parameter shift" {
+    const dist1 = try Landau(f64).init(0.0, 1.0);
+    const dist2 = try Landau(f64).init(5.0, 1.0);
+    const m1 = dist1.mode();
+    const m2 = dist2.mode();
+    try expectApproxEqAbs(m1 + 5.0, m2, 1e-10);
+}
+
+test "Landau: mean returns positive infinity" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isPositiveInf(m));
+}
+
+test "Landau: variance returns positive infinity" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isPositiveInf(v));
+}
+
+test "Landau: entropy finite and positive" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const e = dist.entropy();
+    try expect(e > 0.0);
+    try expect(math.isFinite(e));
+}
+
+test "Landau: entropy scaling law H(c) ~ H(1) + log(c)" {
+    const dist1 = try Landau(f64).init(0.0, 1.0);
+    const dist2 = try Landau(f64).init(0.0, 2.0);
+    const e1 = dist1.entropy();
+    const e2 = dist2.entropy();
+    try expect(e2 > e1);
+    const diff = e2 - e1;
+    try expectApproxEqAbs(@log(2.0), diff, 0.2);
+}
+
+test "Landau: quantile invalid p < 0" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Landau: quantile invalid p > 1" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Landau: quantile invalid p NaN" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Landau: quantile boundary p=0 returns very negative value" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try expect(q < -5.0);
+}
+
+test "Landau: quantile boundary p=1 returns very large value" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try expect(q > 30.0);
+}
+
+test "Landau: quantile monotonic increasing" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const ps = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var i: usize = 0;
+    while (i + 1 < ps.len) : (i += 1) {
+        const q1 = try dist.quantile(ps[i]);
+        const q2 = try dist.quantile(ps[i + 1]);
+        try expect(q1 < q2);
+    }
+}
+
+test "Landau: quantile roundtrip cdf(quantile(p)) >= p" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const ps = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (ps) |p| {
+        const q = try dist.quantile(p);
+        const cdf_val = dist.cdf(q);
+        try expect(cdf_val >= p - 0.01);
+    }
+}
+
+test "Landau: quantile scale invariance" {
+    const dist1 = try Landau(f64).init(0.0, 1.0);
+    const dist2 = try Landau(f64).init(2.0, 3.0);
+    const p = 0.5;
+    const q1 = try dist1.quantile(p);
+    const q2 = try dist2.quantile(p);
+    const expected = 2.0 + 3.0 * q1;
+    try expectApproxEqAbs(expected, q2, 0.01);
+}
+
+test "Landau: validate passes for mu=0 c=1" {
+    const dist = try Landau(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "Landau: validate passes for mu=5 c=2" {
+    const dist = try Landau(f64).init(5.0, 2.0);
+    try dist.validate();
+}
+
+test "Landau: validate fails for c=0" {
+    var dist = try Landau(f64).init(0.0, 1.0);
+    dist.c = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Landau: validate fails for c negative" {
+    var dist = try Landau(f64).init(0.0, 1.0);
+    dist.c = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Landau: validate fails for c NaN" {
+    var dist = try Landau(f64).init(0.0, 1.0);
+    dist.c = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Landau: validate fails for mu NaN" {
+    var dist = try Landau(f64).init(0.0, 1.0);
+    dist.mu = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Landau: sample returns finite f64" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const s = dist.sample(rng);
+    try expect(math.isFinite(s));
+}
+
+test "Landau: sample from different seeds gives different values" {
+    var prng1 = std.Random.DefaultPrng.init(42);
+    const rng1 = prng1.random();
+    var prng2 = std.Random.DefaultPrng.init(123);
+    const rng2 = prng2.random();
+    const dist = try Landau(f64).init(0.0, 1.0);
+    const s1 = dist.sample(rng1);
+    const s2 = dist.sample(rng2);
+    try expect(s1 != s2);
+}
+
+test "Landau: sample empirical mean closer to median than mode" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Landau(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 100;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, n);
+    const mode = dist.mode();
+    const median_approx = try dist.quantile(0.5);
+    try expect(@abs(empirical_mean - median_approx) < @abs(empirical_mean - mode));
+}
+
+test "Landau: f32 type support" {
+    const dist = try Landau(f32).init(0.0, 1.0);
+    try expect(dist.pdf(0.0) > 0.0);
+    try expect(dist.cdf(0.0) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q));
+    const m = dist.mode();
+    try expect(math.isFinite(m));
+    try expect(math.isPositiveInf(dist.mean()));
+    try expect(math.isPositiveInf(dist.variance()));
+    try expect(dist.entropy() > 0.0);
+    try dist.validate();
+}
+
+test "Landau: format output contains mu and c" {
+    const dist = try Landau(f64).init(2.0, 1.5);
+    var buf: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+    try dist.format("", std.fmt.FormatOptions{}, stream.writer());
+    const output = stream.getWritten();
+    try expect(std.mem.containsAtLeast(u8, output, 1, "Landau"));
+}
