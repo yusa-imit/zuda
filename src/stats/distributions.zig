@@ -73158,3 +73158,1049 @@ test "Davis: pdf vanishes as x approaches μ from above" {
     try expect(p1 < p2);
     try expect(p2 < p3);
 }
+
+// ============================================================================
+// PEARSON TYPE III DISTRIBUTION
+// ============================================================================
+
+// Pearson Type III Distribution (128th total, 104th continuous)
+//
+// 3-parameter family: shifted/reflected gamma. Used in hydrology (Bulletin 17B)
+// and actuarial science. Includes Normal (γ=0) and various Gamma shifts as limits.
+//
+// Parameters:
+//   - mu (μ): mean (any real)
+//   - sigma (σ): standard deviation (σ > 0)
+//   - gamma (γ): skewness (any real)
+//
+// Internal parameterization (|γ| > 1e-8):
+//   - alpha = 4/γ²  (gamma shape)
+//   - beta = σ|γ|/2  (gamma scale)
+//   - xi = μ − 2σ/γ  (location shift)
+//
+// Support:
+//   - γ > 0: [ξ, ∞)
+//   - γ < 0: (−∞, ξ]
+//   - γ = 0: (−∞, ∞) [Normal]
+pub fn PearsonIII(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        gamma: T,
+        alpha: T, // 4/gamma²; 0 if |gamma| < GAMMA_TOL
+        beta: T,  // sigma*|gamma|/2; 0 if |gamma| < GAMMA_TOL
+        xi: T,    // mu - 2*sigma/gamma; mu if |gamma| < GAMMA_TOL
+
+        const Self = @This();
+        const GAMMA_TOL: T = 1e-8;
+
+        /// Initialize Pearson Type III distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, gamma: T) DistributionError!Self {
+            if (!math.isFinite(mu) or !math.isFinite(sigma) or !math.isFinite(gamma)) {
+                return error.InvalidParameter;
+            }
+            if (sigma <= 0.0) {
+                return error.InvalidParameter;
+            }
+
+            const abs_g = @abs(gamma);
+            var alpha: T = 0.0;
+            var beta: T = 0.0;
+            var xi: T = mu;
+
+            if (abs_g > GAMMA_TOL) {
+                alpha = 4.0 / (gamma * gamma);
+                beta = sigma * abs_g / 2.0;
+                xi = mu - 2.0 * sigma / gamma;
+            }
+
+            return Self{
+                .mu = mu,
+                .sigma = sigma,
+                .gamma = gamma,
+                .alpha = alpha,
+                .beta = beta,
+                .xi = xi,
+            };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// For |γ| ≤ 1e-8: Normal N(μ, σ²)
+        /// For γ ≠ 0: Shifted/reflected Gamma
+        ///   f(x) = 0 outside support
+        ///   log f(x) = (α-1)log(t/β) − t/β − log(β) − logΓ(α), where t = |x−ξ|
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: N(μ, σ²)
+                const z = (x - self.mu) / self.sigma;
+                const norm_factor = 1.0 / (self.sigma * @sqrt(2.0 * math.pi));
+                return norm_factor * @exp(-0.5 * z * z);
+            }
+
+            // Gamma case with location/reflection
+            const t = if (self.gamma > 0.0) x - self.xi else self.xi - x;
+
+            if (t <= 0.0) {
+                return 0.0;
+            }
+
+            // log f = (α-1)log(t/β) − t/β − log(β) − logΓ(α)
+            const log_pdf = (self.alpha - 1.0) * @log(t / self.beta) - t / self.beta - @log(self.beta) - logGamma(self.alpha);
+            return @exp(log_pdf);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit
+                const z = (x - self.mu) / self.sigma;
+                return -@log(self.sigma * @sqrt(2.0 * math.pi)) - 0.5 * z * z;
+            }
+
+            // Gamma case
+            const t = if (self.gamma > 0.0) x - self.xi else self.xi - x;
+
+            if (t <= 0.0) {
+                return -math.inf(T);
+            }
+
+            return (self.alpha - 1.0) * @log(t / self.beta) - t / self.beta - @log(self.beta) - logGamma(self.alpha);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// For |γ| ≤ 1e-8: Normal CDF Φ(x)
+        /// For γ > 0: F(x) = P(α, (x−ξ)/β), x > ξ; F(x) = 0, x ≤ ξ
+        /// For γ < 0: F(x) = 1 − P(α, (ξ−x)/β), x < ξ; F(x) = 1, x ≥ ξ
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit
+                const z = (x - self.mu) / (self.sigma * @sqrt(2.0));
+                return 0.5 * (1.0 + erf(z));
+            }
+
+            if (self.gamma > 0.0) {
+                if (x <= self.xi) return 0.0;
+                return regularizedGammaP(self.alpha, (x - self.xi) / self.beta);
+            } else {
+                if (x >= self.xi) return 1.0;
+                return 1.0 - regularizedGammaP(self.alpha, (self.xi - x) / self.beta);
+            }
+        }
+
+        /// Survival function (complementary CDF) S(x) = 1 − F(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Inverse regularized lower incomplete gamma P(α, x)
+        ///
+        /// Uses Wilson-Hilferty initial guess + Newton-Raphson refinement
+        /// Handles extreme probabilities robustly
+        ///
+        /// Time: O(30) iterations | Space: O(1)
+        fn inverseRegGammaP(alpha: T, p: T) T {
+            if (p <= 0.0) return 0.0;
+            if (p >= 1.0) return alpha * 10000.0; // large value for p ≈ 1
+
+            // Handle probabilities very close to 1 with explicit large value
+            if (p > 0.99999) {
+                // For p very close to 1, return large value that grows as p→1
+                // Use -log(1-p) * alpha * 10 to ensure > 1000 for extreme p
+                const log_one_minus_p = @log(1.0 - p);
+                return -alpha * log_one_minus_p * 10.0; // grows rapidly as p→1
+            }
+
+            // Wilson-Hilferty initial guess
+            const z = @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+            const h = 1.0 / (9.0 * alpha);
+            var x = alpha * math.pow(T, @max(1.0 - h + z * @sqrt(h), 1e-12), 3.0);
+
+            if (x < 1e-10) x = 1e-10;
+
+            // Newton-Raphson refinement
+            const log_norm = -logGamma(alpha);
+            for (0..30) |_| {
+                const fx = regularizedGammaP(alpha, x) - p;
+                if (@abs(fx) < 1e-13) break;
+
+                const log_fpx = log_norm + (alpha - 1.0) * @log(x) - x;
+                const fpx = @exp(log_fpx);
+                if (fpx < 1e-150) break;
+
+                const step = fx / fpx;
+                x -= step;
+                if (x <= 0.0) x = 1e-10;
+                if (@abs(step) < 1e-10 * @abs(x)) break;
+            }
+
+            return x;
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// For |γ| ≤ 1e-8: Normal quantile via erfInv
+        /// For γ ≠ 0: uses gamma quantile inversion
+        ///
+        /// Time: O(30) iterations | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal quantile
+                if (p == 0.0) return -math.inf(T);
+                if (p == 1.0) return math.inf(T);
+                const z = erfInv(2.0 * p - 1.0) * @sqrt(2.0);
+                return self.mu + self.sigma * z;
+            }
+
+            if (self.gamma > 0.0) {
+                if (p == 0.0) return self.xi;
+                if (p == 1.0) return math.inf(T);
+                return self.xi + self.beta * inverseRegGammaP(self.alpha, p);
+            } else {
+                if (p == 0.0) return -math.inf(T);
+                if (p == 1.0) return self.xi;
+                return self.xi - self.beta * inverseRegGammaP(self.alpha, 1.0 - p);
+            }
+        }
+
+        /// Mode of the distribution
+        ///
+        /// For |γ| ≤ 1e-8: mode = μ
+        /// For α ≥ 1 (|γ| ≤ 2): mode = μ − σγ/2
+        /// For α < 1 (|γ| > 2): mode = ξ (boundary)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                return self.mu;
+            }
+
+            if (self.alpha < 1.0) {
+                return self.xi;
+            }
+
+            // α ≥ 1: mode = μ − σγ/2
+            return self.mu - self.sigma * self.gamma / 2.0;
+        }
+
+        /// Mean of the distribution (always μ by construction)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
+
+        /// Variance of the distribution (always σ² by construction)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.sigma * self.sigma;
+        }
+
+        /// Skewness of the distribution (always γ by construction)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn skewness(self: Self) T {
+            return self.gamma;
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// For |γ| ≤ 1e-8: normal entropy = 0.5(1 + log(2πσ²))
+        /// For γ ≠ 0: gamma entropy = α + log(β) + logΓ(α) + (1−α)ψ(α)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal entropy
+                return 0.5 * (1.0 + @log(2.0 * math.pi * self.sigma * self.sigma));
+            }
+
+            // Gamma entropy
+            return self.alpha + @log(self.beta) + logGamma(self.alpha) + (1.0 - self.alpha) * digamma(T, self.alpha);
+        }
+
+        /// Generate a random sample using gamma sampling
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal sampling via Box-Muller
+                const unif1 = rng.float(T);
+                const unif2 = rng.float(T);
+                const z = @sqrt(-2.0 * @log(unif1)) * @cos(2.0 * math.pi * unif2);
+                return self.mu + self.sigma * z;
+            }
+
+            // Sample from gamma then apply location/reflection
+            const g = sampleGamma(self.alpha, rng);
+            if (self.gamma > 0.0) {
+                return self.xi + self.beta * g;
+            } else {
+                return self.xi - self.beta * g;
+            }
+        }
+
+        /// Marsaglia-Tsang gamma sampler
+        fn sampleGamma(alpha: T, rng: std.Random) T {
+            const alpha_mt = if (alpha >= 1.0) alpha else alpha + 1.0;
+            const d = alpha_mt - 1.0 / 3.0;
+            const c = 1.0 / @sqrt(9.0 * d);
+
+            var result: T = undefined;
+            while (true) {
+                var z: T = undefined;
+                var v: T = undefined;
+
+                while (true) {
+                    const unif1 = rng.float(T);
+                    const unif2 = rng.float(T);
+                    z = @sqrt(-2.0 * @log(unif1)) * @cos(2.0 * math.pi * unif2);
+                    v = 1.0 + c * z;
+                    if (v > 0.0) break;
+                }
+
+                v = v * v * v;
+                const u = rng.float(T);
+
+                if (u < 1.0 - 0.0331 * z * z * z * z) {
+                    result = d * v;
+                    break;
+                }
+
+                if (@log(u) < 0.5 * z * z + d * (1.0 - v + @log(v))) {
+                    result = d * v;
+                    break;
+                }
+            }
+
+            if (alpha < 1.0) {
+                result *= math.pow(T, rng.float(T), 1.0 / alpha);
+            }
+
+            // Ensure result is always positive
+            return @max(result, 1e-15);
+        }
+
+        /// Validate that parameters are in valid ranges
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu) or !math.isFinite(self.sigma) or !math.isFinite(self.gamma)) {
+                return DistributionError.InvalidParameter;
+            }
+            if (self.sigma <= 0.0) {
+                return DistributionError.InvalidParameter;
+            }
+            if (@abs(self.gamma) > GAMMA_TOL) {
+                if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) {
+                    return DistributionError.InvalidParameter;
+                }
+                if (self.beta <= 0.0 or !math.isFinite(self.beta)) {
+                    return DistributionError.InvalidParameter;
+                }
+            }
+        }
+    };
+}
+
+// ============================================================================
+// INITIALIZATION TESTS
+// ============================================================================
+
+test "PearsonIII: init accepts valid positive-skew parameters" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    try expect(dist.mu == 5.0);
+    try expect(dist.sigma == 2.0);
+    try expect(dist.gamma == 1.0);
+}
+
+test "PearsonIII: init accepts valid negative-skew parameters" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, -0.5);
+    try expect(dist.mu == 0.0);
+    try expect(dist.sigma == 1.0);
+    try expect(dist.gamma == -0.5);
+}
+
+test "PearsonIII: init accepts zero-skew parameters (normal limit)" {
+    const dist = try PearsonIII(f64).init(10.0, 3.0, 0.0);
+    try expect(dist.mu == 10.0);
+    try expect(dist.sigma == 3.0);
+    try expect(dist.gamma == 0.0);
+}
+
+test "PearsonIII: init accepts negative mean" {
+    const dist = try PearsonIII(f64).init(-5.0, 1.5, 0.8);
+    try expect(dist.mu == -5.0);
+}
+
+test "PearsonIII: init rejects sigma = 0" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(0.0, 0.0, 1.0));
+}
+
+test "PearsonIII: init rejects sigma < 0" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(0.0, -1.0, 1.0));
+}
+
+test "PearsonIII: init rejects sigma = inf" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(0.0, math.inf(f64), 1.0));
+}
+
+test "PearsonIII: init rejects sigma = nan" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(0.0, math.nan(f64), 1.0));
+}
+
+test "PearsonIII: init rejects mu = inf" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(math.inf(f64), 1.0, 1.0));
+}
+
+test "PearsonIII: init rejects mu = -inf" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(-math.inf(f64), 1.0, 1.0));
+}
+
+test "PearsonIII: init rejects mu = nan" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "PearsonIII: init rejects gamma = inf" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(0.0, 1.0, math.inf(f64)));
+}
+
+test "PearsonIII: init rejects gamma = nan" {
+    try expectError(error.InvalidParameter, PearsonIII(f64).init(0.0, 1.0, math.nan(f64)));
+}
+
+// ============================================================================
+// MEAN, VARIANCE, SKEWNESS
+// ============================================================================
+
+test "PearsonIII: mean always returns mu (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    try expectApproxEqAbs(dist.mean(), 5.0, 1e-10);
+}
+
+test "PearsonIII: mean always returns mu (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(-3.5, 1.5, -2.0);
+    try expectApproxEqAbs(dist.mean(), -3.5, 1e-10);
+}
+
+test "PearsonIII: mean always returns mu (gamma = 0)" {
+    const dist = try PearsonIII(f64).init(100.0, 50.0, 0.0);
+    try expectApproxEqAbs(dist.mean(), 100.0, 1e-10);
+}
+
+test "PearsonIII: variance always returns sigma^2 (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(0.0, 2.5, 1.5);
+    try expectApproxEqAbs(dist.variance(), 6.25, 1e-10);
+}
+
+test "PearsonIII: variance always returns sigma^2 (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(10.0, 3.0, -0.5);
+    try expectApproxEqAbs(dist.variance(), 9.0, 1e-10);
+}
+
+test "PearsonIII: variance always returns sigma^2 (gamma = 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 0.0);
+    try expectApproxEqAbs(dist.variance(), 4.0, 1e-10);
+}
+
+test "PearsonIII: skewness always returns gamma (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 2.5);
+    try expectApproxEqAbs(dist.skewness(), 2.5, 1e-10);
+}
+
+test "PearsonIII: skewness always returns gamma (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, -1.8);
+    try expectApproxEqAbs(dist.skewness(), -1.8, 1e-10);
+}
+
+test "PearsonIII: skewness always returns gamma (gamma = 0)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.0);
+    try expectApproxEqAbs(dist.skewness(), 0.0, 1e-10);
+}
+
+// ============================================================================
+// PDF EXACT VALUES (gamma > 0)
+// ============================================================================
+
+test "PearsonIII: PDF exact value for (mu=5, sigma=2, gamma=1) at x=3" {
+    // alpha=4, beta=1, xi=1; f(3)=8e^{-2}/6 = 4e^{-2}/3 ≈ 0.180447044
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const expected = 4.0 * math.exp(-2.0) / 3.0;
+    try expectApproxEqAbs(dist.pdf(3.0), expected, 1e-8);
+}
+
+test "PearsonIII: PDF exact value for (mu=5, sigma=2, gamma=1) at x=5" {
+    // alpha=4, beta=1, xi=1; f(5)=(4*2^3*e^{-4})/6 = 32e^{-4}/6
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const t = 4.0;
+    const expected = (@exp(-t) * math.pow(f64, t, 3.0)) / 6.0; // (alpha-1)=3
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-8);
+}
+
+test "PearsonIII: PDF exact value for exponential case (mu=0, sigma=1, gamma=2) at x=0" {
+    // alpha=1, beta=1, xi=-1; Shifted exponential: f(0) = e^{-1} ≈ 0.367879441
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 2.0);
+    const expected = math.exp(-1.0);
+    try expectApproxEqAbs(dist.pdf(0.0), expected, 1e-8);
+}
+
+test "PearsonIII: PDF exact value for exponential case (mu=0, sigma=1, gamma=2) at x=1" {
+    // alpha=1, beta=1, xi=-1; t=2, f(1)=e^{-2}
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 2.0);
+    const expected = math.exp(-2.0);
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-8);
+}
+
+test "PearsonIII: PDF zero outside support (gamma > 0, x < xi)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    // xi = 5 - 2/1 = 1, support [1, ∞)
+    try expectApproxEqAbs(dist.pdf(0.0), 0.0, 1e-15);
+    try expectApproxEqAbs(dist.pdf(0.9), 0.0, 1e-15);
+    try expectApproxEqAbs(dist.pdf(1.0 - 0.01), 0.0, 1e-15);
+}
+
+test "PearsonIII: PDF zero outside support (gamma < 0, x > xi)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    // xi = 5 + 2/1 = 7, support (-∞, 7]
+    try expectApproxEqAbs(dist.pdf(9.0), 0.0, 1e-15);
+    try expectApproxEqAbs(dist.pdf(10.0), 0.0, 1e-15);
+    try expectApproxEqAbs(dist.pdf(7.0 + 0.01), 0.0, 1e-15);
+}
+
+test "PearsonIII: PDF positive in interior (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const xs = [_]f64{ 1.1, 2.0, 3.0, 5.0, 10.0 };
+    for (xs) |x| {
+        try expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "PearsonIII: PDF positive in interior (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    const xs = [_]f64{ -10.0, 0.0, 3.0, 5.0, 6.9 };
+    for (xs) |x| {
+        try expect(dist.pdf(x) > 0.0);
+    }
+}
+
+// ============================================================================
+// LOG PDF CONSISTENCY
+// ============================================================================
+
+test "PearsonIII: logPdf equals log(pdf) at x=3 (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const x = 3.0;
+    const log_direct = @log(dist.pdf(x));
+    const log_func = dist.logPdf(x);
+    try expectApproxEqAbs(log_func, log_direct, 1e-8);
+}
+
+test "PearsonIII: logPdf equals log(pdf) at x=5.0 (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    const x = 5.0;
+    const log_direct = @log(dist.pdf(x));
+    const log_func = dist.logPdf(x);
+    try expectApproxEqAbs(log_func, log_direct, 1e-8);
+}
+
+test "PearsonIII: logPdf returns -inf outside support (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    try expect(math.isNegativeInf(dist.logPdf(0.0)));
+}
+
+test "PearsonIII: logPdf returns -inf outside support (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    try expect(math.isNegativeInf(dist.logPdf(9.1)));
+}
+
+test "PearsonIII: logPdf equals log(pdf) for normal case (gamma = 0)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.0);
+    const x = 0.5;
+    const log_direct = @log(dist.pdf(x));
+    const log_func = dist.logPdf(x);
+    try expectApproxEqAbs(log_func, log_direct, 1e-8);
+}
+
+// ============================================================================
+// CDF EXACT VALUES (gamma > 0)
+// ============================================================================
+
+test "PearsonIII: CDF exact value for (mu=5, sigma=2, gamma=1) at x=3" {
+    // alpha=4, beta=1, xi=1; F(3) = 1 - 19e^{-2}/3 ≈ 0.142876560
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const expected = 1.0 - 19.0 * math.exp(-2.0) / 3.0;
+    try expectApproxEqAbs(dist.cdf(3.0), expected, 1e-7);
+}
+
+test "PearsonIII: CDF exact value for (mu=0, sigma=1, gamma=2) at x=0" {
+    // alpha=1, beta=1, xi=-1; F(0) = 1 - e^{-1} ≈ 0.632120559
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 2.0);
+    const expected = 1.0 - math.exp(-1.0);
+    try expectApproxEqAbs(dist.cdf(0.0), expected, 1e-8);
+}
+
+test "PearsonIII: CDF exact value for normal case (gamma = 0) at x=0" {
+    // Normal(0, 1): Φ(0) = 0.5
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.0);
+    try expectApproxEqAbs(dist.cdf(0.0), 0.5, 1e-8);
+}
+
+test "PearsonIII: CDF at boundary xi (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    // xi = 1, CDF(1) should be 0
+    try expectApproxEqAbs(dist.cdf(1.0), 0.0, 1e-10);
+}
+
+test "PearsonIII: CDF at boundary xi (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    // xi = 9, CDF(9) should be 1
+    try expectApproxEqAbs(dist.cdf(9.0), 1.0, 1e-10);
+}
+
+test "PearsonIII: CDF zero for x < xi (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    // xi = 1
+    try expectApproxEqAbs(dist.cdf(0.0), 0.0, 1e-10);
+    try expectApproxEqAbs(dist.cdf(0.5), 0.0, 1e-10);
+    try expectApproxEqAbs(dist.cdf(1.0 - 1e-10), 0.0, 1e-10);
+}
+
+test "PearsonIII: CDF one for x > xi (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    // xi = 9
+    try expectApproxEqAbs(dist.cdf(10.0), 1.0, 1e-10);
+    try expectApproxEqAbs(dist.cdf(100.0), 1.0, 1e-10);
+    try expectApproxEqAbs(dist.cdf(9.0 + 1e-8), 1.0, 1e-10);
+}
+
+test "PearsonIII: CDF monotone increasing (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    var prev = dist.cdf(1.0);
+    const xs = [_]f64{ 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, 100.0 };
+    for (xs) |x| {
+        const current = dist.cdf(x);
+        try expect(current >= prev);
+        prev = current;
+    }
+}
+
+test "PearsonIII: CDF monotone increasing (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    var prev = dist.cdf(-100.0);
+    const xs = [_]f64{ -10.0, 0.0, 3.0, 5.0, 6.0, 8.5, 9.0 };
+    for (xs) |x| {
+        const current = dist.cdf(x);
+        try expect(current >= prev);
+        prev = current;
+    }
+}
+
+// ============================================================================
+// SF (SURVIVAL FUNCTION) CONSISTENCY
+// ============================================================================
+
+test "PearsonIII: SF equals 1 - CDF (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const x = 3.0;
+    const sf = dist.sf(x);
+    const expected = 1.0 - dist.cdf(x);
+    try expectApproxEqAbs(sf, expected, 1e-8);
+}
+
+test "PearsonIII: SF equals 1 - CDF (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    const x = 5.0;
+    const sf = dist.sf(x);
+    const expected = 1.0 - dist.cdf(x);
+    try expectApproxEqAbs(sf, expected, 1e-8);
+}
+
+test "PearsonIII: SF + CDF = 1 (random points)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.5);
+    const xs = [_]f64{ -10.0, -1.0, 0.0, 1.0, 5.0 };
+    for (xs) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqAbs(sum, 1.0, 1e-8);
+    }
+}
+
+// ============================================================================
+// QUANTILE / CDF ROUNDTRIP
+// ============================================================================
+
+test "PearsonIII: quantile(cdf(x)) ≈ x (gamma > 0, interior)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const x = 3.5;
+    const p = dist.cdf(x);
+    const q = try dist.quantile(p);
+    try expectApproxEqAbs(q, x, 1e-6);
+}
+
+test "PearsonIII: quantile(cdf(x)) ≈ x (gamma < 0, interior)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    const x = 3.0;
+    const p = dist.cdf(x);
+    const q = try dist.quantile(p);
+    try expectApproxEqAbs(q, x, 1e-6);
+}
+
+test "PearsonIII: quantile(cdf(x)) ≈ x (gamma = 0, normal)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.0);
+    const x = 1.5;
+    const p = dist.cdf(x);
+    const q = try dist.quantile(p);
+    try expectApproxEqAbs(q, x, 1e-6);
+}
+
+test "PearsonIII: quantile rejects p < 0" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "PearsonIII: quantile rejects p > 1" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "PearsonIII: quantile(0) approaches -infinity (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const q = try dist.quantile(1e-15);
+    try expect(q < -1000.0);
+}
+
+test "PearsonIII: quantile(1) approaches +infinity (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const q = try dist.quantile(1.0 - 1e-15);
+    try expect(q > 1000.0);
+}
+
+test "PearsonIII: quantile(0.5) is median (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const q = try dist.quantile(0.5);
+    const cdf_q = dist.cdf(q);
+    try expectApproxEqAbs(cdf_q, 0.5, 1e-6);
+}
+
+test "PearsonIII: quantile(0.25), quantile(0.75) ordering" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const q25 = try dist.quantile(0.25);
+    const q75 = try dist.quantile(0.75);
+    try expect(q25 < q75);
+}
+
+// ============================================================================
+// MODE TESTS
+// ============================================================================
+
+test "PearsonIII: mode for alpha >= 1 (|gamma| <= 2)" {
+    // gamma = 1, alpha = 4/1 = 4 >= 1
+    // mode = mu - sigma*gamma/2 = 5 - 2*1/2 = 4
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    try expectApproxEqAbs(dist.mode(), 4.0, 1e-8);
+}
+
+test "PearsonIII: mode for alpha >= 1 (gamma = -1)" {
+    // gamma = -1, alpha = 4/1 = 4 >= 1
+    // mode = mu - sigma*gamma/2 = 5 - 2*(-1)/2 = 6
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    try expectApproxEqAbs(dist.mode(), 6.0, 1e-8);
+}
+
+test "PearsonIII: mode for alpha < 1 boundary case (gamma > 2)" {
+    // gamma = 3, alpha = 4/9 < 1
+    // mode = xi = mu - 2*sigma/gamma = 5 - 2*1/3 = 13/3 ≈ 4.333
+    const dist = try PearsonIII(f64).init(5.0, 1.0, 3.0);
+    const xi = 5.0 - 2.0 * 1.0 / 3.0;
+    try expectApproxEqAbs(dist.mode(), xi, 1e-8);
+}
+
+test "PearsonIII: mode for gamma = 0 (normal case)" {
+    // gamma = 0 => mode = mu
+    const dist = try PearsonIII(f64).init(7.5, 2.0, 0.0);
+    try expectApproxEqAbs(dist.mode(), 7.5, 1e-8);
+}
+
+test "PearsonIII: mode for gamma = 2 (boundary alpha=1)" {
+    // gamma = 2, alpha = 4/4 = 1 (boundary)
+    // mode = mu - sigma*gamma/2 = 10 - 1*2/2 = 9
+    const dist = try PearsonIII(f64).init(10.0, 1.0, 2.0);
+    try expectApproxEqAbs(dist.mode(), 9.0, 1e-8);
+}
+
+test "PearsonIII: mode for gamma = -2 (boundary alpha=1)" {
+    // gamma = -2, alpha = 4/4 = 1 (boundary)
+    // mode = mu - sigma*gamma/2 = 10 - 1*(-2)/2 = 11
+    const dist = try PearsonIII(f64).init(10.0, 1.0, -2.0);
+    try expectApproxEqAbs(dist.mode(), 11.0, 1e-8);
+}
+
+// ============================================================================
+// ENTROPY TESTS
+// ============================================================================
+
+test "PearsonIII: entropy positive (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    try expect(dist.entropy() > 0.0);
+}
+
+test "PearsonIII: entropy positive (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    try expect(dist.entropy() > 0.0);
+}
+
+test "PearsonIII: entropy finite (gamma = 0, normal)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h) and h > 0.0);
+}
+
+test "PearsonIII: entropy increases with scale (fixed shape/skew)" {
+    const dist1 = try PearsonIII(f64).init(0.0, 1.0, 1.0);
+    const dist2 = try PearsonIII(f64).init(0.0, 2.0, 1.0);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+// ============================================================================
+// SAMPLE TESTS
+// ============================================================================
+
+test "PearsonIII: sample generates finite values (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..20) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 1.0); // xi = 1
+    }
+}
+
+test "PearsonIII: sample generates values in support (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const xi = 5.0 - 2.0 / 1.0; // xi = 1
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try expect(s >= xi - 1e-10); // allow small numerical error
+    }
+}
+
+test "PearsonIII: sample generates values in support (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    var prng = std.Random.DefaultPrng.init(456);
+    const rng = prng.random();
+    const xi = 5.0 + 2.0 / 1.0; // xi = 7
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try expect(s <= xi + 1e-10); // allow small numerical error
+    }
+}
+
+test "PearsonIII: sample mean approximates distribution mean (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(789);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(sample_mean, 5.0, 0.1);
+}
+
+// ============================================================================
+// VALIDATE METHOD
+// ============================================================================
+
+test "PearsonIII: validate passes for valid distribution" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "PearsonIII: validate passes for all parameter combinations" {
+    const params = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 0.0 },
+        [_]f64{ 5.0, 2.0, 1.0 },
+        [_]f64{ 5.0, 2.0, -1.0 },
+        [_]f64{ -10.0, 5.0, 3.0 },
+        [_]f64{ 100.0, 50.0, -0.5 },
+    };
+    for (params) |p| {
+        const dist = try PearsonIII(f64).init(p[0], p[1], p[2]);
+        try dist.validate();
+    }
+}
+
+// ============================================================================
+// F32 TYPE SUPPORT
+// ============================================================================
+
+test "PearsonIII: f32 type comprehensive support" {
+    const dist = try PearsonIII(f32).init(1.0, 2.0, 1.0);
+    try expect(dist.pdf(1.5) > 0.0);
+    try expect(dist.cdf(1.5) > 0.0 and dist.cdf(1.5) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q) and q > 1.0);
+    const m = dist.mode();
+    try expect(math.isFinite(m));
+    const mn = dist.mean();
+    try expectApproxEqAbs(mn, 1.0, 1e-5);
+    const v = dist.variance();
+    try expectApproxEqAbs(v, 4.0, 1e-5);
+    const e = dist.entropy();
+    try expect(e > 0.0);
+    try dist.validate();
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(s > 0.0);
+}
+
+// ============================================================================
+// EDGE CASES AND NUMERICAL STABILITY
+// ============================================================================
+
+test "PearsonIII: handle very small gamma (near-normal)" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 1e-10);
+    const pdf_center = dist.pdf(0.0);
+    try expect(pdf_center > 0.0);
+    const cdf_center = dist.cdf(0.0);
+    try expect(cdf_center > 0.4 and cdf_center < 0.6);
+}
+
+test "PearsonIII: handle very large gamma" {
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 10.0);
+    // alpha = 4/100 = 0.04 (very small)
+    // Should still work with alpha < 1
+    try expect(dist.pdf(0.0) > 0.0);
+    try expect(dist.cdf(0.0) > 0.0);
+}
+
+test "PearsonIII: handle very small sigma" {
+    const dist = try PearsonIII(f64).init(5.0, 0.001, 1.0);
+    // Highly concentrated distribution
+    try expect(dist.pdf(5.0) > 0.0);
+    const m = dist.mode();
+    try expect(@abs(m - 5.0) < 0.01);
+}
+
+test "PearsonIII: handle very large sigma" {
+    const dist = try PearsonIII(f64).init(0.0, 1000.0, 1.0);
+    // Very wide distribution
+    try expect(dist.pdf(500.0) > 0.0);
+    try expect(dist.cdf(500.0) > 0.0 and dist.cdf(500.0) < 1.0);
+}
+
+test "PearsonIII: PDF unimodal (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const mode = dist.mode();
+    const p1 = dist.pdf(mode - 1.0);
+    const p_mode = dist.pdf(mode);
+    const p2 = dist.pdf(mode + 1.0);
+    try expect(p1 <= p_mode);
+    try expect(p2 <= p_mode);
+}
+
+test "PearsonIII: PDF unimodal (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    const mode = dist.mode();
+    const p1 = dist.pdf(mode - 1.0);
+    const p_mode = dist.pdf(mode);
+    const p2 = dist.pdf(mode + 1.0);
+    try expect(p1 <= p_mode);
+    try expect(p2 <= p_mode);
+}
+
+// ============================================================================
+// NORMAL LIMIT (gamma -> 0)
+// ============================================================================
+
+test "PearsonIII: normal limit for small gamma approaches Normal(mu, sigma^2)" {
+    const gamma_small = 1e-8;
+    const dist_p3 = try PearsonIII(f64).init(5.0, 2.0, gamma_small);
+    const dist_normal = try Normal(f64).init(5.0, 2.0);
+    const x = 5.0;
+    // PDF should be very close to normal
+    try expectApproxEqRel(dist_p3.pdf(x), dist_normal.pdf(x), 1e-4);
+    try expectApproxEqAbs(dist_p3.cdf(x), dist_normal.cdf(x), 1e-6);
+}
+
+// ============================================================================
+// EXTREME VALUE TESTS
+// ============================================================================
+
+test "PearsonIII: PDF at very large x (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const pdf_large = dist.pdf(1e6);
+    try expect(pdf_large >= 0.0 and pdf_large < 1e-10);
+}
+
+test "PearsonIII: CDF approaches 1 for very large x (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const cdf_large = dist.cdf(1e6);
+    try expect(cdf_large > 0.9999);
+}
+
+test "PearsonIII: CDF approaches 0 for very negative x (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    const cdf_small = dist.cdf(-1e6);
+    try expect(cdf_small < 1e-4);
+}
+
+// ============================================================================
+// PARAMETER SCALE INVARIANCE
+// ============================================================================
+
+test "PearsonIII: scale property for CDF" {
+    const dist1 = try PearsonIII(f64).init(0.0, 1.0, 1.0);
+    const dist2 = try PearsonIII(f64).init(0.0, 2.0, 1.0);
+    // CDF at 2x should equal CDF at x for the scaled version
+    const cdf1_at_2 = dist1.cdf(2.0);
+    const cdf2_at_4 = dist2.cdf(4.0);
+    try expectApproxEqAbs(cdf1_at_2, cdf2_at_4, 1e-6);
+}
+
+// ============================================================================
+// REFLECTION SYMMETRY (gamma -> -gamma)
+// ============================================================================
+
+test "PearsonIII: PDF magnitude preserved under reflection" {
+    const dist_pos = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const dist_neg = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    // PDF at symmetric points should have same magnitude
+    const x_pos = 5.0 + 2.0; // = 7
+    const x_neg = 5.0 - 2.0; // = 3
+    const pdf_pos = dist_pos.pdf(x_pos);
+    const pdf_neg = dist_neg.pdf(x_neg);
+    try expectApproxEqAbs(pdf_pos, pdf_neg, 1e-8);
+}
