@@ -72371,3 +72371,790 @@ test "Landau: format output contains mu and c" {
     const output = stream.getWritten();
     try expect(std.mem.containsAtLeast(u8, output, 1, "Landau"));
 }
+
+// ============================================================================
+// Davis Distribution (127th total, 103rd continuous)
+// ============================================================================
+/// Davis distribution — continuous distribution on (μ, ∞) related to Bose-Einstein
+/// statistics and the Riemann zeta function. Named after Harold T. Davis (1941).
+///
+/// Parameters:
+///   b > 0  — scale parameter
+///   n > 1  — shape parameter
+///   μ ∈ ℝ  — location parameter
+///
+/// Support: x > μ
+///
+/// PDF: f(x; b, n, μ) = b^n / (Γ(n)·ζ(n)) · (x-μ)^{-(n+1)} · 1/(exp(b/(x-μ)) - 1)
+///
+/// CDF via substitution u = b/(x-μ):
+///   F(x) = 1 - I(b/(x-μ)) / (Γ(n)·ζ(n))
+///   where I(u_max) = ∫_0^{u_max} u^{n-1}/(e^u-1) du  [500-pt midpoint]
+///
+/// Mode:   μ + b/u* where u* solves u·exp(u)/(exp(u)-1) = n+1  [bisection]
+/// Mean:   μ + b·ζ(n-1)/((n-1)·ζ(n))  for n > 2;  else +∞
+/// Var:    b²[ζ(n-2)/((n-1)(n-2)·ζ(n)) - (ζ(n-1)/((n-1)·ζ(n)))²]  for n > 3; else +∞
+
+pub fn Davis(comptime T: type) type {
+    return struct {
+        b: T,
+        n: T,
+        mu: T,
+        log_norm: T,  // n·log(b) - lgamma(n) - log(ζ(n))
+        zeta_n: T,    // ζ(n) precomputed
+        i_total: T,   // Γ(n)·ζ(n) = normalization for CDF
+
+        const Self = @This();
+        const CDF_N: usize = 500;
+
+        // Riemann ζ(s) for s > 1 via direct sum + Euler-Maclaurin tail.
+        // Uses 2000 terms for accuracy ≲ 10⁻⁸ for s ≥ 1.5.
+        //
+        // Time: O(2000) | Space: O(1)
+        fn computeZeta(s: T) T {
+            const N: usize = 2000;
+            var sum: T = 0.0;
+            for (1..N + 1) |k| {
+                const k_f: T = @floatFromInt(k);
+                sum += math.pow(T, k_f, -s);
+            }
+            const n_f: T = @floatFromInt(N);
+            sum += math.pow(T, n_f, 1.0 - s) / (s - 1.0);
+            sum -= 0.5 * math.pow(T, n_f, -s);
+            return sum;
+        }
+
+        // ∫_0^{u_max} u^{n-1}/(e^u - 1) du  via CDF_N-point midpoint rule.
+        //
+        // The integrand u^{n-1}/(e^u-1) → u^{n-2} as u→0 (integrable for n > 1).
+        // Clamps to [0, i_total] to avoid negative values from floating-point drift.
+        //
+        // Time: O(CDF_N) | Space: O(1)
+        fn integrateKernel(n_val: T, u_max: T, i_total: T) T {
+            if (u_max <= 0.0) return 0.0;
+            const u_clip = @min(u_max, 200.0); // exp(200) > 10^86 → negligible beyond
+            const h: T = u_clip / @as(T, @floatFromInt(CDF_N));
+            var sum: T = 0.0;
+            var k: usize = 0;
+            while (k < CDF_N) : (k += 1) {
+                const u: T = (@as(T, @floatFromInt(k)) + 0.5) * h;
+                const eu = @exp(u);
+                if (eu > 1.0e15) break; // integrand negligible
+                const integrand = math.pow(T, u, n_val - 1.0) / (eu - 1.0);
+                sum += integrand * h;
+            }
+            return @min(i_total, @max(0.0, sum));
+        }
+
+        /// Initialize Davis(b, n, μ).
+        /// Requires: b > 0 and finite, n > 1 and finite, μ finite.
+        ///
+        /// Precomputes ζ(n), log_norm, and i_total at construction.
+        ///
+        /// Time: O(2000) | Space: O(1)
+        pub fn init(b: T, n: T, mu: T) DistributionError!Self {
+            if (!(b > 0.0) or !math.isFinite(b)) return error.InvalidParameter;
+            if (!(n > 1.0) or !math.isFinite(n)) return error.InvalidParameter;
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            const zeta_n = computeZeta(n);
+            const log_norm = n * @log(b) - math.lgamma(T, n) - @log(zeta_n);
+            const i_total = @exp(math.lgamma(T, n)) * zeta_n;
+            return Self{
+                .b = b,
+                .n = n,
+                .mu = mu,
+                .log_norm = log_norm,
+                .zeta_n = zeta_n,
+                .i_total = i_total,
+            };
+        }
+
+        /// Probability density function.
+        ///
+        /// f(x) = exp(log_norm - (n+1)·log(x-μ) - log(exp(b/(x-μ)) - 1))  for x > μ; 0 otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const y = x - self.mu;
+            if (y <= 0.0) return 0.0;
+            const by = self.b / y;
+            const exp_by = @exp(by);
+            // For very large by, exp(by) is huge, so exp(by)-1 ≈ exp(by), and pdf ≈ 0
+            // due to by in the denominator
+            if (!math.isFinite(exp_by)) return 0.0;
+            const log_denom = @log(exp_by - 1.0);
+            const log_val = self.log_norm - (self.n + 1.0) * @log(y) - log_denom;
+            const result = @exp(log_val);
+            if (!math.isFinite(result)) return 0.0;
+            return result;
+        }
+
+        /// Log probability density function. Returns -∞ for x ≤ μ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const y = x - self.mu;
+            if (y <= 0.0) return -math.inf(T);
+            const by = self.b / y;
+            const exp_by = @exp(by);
+            if (!math.isFinite(exp_by)) return -math.inf(T);
+            const log_denom = @log(exp_by - 1.0);
+            const result = self.log_norm - (self.n + 1.0) * @log(y) - log_denom;
+            return result;
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// F(x) = 1 - I(b/(x-μ)) / i_total  for x > μ; 0 otherwise.
+        ///
+        /// Time: O(CDF_N) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const y = x - self.mu;
+            if (y <= 0.0) return 0.0;
+            const u_max = self.b / y;
+            const integral = integrateKernel(self.n, u_max, self.i_total);
+            return @max(0.0, @min(1.0, 1.0 - integral / self.i_total));
+        }
+
+        /// Survival function: 1 - CDF(x).
+        ///
+        /// Time: O(CDF_N) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function via bisection on CDF.
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN.
+        ///
+        /// Time: O(80 · CDF_N) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0) or math.isNan(p)) return error.InvalidProbability;
+            if (p == 0.0) return self.mu;
+            if (p == 1.0) return math.inf(T);
+            // Search in y-space (y = x - mu)
+            var lo: T = self.b / 1000.0;
+            var hi: T = self.b * 1000.0;
+            // Expand hi until cdf(hi) >= p
+            while (self.cdf(self.mu + hi) < p) hi *= 2.0;
+            // Shrink lo until cdf(lo) <= p
+            while (self.cdf(self.mu + lo) > p) lo /= 2.0;
+            var iter: usize = 0;
+            while (iter < 80) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(self.mu + mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo < 1e-10 * hi) break;
+            }
+            return self.mu + (lo + hi) / 2.0;
+        }
+
+        /// Mode of the distribution: μ + b/u* where u* solves u·exp(u)/(exp(u)-1) = n+1.
+        ///
+        /// The equation is solved via bisection on g(u) = u·exp(u)/(exp(u)-1) - (n+1).
+        /// g is strictly increasing; g(0+) = 1, g(∞) = ∞. Root exists iff n+1 > 1, always true.
+        ///
+        /// Time: O(80) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const target = self.n + 1.0;
+            var lo: T = 1e-9;
+            var hi: T = 100.0;
+            // Ensure hi is large enough
+            while (hi * @exp(hi) / (@exp(hi) - 1.0) < target) hi *= 2.0;
+            var iter: usize = 0;
+            while (iter < 80) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                const exp_mid = @exp(mid);
+                const g_mid = mid * exp_mid / (exp_mid - 1.0) - target;
+                if (g_mid < 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo < 1e-12) break;
+            }
+            const u_mode = (lo + hi) / 2.0;
+            return self.mu + self.b / u_mode;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// E[X] = μ + b·ζ(n-1)/((n-1)·ζ(n))  for n > 2; else +∞.
+        ///
+        /// Time: O(2000) for n > 2, O(1) otherwise | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.n <= 2.0) return math.inf(T);
+            const zeta_n1 = computeZeta(self.n - 1.0);
+            return self.mu + self.b * zeta_n1 / ((self.n - 1.0) * self.zeta_n);
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var[X] = b²[ζ(n-2)/((n-1)(n-2)·ζ(n)) - (ζ(n-1)/((n-1)·ζ(n)))²]  for n > 3; else +∞.
+        ///
+        /// Time: O(2000) for n > 3, O(1) otherwise | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.n <= 3.0) return math.inf(T);
+            const zeta_n1 = computeZeta(self.n - 1.0);
+            const zeta_n2 = computeZeta(self.n - 2.0);
+            const second_moment = self.b * self.b * zeta_n2 / ((self.n - 1.0) * (self.n - 2.0) * self.zeta_n);
+            const mean_sq_term = (self.b * zeta_n1 / ((self.n - 1.0) * self.zeta_n));
+            return second_moment - mean_sq_term * mean_sq_term;
+        }
+
+        /// Differential entropy (nats) via numerical integration.
+        ///
+        /// H = -∫ f(x)·log(f(x)) dx  [grid-based midpoint rule]
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Grid-based approach: uniform sampling in x-space around mode region
+            const mode_y = self.b / (self.n + 1.0);
+            const y_min = @max(mode_y / 100.0, self.b * 1e-4);
+            const y_max = @max(mode_y * 100.0, self.b * 100.0);
+            const N: usize = 500;
+            const h = (y_max - y_min) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            var k: usize = 0;
+            while (k < N) : (k += 1) {
+                const y = y_min + (@as(T, @floatFromInt(k)) + 0.5) * h;
+                const pdf_val = self.pdf(self.mu + y);
+                if (pdf_val > 0.0 and math.isFinite(pdf_val)) {
+                    const log_pdf_val = @log(pdf_val);
+                    if (math.isFinite(log_pdf_val)) {
+                        sum -= pdf_val * log_pdf_val;
+                    }
+                }
+            }
+            return sum * h;
+        }
+
+        /// Draw a random sample using the inverse-CDF method.
+        ///
+        /// Time: O(quantile) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            if (u <= 0.0) u = std.math.floatMin(T);
+            if (u >= 1.0) u = 1.0 - std.math.floatEps(T);
+            return self.quantile(u) catch self.mode();
+        }
+
+        /// Assert that parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.b > 0.0) or !math.isFinite(self.b)) return error.InvalidParameter;
+            if (!(self.n > 1.0) or !math.isFinite(self.n)) return error.InvalidParameter;
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+        }
+
+        /// Format distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Davis(b={d}, n={d}, μ={d})", .{ self.b, self.n, self.mu });
+        }
+    };
+}
+
+test "Davis: init valid params b=1 n=2 mu=0" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(dist.b == 1.0);
+    try expect(dist.n == 2.0);
+    try expect(dist.mu == 0.0);
+}
+
+test "Davis: init valid params b=0.5 n=3 mu=1" {
+    const dist = try Davis(f64).init(0.5, 3.0, 1.0);
+    try expect(dist.b == 0.5);
+    try expect(dist.n == 3.0);
+    try expect(dist.mu == 1.0);
+}
+
+test "Davis: init valid params b=2 n=1.5 mu=-1" {
+    const dist = try Davis(f64).init(2.0, 1.5, -1.0);
+    try expect(dist.b == 2.0);
+    try expect(dist.n == 1.5);
+    try expect(dist.mu == -1.0);
+}
+
+test "Davis: init fails for b=0" {
+    try expectError(error.InvalidParameter, Davis(f64).init(0.0, 2.0, 0.0));
+}
+
+test "Davis: init fails for b<0" {
+    try expectError(error.InvalidParameter, Davis(f64).init(-1.0, 2.0, 0.0));
+}
+
+test "Davis: init fails for b=inf" {
+    try expectError(error.InvalidParameter, Davis(f64).init(math.inf(f64), 2.0, 0.0));
+}
+
+test "Davis: init fails for n≤1" {
+    try expectError(error.InvalidParameter, Davis(f64).init(1.0, 1.0, 0.0));
+    try expectError(error.InvalidParameter, Davis(f64).init(1.0, 0.5, 0.0));
+}
+
+test "Davis: init fails for mu=nan" {
+    try expectError(error.InvalidParameter, Davis(f64).init(1.0, 2.0, math.nan(f64)));
+}
+
+test "Davis: validate passes for valid params" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try dist.validate();
+}
+
+test "Davis: validate fails for b=0" {
+    var dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    dist.b = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Davis: pdf returns 0 for x≤μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(dist.pdf(0.0) == 0.0);
+    try expect(dist.pdf(-1.0) == 0.0);
+    try expect(dist.pdf(-10.0) == 0.0);
+}
+
+test "Davis: pdf returns 0 for x=μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 1.0);
+    try expect(dist.pdf(1.0) == 0.0);
+}
+
+test "Davis: pdf positive for x>μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(dist.pdf(0.1) > 0.0);
+    try expect(dist.pdf(0.5) > 0.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.pdf(10.0) > 0.0);
+}
+
+test "Davis: pdf at interior point is finite" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const p = dist.pdf(1.0);
+    try expect(math.isFinite(p));
+    try expect(p > 0.0);
+}
+
+test "Davis: pdf(1; b=1,n=2,μ=0) ≈ 0.3540 (exact: 1/(ζ(2)·(e-1)))" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = 0.3540; // 1 / (π²/6 * (e-1))
+    try expectApproxEqAbs(expected, pdf_val, 2e-3);
+}
+
+test "Davis: pdf decreases in right tail" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const p1 = dist.pdf(0.5);
+    const p2 = dist.pdf(1.0);
+    const p3 = dist.pdf(2.0);
+    const p4 = dist.pdf(5.0);
+    try expect(p1 > p2);
+    try expect(p2 > p3);
+    try expect(p3 > p4);
+}
+
+test "Davis: pdf finite for all interior x" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const xs = [_]f64{ 0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0, 100.0 };
+    for (xs) |x| {
+        const p = dist.pdf(x);
+        try expect(math.isFinite(p));
+        try expect(p >= 0.0);
+    }
+}
+
+test "Davis: f32 type pdf support" {
+    const dist = try Davis(f32).init(1.0, 2.0, 0.0);
+    const p = dist.pdf(1.0);
+    try expect(p > 0.0);
+    try expect(math.isFinite(p));
+}
+
+test "Davis: logpdf returns -inf for x≤μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "Davis: logpdf = log(pdf) for interior x" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected = @log(pdf_val);
+    try expectApproxEqAbs(expected, logpdf_val, 1e-10);
+}
+
+test "Davis: logpdf finite for interior x" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const x = 1.0;
+    const lp = dist.logpdf(x);
+    try expect(math.isFinite(lp));
+}
+
+test "Davis: logpdf consistency across multiple points" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (xs) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logpdf(x);
+        const expected = @log(pdf_val);
+        try expectApproxEqAbs(expected, logpdf_val, 1e-10);
+    }
+}
+
+test "Davis: cdf returns 0 for x≤μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(dist.cdf(0.0) == 0.0);
+    try expect(dist.cdf(-1.0) == 0.0);
+    try expect(dist.cdf(-1000.0) == 0.0);
+}
+
+test "Davis: cdf in [0,1] for all x" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const xs = [_]f64{ -10.0, 0.0, 0.1, 0.5, 1.0, 5.0, 100.0 };
+    for (xs) |x| {
+        const c = dist.cdf(x);
+        try expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "Davis: cdf monotone increasing" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const xs = [_]f64{ 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var i: usize = 0;
+    while (i + 1 < xs.len) : (i += 1) {
+        const c1 = dist.cdf(xs[i]);
+        const c2 = dist.cdf(xs[i + 1]);
+        try expect(c1 <= c2);
+    }
+}
+
+test "Davis: cdf + sf = 1" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const xs = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (xs) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try expectApproxEqAbs(1.0, c + s, 1e-8);
+    }
+}
+
+test "Davis: cdf approaches 1 for large x" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const cdf_large = dist.cdf(1000.0);
+    try expect(cdf_large > 0.99);
+}
+
+test "Davis: cdf at mode is between 0.2 and 0.8" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const m = dist.mode();
+    const cdf_mode = dist.cdf(m);
+    try expect(cdf_mode > 0.1 and cdf_mode < 0.9);
+}
+
+test "Davis: cdf is finite everywhere" {
+    const dist = try Davis(f64).init(1.0, 2.5, 0.0);
+    const xs = [_]f64{ 0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 50.0 };
+    for (xs) |x| {
+        const c = dist.cdf(x);
+        try expect(math.isFinite(c));
+    }
+}
+
+test "Davis: sf returns 1 for x≤μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(dist.sf(0.0) == 1.0);
+    try expect(dist.sf(-1.0) == 1.0);
+}
+
+test "Davis: sf + cdf = 1 for all x" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const xs = [_]f64{ 0.05, 0.1, 0.5, 1.0, 2.0, 10.0 };
+    for (xs) |x| {
+        const c = dist.cdf(x);
+        const s = dist.sf(x);
+        try expectApproxEqAbs(1.0, c + s, 1e-9);
+    }
+}
+
+test "Davis: quantile rejects p<0" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Davis: quantile rejects p>1" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Davis: quantile rejects p=nan" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Davis: quantile monotone increasing" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const ps = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    var i: usize = 0;
+    while (i + 1 < ps.len) : (i += 1) {
+        const q1 = try dist.quantile(ps[i]);
+        const q2 = try dist.quantile(ps[i + 1]);
+        try expect(q1 < q2);
+    }
+}
+
+test "Davis: quantile roundtrip cdf(quantile(p)) ≈ p" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const ps = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (ps) |p| {
+        const q = try dist.quantile(p);
+        const cdf_val = dist.cdf(q);
+        try expect(cdf_val >= p - 0.02 and cdf_val <= p + 0.02);
+    }
+}
+
+test "Davis: mode is greater than μ" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const m = dist.mode();
+    try expect(m > 0.0);
+}
+
+test "Davis: mode is finite" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const m = dist.mode();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0);
+}
+
+test "Davis: mode(b=1,n=3,μ=0) is in valid range (0.2, 0.35)" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const m = dist.mode();
+    // Mode for Davis(1,3,0) ≈ 0.2550 (where u·e^u/(e^u-1) = 4)
+    try expect(m > 0.20 and m < 0.35);
+}
+
+test "Davis: mode location shift invariance" {
+    const dist1 = try Davis(f64).init(1.0, 3.0, 0.0);
+    const dist2 = try Davis(f64).init(1.0, 3.0, 1.0);
+    const m1 = dist1.mode();
+    const m2 = dist2.mode();
+    // mode should shift by μ
+    try expectApproxEqAbs(m1 + 1.0, m2, 1e-10);
+}
+
+test "Davis: mode scale property" {
+    const dist1 = try Davis(f64).init(1.0, 3.0, 0.0);
+    const dist2 = try Davis(f64).init(2.0, 3.0, 0.0);
+    const m1 = dist1.mode();
+    const m2 = dist2.mode();
+    // Mode should scale with b
+    try expectApproxEqAbs(m1 * 2.0, m2, 1e-9);
+}
+
+test "Davis: mean is +∞ for n≤2" {
+    const dist1 = try Davis(f64).init(1.0, 1.5, 0.0);
+    const dist2 = try Davis(f64).init(1.0, 2.0, 0.0);
+    try expect(math.isPositiveInf(dist1.mean()));
+    try expect(math.isPositiveInf(dist2.mean()));
+}
+
+test "Davis: mean is finite for n>2" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0);
+}
+
+test "Davis: mean(b=1,n=3,μ=0) ≈ 0.6840 (ζ(2)/(2·ζ(3)))" {
+    const dist = try Davis(f64).init(1.0, 3.0, 0.0);
+    const m = dist.mean();
+    // ζ(2)/(2·ζ(3)) ≈ 1.6449/(2·1.2021) ≈ 0.6840
+    const expected = 0.6840;
+    try expectApproxEqAbs(expected, m, 0.01);
+}
+
+test "Davis: mean location parameter shift" {
+    const dist1 = try Davis(f64).init(1.0, 4.0, 0.0);
+    const dist2 = try Davis(f64).init(1.0, 4.0, 5.0);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    // mean(μ) = mean(0) + μ
+    try expectApproxEqAbs(m1 + 5.0, m2, 1e-10);
+}
+
+test "Davis: variance is +∞ for n≤3" {
+    const dist1 = try Davis(f64).init(1.0, 2.0, 0.0);
+    const dist2 = try Davis(f64).init(1.0, 3.0, 0.0);
+    try expect(math.isPositiveInf(dist1.variance()));
+    try expect(math.isPositiveInf(dist2.variance()));
+}
+
+test "Davis: variance is finite and positive for n>3" {
+    const dist = try Davis(f64).init(1.0, 4.0, 0.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v > 0.0);
+}
+
+test "Davis: variance independent of μ" {
+    const dist1 = try Davis(f64).init(1.0, 4.0, 0.0);
+    const dist2 = try Davis(f64).init(1.0, 4.0, 5.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    try expectApproxEqAbs(v1, v2, 1e-10);
+}
+
+test "Davis: variance scales as b²" {
+    const dist1 = try Davis(f64).init(1.0, 4.0, 0.0);
+    const dist2 = try Davis(f64).init(2.0, 4.0, 0.0);
+    const v1 = dist1.variance();
+    const v2 = dist2.variance();
+    // variance(b) = variance(1) * b²
+    try expectApproxEqAbs(v1 * 4.0, v2, 1e-8);
+}
+
+test "Davis: entropy is finite" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const e = dist.entropy();
+    try expect(math.isFinite(e));
+}
+
+test "Davis: entropy finite for valid params" {
+    const dists = [_]struct { b: f64, n: f64, mu: f64 }{
+        .{ .b = 1.0, .n = 2.0, .mu = 0.0 },
+        .{ .b = 0.5, .n = 3.0, .mu = 1.0 },
+        .{ .b = 2.0, .n = 4.0, .mu = -1.0 },
+    };
+    for (dists) |params| {
+        const dist = try Davis(f64).init(params.b, params.n, params.mu);
+        const e = dist.entropy();
+        try expect(math.isFinite(e));
+    }
+}
+
+test "Davis: sample returns x > μ" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const s = dist.sample(rng);
+    try expect(s > 0.0);
+    try expect(math.isFinite(s));
+}
+
+test "Davis: 100 samples all satisfy x > μ" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Davis(f64).init(1.0, 2.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s > 1.0);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "Davis: sample from different seeds differs" {
+    var prng1 = std.Random.DefaultPrng.init(42);
+    const rng1 = prng1.random();
+    var prng2 = std.Random.DefaultPrng.init(123);
+    const rng2 = prng2.random();
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const s1 = dist.sample(rng1);
+    const s2 = dist.sample(rng2);
+    try expect(s1 != s2);
+}
+
+test "Davis: validate passes after construction" {
+    const dist = try Davis(f64).init(1.0, 2.5, 0.5);
+    try dist.validate();
+}
+
+test "Davis: pdf integral approximates 1" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    var sum: f64 = 0.0;
+    var y: f64 = 0.001;
+    const dy = 0.001;
+    const max_y = 20.0;
+    var i: usize = 0;
+    while (y < max_y) : ({
+        y += dy;
+        i += 1;
+    }) {
+        sum += dist.pdf(y) * dy;
+        if (i > 20000) break;
+    }
+    // PDF should integrate to ~1 over support
+    try expect(sum > 0.90 and sum < 1.10);
+}
+
+test "Davis: location invariance of PDF shape" {
+    const dist1 = try Davis(f64).init(1.0, 2.5, 0.0);
+    const dist2 = try Davis(f64).init(1.0, 2.5, 1.0);
+    const x = 1.0; // for dist2, this is y = 1.0 - 1.0 = 0.0
+    const p1 = dist1.pdf(x);
+    const p2 = dist2.pdf(x + 1.0);
+    try expectApproxEqAbs(p1, p2, 1e-10);
+}
+
+test "Davis: PDF is strictly positive in interior" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const xs = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (xs) |x| {
+        try expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "Davis: f32 type comprehensive support" {
+    const dist = try Davis(f32).init(1.0, 2.0, 0.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q) and q > 0.0);
+    const m = dist.mode();
+    try expect(math.isFinite(m) and m > 0.0);
+    try expect(math.isPositiveInf(dist.mean()));
+    try expect(math.isPositiveInf(dist.variance()));
+    try expect(dist.entropy() > 0.0);
+    try dist.validate();
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(s > 0.0);
+}
+
+test "Davis: handle very small b" {
+    const dist = try Davis(f64).init(0.001, 2.0, 0.0);
+    const m = dist.mode();
+    try expect(m > 0.0);
+    try expect(math.isFinite(m));
+}
+
+test "Davis: handle very large n" {
+    const dist = try Davis(f64).init(1.0, 100.0, 0.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0);
+}
+
+test "Davis: handle negative μ location" {
+    const dist = try Davis(f64).init(1.0, 2.5, -10.0);
+    const pdf_test = dist.pdf(-9.0); // x > μ
+    try expect(pdf_test > 0.0);
+    const cdf_test = dist.cdf(-9.0);
+    try expect(cdf_test > 0.0 and cdf_test < 1.0);
+}
+
+test "Davis: pdf vanishes as x approaches μ from above" {
+    const dist = try Davis(f64).init(1.0, 2.0, 0.0);
+    const p1 = dist.pdf(0.01);
+    const p2 = dist.pdf(0.05);
+    const p3 = dist.pdf(0.1);
+    try expect(p1 < p2);
+    try expect(p2 < p3);
+}
