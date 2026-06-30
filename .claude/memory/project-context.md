@@ -1571,3 +1571,24 @@
 
 ✅ **DiscreteUniform Distribution** — 27th distribution, 12th discrete — commit c159d7a
 - **Distribution count**: 27 total (15 continuous + 12 discrete)
+
+---
+
+**Session 737 Update (2026-06-30) — FEATURE MODE [COMPLETED]:**
+
+✅ **Landau Distribution** — 126th total, 102nd continuous — commit 6469388
+- **Mode**: FEATURE MODE (counter: 737)
+- **CI Status**: GREEN; 0 open issues
+- **Implementation**: Landau(μ, c) — ionization energy-loss distribution (Landau-Vavilov theory)
+  * Lévy α-stable with α=1, β=1 (maximally right-skewed); heavy right tail
+  * Parameters: μ ∈ ℝ (location), c > 0 (scale)
+  * PDF: Fourier integral φ_L(λ)=(1/π)∫₀^∞ e^{-t} cos(tλ+2t·ln(t)/π)dt — 256-pt midpoint on [1e-7, 30]
+  * CDF: 500-pt numerical integration from λ=-8; clamps to [0,1]
+  * Quantile: bisection (80 iterations, tol 1e-7); hi starts at 50 and doubles if needed
+  * Mode: μ+c·(-0.2224); Mean/Variance: +∞ (undefined for Landau)
+  * Entropy: 300-pt integration from [-5,60] of -φ_L·log(φ_L), then +log(c)
+  * Sample: inverse-CDF via quantile
+  * 49 tests passing
+- **Total tests**: 6,310 (was 6,261; +49 Landau tests)
+- **Distribution count**: 126 total (102 continuous + 24 discrete)
+- **Next Priority**: Davis, GeneralizedInverseGaussian, or another continuous distribution
