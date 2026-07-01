@@ -73159,6 +73159,26 @@ test "Davis: pdf vanishes as x approaches μ from above" {
     try expect(p2 < p3);
 }
 
+test "Davis: entropy increases with b (scale property: H(2b) > H(b))" {
+    // Theoretically H(2b) = H(b) + log(2); numerical integration is approximate so
+    // we only verify the direction of change and a rough magnitude.
+    const dist1 = try Davis(f64).init(1.0, 3.0, 0.0);
+    const dist2 = try Davis(f64).init(2.0, 3.0, 0.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try expect(h2 > h1);
+    // H(2b) - H(b) should be approximately log(2) ≈ 0.693, within 20% numerically
+    const diff = h2 - h1;
+    try expect(diff > 0.4 and diff < 1.0);
+}
+
+test "Davis: quantile(0.5) satisfies cdf = 0.5 exactly" {
+    const dist = try Davis(f64).init(1.0, 2.5, 0.0);
+    const q = try dist.quantile(0.5);
+    const cdf_q = dist.cdf(q);
+    try expectApproxEqAbs(cdf_q, 0.5, 1e-6);
+}
+
 // ============================================================================
 // PEARSON TYPE III DISTRIBUTION
 // ============================================================================
@@ -74206,4 +74226,71 @@ test "PearsonIII: PDF magnitude preserved under reflection" {
     const pdf_pos = dist_pos.pdf(x_pos);
     const pdf_neg = dist_neg.pdf(x_neg);
     try expectApproxEqAbs(pdf_pos, pdf_neg, 1e-8);
+}
+
+test "PearsonIII: init computes internal params correctly (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    // alpha = 4/gamma² = 4; beta = sigma*|gamma|/2 = 1; xi = mu - 2*sigma/gamma = 1
+    try expectApproxEqAbs(dist.alpha, 4.0, 1e-10);
+    try expectApproxEqAbs(dist.beta, 1.0, 1e-10);
+    try expectApproxEqAbs(dist.xi, 1.0, 1e-10);
+}
+
+test "PearsonIII: init computes internal params correctly (gamma < 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
+    // alpha = 4/1 = 4; beta = 2*1/2 = 1; xi = 5 - 2*2/(-1) = 9
+    try expectApproxEqAbs(dist.alpha, 4.0, 1e-10);
+    try expectApproxEqAbs(dist.beta, 1.0, 1e-10);
+    try expectApproxEqAbs(dist.xi, 9.0, 1e-10);
+}
+
+test "PearsonIII: PDF matches Normal(mu, sigma^2) exactly for gamma=0" {
+    // When gamma=0, PearsonIII reduces to Normal(mu, sigma^2)
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 0.0);
+    const x = 0.5;
+    const pdf_p3 = dist.pdf(x);
+    const pdf_normal = (1.0 / @sqrt(2.0 * math.pi)) * math.exp(-0.5 * x * x);
+    try expectApproxEqAbs(pdf_p3, pdf_normal, 1e-14);
+}
+
+test "PearsonIII: CDF exact for exponential case (gamma=2, mu=0, sigma=1)" {
+    // gamma=2: alpha=1, beta=1, xi=-1 → Exponential(1) shifted by -1
+    // CDF(x) = 1 - e^{-(x+1)} for x > -1
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 2.0);
+    // CDF(0) = 1 - e^{-1}
+    try expectApproxEqAbs(dist.cdf(0.0), 1.0 - math.exp(-1.0), 1e-8);
+    // CDF(1) = 1 - e^{-2}
+    try expectApproxEqAbs(dist.cdf(1.0), 1.0 - math.exp(-2.0), 1e-8);
+    // CDF(-1+eps) ≈ 0 (boundary)
+    try expectApproxEqAbs(dist.cdf(-0.9999), 1.0 - math.exp(-0.0001), 1e-6);
+}
+
+test "PearsonIII: quantile exact for exponential case (gamma=2, mu=0, sigma=1)" {
+    // Q(p) = -1 - ln(1-p)
+    const dist = try PearsonIII(f64).init(0.0, 1.0, 2.0);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const expected = -1.0 - @log(1.0 - p);
+    try expectApproxEqAbs(q, expected, 1e-7);
+}
+
+test "PearsonIII: mode is a local PDF maximum (gamma > 0)" {
+    const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    const m = dist.mode();
+    const eps = 0.01;
+    const p_mode = dist.pdf(m);
+    try expect(p_mode >= dist.pdf(m - eps));
+    try expect(p_mode >= dist.pdf(m + eps));
+}
+
+test "PearsonIII: validate fails when alpha is corrupted negative" {
+    var dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    dist.alpha = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PearsonIII: validate fails when beta is corrupted zero" {
+    var dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
+    dist.beta = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
 }
