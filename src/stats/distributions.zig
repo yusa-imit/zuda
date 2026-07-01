@@ -73689,10 +73689,10 @@ test "PearsonIII: PDF zero outside support (gamma > 0, x < xi)" {
 
 test "PearsonIII: PDF zero outside support (gamma < 0, x > xi)" {
     const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
-    // xi = 5 + 2/1 = 7, support (-∞, 7]
+    // xi = mu - 2*sigma/gamma = 5 - 2*2/(-1) = 9; support (-∞, 9)
     try expectApproxEqAbs(dist.pdf(9.0), 0.0, 1e-15);
     try expectApproxEqAbs(dist.pdf(10.0), 0.0, 1e-15);
-    try expectApproxEqAbs(dist.pdf(7.0 + 0.01), 0.0, 1e-15);
+    try expectApproxEqAbs(dist.pdf(9.0 + 0.01), 0.0, 1e-15);
 }
 
 test "PearsonIII: PDF positive in interior (gamma > 0)" {
@@ -73890,10 +73890,11 @@ test "PearsonIII: quantile rejects p > 1" {
     try expectError(error.InvalidProbability, dist.quantile(1.1));
 }
 
-test "PearsonIII: quantile(0) approaches -infinity (gamma > 0)" {
+test "PearsonIII: quantile(0) equals lower bound xi (gamma > 0)" {
     const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
-    const q = try dist.quantile(1e-15);
-    try expect(q < -1000.0);
+    // gamma > 0: bounded below at xi = mu - 2*sigma/gamma = 5 - 4 = 1
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(q, 1.0, 1e-9);
 }
 
 test "PearsonIII: quantile(1) approaches +infinity (gamma > 0)" {
@@ -74007,7 +74008,7 @@ test "PearsonIII: sample generates values in support (gamma > 0)" {
     const dist = try PearsonIII(f64).init(5.0, 2.0, 1.0);
     var prng = std.Random.DefaultPrng.init(123);
     const rng = prng.random();
-    const xi = 5.0 - 2.0 / 1.0; // xi = 1
+    const xi = 5.0 - 2.0 * 2.0 / 1.0; // xi = mu - 2*sigma/gamma = 1
     for (0..50) |_| {
         const s = dist.sample(rng);
         try expect(s >= xi - 1e-10); // allow small numerical error
@@ -74018,7 +74019,7 @@ test "PearsonIII: sample generates values in support (gamma < 0)" {
     const dist = try PearsonIII(f64).init(5.0, 2.0, -1.0);
     var prng = std.Random.DefaultPrng.init(456);
     const rng = prng.random();
-    const xi = 5.0 + 2.0 / 1.0; // xi = 7
+    const xi = 5.0 + 2.0 * 2.0 / 1.0; // xi = mu - 2*sigma/gamma = 9
     for (0..50) |_| {
         const s = dist.sample(rng);
         try expect(s <= xi + 1e-10); // allow small numerical error
@@ -74066,11 +74067,13 @@ test "PearsonIII: validate passes for all parameter combinations" {
 // ============================================================================
 
 test "PearsonIII: f32 type comprehensive support" {
+    // mu=1, sigma=2, gamma=1: xi = mu - 2*sigma/gamma = 1 - 4 = -3; alpha=4, beta=1
     const dist = try PearsonIII(f32).init(1.0, 2.0, 1.0);
     try expect(dist.pdf(1.5) > 0.0);
     try expect(dist.cdf(1.5) > 0.0 and dist.cdf(1.5) < 1.0);
     const q = try dist.quantile(0.5);
-    try expect(math.isFinite(q) and q > 1.0);
+    // median of Gamma(4,1) shifted by xi=-3: ~-3+3.67=0.67
+    try expect(math.isFinite(q) and q > -3.0);
     const m = dist.mode();
     try expect(math.isFinite(m));
     const mn = dist.mean();
@@ -74083,7 +74086,7 @@ test "PearsonIII: f32 type comprehensive support" {
     var prng = std.Random.DefaultPrng.init(42);
     const rng = prng.random();
     const s = dist.sample(rng);
-    try expect(s > 0.0);
+    try expect(s > -3.0 - 1e-5); // lower bound is xi = -3
 }
 
 // ============================================================================
