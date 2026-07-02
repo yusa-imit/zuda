@@ -76219,3 +76219,500 @@ test "VarianceGamma: quantile(0.5) close to median (mode for beta=0)" {
     try expectApproxEqAbs(median, m, 1e-2);
 }
 
+// ============================================================================
+// Generalized Hyperbolic Distribution
+// ============================================================================
+
+/// Generalized Hyperbolic distribution GH(λ, α, β, δ, μ)
+///
+/// A 5-parameter family that subsumes NIG (λ=-0.5), Hyperbolic (λ=1), Student-t,
+/// and VarianceGamma (δ→0). Used in finance, hydrology, and Bayesian inference.
+///
+/// PDF: f(x) = λ/(√(2π) K_λ(ξ)) · (γ/α)^λ · (α/q)^{λ-0.5} · K_{λ-0.5}(α·q) · exp(β(x-μ))
+///      where q = √(δ² + (x-μ)²), ξ = δγ, γ = √(α²-β²)
+///
+/// Parameters:
+///   - lambda: Shape index (λ ∈ ℝ, any real)
+///   - alpha:  Tail heaviness (α > 0)
+///   - beta:   Asymmetry (|β| < α)
+///   - delta:  Scale (δ > 0)
+///   - mu:     Location (μ ∈ ℝ)
+///
+/// Support: x ∈ ℝ
+/// Mean:    μ + δβ/γ · K_{λ+1}(ξ) / K_λ(ξ)
+/// Variance: δ/γ · K_{λ+1}(ξ)/K_λ(ξ) + (δβ/γ)² · (K_{λ+2}(ξ)/K_λ(ξ) - (K_{λ+1}/K_λ)²)
+///
+/// Special cases:
+///   λ = -0.5: reduces to NormalInverseGaussian(α, β, μ, δ)
+///   λ = 1:    Hyperbolic distribution
+///   δ → 0:    approaches VarianceGamma
+///
+/// Time: O(1) for logPdf/pdf/mean/variance | O(100) for mode (ternary search)
+///       O(500) for cdf/entropy | O(32000) for quantile
+pub fn GeneralizedHyperbolic(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        lambda: T,
+        alpha: T,
+        beta: T,
+        delta: T,
+        mu: T,
+        gamma: T,      // sqrt(alpha^2 - beta^2)
+        xi: T,         // delta * gamma
+        nu: T,         // lambda - 0.5, Bessel order
+        log_const: T,  // lambda*log(gamma) - 0.5*log(2π) - nu*log(alpha) - lambda*log(delta) - logK(lambda, xi)
+        kr1: T,        // K_{lambda+1}(xi) / K_lambda(xi)
+        kr2: T,        // K_{lambda+2}(xi) / K_lambda(xi)
+
+        /// Initialize GH(λ, α, β, δ, μ)
+        /// Time: O(400) (Bessel K integrals)
+        pub fn init(lambda: T, alpha: T, beta: T, delta: T, mu: T) DistributionError!Self {
+            if (!math.isFinite(lambda) or !(alpha > 0) or !math.isFinite(alpha) or
+                !math.isFinite(beta) or !(@abs(beta) < alpha) or
+                !(delta > 0) or !math.isFinite(delta) or !math.isFinite(mu))
+            {
+                return error.InvalidParameter;
+            }
+
+            const gamma = @sqrt(alpha * alpha - beta * beta);
+            const xi = delta * gamma;
+            const nu = lambda - 0.5;
+
+            // log_const = λ*log(γ) - 0.5*log(2π) - ν*log(α) - λ*log(δ) - log K_λ(ξ)
+            const log_const = lambda * @log(gamma) - 0.5 * @log(2.0 * math.pi) - nu * @log(alpha) -
+                lambda * @log(delta) - gigLogBesselK(T, lambda, xi);
+
+            // Bessel K ratios: use log differences to avoid underflow
+            const log_kr1 = gigLogBesselK(T, lambda + 1.0, xi) - gigLogBesselK(T, lambda, xi);
+            const log_kr2 = gigLogBesselK(T, lambda + 2.0, xi) - gigLogBesselK(T, lambda, xi);
+            const kr1 = @exp(log_kr1);
+            const kr2 = @exp(log_kr2);
+
+            return Self{
+                .lambda = lambda,
+                .alpha = alpha,
+                .beta = beta,
+                .delta = delta,
+                .mu = mu,
+                .gamma = gamma,
+                .xi = xi,
+                .nu = nu,
+                .log_const = log_const,
+                .kr1 = kr1,
+                .kr2 = kr2,
+            };
+        }
+
+        /// Log probability density function
+        /// Time: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            const z = x - self.mu;
+            const q = @sqrt(self.delta * self.delta + z * z);
+            const log_k = gigLogBesselK(T, self.nu, self.alpha * q);
+            return self.log_const + self.nu * @log(q) + log_k + self.beta * z;
+        }
+
+        /// Probability density function
+        /// Time: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logPdf(x));
+        }
+
+        /// Mean E[X]
+        /// Time: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu + self.delta * self.beta / self.gamma * self.kr1;
+        }
+
+        /// Variance Var[X]
+        /// Time: O(1)
+        pub fn variance(self: Self) T {
+            const delta_over_gamma = self.delta / self.gamma;
+            const beta_ratio = self.beta / self.gamma;
+            return delta_over_gamma * self.kr1 + self.delta * self.delta * beta_ratio * beta_ratio *
+                (self.kr2 - self.kr1 * self.kr1);
+        }
+
+        /// Standard deviation
+        /// Time: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Mode via ternary search (GH is always unimodal)
+        /// Time: O(100)
+        pub fn mode(self: Self) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            var lo: T = m - 8.0 * s;
+            var hi: T = m + 8.0 * s;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.logPdf(m1) < self.logPdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+                if (hi - lo < 1e-10 * (@abs(lo) + @abs(hi) + 1.0)) break;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Cumulative distribution function (500-pt midpoint quadrature)
+        /// Time: O(500)
+        pub fn cdf(self: Self, x: T) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            const lo = m - 20.0 * s;
+            if (x <= lo) return 0.0;
+            const N: usize = 500;
+            const h = (x - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                sum += self.pdf(xi);
+            }
+            return @min(1.0, sum * h);
+        }
+
+        /// Survival function S(x) = 1 - CDF(x)
+        /// Time: O(500)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) via bisection
+        /// Time: O(32000) (64 iterations × 500-pt CDF)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            const m = self.mean();
+            const s = self.stdDev();
+            var lo: T = m - 20.0 * s;
+            var hi: T = m + 20.0 * s;
+
+            var expand: usize = 0;
+            while (self.cdf(hi) < p and expand < 20) : (expand += 1) hi += s;
+
+            expand = 0;
+            while (self.cdf(lo) > p and expand < 20) : (expand += 1) lo -= s;
+
+            var iter: usize = 0;
+            while (iter < 64) : (iter += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if ((hi - lo) / (@abs(hi) + @abs(lo) + 1e-300) < 1e-8) break;
+            }
+
+            return (lo + hi) * 0.5;
+        }
+
+        /// Entropy (500-pt numerical integration)
+        /// Time: O(500)
+        pub fn entropy(self: Self) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            const lo = m - 10.0 * s;
+            const hi = m + 10.0 * s;
+            const N: usize = 500;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const p_val = self.pdf(xi);
+                if (p_val > 0) sum -= p_val * @log(p_val);
+            }
+            return sum * h;
+        }
+
+        /// Sample via inverse CDF
+        /// Time: O(32000)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch self.mean();
+        }
+
+        /// Validate internal invariants
+        /// Time: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.lambda) or !(self.alpha > 0) or !(@abs(self.beta) < self.alpha) or
+                !(self.delta > 0) or !(self.gamma > 0) or !math.isFinite(self.log_const) or
+                !math.isFinite(self.kr1) or !math.isFinite(self.kr2))
+            {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format for printing
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("GH(λ={d}, α={d}, β={d}, δ={d}, μ={d})", .{ self.lambda, self.alpha, self.beta, self.delta, self.mu });
+        }
+    };
+}
+
+// ============================================================================
+// Generalized Hyperbolic Distribution Tests
+// ============================================================================
+
+test "GeneralizedHyperbolic: init succeeds with valid params (lambda=-0.5,alpha=2,beta=0,delta=1,mu=0)" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    try std.testing.expect(dist.lambda == -0.5);
+    try std.testing.expect(dist.alpha == 2.0);
+    try std.testing.expect(dist.beta == 0.0);
+    try std.testing.expect(dist.delta == 1.0);
+    try std.testing.expect(dist.mu == 0.0);
+}
+
+test "GeneralizedHyperbolic: init fails when lambda not finite" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(math.inf(f64), 2.0, 1.0, 1.0, 0.0));
+}
+
+test "GeneralizedHyperbolic: init fails when alpha is zero" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(-0.5, 0.0, 0.0, 1.0, 0.0));
+}
+
+test "GeneralizedHyperbolic: init fails when alpha is negative" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(-0.5, -2.0, 0.0, 1.0, 0.0));
+}
+
+test "GeneralizedHyperbolic: init fails when |beta| >= alpha" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(-0.5, 2.0, 2.0, 1.0, 0.0));
+}
+
+test "GeneralizedHyperbolic: init fails when delta is zero" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 0.0, 0.0));
+}
+
+test "GeneralizedHyperbolic: init fails when delta is negative" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, -1.0, 0.0));
+}
+
+test "GeneralizedHyperbolic: init fails when mu is not finite" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, math.inf(f64)));
+}
+
+test "GeneralizedHyperbolic: pdf is positive for all tested x values" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(p > 0.0);
+    }
+}
+
+test "GeneralizedHyperbolic: pdf is finite everywhere" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    const x_vals = [_]f64{ -100.0, -10.0, 0.0, 10.0, 100.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(math.isFinite(p));
+    }
+}
+
+test "GeneralizedHyperbolic: logPdf equals log(pdf) consistency" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const x: f64 = 1.5;
+    const p = dist.pdf(x);
+    const log_p = dist.logPdf(x);
+    try expectApproxEqAbs(log_p, @log(p), 1e-10);
+}
+
+test "GeneralizedHyperbolic: pdf symmetric when beta=0" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const t: f64 = 1.5;
+    const pdf_plus = dist.pdf(t);
+    const pdf_minus = dist.pdf(-t);
+    try expectApproxEqAbs(pdf_plus, pdf_minus, 1e-8);
+}
+
+test "GeneralizedHyperbolic: special case GH(-0.5,2,0,1,0) matches NIG(2,0,0,1)" {
+    const gh_dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const nig_dist = try NormalInverseGaussian(f64).init(2.0, 0.0, 0.0, 1.0);
+    const x: f64 = 0.0;
+    const gh_pdf = gh_dist.pdf(x);
+    const nig_pdf = nig_dist.pdf(x);
+    try expectApproxEqAbs(gh_pdf, nig_pdf, 1e-8);
+}
+
+test "GeneralizedHyperbolic: CDF is monotone increasing" {
+    const dist = try GeneralizedHyperbolic(f64).init(1.0, 2.0, 0.5, 1.0, 0.0);
+    const x_vals = [_]f64{ -5.0, -2.0, 0.0, 2.0, 5.0 };
+    var prev_cdf: f64 = 0.0;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try std.testing.expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "GeneralizedHyperbolic: cdf(mu) near 0.5 when beta=0" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const c = dist.cdf(dist.mu);
+    try expectApproxEqAbs(c, 0.5, 1e-3);
+}
+
+test "GeneralizedHyperbolic: cdf approaches 0 far left" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const c = dist.cdf(-100.0);
+    try std.testing.expect(c < 0.01);
+}
+
+test "GeneralizedHyperbolic: cdf approaches 1 far right" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const c = dist.cdf(100.0);
+    try std.testing.expect(c > 0.99);
+}
+
+test "GeneralizedHyperbolic: cdf + sf = 1.0 at x" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    const x: f64 = 2.0;
+    const cdf_x = dist.cdf(x);
+    const sf_x = dist.sf(x);
+    try expectApproxEqAbs(1.0, cdf_x + sf_x, 1e-10);
+}
+
+test "GeneralizedHyperbolic: quantile(0) is -inf" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expect(q == -math.inf(f64));
+}
+
+test "GeneralizedHyperbolic: quantile(1) is +inf" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expect(q == math.inf(f64));
+}
+
+test "GeneralizedHyperbolic: quantile(p<0) returns error" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "GeneralizedHyperbolic: quantile(p>1) returns error" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "GeneralizedHyperbolic: quantile(cdf(x)) roundtrip" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const x: f64 = 1.0;
+    const cdf_x = dist.cdf(x);
+    const q = try dist.quantile(cdf_x);
+    try expectApproxEqAbs(q, x, 1e-3);
+}
+
+test "GeneralizedHyperbolic: mean is finite" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    const m = dist.mean();
+    try std.testing.expect(math.isFinite(m));
+}
+
+test "GeneralizedHyperbolic: mean is mu when beta=0" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 5.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(m, 5.0, 1e-8);
+}
+
+test "GeneralizedHyperbolic: variance is finite" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    const v = dist.variance();
+    try std.testing.expect(math.isFinite(v));
+}
+
+test "GeneralizedHyperbolic: variance is positive" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const v = dist.variance();
+    try std.testing.expect(v > 0.0);
+}
+
+test "GeneralizedHyperbolic: stdDev equals sqrt(variance)" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const sd = dist.stdDev();
+    const expected = @sqrt(dist.variance());
+    try expectApproxEqAbs(sd, expected, 1e-10);
+}
+
+test "GeneralizedHyperbolic: mode is finite" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    const m = dist.mode();
+    try std.testing.expect(math.isFinite(m));
+}
+
+test "GeneralizedHyperbolic: mode near mean when beta=0" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const mode = dist.mode();
+    const mean = dist.mean();
+    try expectApproxEqAbs(mode, mean, 0.1 * dist.stdDev());
+}
+
+test "GeneralizedHyperbolic: pdf(mode) >= pdf(mode+0.5)" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    const mode = dist.mode();
+    const pdf_mode = dist.pdf(mode);
+    const pdf_offset = dist.pdf(mode + 0.5);
+    try std.testing.expect(pdf_mode >= pdf_offset);
+}
+
+test "GeneralizedHyperbolic: entropy is finite" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const e = dist.entropy();
+    try std.testing.expect(math.isFinite(e));
+}
+
+test "GeneralizedHyperbolic: entropy is positive" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const e = dist.entropy();
+    try std.testing.expect(e > 0.0);
+}
+
+test "GeneralizedHyperbolic: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(12345);
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    const sample_val = dist.sample(rng.random());
+    try std.testing.expect(math.isFinite(sample_val));
+}
+
+test "GeneralizedHyperbolic: samples have mean near E[X]" {
+    var rng = std.Random.DefaultPrng.init(12345);
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 0.5, 1.0, 0.0);
+    var sum: f64 = 0.0;
+    const n: usize = 200;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const expected_mean = dist.mean();
+    try expectApproxEqAbs(sample_mean, expected_mean, 0.3);
+}
+
+test "GeneralizedHyperbolic: validate succeeds with valid params" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "GeneralizedHyperbolic: type f32 works (pdf > 0 and mean finite)" {
+    const dist = try GeneralizedHyperbolic(f32).init(-0.5, 2.0, 0.0, 1.0, 0.0);
+    const p = dist.pdf(0.0);
+    try std.testing.expect(p > 0.0);
+    const m = dist.mean();
+    try std.testing.expect(math.isFinite(m));
+}
+
+test "GeneralizedHyperbolic: NIG special case lambda=-0.5 mean formula" {
+    const dist = try GeneralizedHyperbolic(f64).init(-0.5, 2.0, 1.0, 1.0, 3.0);
+    const m = dist.mean();
+    const gamma = @sqrt(2.0 * 2.0 - 1.0 * 1.0);
+    const expected = 3.0 + 1.0 * 1.0 / gamma;
+    try expectApproxEqAbs(m, expected, 1e-8);
+}
+
