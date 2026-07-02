@@ -74294,3 +74294,775 @@ test "PearsonIII: validate fails when beta is corrupted zero" {
     dist.beta = 0.0;
     try expectError(error.InvalidParameter, dist.validate());
 }
+
+// ============================================================================
+// Generalized Inverse Gaussian Distribution (129th total, 105th continuous)
+// ============================================================================
+
+/// Modified Bessel function of the second kind, K_0(x)
+/// Uses Abramowitz & Stegun 9.8.5-9.8.6 polynomial approximations
+fn gigBesselK0(comptime T: type, x: T) T {
+    if (x <= 2.0) {
+        const t2 = (x / 3.75) * (x / 3.75);
+        const bessel_i0 = 1.0 + t2 * (3.5156329 + t2 * (3.0899424 + t2 * (1.2067492 + t2 * (0.2659732 + t2 * (0.0360768 + t2 * 0.0045813)))));
+        const y = x * x * 0.25;
+        const p = -0.57721566 + y * (0.42278420 + y * (0.23069756 + y * (0.03488590 + y * (0.00262698 + y * (0.00010750 + y * 7.4e-6)))));
+        return p - @log(x * 0.5) * bessel_i0;
+    } else {
+        const t = 2.0 / x;
+        const p = 1.25331414 + t * (-0.07832358 + t * (0.02189568 + t * (-0.01062446 + t * (0.00587872 + t * (-0.00251540 + t * 0.00053208)))));
+        return @exp(-x) / @sqrt(x) * p;
+    }
+}
+
+/// Modified Bessel function of the second kind, K_1(x)
+/// Uses Abramowitz & Stegun 9.8.7-9.8.8 polynomial approximations
+fn gigBesselK1(comptime T: type, x: T) T {
+    if (x <= 2.0) {
+        const t2 = (x / 3.75) * (x / 3.75);
+        const bessel_i1 = x * (0.5 + t2 * (0.87890594 + t2 * (0.51498869 + t2 * (0.15084934 + t2 * (0.02658733 + t2 * (0.00301532 + t2 * 0.00032411))))));
+        const y = x * x * 0.25;
+        const p = 1.0 + y * (0.15443144 + y * (-0.67278579 + y * (-0.18156897 + y * (-0.01919402 + y * (-0.00110404 + y * (-0.00004686))))));
+        return bessel_i1 * @log(x * 0.5) + p / x;
+    } else {
+        const t = 2.0 / x;
+        const p = 1.25331414 + t * (0.23498619 + t * (-0.03655620 + t * (0.01504268 + t * (-0.00780353 + t * (0.00325614 + t * (-0.00068245))))));
+        return @exp(-x) / @sqrt(x) * p;
+    }
+}
+
+/// Modified Bessel function of the second kind, K_n(x) for integer n
+/// Uses upward recurrence: K_{n+1} = K_{n-1} + (2n/x)*K_n
+fn gigBesselKInt(comptime T: type, n: u32, x: T) T {
+    var k_prev = gigBesselK0(T, x);
+    if (n == 0) return k_prev;
+    var k_curr = gigBesselK1(T, x);
+    if (n == 1) return k_curr;
+    var i: u32 = 1;
+    while (i < n) : (i += 1) {
+        const fi: T = @as(T, @floatFromInt(i));
+        const k_next = k_prev + (2.0 * fi / x) * k_curr;
+        k_prev = k_curr;
+        k_curr = k_next;
+    }
+    return k_curr;
+}
+
+/// Modified Bessel function of the second kind, K_nu(x) for general nu
+/// Uses numerical integration: K_nu(x) = integral_0^infty e^{-x*cosh(t)} cosh(nu*t) dt
+fn gigBesselKGeneral(comptime T: type, abs_nu: T, x: T) T {
+    const N: usize = 400;
+    const T_max: T = 50.0;
+    const dt: T = T_max / @as(T, @floatFromInt(N));
+
+    // Find peak for normalization
+    const t_peak: T = if (abs_nu > x) math.asinh(abs_nu / x) else 0.0;
+    const nu_tp = abs_nu * t_peak;
+    const log_cosh_peak: T = if (nu_tp > 20.0) nu_tp - @log(@as(T, 2.0)) else @log(math.cosh(nu_tp));
+    const peak_log: T = -x * math.cosh(t_peak) + log_cosh_peak;
+
+    var sum: T = 0.0;
+    var i: usize = 0;
+    while (i < N) : (i += 1) {
+        const t: T = (@as(T, @floatFromInt(i)) + 0.5) * dt;
+        const nu_t = abs_nu * t;
+        const log_ch: T = if (nu_t > 20.0) nu_t - @log(@as(T, 2.0)) else @log(math.cosh(nu_t));
+        const log_val = -x * math.cosh(t) + log_ch;
+        sum += @exp(log_val - peak_log);
+    }
+    return @exp(peak_log) * sum * dt;
+}
+
+/// Modified Bessel function of the second kind, K_nu(x)
+/// Dispatches to integer order or general integral based on nu
+fn gigBesselK(comptime T: type, nu: T, x: T) T {
+    const abs_nu = @abs(nu);
+    const n = @round(abs_nu);
+    if (@abs(abs_nu - n) < 1e-9 and n <= 30.0) {
+        return gigBesselKInt(T, @intFromFloat(n), x);
+    }
+    return gigBesselKGeneral(T, abs_nu, x);
+}
+
+/// Log of modified Bessel function K_nu(x), numerically stable
+fn gigLogBesselK(comptime T: type, nu: T, x: T) T {
+    if (x > 30.0) {
+        const mu = 4.0 * nu * nu;
+        const inv8x = 1.0 / (8.0 * x);
+        const a1 = (mu - 1.0) * inv8x;
+        const a2 = (mu - 1.0) * (mu - 9.0) * inv8x * inv8x * 0.5;
+        const a3 = (mu - 1.0) * (mu - 9.0) * (mu - 25.0) * inv8x * inv8x * inv8x / 6.0;
+        const series = 1.0 + a1 + a2 + a3;
+        return 0.5 * @log(math.pi / (2.0 * x)) - x + @log(@max(series, @as(T, 1e-300)));
+    }
+    return @log(gigBesselK(T, nu, x));
+}
+
+/// Generalized Inverse Gaussian distribution GIG(λ, ψ, χ)
+///
+/// Unifies Gamma, InverseGamma, InverseGaussian via a 3-parameter family.
+/// Used in finance (variance-gamma base), hydrology, and Bayesian inference.
+///
+/// PDF: f(x) = (ψ/χ)^{λ/2} / (2 K_λ(ω)) · x^{λ-1} · exp(-½(ψx + χ/x))
+/// where ω = √(ψχ), K_λ is modified Bessel K of order λ
+///
+/// Parameters:
+///   - lambda: Shape index (ℝ, any real)
+///   - psi:    Scale for x (psi > 0)
+///   - chi:    Scale for 1/x (chi > 0)
+///
+/// Support: x ∈ (0, ∞)
+/// Mode:    [(λ-1) + √((λ-1)² + ψχ)] / ψ
+/// Mean:    √(χ/ψ) · K_{λ+1}(ω) / K_λ(ω)
+///
+/// Special cases:
+///   λ = -½: reduces to InverseGaussian
+///   λ > 0, χ→0: reduces to Gamma(λ, ψ/2)
+///   λ < 0, ψ→0: reduces to InverseGamma(-λ, χ/2)
+///
+/// Time: O(400) for init/mean/variance (Bessel integral) | O(500) for cdf | O(40000) for quantile
+pub fn GeneralizedInverseGaussian(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        lambda: T,
+        psi: T,
+        chi: T,
+        omega: T,      // sqrt(psi * chi), pre-computed
+        log_norm: T,   // (lambda/2)*log(psi/chi) - log(2) - logK_lambda(omega)
+
+        /// Initialize GeneralizedInverseGaussian with shape λ, scale ψ, and scale χ
+        /// Time: O(400) (Bessel K integral)
+        pub fn init(lambda: T, psi: T, chi: T) DistributionError!Self {
+            if (!(psi > 0) or !(chi > 0) or !math.isFinite(lambda) or !math.isFinite(psi) or !math.isFinite(chi)) {
+                return error.InvalidParameter;
+            }
+
+            const omega = @sqrt(psi * chi);
+            const log_ratio = @log(psi / chi);
+            const log_norm_val = (lambda / 2.0) * log_ratio - @log(2.0) - gigLogBesselK(T, lambda, omega);
+
+            return Self{
+                .lambda = lambda,
+                .psi = psi,
+                .chi = chi,
+                .omega = omega,
+                .log_norm = log_norm_val,
+            };
+        }
+
+        /// Log probability density function
+        /// Time: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            if (!(x > 0)) return -math.inf(T);
+            return self.log_norm + (self.lambda - 1.0) * @log(x) - 0.5 * (self.psi * x + self.chi / x);
+        }
+
+        /// Probability density function
+        /// Time: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logPdf(x));
+        }
+
+        /// Mode (maximum of PDF)
+        /// Time: O(1)
+        pub fn mode(self: Self) T {
+            const lm1 = self.lambda - 1.0;
+            return (lm1 + @sqrt(lm1 * lm1 + self.psi * self.chi)) / self.psi;
+        }
+
+        /// Mean E[X]
+        /// Time: O(400) (Bessel K integral)
+        pub fn mean(self: Self) T {
+            const k_next = gigBesselK(T, self.lambda + 1.0, self.omega);
+            const k_curr = gigBesselK(T, self.lambda, self.omega);
+            return @sqrt(self.chi / self.psi) * k_next / k_curr;
+        }
+
+        /// Variance Var[X]
+        /// Time: O(400) (Bessel K integral)
+        pub fn variance(self: Self) T {
+            const k0 = gigBesselK(T, self.lambda, self.omega);
+            const k1 = gigBesselK(T, self.lambda + 1.0, self.omega);
+            const k2 = gigBesselK(T, self.lambda + 2.0, self.omega);
+            const k1_k0 = k1 / k0;
+            return (self.chi / self.psi) * (k2 / k0 - k1_k0 * k1_k0);
+        }
+
+        /// Cumulative distribution function (500-pt midpoint quadrature)
+        /// Time: O(500)
+        pub fn cdf(self: Self, x: T) T {
+            if (!(x > 0)) return 0.0;
+            const N: usize = 500;
+            const h = x / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = (@as(T, @floatFromInt(i)) + 0.5) * h;
+                sum += self.pdf(xi);
+            }
+            return @min(1.0, sum * h);
+        }
+
+        /// Quantile function (inverse CDF) via bisection
+        /// Time: O(40000) (80 bisection iterations × 500-pt CDF)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            var lo: T = 0.0;
+            var hi: T = self.mode() * 10.0;
+            while (self.cdf(hi) < p) {
+                hi *= 2.0;
+            }
+
+            var iter: usize = 0;
+            while (iter < 80) : (iter += 1) {
+                const mid = (lo + hi) * 0.5;
+                const cdf_mid = self.cdf(mid);
+                if (cdf_mid < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                const rel_tol = (hi - lo) / (hi + lo + 1e-300);
+                if (rel_tol < 1e-7) break;
+            }
+
+            return (lo + hi) * 0.5;
+        }
+
+        /// Entropy (500-pt numerical integration)
+        /// Time: O(500)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const m = self.mode();
+            const lo = m / 100.0;
+            const hi = m * 100.0;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const p_val = self.pdf(xi);
+                if (p_val > 0) {
+                    sum -= p_val * @log(p_val);
+                }
+            }
+            return sum * h;
+        }
+
+        /// Sample from distribution via inverse CDF
+        /// Time: O(40000)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch self.mode();
+        }
+
+        /// Validate internal invariants
+        /// Time: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.psi > 0) or !(self.chi > 0) or !math.isFinite(self.omega) or !math.isFinite(self.log_norm)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format for printing
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("GIG(λ={d}, ψ={d}, χ={d})", .{ self.lambda, self.psi, self.chi });
+        }
+    };
+}
+
+// GIG Distribution Tests
+// =============================================================================
+
+test "GeneralizedInverseGaussian: init succeeds with valid parameters (lambda=1, psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.lambda == 1.0);
+    try std.testing.expect(dist.psi == 1.0);
+    try std.testing.expect(dist.chi == 1.0);
+}
+
+test "GeneralizedInverseGaussian: init succeeds with lambda=0" {
+    const dist = try GeneralizedInverseGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.lambda == 0.0);
+}
+
+test "GeneralizedInverseGaussian: init succeeds with negative lambda" {
+    const dist = try GeneralizedInverseGaussian(f64).init(-2.0, 1.0, 1.0);
+    try std.testing.expect(dist.lambda == -2.0);
+}
+
+test "GeneralizedInverseGaussian: init fails when psi is zero" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(1.0, 0.0, 1.0));
+}
+
+test "GeneralizedInverseGaussian: init fails when psi is negative" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(1.0, -1.0, 1.0));
+}
+
+test "GeneralizedInverseGaussian: init fails when chi is zero" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(1.0, 1.0, 0.0));
+}
+
+test "GeneralizedInverseGaussian: init fails when chi is negative" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(1.0, 1.0, -1.0));
+}
+
+test "GeneralizedInverseGaussian: init fails when psi is NaN" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(1.0, math.nan(f64), 1.0));
+}
+
+test "GeneralizedInverseGaussian: init fails when chi is NaN" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+test "GeneralizedInverseGaussian: init fails when lambda is infinite" {
+    try std.testing.expectError(error.InvalidParameter, GeneralizedInverseGaussian(f64).init(math.inf(f64), 1.0, 1.0));
+}
+
+// ============================================================================
+// MODE CALCULATION (EXACT FORMULA)
+// ============================================================================
+
+test "GeneralizedInverseGaussian: mode exact for (lambda=1, psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mode();
+    // mode = [(1-1) + sqrt(0+1)]/1 = 1
+    try expectApproxEqAbs(m, 1.0, 1e-10);
+}
+
+test "GeneralizedInverseGaussian: mode exact for (lambda=2, psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(2.0, 1.0, 1.0);
+    const m = dist.mode();
+    // mode = [(2-1) + sqrt(1+1)]/1 = 1 + sqrt(2)
+    const expected = 1.0 + @sqrt(2.0);
+    try expectApproxEqAbs(m, expected, 1e-10);
+}
+
+test "GeneralizedInverseGaussian: mode exact for (lambda=1, psi=2, chi=2)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 2.0, 2.0);
+    const m = dist.mode();
+    // mode = [(0) + sqrt(0+4)]/2 = 2/2 = 1
+    try expectApproxEqAbs(m, 1.0, 1e-10);
+}
+
+test "GeneralizedInverseGaussian: mode exact for (lambda=3, psi=1, chi=4)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(3.0, 1.0, 4.0);
+    const m = dist.mode();
+    // mode = [(3-1) + sqrt(4+4)]/1 = 2 + 2*sqrt(2)
+    const expected = 2.0 + 2.0 * @sqrt(2.0);
+    try expectApproxEqAbs(m, expected, 1e-10);
+}
+
+test "GeneralizedInverseGaussian: mode is always positive" {
+    const params = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 1.0 },
+        [_]f64{ -1.0, 1.0, 2.0 },
+        [_]f64{ 5.0, 2.0, 3.0 },
+        [_]f64{ -0.5, 1.0, 1.0 },
+    };
+    for (params) |p| {
+        const dist = try GeneralizedInverseGaussian(f64).init(p[0], p[1], p[2]);
+        const m = dist.mode();
+        try std.testing.expect(m > 0.0);
+    }
+}
+
+// ============================================================================
+// PDF PROPERTIES
+// ============================================================================
+
+test "GeneralizedInverseGaussian: PDF is positive for x > 0" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.pdf(0.5) > 0.0);
+    try std.testing.expect(dist.pdf(1.0) > 0.0);
+    try std.testing.expect(dist.pdf(2.0) > 0.0);
+    try std.testing.expect(dist.pdf(10.0) > 0.0);
+}
+
+test "GeneralizedInverseGaussian: PDF is zero or near-zero for x <= 0" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.pdf(-1.0) <= 0.0 or dist.pdf(-1.0) < 1e-10);
+    try std.testing.expect(dist.pdf(0.0) <= 0.0 or dist.pdf(0.0) < 1e-10);
+}
+
+test "GeneralizedInverseGaussian: PDF has maximum at mode" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mode();
+    const p_mode = dist.pdf(m);
+    const p_half_mode = dist.pdf(0.5 * m);
+    const p_double_mode = dist.pdf(2.0 * m);
+    try std.testing.expect(p_mode >= p_half_mode);
+    try std.testing.expect(p_mode >= p_double_mode);
+}
+
+test "GeneralizedInverseGaussian: PDF is unimodal (lambda=1, psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev_pdf: f64 = 0.0;
+    var in_increasing = true;
+    var peak_passed = false;
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        if (in_increasing) {
+            if (p < prev_pdf) {
+                in_increasing = false;
+                peak_passed = true;
+            }
+        } else if (peak_passed) {
+            // After peak, should only decrease
+            try std.testing.expect(p <= prev_pdf + 1e-10);
+        }
+        prev_pdf = p;
+    }
+}
+
+test "GeneralizedInverseGaussian: PDF integrates to approximately 1 (lambda=1, psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    // 100-pt midpoint quadrature on [0.01, 50]
+    const a = 0.01;
+    const b = 50.0;
+    const n = 100;
+    const dx = (b - a) / @as(f64, @floatFromInt(n));
+    var sum: f64 = 0.0;
+    for (0..n) |i| {
+        const x = a + (@as(f64, @floatFromInt(i)) + 0.5) * dx;
+        sum += dist.pdf(x) * dx;
+    }
+    try expectApproxEqAbs(sum, 1.0, 0.01);
+}
+
+// ============================================================================
+// LOGPDF CONSISTENCY
+// ============================================================================
+
+test "GeneralizedInverseGaussian: logPdf equals log(pdf) at moderate x" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const pdf_val = dist.pdf(x);
+        const logpdf_val = dist.logPdf(x);
+        const expected_log = @log(pdf_val);
+        try expectApproxEqAbs(logpdf_val, expected_log, 1e-10);
+    }
+}
+
+test "GeneralizedInverseGaussian: logPdf is negative for x > 0" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.logPdf(0.5) < 0.0);
+    try std.testing.expect(dist.logPdf(1.0) < 0.0);
+    try std.testing.expect(dist.logPdf(2.0) < 0.0);
+}
+
+test "GeneralizedInverseGaussian: logPdf is -inf for x <= 0" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expect(math.isInf(dist.logPdf(0.0)) and dist.logPdf(0.0) < 0.0);
+    try std.testing.expect(math.isInf(dist.logPdf(-1.0)) and dist.logPdf(-1.0) < 0.0);
+}
+
+// ============================================================================
+// CDF PROPERTIES AND MONOTONICITY
+// ============================================================================
+
+test "GeneralizedInverseGaussian: CDF is non-decreasing" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev_cdf = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const cdf_val = dist.cdf(x);
+        try std.testing.expect(cdf_val >= prev_cdf - 1e-10);
+        prev_cdf = cdf_val;
+    }
+}
+
+test "GeneralizedInverseGaussian: CDF approaches 0 for small x" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const cdf_small = dist.cdf(0.001);
+    try std.testing.expect(cdf_small < 0.01);
+}
+
+test "GeneralizedInverseGaussian: CDF approaches 1 for large x" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const cdf_large = dist.cdf(100.0);
+    try std.testing.expect(cdf_large > 0.99);
+}
+
+test "GeneralizedInverseGaussian: CDF at mode is between 0 and 1" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mode();
+    const cdf_at_mode = dist.cdf(m);
+    try std.testing.expect(cdf_at_mode > 0.0 and cdf_at_mode < 1.0);
+}
+
+// ============================================================================
+// QUANTILE (INVERSE CDF)
+// ============================================================================
+
+test "GeneralizedInverseGaussian: quantile fails for p < 0" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "GeneralizedInverseGaussian: quantile fails for p > 1" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "GeneralizedInverseGaussian: quantile roundtrip CDF(quantile(p)) ≈ p" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqAbs(cdf_q, p, 1e-3);
+    }
+}
+
+test "GeneralizedInverseGaussian: quantile is positive for valid p" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const probs = [_]f64{ 0.01, 0.5, 0.99 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try std.testing.expect(q > 0.0);
+    }
+}
+
+// ============================================================================
+// MEAN AND VARIANCE
+// ============================================================================
+
+test "GeneralizedInverseGaussian: mean is positive" {
+    const params = [_][3]f64{
+        [_]f64{ 1.0, 1.0, 1.0 },
+        [_]f64{ 0.0, 1.0, 1.0 },
+        [_]f64{ 2.0, 1.0, 1.0 },
+        [_]f64{ -0.5, 1.0, 1.0 },
+    };
+    for (params) |p| {
+        const dist = try GeneralizedInverseGaussian(f64).init(p[0], p[1], p[2]);
+        const m = dist.mean();
+        try std.testing.expect(m > 0.0);
+    }
+}
+
+test "GeneralizedInverseGaussian: variance is positive" {
+    const params = [_][3]f64{
+        [_]f64{ 1.0, 1.0, 1.0 },
+        [_]f64{ 0.0, 1.0, 1.0 },
+        [_]f64{ 2.0, 1.0, 1.0 },
+    };
+    for (params) |p| {
+        const dist = try GeneralizedInverseGaussian(f64).init(p[0], p[1], p[2]);
+        const v = dist.variance();
+        try std.testing.expect(v > 0.0);
+    }
+}
+
+test "GeneralizedInverseGaussian: mean is reasonable for (lambda=1, psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mean();
+    // Expected: K_2(1)/K_1(1) ≈ 2.6993
+    try expectApproxEqAbs(m, 2.6993, 0.05);
+}
+
+// ============================================================================
+// SCALE PROPERTY
+// ============================================================================
+
+test "GeneralizedInverseGaussian: scale property for mode" {
+    const dist1 = try GeneralizedInverseGaussian(f64).init(2.0, 1.0, 1.0);
+    const dist2 = try GeneralizedInverseGaussian(f64).init(2.0, 0.5, 2.0);
+    const mode1 = dist1.mode();
+    const mode2 = dist2.mode();
+    // GIG(lambda, psi/k, k*chi) has mode = k * mode(GIG(lambda, psi, chi))
+    try expectApproxEqAbs(mode2, 2.0 * mode1, 1e-10);
+}
+
+test "GeneralizedInverseGaussian: scale property for mean" {
+    const dist1 = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const dist2 = try GeneralizedInverseGaussian(f64).init(1.0, 0.5, 2.0);
+    const mean1 = dist1.mean();
+    const mean2 = dist2.mean();
+    // E[GIG(lambda, psi/k, k*chi)] = k * E[GIG(lambda, psi, chi)]
+    try expectApproxEqAbs(mean2, 2.0 * mean1, 1e-10);
+}
+
+// ============================================================================
+// SPECIAL CASE: INVERSE GAUSSIAN APPROXIMATION
+// ============================================================================
+
+test "GeneralizedInverseGaussian: special case lambda=-0.5 has mean=1 for (psi=1, chi=1)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(-0.5, 1.0, 1.0);
+    const m = dist.mean();
+    // For GIG(-0.5, 1, 1): mean = K_{0.5}(1)/K_{-0.5}(1) = 1 (since K_{0.5} = K_{-0.5})
+    try expectApproxEqAbs(m, 1.0, 1e-3);
+}
+
+// ============================================================================
+// ENTROPY
+// ============================================================================
+
+test "GeneralizedInverseGaussian: entropy is positive" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try std.testing.expect(h > 0.0);
+}
+
+test "GeneralizedInverseGaussian: entropy is finite" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try std.testing.expect(math.isFinite(h));
+}
+
+// ============================================================================
+// SAMPLE AND DISTRIBUTION
+// ============================================================================
+
+test "GeneralizedInverseGaussian: sample returns positive values" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try std.testing.expect(s > 0.0);
+    }
+}
+
+test "GeneralizedInverseGaussian: sample mean approaches theoretical mean" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(sample_mean, theoretical_mean, 0.15);
+}
+
+// ============================================================================
+// VALIDATE METHOD
+// ============================================================================
+
+test "GeneralizedInverseGaussian: validate passes for valid distribution" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "GeneralizedInverseGaussian: validate passes for all valid parameter combinations" {
+    const params = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 1.0 },
+        [_]f64{ 1.0, 2.0, 3.0 },
+        [_]f64{ -1.0, 2.0, 3.0 },
+        [_]f64{ 5.0, 0.5, 10.0 },
+        [_]f64{ -2.0, 0.1, 0.1 },
+    };
+    for (params) |p| {
+        const dist = try GeneralizedInverseGaussian(f64).init(p[0], p[1], p[2]);
+        try dist.validate();
+    }
+}
+
+test "GeneralizedInverseGaussian: validate fails when psi is corrupted negative" {
+    var dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    dist.psi = -1.0;
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedInverseGaussian: validate fails when chi is corrupted negative" {
+    var dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 1.0);
+    dist.chi = -1.0;
+    try std.testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+// ============================================================================
+// F32 TYPE SUPPORT
+// ============================================================================
+
+test "GeneralizedInverseGaussian: f32 type comprehensive support" {
+    const dist = try GeneralizedInverseGaussian(f32).init(1.0, 1.0, 1.0);
+    try std.testing.expect(dist.pdf(1.0) > 0.0);
+    try std.testing.expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expect(math.isFinite(q) and q > 0.0);
+    const m = dist.mode();
+    try expectApproxEqAbs(m, 1.0, 1e-5);
+    const mean_val = dist.mean();
+    try std.testing.expect(mean_val > 0.0);
+    const v = dist.variance();
+    try std.testing.expect(v > 0.0);
+    const e = dist.entropy();
+    try std.testing.expect(e > 0.0);
+    try dist.validate();
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try std.testing.expect(s > 0.0);
+}
+
+// ============================================================================
+// EDGE CASES AND NUMERICAL STABILITY
+// ============================================================================
+
+test "GeneralizedInverseGaussian: handle very small psi (concentrated)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 0.001, 1.0);
+    try std.testing.expect(dist.pdf(1.0) > 0.0);
+    const m = dist.mode();
+    try std.testing.expect(m > 0.0);
+    try dist.validate();
+}
+
+test "GeneralizedInverseGaussian: handle very large chi (concentrated)" {
+    const dist = try GeneralizedInverseGaussian(f64).init(1.0, 1.0, 100.0);
+    try std.testing.expect(dist.pdf(10.0) > 0.0);
+    const m = dist.mode();
+    try std.testing.expect(m > 0.0);
+    try dist.validate();
+}
+
+test "GeneralizedInverseGaussian: handle negative lambda with positive chi/psi" {
+    const dist = try GeneralizedInverseGaussian(f64).init(-2.0, 1.0, 1.0);
+    try std.testing.expect(dist.pdf(1.0) > 0.0);
+    const m = dist.mode();
+    try std.testing.expect(m > 0.0);
+}
+
+test "GeneralizedInverseGaussian: handle large positive lambda" {
+    const dist = try GeneralizedInverseGaussian(f64).init(10.0, 1.0, 1.0);
+    try std.testing.expect(dist.pdf(5.0) > 0.0);
+    const m = dist.mode();
+    try std.testing.expect(m > 0.0);
+}
+
+test "GeneralizedInverseGaussian: mean is finite for all tested parameters" {
+    const params = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 1.0 },
+        [_]f64{ 1.0, 1.0, 1.0 },
+        [_]f64{ -1.0, 1.0, 1.0 },
+        [_]f64{ 5.0, 2.0, 3.0 },
+    };
+    for (params) |p| {
+        const dist = try GeneralizedInverseGaussian(f64).init(p[0], p[1], p[2]);
+        const m = dist.mean();
+        try std.testing.expect(math.isFinite(m));
+    }
+}
+
+test "GeneralizedInverseGaussian: variance is finite for all tested parameters" {
+    const params = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 1.0 },
+        [_]f64{ 1.0, 1.0, 1.0 },
+        [_]f64{ -1.0, 1.0, 1.0 },
+        [_]f64{ 5.0, 2.0, 3.0 },
+    };
+    for (params) |p| {
+        const dist = try GeneralizedInverseGaussian(f64).init(p[0], p[1], p[2]);
+        const v = dist.variance();
+        try std.testing.expect(math.isFinite(v));
+    }
+}
