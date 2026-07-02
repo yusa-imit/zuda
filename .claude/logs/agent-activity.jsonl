@@ -630,3 +630,6 @@
 {"timestamp":"2026-07-02T12:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write 52 failing tests for GeneralizedInverseGaussian distribution (129th total, 105th continuous)","project":"zuda"}
 {"timestamp":"2026-07-02T12:15:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedInverseGaussian distribution with Bessel K helpers in distributions.zig","project":"zuda"}
 {"timestamp":"2026-07-02T05:30:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NormalInverseGaussian distribution","project":"zuda"}
+{"timestamp":"2026-07-02T15:49:30Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedHyperbolic distribution (132nd total, 108th continuous)","project":"zuda"}
+{"timestamp":"2026-07-03T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Test quality audit for VarianceGamma and GeneralizedHyperbolic distributions","project":"zuda"}
+{"timestamp":"2026-07-03T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NonCentralChiSquared distribution (133rd)","project":"zuda"}

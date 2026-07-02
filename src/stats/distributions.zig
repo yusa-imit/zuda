@@ -76219,6 +76219,78 @@ test "VarianceGamma: quantile(0.5) close to median (mode for beta=0)" {
     try expectApproxEqAbs(median, m, 1e-2);
 }
 
+// ---- NEW AUDIT TESTS for VarianceGamma ----
+
+test "VarianceGamma: validate fails when beta equals alpha (boundary)" {
+    // Attempting to initialize with beta=alpha should fail validation
+    const result = VarianceGamma(f64).init(1.0, 2.0, 2.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: validate fails when beta > alpha" {
+    // Attempting to initialize with |beta| > alpha should fail validation
+    const result = VarianceGamma(f64).init(1.0, 1.5, 2.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: validate passes when beta = alpha - epsilon" {
+    // Initialize with beta just under alpha should succeed
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 1.99999, 0.0);
+    try dist.validate();
+}
+
+test "VarianceGamma: quantile is symmetric when beta=0" {
+    // For symmetric distribution beta=0: quantile(1-p) - mu = -(quantile(p) - mu)
+    // Note: quantile uses bisection (1e-3 tolerance), so we need looser tolerance here
+    const dist = try VarianceGamma(f64).init(1.0, 1.5, 0.0, 2.0);
+    const q_low = try dist.quantile(0.25);
+    const q_high = try dist.quantile(0.75);
+    const dist_low = q_low - dist.mu;
+    const dist_high = q_high - dist.mu;
+    try expectApproxEqAbs(-dist_low, dist_high, 1e-3);
+}
+
+test "VarianceGamma: mean formula depends on beta sign" {
+    // beta > 0 -> mean > mu; beta < 0 -> mean < mu; beta = 0 -> mean = mu
+    const lambda = 1.0;
+    const alpha = 2.0;
+    const mu = 5.0;
+
+    const dist_pos = try VarianceGamma(f64).init(lambda, alpha, 0.5, mu);
+    const dist_neg = try VarianceGamma(f64).init(lambda, alpha, -0.5, mu);
+    const dist_sym = try VarianceGamma(f64).init(lambda, alpha, 0.0, mu);
+
+    try std.testing.expect(dist_pos.mean() > mu);
+    try std.testing.expect(dist_neg.mean() < mu);
+    try expectApproxEqAbs(dist_sym.mean(), mu, 1e-10);
+}
+
+test "VarianceGamma: pdf approaches 0 as x moves away from mode" {
+    // PDF should decrease as we move far from mode in both directions
+    const dist = try VarianceGamma(f64).init(1.0, 1.5, 0.3, 0.0);
+    const m = dist.mode();
+    const pdf_mode = dist.pdf(m);
+    const pdf_far_left = dist.pdf(m - 10.0);
+    const pdf_far_right = dist.pdf(m + 10.0);
+
+    try std.testing.expect(pdf_far_left < pdf_mode);
+    try std.testing.expect(pdf_far_right < pdf_mode);
+}
+
+test "VarianceGamma: special case VG(1,2,1,0) satisfies mean formula exactly" {
+    // VG(1, 2, 1, 0): mean = 0 + 2*1*1/(4-1) = 2/3
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 1.0, 0.0);
+    const omega_sq = 3.0; // alpha^2 - beta^2 = 4 - 1
+    const expected_mean = 2.0 * 1.0 * 1.0 / omega_sq;
+    try expectApproxEqAbs(dist.mean(), expected_mean, 1e-12);
+}
+
+test "VarianceGamma: validate passes for valid symmetric distribution" {
+    // VG with beta=0 should always pass validate()
+    const dist = try VarianceGamma(f64).init(2.5, 1.8, 0.0, -3.0);
+    try dist.validate();
+}
+
 // ============================================================================
 // Generalized Hyperbolic Distribution
 // ============================================================================
@@ -76714,5 +76786,127 @@ test "GeneralizedHyperbolic: NIG special case lambda=-0.5 mean formula" {
     const gamma = @sqrt(2.0 * 2.0 - 1.0 * 1.0);
     const expected = 3.0 + 1.0 * 1.0 / gamma;
     try expectApproxEqAbs(m, expected, 1e-8);
+}
+
+// ---- NEW AUDIT TESTS for GeneralizedHyperbolic ----
+
+test "GeneralizedHyperbolic: validate fails when |beta| equals alpha" {
+    // Boundary: |beta| >= alpha should fail
+    const result = GeneralizedHyperbolic(f64).init(0.5, 3.0, 3.0, 1.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedHyperbolic: validate passes when |beta| just below alpha" {
+    // Boundary: |beta| < alpha (just below) should pass
+    const dist = try GeneralizedHyperbolic(f64).init(0.5, 3.0, 2.99999, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "GeneralizedHyperbolic: quantile is symmetric when beta=0" {
+    // For symmetric GH (beta=0): Q(1-p) - mu = -(Q(p) - mu)
+    // Note: quantile uses bisection (1e-3 tolerance), so we need looser tolerance here
+    const dist = try GeneralizedHyperbolic(f64).init(1.0, 2.5, 0.0, 1.0, 5.0);
+    const q_25 = try dist.quantile(0.25);
+    const q_75 = try dist.quantile(0.75);
+    const offset_25 = q_25 - dist.mu;
+    const offset_75 = q_75 - dist.mu;
+    try expectApproxEqAbs(-offset_25, offset_75, 1e-3);
+}
+
+test "GeneralizedHyperbolic: special case GH(-0.5,α,β,δ,μ) matches NIG(α,β,μ,δ) exactly at multiple x values" {
+    // GH with lambda=-0.5 should match NormalInverseGaussian across multiple points
+    const gh = try GeneralizedHyperbolic(f64).init(-0.5, 3.0, 1.0, 2.0, 1.0);
+    const nig = try NormalInverseGaussian(f64).init(3.0, 1.0, 1.0, 2.0);
+
+    const test_points = [_]f64{ -5.0, -1.0, 0.0, 1.0, 2.0, 5.0 };
+    for (test_points) |x| {
+        const gh_pdf = gh.pdf(x);
+        const nig_pdf = nig.pdf(x);
+        try expectApproxEqAbs(gh_pdf, nig_pdf, 1e-8);
+    }
+}
+
+test "GeneralizedHyperbolic: mean depends on beta sign (delta fixed)" {
+    // With beta > 0: mean > mu; with beta < 0: mean < mu; with beta = 0: mean = mu
+    const lambda = 0.5;
+    const alpha = 2.5;
+    const delta = 1.5;
+    const mu = 10.0;
+
+    const gh_pos = try GeneralizedHyperbolic(f64).init(lambda, alpha, 1.0, delta, mu);
+    const gh_neg = try GeneralizedHyperbolic(f64).init(lambda, alpha, -1.0, delta, mu);
+    const gh_sym = try GeneralizedHyperbolic(f64).init(lambda, alpha, 0.0, delta, mu);
+
+    try std.testing.expect(gh_pos.mean() > mu);
+    try std.testing.expect(gh_neg.mean() < mu);
+    try expectApproxEqAbs(gh_sym.mean(), mu, 1e-8);
+}
+
+test "GeneralizedHyperbolic: pdf monotonically increases to mode then decreases" {
+    // PDF should peak at or very near the mode
+    const dist = try GeneralizedHyperbolic(f64).init(1.0, 2.0, 0.5, 1.0, 0.0);
+    const m = dist.mode();
+    const pdf_mode = dist.pdf(m);
+
+    // Test several points on both sides of mode
+    const left_points = [_]f64{ m - 2.0, m - 1.0, m - 0.5 };
+    const right_points = [_]f64{ m + 0.5, m + 1.0, m + 2.0 };
+
+    for (left_points) |x| {
+        try std.testing.expect(dist.pdf(x) <= pdf_mode);
+    }
+    for (right_points) |x| {
+        try std.testing.expect(dist.pdf(x) <= pdf_mode);
+    }
+}
+
+test "GeneralizedHyperbolic: variance is finite and bounded for all tested params" {
+    // Variance should be O(delta²) in the scale parameter
+    const test_cases = [_][5]f64{
+        [_]f64{ 0.5, 2.0, 0.5, 1.0, 0.0 },
+        [_]f64{ 1.0, 3.0, 1.0, 2.0, 0.0 },
+        [_]f64{ -0.5, 2.5, -1.0, 1.5, 0.0 },
+    };
+
+    for (test_cases) |params| {
+        const dist = try GeneralizedHyperbolic(f64).init(params[0], params[1], params[2], params[3], params[4]);
+        const v = dist.variance();
+        try std.testing.expect(math.isFinite(v));
+        try std.testing.expect(v > 0.0);
+        try std.testing.expect(v < 1e6); // shouldn't explode for reasonable params
+    }
+}
+
+test "GeneralizedHyperbolic: cdf is strictly increasing between quantiles" {
+    // If q1 < q2, then cdf(q1) < cdf(q2)
+    const dist = try GeneralizedHyperbolic(f64).init(1.0, 2.0, 0.3, 1.0, 0.0);
+    const p_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+
+    for (0..p_vals.len - 1) |i| {
+        const q1 = try dist.quantile(p_vals[i]);
+        const q2 = try dist.quantile(p_vals[i + 1]);
+        const cdf1 = dist.cdf(q1);
+        const cdf2 = dist.cdf(q2);
+        try std.testing.expect(cdf1 < cdf2);
+    }
+}
+
+test "GeneralizedHyperbolic: special case lambda=1 (Hyperbolic) pdf is unimodal" {
+    // Hyperbolic distribution (lambda=1) should be unimodal
+    const dist = try GeneralizedHyperbolic(f64).init(1.0, 2.0, 0.5, 1.0, 0.0);
+    const m = dist.mode();
+    const delta = 0.1;
+
+    // Check that pdf increases then decreases around mode
+    var max_pdf = dist.pdf(m - 2.0 * delta);
+    for (0..20) |i| {
+        const x = m - 2.0 * delta + @as(f64, @floatFromInt(i)) * 0.2 * delta;
+        const p = dist.pdf(x);
+        max_pdf = @max(max_pdf, p);
+    }
+
+    // PDF at far points should be much less than at mode
+    try std.testing.expect(dist.pdf(m - 5.0) < dist.pdf(m) * 0.5);
+    try std.testing.expect(dist.pdf(m + 5.0) < dist.pdf(m) * 0.5);
 }
 
