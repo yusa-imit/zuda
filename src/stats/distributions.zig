@@ -75066,3 +75066,536 @@ test "GeneralizedInverseGaussian: variance is finite for all tested parameters" 
         try std.testing.expect(math.isFinite(v));
     }
 }
+
+// =============================================================================
+// NIG Distribution Helpers
+// =============================================================================
+
+/// Normal Inverse Gaussian distribution NIG(α, β, μ, δ)
+///
+/// A 4-parameter continuous distribution for asymmetric, leptokurtic data.
+/// Arises as a normal variance-mean mixture where the mixing distribution
+/// is InverseGaussian(δ/γ, δ²), with γ = √(α²-β²).
+/// Used in finance (log returns), signal processing, Lévy processes.
+///
+/// PDF: f(x) = αδ/π · K₁(α·q)/q · exp(δγ + β(x-μ))
+///      where q = √(δ² + (x-μ)²), K₁ is modified Bessel K of order 1
+///
+/// Parameters:
+///   - alpha: Tail heaviness (α > 0)
+///   - beta:  Asymmetry (|β| < α)
+///   - mu:    Location (μ ∈ ℝ)
+///   - delta: Scale (δ > 0)
+///
+/// Support: x ∈ ℝ
+/// Mean:    μ + δβ/γ
+/// Variance: δα²/γ³
+///
+/// Special case: as α→∞ with δ/γ fixed → approaches Normal distribution
+///
+/// Time: O(1) for logPdf/pdf/mean/variance | O(100) for mode (ternary search)
+///       O(500) for cdf/entropy | O(32000) for quantile
+pub fn NormalInverseGaussian(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        alpha: T,
+        beta: T,
+        mu: T,
+        delta: T,
+        gamma: T,     // sqrt(alpha^2 - beta^2)
+        log_const: T, // log(alpha) + log(delta) - log(pi) + delta*gamma
+
+        /// Initialize NIG(α, β, μ, δ)
+        /// Time: O(1)
+        pub fn init(alpha: T, beta: T, mu: T, delta: T) DistributionError!Self {
+            if (!(alpha > 0) or !math.isFinite(alpha) or
+                !math.isFinite(beta) or !(@abs(beta) < alpha) or
+                !math.isFinite(mu) or
+                !(delta > 0) or !math.isFinite(delta))
+            {
+                return error.InvalidParameter;
+            }
+            const gamma = @sqrt(alpha * alpha - beta * beta);
+            const log_const = @log(alpha) + @log(delta) - @log(math.pi) + delta * gamma;
+            return Self{
+                .alpha = alpha,
+                .beta = beta,
+                .mu = mu,
+                .delta = delta,
+                .gamma = gamma,
+                .log_const = log_const,
+            };
+        }
+
+        /// Log probability density function
+        /// Time: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            const z = x - self.mu;
+            const q = @sqrt(self.delta * self.delta + z * z);
+            const log_k1 = gigLogBesselK(T, 1.0, self.alpha * q);
+            return self.log_const + log_k1 - @log(q) + self.beta * z;
+        }
+
+        /// Probability density function
+        /// Time: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logPdf(x));
+        }
+
+        /// Mean E[X] = μ + δβ/γ
+        /// Time: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu + self.delta * self.beta / self.gamma;
+        }
+
+        /// Variance Var[X] = δα²/γ³
+        /// Time: O(1)
+        pub fn variance(self: Self) T {
+            const g3 = self.gamma * self.gamma * self.gamma;
+            return self.delta * self.alpha * self.alpha / g3;
+        }
+
+        /// Standard deviation
+        /// Time: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Mode via ternary search (NIG is always unimodal)
+        /// Time: O(100)
+        pub fn mode(self: Self) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            var lo: T = m - 5.0 * s;
+            var hi: T = m + 5.0 * s;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.logPdf(m1) < self.logPdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+                if (hi - lo < 1e-10 * (@abs(lo) + @abs(hi) + 1.0)) break;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Cumulative distribution function (500-pt midpoint quadrature)
+        /// Time: O(500)
+        pub fn cdf(self: Self, x: T) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            const lo = m - 20.0 * s;
+            if (x <= lo) return 0.0;
+            const N: usize = 500;
+            const h = (x - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                sum += self.pdf(xi);
+            }
+            return @min(1.0, sum * h);
+        }
+
+        /// Quantile function (inverse CDF) via bisection
+        /// Time: O(32000) (64 iterations × 500-pt CDF)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            const m = self.mean();
+            const s = self.stdDev();
+            var lo: T = m - 20.0 * s;
+            var hi: T = m + 20.0 * s;
+            var expand: usize = 0;
+            while (self.cdf(hi) < p and expand < 20) : (expand += 1) hi += s;
+            expand = 0;
+            while (self.cdf(lo) > p and expand < 20) : (expand += 1) lo -= s;
+            var iter: usize = 0;
+            while (iter < 64) : (iter += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if ((hi - lo) / (@abs(hi) + @abs(lo) + 1e-300) < 1e-8) break;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Entropy (500-pt numerical integration over ±10σ from mean)
+        /// Time: O(500)
+        pub fn entropy(self: Self) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            const lo = m - 10.0 * s;
+            const hi = m + 10.0 * s;
+            const N: usize = 500;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const p_val = self.pdf(xi);
+                if (p_val > 0) sum -= p_val * @log(p_val);
+            }
+            return sum * h;
+        }
+
+        /// Sample via inverse CDF
+        /// Time: O(32000)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch self.mean();
+        }
+
+        /// Validate internal invariants
+        /// Time: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0) or !(@abs(self.beta) < self.alpha) or
+                !(self.delta > 0) or !(self.gamma > 0) or !math.isFinite(self.log_const))
+            {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format for printing
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("NIG(α={d}, β={d}, μ={d}, δ={d})", .{ self.alpha, self.beta, self.mu, self.delta });
+        }
+    };
+}
+
+// NIG Distribution Tests
+// =============================================================================
+
+test "NormalInverseGaussian: init succeeds with valid params (alpha=1,beta=0,mu=0,delta=1)" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    try std.testing.expect(dist.alpha == 1.0);
+    try std.testing.expect(dist.beta == 0.0);
+    try std.testing.expect(dist.mu == 0.0);
+    try std.testing.expect(dist.delta == 1.0);
+}
+
+test "NormalInverseGaussian: init succeeds with positive beta" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 3.0, 0.5);
+    try std.testing.expect(math.isFinite(dist.gamma));
+    try std.testing.expect(dist.gamma > 0.0);
+}
+
+test "NormalInverseGaussian: init succeeds with negative beta" {
+    const dist = try NormalInverseGaussian(f64).init(3.0, -2.0, -1.0, 2.0);
+    try std.testing.expect(dist.gamma > 0.0);
+}
+
+test "NormalInverseGaussian: init fails when alpha is zero" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(0.0, 0.0, 0.0, 1.0));
+}
+
+test "NormalInverseGaussian: init fails when alpha is negative" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(-1.0, 0.0, 0.0, 1.0));
+}
+
+test "NormalInverseGaussian: init fails when |beta| equals alpha" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, 1.0, 0.0, 1.0));
+}
+
+test "NormalInverseGaussian: init fails when |beta| exceeds alpha" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, 1.5, 0.0, 1.0));
+}
+
+test "NormalInverseGaussian: init fails when delta is zero" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 0.0));
+}
+
+test "NormalInverseGaussian: init fails when delta is negative" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, -1.0));
+}
+
+test "NormalInverseGaussian: init fails when alpha is NaN" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(math.nan(f64), 0.0, 0.0, 1.0));
+}
+
+test "NormalInverseGaussian: init fails when beta is NaN" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, math.nan(f64), 0.0, 1.0));
+}
+
+test "NormalInverseGaussian: init fails when delta is NaN" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, math.nan(f64)));
+}
+
+test "NormalInverseGaussian: init fails when mu is infinite" {
+    try std.testing.expectError(error.InvalidParameter, NormalInverseGaussian(f64).init(1.0, 0.0, math.inf(f64), 1.0));
+}
+
+test "NormalInverseGaussian: validate passes for valid distribution" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    try dist.validate();
+}
+
+test "NormalInverseGaussian: gamma is correctly precomputed" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 0.0, 1.0);
+    // gamma = sqrt(4 - 1) = sqrt(3)
+    try expectApproxEqAbs(dist.gamma, @sqrt(3.0), 1e-12);
+}
+
+test "NormalInverseGaussian: pdf at x=0 for (alpha=1,beta=0,mu=0,delta=1)" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    // PDF(0) = (1/pi) * K1(1) * exp(1) ~= 0.5212
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(p, 0.5212, 1e-3);
+}
+
+test "NormalInverseGaussian: pdf at x=0 for (alpha=2,beta=0,mu=0,delta=1)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 0.0, 0.0, 1.0);
+    // PDF(0) = (2/pi) * K1(2) * exp(2) ~= 0.6585
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(p, 0.6585, 1e-3);
+}
+
+test "NormalInverseGaussian: pdf is symmetric for beta=0" {
+    const dist = try NormalInverseGaussian(f64).init(1.5, 0.0, 2.0, 1.0);
+    // For beta=0: pdf(mu+t) == pdf(mu-t) for all t
+    const t = 1.3;
+    try expectApproxEqAbs(dist.pdf(2.0 + t), dist.pdf(2.0 - t), 1e-12);
+}
+
+test "NormalInverseGaussian: pdf is non-negative everywhere" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 0.0, 1.0);
+    const xs = [_]f64{ -10.0, -5.0, -1.0, 0.0, 0.5, 1.0, 5.0, 10.0 };
+    for (xs) |x| {
+        try std.testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "NormalInverseGaussian: pdf integrates to 1 (numerical check)" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const N: usize = 2000;
+    const lo: f64 = -15.0;
+    const hi: f64 = 15.0;
+    const h = (hi - lo) / @as(f64, @floatFromInt(N));
+    var sum: f64 = 0.0;
+    for (0..N) |i| {
+        const xi = lo + (@as(f64, @floatFromInt(i)) + 0.5) * h;
+        sum += dist.pdf(xi);
+    }
+    try expectApproxEqAbs(sum * h, 1.0, 1e-3);
+}
+
+test "NormalInverseGaussian: logPdf equals log(pdf)" {
+    const dist = try NormalInverseGaussian(f64).init(1.5, 0.5, 1.0, 2.0);
+    const x: f64 = 2.5;
+    try expectApproxEqAbs(dist.logPdf(x), @log(dist.pdf(x)), 1e-10);
+}
+
+test "NormalInverseGaussian: mean is zero for beta=0" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 0.0, 0.0, 3.0);
+    try expectApproxEqAbs(dist.mean(), 0.0, 1e-12);
+}
+
+test "NormalInverseGaussian: mean equals mu for beta=0" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 5.0, 1.0);
+    try expectApproxEqAbs(dist.mean(), 5.0, 1e-12);
+}
+
+test "NormalInverseGaussian: mean exact for (alpha=2,beta=1,mu=0,delta=1)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 0.0, 1.0);
+    // mean = 0 + 1*1/sqrt(3) = 1/sqrt(3)
+    try expectApproxEqAbs(dist.mean(), 1.0 / @sqrt(3.0), 1e-12);
+}
+
+test "NormalInverseGaussian: mean exact for (alpha=2,beta=1,mu=5,delta=3)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 5.0, 3.0);
+    // mean = 5 + 3*1/sqrt(3) = 5 + sqrt(3)
+    try expectApproxEqAbs(dist.mean(), 5.0 + @sqrt(3.0), 1e-12);
+}
+
+test "NormalInverseGaussian: variance exact for (alpha=1,beta=0,mu=0,delta=1)" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    // var = delta*alpha^2/gamma^3 = 1*1/1 = 1
+    try expectApproxEqAbs(dist.variance(), 1.0, 1e-12);
+}
+
+test "NormalInverseGaussian: variance exact for (alpha=2,beta=0,mu=0,delta=1)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 0.0, 0.0, 1.0);
+    // gamma=2, var = 1*4/8 = 0.5
+    try expectApproxEqAbs(dist.variance(), 0.5, 1e-12);
+}
+
+test "NormalInverseGaussian: variance scales with delta" {
+    const d1 = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const d2 = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 2.0);
+    // var scales linearly with delta
+    try expectApproxEqAbs(d2.variance() / d1.variance(), 2.0, 1e-12);
+}
+
+test "NormalInverseGaussian: variance is always positive" {
+    const dist = try NormalInverseGaussian(f64).init(3.0, 2.0, 7.0, 0.5);
+    try std.testing.expect(dist.variance() > 0.0);
+}
+
+test "NormalInverseGaussian: mode equals mu for beta=0 (symmetric)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 0.0, 3.0, 1.0);
+    // For beta=0, pdf is symmetric around mu, so mode = mu
+    try expectApproxEqAbs(dist.mode(), 3.0, 1e-5);
+}
+
+test "NormalInverseGaussian: mode is finite" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 0.0, 1.0);
+    try std.testing.expect(math.isFinite(dist.mode()));
+}
+
+test "NormalInverseGaussian: mode is between lo and hi of pdf" {
+    const dist = try NormalInverseGaussian(f64).init(1.5, 0.5, 0.0, 1.0);
+    const m = dist.mode();
+    // pdf at mode >= pdf at neighboring points
+    const h: f64 = 0.01;
+    try std.testing.expect(dist.pdf(m) >= dist.pdf(m - h));
+    try std.testing.expect(dist.pdf(m) >= dist.pdf(m + h));
+}
+
+test "NormalInverseGaussian: cdf at mean is 0.5 for symmetric (beta=0)" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    // Symmetric distribution: CDF(mu) = 0.5
+    try expectApproxEqAbs(dist.cdf(0.0), 0.5, 5e-3);
+}
+
+test "NormalInverseGaussian: cdf is monotone increasing" {
+    const dist = try NormalInverseGaussian(f64).init(1.5, 0.3, 1.0, 1.0);
+    const xs = [_]f64{ -3.0, -1.0, 0.0, 1.0, 2.0, 4.0, 6.0 };
+    for (1..xs.len) |i| {
+        try std.testing.expect(dist.cdf(xs[i]) >= dist.cdf(xs[i - 1]));
+    }
+}
+
+test "NormalInverseGaussian: cdf approaches 0 in far left tail" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    // At -25 sigma, CDF should be very close to 0
+    try std.testing.expect(dist.cdf(-25.0) < 1e-4);
+}
+
+test "NormalInverseGaussian: cdf approaches 1 in far right tail" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    try std.testing.expect(dist.cdf(25.0) > 0.999);
+}
+
+test "NormalInverseGaussian: quantile(0) returns -inf" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expect(math.isNegativeInf(q));
+}
+
+test "NormalInverseGaussian: quantile(1) returns +inf" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expect(math.isInf(q) and q > 0.0);
+}
+
+test "NormalInverseGaussian: quantile(0.5) is near mean for symmetric" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 2.0, 1.0);
+    const q = try dist.quantile(0.5);
+    // For symmetric dist (beta=0), median = mean = mu
+    try expectApproxEqAbs(q, 2.0, 1e-2);
+}
+
+test "NormalInverseGaussian: quantile fails for p < 0" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "NormalInverseGaussian: quantile fails for p > 1" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    try std.testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "NormalInverseGaussian: quantile roundtrip (quantile(cdf(x)) ~= x)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 0.5, 1.0, 1.0);
+    const x: f64 = 1.5;
+    const q = try dist.quantile(dist.cdf(x));
+    try expectApproxEqAbs(q, x, 5e-3);
+}
+
+test "NormalInverseGaussian: quantile is increasing" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const q25 = try dist.quantile(0.25);
+    const q75 = try dist.quantile(0.75);
+    try std.testing.expect(q25 < q75);
+}
+
+test "NormalInverseGaussian: quantile symmetry for beta=0" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const q25 = try dist.quantile(0.25);
+    const q75 = try dist.quantile(0.75);
+    // For symmetric dist: quantile(0.25) = -quantile(0.75)
+    try expectApproxEqAbs(q25 + q75, 0.0, 1e-2);
+}
+
+test "NormalInverseGaussian: entropy is finite and positive" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const h = dist.entropy();
+    try std.testing.expect(math.isFinite(h) and h > 0.0);
+}
+
+test "NormalInverseGaussian: entropy increases with delta (heavier tails)" {
+    const d1 = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    const d2 = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 2.0);
+    try std.testing.expect(d2.entropy() > d1.entropy());
+}
+
+test "NormalInverseGaussian: sample returns finite value" {
+    const dist = try NormalInverseGaussian(f64).init(1.0, 0.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    const s = dist.sample(rng.random());
+    try std.testing.expect(math.isFinite(s));
+}
+
+test "NormalInverseGaussian: multiple samples have mean near E[X]" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(123);
+    var sum: f64 = 0.0;
+    const N = 200;
+    for (0..N) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, N);
+    try expectApproxEqAbs(sample_mean, dist.mean(), 0.2);
+}
+
+test "NormalInverseGaussian: validate passes for valid params" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 3.0, 0.5);
+    try dist.validate();
+}
+
+test "NormalInverseGaussian: std equals sqrt(variance)" {
+    const dist = try NormalInverseGaussian(f64).init(3.0, 1.0, 0.0, 2.0);
+    try expectApproxEqAbs(dist.stdDev(), @sqrt(dist.variance()), 1e-12);
+}
+
+test "NormalInverseGaussian: logPdf is always finite for any x in R" {
+    const dist = try NormalInverseGaussian(f64).init(1.5, 0.5, 0.0, 1.0);
+    const xs = [_]f64{ -100.0, -10.0, -1.0, 0.0, 1.0, 10.0, 100.0 };
+    for (xs) |x| {
+        try std.testing.expect(math.isFinite(dist.logPdf(x)));
+    }
+}
+
+test "NormalInverseGaussian: right-skewed when beta > 0 (mean > mu)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, 1.0, 0.0, 1.0);
+    try std.testing.expect(dist.mean() > 0.0);
+}
+
+test "NormalInverseGaussian: left-skewed when beta < 0 (mean < mu)" {
+    const dist = try NormalInverseGaussian(f64).init(2.0, -1.0, 0.0, 1.0);
+    try std.testing.expect(dist.mean() < 0.0);
+}
+
+test "NormalInverseGaussian: f32 type works correctly" {
+    const dist = try NormalInverseGaussian(f32).init(1.0, 0.0, 0.0, 1.0);
+    try std.testing.expect(dist.pdf(0.0) > 0.0);
+    try std.testing.expect(math.isFinite(dist.mean()));
+}
+
