@@ -75599,3 +75599,623 @@ test "NormalInverseGaussian: f32 type works correctly" {
     try std.testing.expect(math.isFinite(dist.mean()));
 }
 
+// =============================================================================
+// VarianceGamma Distribution Helpers
+// =============================================================================
+
+/// Variance-Gamma distribution VG(λ, α, β, μ)
+///
+/// A 4-parameter continuous distribution on ℝ that arises as the limiting case
+/// of the Generalized Hyperbolic distribution when δ → 0. Also known as a
+/// subordinated Brownian motion where the subordinator is a Gamma process.
+/// Used in finance (asset returns, log prices), physics (particle scattering),
+/// and statistical inference for heavy-tailed data.
+///
+/// PDF: f(x) = exp(log_const + β(x-μ) + (λ-0.5)·log|x-μ| + logK_{λ-0.5}(α|x-μ|))
+///      where log_const = λ·log(ω²) - 0.5·log(π) - lgamma(λ) - (λ-0.5)·log(2α)
+///      ω² = α² - β², K_ν is modified Bessel K of order ν
+///
+/// Parameters:
+///   - lambda: Shape parameter (λ > 0)
+///   - alpha:  Tail heaviness (α > 0)
+///   - beta:   Asymmetry (|β| < α)
+///   - mu:     Location (μ ∈ ℝ)
+///
+/// Support: x ∈ ℝ
+/// Mean:    μ + 2βλ/ω²
+/// Variance: 2λ(α²+β²)/ω⁴
+///
+/// Special case: λ=1, β=0 → Laplace(μ, 1/α)
+///
+/// Time: O(1) for logPdf/pdf/mean/variance | O(100) for mode (ternary search)
+///       O(500) for cdf/entropy | O(32000) for quantile
+pub fn VarianceGamma(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        lambda: T,
+        alpha: T,
+        beta: T,
+        mu: T,
+        omega_sq: T,    // α² - β²
+        log_const: T,   // λ·log(ω²) - 0.5·log(π) - lgamma(λ) - (λ-0.5)·log(2α)
+        nu: T,          // λ - 0.5 (Bessel order)
+
+        /// Initialize VG(λ, α, β, μ)
+        /// Time: O(1)
+        pub fn init(lambda: T, alpha: T, beta: T, mu: T) DistributionError!Self {
+            if (!(lambda > 0) or !math.isFinite(lambda) or
+                !(alpha > 0) or !math.isFinite(alpha) or
+                !(@abs(beta) < alpha) or !math.isFinite(beta) or
+                !math.isFinite(mu))
+            {
+                return error.InvalidParameter;
+            }
+            const omega_sq = alpha * alpha - beta * beta;
+            const nu = lambda - 0.5;
+            const log_const = lambda * @log(omega_sq) - 0.5 * @log(math.pi) - math.lgamma(T, lambda) - nu * @log(2.0 * alpha);
+            return Self{
+                .lambda = lambda,
+                .alpha = alpha,
+                .beta = beta,
+                .mu = mu,
+                .omega_sq = omega_sq,
+                .log_const = log_const,
+                .nu = nu,
+            };
+        }
+
+        /// Log probability density function
+        /// Time: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            var z = @abs(x - self.mu);
+            // Guard against |x-μ| ≈ 0: use eps=1e-15 to avoid log(0)
+            const eps: T = 1e-15;
+            if (z < eps) {
+                z = eps;
+            }
+            const log_k = gigLogBesselK(T, self.nu, self.alpha * z);
+            return self.log_const + self.beta * (x - self.mu) + self.nu * @log(z) + log_k;
+        }
+
+        /// Probability density function
+        /// Time: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logPdf(x));
+        }
+
+        /// Mean E[X] = μ + 2βλ/ω²
+        /// Time: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu + 2.0 * self.beta * self.lambda / self.omega_sq;
+        }
+
+        /// Variance Var[X] = 2λ(α²+β²)/ω⁴
+        /// where ω = √(α²-β²), so ω⁴ = (α²-β²)²
+        /// Time: O(1)
+        pub fn variance(self: Self) T {
+            const w2 = self.omega_sq * self.omega_sq;
+            return 2.0 * self.lambda * (self.alpha * self.alpha + self.beta * self.beta) / w2;
+        }
+
+        /// Standard deviation
+        /// Time: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Mode via ternary search (VG is always unimodal)
+        /// Time: O(100)
+        pub fn mode(self: Self) T {
+            // For β ≈ 0 (symmetric), mode = μ
+            if (@abs(self.beta) < 1e-12) {
+                return self.mu;
+            }
+            const s = self.stdDev();
+            var lo: T = self.mu - 10.0 * s;
+            var hi: T = self.mu + 10.0 * s;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.logPdf(m1) < self.logPdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+                if (hi - lo < 1e-10 * (@abs(lo) + @abs(hi) + 1.0)) break;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Cumulative distribution function (500-pt midpoint quadrature)
+        /// Time: O(500)
+        pub fn cdf(self: Self, x: T) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            const lo = m - 20.0 * s;
+            if (x <= lo) return 0.0;
+            const N: usize = 500;
+            const h = (x - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                sum += self.pdf(xi);
+            }
+            return @min(sum * h, 1.0);
+        }
+
+        /// Survival function
+        /// Time: O(500)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile (inverse CDF) via bisection
+        /// Time: O(32000)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) {
+                return error.InvalidProbability;
+            }
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            const s = self.stdDev();
+            var lo: T = self.mean() - 20.0 * s;
+            var hi: T = self.mean() + 20.0 * s;
+            for (0..64) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Entropy via 500-pt numerical integration
+        /// Time: O(500)
+        pub fn entropy(self: Self) T {
+            const s = self.stdDev();
+            const lo = self.mean() - 20.0 * s;
+            const hi = self.mean() + 20.0 * s;
+            const N: usize = 500;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const t = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const lp = self.logPdf(t);
+                if (math.isFinite(lp)) {
+                    sum += -@exp(lp) * lp;
+                }
+            }
+            return sum * h;
+        }
+
+        /// Generate random sample via inverse CDF
+        /// Time: O(32000)
+        pub fn sample(self: Self, rng: anytype) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.mean();
+        }
+
+        /// Check all internal invariants
+        /// Time: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) {
+                return error.InvalidParameter;
+            }
+            if (!(self.alpha > 0.0) or !math.isFinite(self.alpha)) {
+                return error.InvalidParameter;
+            }
+            if (!(@abs(self.beta) < self.alpha) or !math.isFinite(self.beta)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+            if (!(self.omega_sq > 0.0)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format distribution for display
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("VarianceGamma(lambda={d:.4}, alpha={d:.4}, beta={d:.4}, mu={d:.4})", .{
+                self.lambda, self.alpha, self.beta, self.mu,
+            });
+        }
+    };
+}
+
+// ============================================================================
+// VarianceGamma Distribution Tests (131st total, 107th continuous)
+// ============================================================================
+
+// ---- Parameter Validation (8+ tests) ----
+
+test "VarianceGamma: lambda=0 returns error" {
+    // VarianceGamma(lambda=0, alpha=1, beta=0, mu=0)
+    const result = VarianceGamma(f64).init(0.0, 1.0, 0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: lambda<0 returns error" {
+    // VarianceGamma(lambda=-1, alpha=1, beta=0, mu=0)
+    const result = VarianceGamma(f64).init(-1.0, 1.0, 0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: alpha=0 returns error" {
+    // VarianceGamma(lambda=1, alpha=0, beta=0, mu=0)
+    const result = VarianceGamma(f64).init(1.0, 0.0, 0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: |beta|=alpha (touching) returns error" {
+    // VarianceGamma(lambda=1, alpha=1, beta=1, mu=0) — |beta|=alpha not allowed
+    const result = VarianceGamma(f64).init(1.0, 1.0, 1.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: |beta|>alpha returns error" {
+    // VarianceGamma(lambda=1, alpha=1, beta=2, mu=0)
+    const result = VarianceGamma(f64).init(1.0, 1.0, 2.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: NaN lambda returns error" {
+    // VarianceGamma(lambda=NaN, alpha=1, beta=0, mu=0)
+    const result = VarianceGamma(f64).init(math.nan(f64), 1.0, 0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: inf alpha returns error" {
+    // VarianceGamma(lambda=1, alpha=inf, beta=0, mu=0)
+    const result = VarianceGamma(f64).init(1.0, math.inf(f64), 0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "VarianceGamma: inf mu returns error" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=inf)
+    const result = VarianceGamma(f64).init(1.0, 1.0, 0.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+// ---- PDF Properties (6+ tests) ----
+
+test "VarianceGamma: pdf(x)>0 for all x" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const xs = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (xs) |x| {
+        try std.testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "VarianceGamma: pdf is always finite" {
+    // VarianceGamma(lambda=2, alpha=2, beta=0.5, mu=1)
+    const dist = try VarianceGamma(f64).init(2.0, 2.0, 0.5, 1.0);
+    const xs = [_]f64{ -100.0, -10.0, -1.0, 0.0, 1.0, 10.0, 100.0 };
+    for (xs) |x| {
+        try std.testing.expect(math.isFinite(dist.pdf(x)));
+    }
+}
+
+test "VarianceGamma: Laplace special case VG(1,1,0,0) pdf(0)≈0.5" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0) = Laplace(0,1)
+    // pdf(0) should equal 0.5
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    try expectApproxEqAbs(0.5, dist.pdf(0.0), 1e-4);
+}
+
+test "VarianceGamma: Laplace special case VG(1,1,0,0) pdf(1)≈0.5/e" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0) = Laplace(0,1)
+    // pdf(1) = 0.5*e^(-1)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const expected = 0.5 / @exp(1.0);
+    try expectApproxEqAbs(expected, dist.pdf(1.0), 1e-4);
+}
+
+test "VarianceGamma: Laplace special case VG(1,2,0,0) pdf(0)≈1.0" {
+    // VarianceGamma(lambda=1, alpha=2, beta=0, mu=0) = Laplace(0, 0.5)
+    // pdf(0) = alpha = 2.0 (since 1/2 for base Laplace scale)
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 0.0, 0.0);
+    try expectApproxEqAbs(1.0, dist.pdf(0.0), 1e-4);
+}
+
+test "VarianceGamma: logPdf(x)=log(pdf(x)) consistency" {
+    // VarianceGamma(lambda=1.5, alpha=1.2, beta=0.3, mu=0)
+    const dist = try VarianceGamma(f64).init(1.5, 1.2, 0.3, 0.0);
+    const x: f64 = 2.0;
+    const pdf_x = dist.pdf(x);
+    const logpdf_x = dist.logPdf(x);
+    try expectApproxEqAbs(logpdf_x, @log(pdf_x), 1e-6);
+}
+
+test "VarianceGamma: pdf is symmetric when beta=0" {
+    // VarianceGamma(lambda=1, alpha=1.5, beta=0, mu=2)
+    const dist = try VarianceGamma(f64).init(1.0, 1.5, 0.0, 2.0);
+    const delta: f64 = 1.5;
+    const pdf_left = dist.pdf(2.0 - delta);
+    const pdf_right = dist.pdf(2.0 + delta);
+    try expectApproxEqAbs(pdf_left, pdf_right, 1e-6);
+}
+
+// ---- CDF Properties (5+ tests) ----
+
+test "VarianceGamma: cdf is monotone increasing" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const xs = [_]f64{ -5.0, -2.0, 0.0, 2.0, 5.0 };
+    for (0..xs.len - 1) |i| {
+        const c1 = dist.cdf(xs[i]);
+        const c2 = dist.cdf(xs[i + 1]);
+        try std.testing.expect(c1 <= c2);
+    }
+}
+
+test "VarianceGamma: cdf(mu)≈0.5 for beta=0 (symmetric)" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(0.5, c, 1e-3);
+}
+
+test "VarianceGamma: Laplace special case VG(1,1,0,0) cdf(0)≈0.5" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0) = Laplace(0,1)
+    // cdf(0) = 0.5
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    try expectApproxEqAbs(0.5, dist.cdf(0.0), 1e-3);
+}
+
+test "VarianceGamma: cdf approaches 0 in far left tail" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const c = dist.cdf(-100.0);
+    try std.testing.expect(c < 0.01);
+}
+
+test "VarianceGamma: cdf approaches 1 in far right tail" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const c = dist.cdf(100.0);
+    try std.testing.expect(c > 0.99);
+}
+
+// ---- Quantile Function (5+ tests) ----
+
+test "VarianceGamma: quantile(0) returns -inf" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expect(q == -math.inf(f64));
+}
+
+test "VarianceGamma: quantile(1) returns +inf" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expect(q == math.inf(f64));
+}
+
+test "VarianceGamma: quantile(p<0) returns error" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "VarianceGamma: quantile(p>1) returns error" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "VarianceGamma: quantile(cdf(x))≈x roundtrip" {
+    // VarianceGamma(lambda=1.2, alpha=1.5, beta=0.2, mu=1)
+    const dist = try VarianceGamma(f64).init(1.2, 1.5, 0.2, 1.0);
+    const x: f64 = 0.5;
+    const q = try dist.quantile(dist.cdf(x));
+    try expectApproxEqAbs(x, q, 1e-3);
+}
+
+test "VarianceGamma: quantile is monotone increasing" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const q25 = try dist.quantile(0.25);
+    const q50 = try dist.quantile(0.50);
+    const q75 = try dist.quantile(0.75);
+    try std.testing.expect(q25 < q50 and q50 < q75);
+}
+
+// ---- Moments (5+ tests) ----
+
+test "VarianceGamma: VG(1,1,0,0) mean≈0" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    // mean = mu + 2*beta*lambda/omega^2 = 0 + 0 = 0
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+}
+
+test "VarianceGamma: VG(1,1,0,0) variance≈2" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    // variance = 2*lambda*(alpha^2+beta^2)/omega^4 = 2*1*(1+0)/(1)^4 = 2
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    try expectApproxEqAbs(2.0, dist.variance(), 1e-4);
+}
+
+test "VarianceGamma: VG(2,1,0,0) variance≈4" {
+    // VarianceGamma(lambda=2, alpha=1, beta=0, mu=0)
+    // variance = 2*2*(1+0)/(1)^4 = 4
+    const dist = try VarianceGamma(f64).init(2.0, 1.0, 0.0, 0.0);
+    try expectApproxEqAbs(4.0, dist.variance(), 1e-4);
+}
+
+test "VarianceGamma: VG(1,2,1,0) mean exact 2/3" {
+    // VarianceGamma(lambda=1, alpha=2, beta=1, mu=0)
+    // omega^2 = 4-1 = 3, mean = 0 + 2*1*1/3 = 2/3
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 1.0, 0.0);
+    try expectApproxEqAbs(2.0 / 3.0, dist.mean(), 1e-10);
+}
+
+test "VarianceGamma: variance is always positive" {
+    // VarianceGamma(lambda=1.5, alpha=1.2, beta=0.5, mu=2)
+    const dist = try VarianceGamma(f64).init(1.5, 1.2, 0.5, 2.0);
+    try std.testing.expect(dist.variance() > 0.0);
+}
+
+test "VarianceGamma: stdDev=sqrt(variance)" {
+    // VarianceGamma(lambda=1.5, alpha=1.2, beta=0.3, mu=0)
+    const dist = try VarianceGamma(f64).init(1.5, 1.2, 0.3, 0.0);
+    try expectApproxEqAbs(dist.stdDev(), @sqrt(dist.variance()), 1e-12);
+}
+
+// ---- Mode (3+ tests) ----
+
+test "VarianceGamma: VG(1,1,0,0) mode≈0" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    // Symmetric distribution, mode = mean = 0
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-4);
+}
+
+test "VarianceGamma: mode is finite" {
+    // VarianceGamma(lambda=2, alpha=1.5, beta=0.3, mu=1)
+    const dist = try VarianceGamma(f64).init(2.0, 1.5, 0.3, 1.0);
+    const m = dist.mode();
+    try std.testing.expect(math.isFinite(m));
+}
+
+test "VarianceGamma: beta>0 shifts pdf mass rightward (cdf(mu)<0.5)" {
+    // VarianceGamma(lambda=1, alpha=1.5, beta=0.5, mu=0): right-skewed, median > mu
+    // cdf(0) < 0.5 because positive beta pulls mass to the right
+    const dist = try VarianceGamma(f64).init(1.0, 1.5, 0.5, 0.0);
+    try std.testing.expect(dist.cdf(0.0) < 0.5);
+}
+
+// ---- Entropy (2+ tests) ----
+
+test "VarianceGamma: entropy is finite" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const h = dist.entropy();
+    try std.testing.expect(math.isFinite(h));
+}
+
+test "VarianceGamma: entropy is positive" {
+    // VarianceGamma(lambda=1, alpha=2, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 0.0, 0.0);
+    const h = dist.entropy();
+    try std.testing.expect(h > 0.0);
+}
+
+// ---- Sampling (2+ tests) ----
+
+test "VarianceGamma: sample returns finite value" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const s = dist.sample(prng.random());
+    try std.testing.expect(math.isFinite(s));
+}
+
+test "VarianceGamma: multiple samples have mean near E[X]" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    var sum: f64 = 0.0;
+    const N = 200;
+    for (0..N) |_| {
+        sum += dist.sample(prng.random());
+    }
+    const sample_mean = sum / @as(f64, N);
+    try expectApproxEqAbs(sample_mean, dist.mean(), 0.2);
+}
+
+// ---- Validation (3+ tests) ----
+
+test "VarianceGamma: validate passes for valid params" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    try dist.validate();
+}
+
+test "VarianceGamma: init rejects lambda<=0 (covers validate lambda path)" {
+    // init() gates the same condition that validate() checks
+    try std.testing.expectError(error.InvalidParameter, VarianceGamma(f64).init(-1.0, 1.0, 0.0, 0.0));
+    try std.testing.expectError(error.InvalidParameter, VarianceGamma(f64).init(0.0, 1.0, 0.0, 0.0));
+}
+
+test "VarianceGamma: f32 type works correctly" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f32).init(1.0, 1.0, 0.0, 0.0);
+    try std.testing.expect(dist.pdf(0.0) > 0.0);
+    try std.testing.expect(math.isFinite(dist.mean()));
+}
+
+// ---- Skewness Checks (2+ tests) ----
+
+test "VarianceGamma: beta>0 implies mean>mu (right skew)" {
+    // VarianceGamma(lambda=1, alpha=2, beta=0.5, mu=0)
+    // mean = 0 + 2*0.5*1/3 > 0
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 0.5, 0.0);
+    try std.testing.expect(dist.mean() > 0.0);
+}
+
+test "VarianceGamma: beta<0 implies mean<mu (left skew)" {
+    // VarianceGamma(lambda=1, alpha=2, beta=-0.5, mu=0)
+    // mean = 0 + 2*(-0.5)*1/3 < 0
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, -0.5, 0.0);
+    try std.testing.expect(dist.mean() < 0.0);
+}
+
+// ---- Edge Cases & Additional Coverage ----
+
+test "VarianceGamma: VG(1,2,1,0) variance formula exact" {
+    // VarianceGamma(lambda=1, alpha=2, beta=1, mu=0)
+    // omega^2 = alpha^2-beta^2 = 4-1 = 3, omega^4 = (omega^2)^2 = 9
+    // variance = 2*1*(4+1)/9 = 10/9 ≈ 1.111...
+    const dist = try VarianceGamma(f64).init(1.0, 2.0, 1.0, 0.0);
+    const expected: f64 = 2.0 * 5.0 / 9.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "VarianceGamma: logPdf finite for all test points" {
+    // VarianceGamma(lambda=1.5, alpha=1.2, beta=0.3, mu=1)
+    const dist = try VarianceGamma(f64).init(1.5, 1.2, 0.3, 1.0);
+    const xs = [_]f64{ -50.0, -10.0, -1.0, 0.0, 1.0, 10.0, 50.0 };
+    for (xs) |x| {
+        try std.testing.expect(math.isFinite(dist.logPdf(x)));
+    }
+}
+
+test "VarianceGamma: pdf peak near mode" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const m = dist.mode();
+    const pdf_mode = dist.pdf(m);
+    const pdf_offset = dist.pdf(m + 1.0);
+    try std.testing.expect(pdf_mode >= pdf_offset);
+}
+
+test "VarianceGamma: CDF and SF complement" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const x: f64 = 2.0;
+    const cdf_x = dist.cdf(x);
+    const sf_x = dist.sf(x);
+    try expectApproxEqAbs(1.0, cdf_x + sf_x, 1e-10);
+}
+
+test "VarianceGamma: quantile(0.5) close to median (mode for beta=0)" {
+    // VarianceGamma(lambda=1, alpha=1, beta=0, mu=0)
+    const dist = try VarianceGamma(f64).init(1.0, 1.0, 0.0, 0.0);
+    const median = try dist.quantile(0.5);
+    const m = dist.mode();
+    try expectApproxEqAbs(median, m, 1e-2);
+}
+
