@@ -76910,3 +76910,357 @@ test "GeneralizedHyperbolic: special case lambda=1 (Hyperbolic) pdf is unimodal"
     try std.testing.expect(dist.pdf(m + 5.0) < dist.pdf(m) * 0.5);
 }
 
+// ============================================================================
+// Skew-Normal Distribution Tests
+// ============================================================================
+
+test "SkewNormal: init with valid parameters" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    try expectEqual(0.0, dist.xi);
+    try expectEqual(1.0, dist.omega);
+    try expectEqual(0.0, dist.alpha);
+}
+
+test "SkewNormal: init rejects omega <= 0" {
+    try expectError(error.InvalidParameter, SkewNormal(f64).init(0.0, 0.0, 1.0));
+    try expectError(error.InvalidParameter, SkewNormal(f64).init(0.0, -1.0, 1.0));
+}
+
+test "SkewNormal: init rejects non-finite omega" {
+    try expectError(error.InvalidParameter, SkewNormal(f64).init(0.0, math.inf(f64), 1.0));
+    try expectError(error.InvalidParameter, SkewNormal(f64).init(0.0, math.nan(f64), 1.0));
+}
+
+test "SkewNormal: init accepts any finite xi and alpha" {
+    const dist1 = try SkewNormal(f64).init(-100.0, 1.0, 50.0);
+    try expectEqual(-100.0, dist1.xi);
+    try expectEqual(50.0, dist1.alpha);
+
+    const dist2 = try SkewNormal(f64).init(1000.0, 1.0, -50.0);
+    try expectEqual(1000.0, dist2.xi);
+    try expectEqual(-50.0, dist2.alpha);
+}
+
+test "SkewNormal: validate passes for valid parameters" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "SkewNormal: validate fails for omega <= 0" {
+    var dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    dist.omega = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "SkewNormal: validate fails for non-finite omega" {
+    var dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    dist.omega = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "SkewNormal: pdf with alpha=0 reduces to Normal" {
+    const sn = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const n = try Normal(f64).init(0.0, 1.0);
+
+    const test_points = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (test_points) |x| {
+        const sn_pdf = sn.pdf(x);
+        const n_pdf = n.pdf(x);
+        try expectApproxEqAbs(sn_pdf, n_pdf, 1e-10);
+    }
+}
+
+test "SkewNormal: pdf(0; xi=0, omega=1, alpha=0) = 1/sqrt(2*pi)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(0.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try expectApproxEqAbs(pdf_val, expected, 1e-10);
+}
+
+test "SkewNormal: pdf(0; xi=0, omega=1, alpha=1) = 1/sqrt(2*pi)" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    const expected = 1.0 / @sqrt(2.0 * math.pi);
+    try expectApproxEqAbs(pdf_val, expected, 1e-10);
+}
+
+test "SkewNormal: pdf is symmetric when alpha=0" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.5 };
+    for (test_points) |x| {
+        const pdf_pos = dist.pdf(x);
+        const pdf_neg = dist.pdf(-x);
+        try expectApproxEqAbs(pdf_pos, pdf_neg, 1e-10);
+    }
+}
+
+test "SkewNormal: pdf is always positive" {
+    const dist = try SkewNormal(f64).init(2.0, 1.5, 1.5);
+    const test_points = [_]f64{ -100.0, -1.0, 0.0, 1.0, 100.0 };
+    for (test_points) |x| {
+        const pdf_val = dist.pdf(x);
+        try expect(pdf_val >= 0.0);
+    }
+}
+
+test "SkewNormal: logpdf = log(pdf) consistency" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.5);
+    const test_points = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (test_points) |x| {
+        const logpdf_val = dist.logpdf(x);
+        const pdf_val = dist.pdf(x);
+        const expected_logpdf = @log(pdf_val);
+        try expectApproxEqAbs(logpdf_val, expected_logpdf, 1e-10);
+    }
+}
+
+test "SkewNormal: cdf with alpha=0 reduces to Normal cdf" {
+    const sn = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const n = try Normal(f64).init(0.0, 1.0);
+
+    const test_points = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (test_points) |x| {
+        const sn_cdf = sn.cdf(x);
+        const n_cdf = n.cdf(x);
+        try expectApproxEqAbs(sn_cdf, n_cdf, 1e-6);
+    }
+}
+
+test "SkewNormal: cdf(xi; alpha=0) = 0.5" {
+    const dist = try SkewNormal(f64).init(3.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(3.0);
+    try expectApproxEqAbs(cdf_val, 0.5, 1e-6);
+}
+
+test "SkewNormal: cdf(0; xi=0, omega=1, alpha=0) = 0.5" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(0.0);
+    try expectApproxEqAbs(cdf_val, 0.5, 1e-6);
+}
+
+test "SkewNormal: cdf is strictly increasing" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    var prev_cdf = dist.cdf(-10.0);
+    var x: f64 = -9.5;
+    while (x <= 10.0) : (x += 0.5) {
+        const curr_cdf = dist.cdf(x);
+        try expect(curr_cdf > prev_cdf - 1e-10);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "SkewNormal: cdf + sf = 1.0" {
+    const dist = try SkewNormal(f64).init(1.0, 2.0, 1.5);
+    const test_points = [_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 };
+    for (test_points) |x| {
+        const cdf_val = dist.cdf(x);
+        const sf_val = dist.sf(x);
+        try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-10);
+    }
+}
+
+test "SkewNormal: symmetry property cdf(x;-alpha) = 1 - cdf(-x;alpha)" {
+    const sn_pos = try SkewNormal(f64).init(0.0, 1.0, 1.5);
+    const sn_neg = try SkewNormal(f64).init(0.0, 1.0, -1.5);
+
+    const test_points = [_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 };
+    for (test_points) |x| {
+        const cdf_neg_alpha_at_neg_x = sn_neg.cdf(-x);
+        const cdf_pos_alpha_at_x = sn_pos.cdf(x);
+        try expectApproxEqAbs(cdf_neg_alpha_at_neg_x, 1.0 - cdf_pos_alpha_at_x, 1e-6);
+    }
+}
+
+test "SkewNormal: mean formula with alpha=0" {
+    const dist = try SkewNormal(f64).init(5.0, 1.0, 0.0);
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(mean_val, 5.0, 1e-6);
+}
+
+test "SkewNormal: variance formula with alpha=0" {
+    const dist = try SkewNormal(f64).init(0.0, 2.0, 0.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(var_val, 4.0, 1e-6);
+}
+
+test "SkewNormal: mean with alpha=1" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const mean_val = dist.mean();
+    // delta = 1/sqrt(2), mean = delta * sqrt(2/pi)
+    const expected = (1.0 / @sqrt(2.0)) * @sqrt(2.0 / math.pi);
+    try expectApproxEqAbs(mean_val, expected, 1e-6);
+}
+
+test "SkewNormal: variance with alpha=1 is less than 1.0" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const var_val = dist.variance();
+    try expect(var_val < 1.0);
+    try expect(var_val > 0.5);
+}
+
+test "SkewNormal: mean with alpha=-1 is negative of alpha=1" {
+    const sn_pos = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const sn_neg = try SkewNormal(f64).init(0.0, 1.0, -1.0);
+    const mean_pos = sn_pos.mean();
+    const mean_neg = sn_neg.mean();
+    try expectApproxEqAbs(mean_pos, -mean_neg, 1e-6);
+}
+
+test "SkewNormal: variance is same for alpha and -alpha" {
+    const sn_pos = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    const sn_neg = try SkewNormal(f64).init(0.0, 1.0, -2.0);
+    const var_pos = sn_pos.variance();
+    const var_neg = sn_neg.variance();
+    try expectApproxEqAbs(var_pos, var_neg, 1e-6);
+}
+
+test "SkewNormal: quantile round-trip with cdf" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const test_ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_ps) |p| {
+        const q = try dist.quantile(p);
+        const cdf_val = dist.cdf(q);
+        try expectApproxEqAbs(cdf_val, p, 1e-5);
+    }
+}
+
+test "SkewNormal: quantile(0.5) near mean when alpha=0" {
+    const dist = try SkewNormal(f64).init(3.0, 1.0, 0.0);
+    const q50 = try dist.quantile(0.5);
+    try expectApproxEqAbs(q50, 3.0, 1e-5);
+}
+
+test "SkewNormal: quantile(0) -> -infinity" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const q0 = try dist.quantile(0.0);
+    try expect(math.isNegativeInf(q0));
+}
+
+test "SkewNormal: quantile(1) -> +infinity" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const q1 = try dist.quantile(1.0);
+    try expect(math.isPositiveInf(q1));
+}
+
+test "SkewNormal: quantile rejects invalid probability" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    try expectError(error.InvalidParameter, dist.quantile(-0.1));
+    try expectError(error.InvalidParameter, dist.quantile(1.1));
+}
+
+test "SkewNormal: mode changes with alpha sign" {
+    const sn_pos = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    const sn_neg = try SkewNormal(f64).init(0.0, 1.0, -2.0);
+    const mode_pos = sn_pos.mode();
+    const mode_neg = sn_neg.mode();
+    // For symmetric positive/negative alpha, modes should be reflections
+    try expectApproxEqAbs(mode_pos, -mode_neg, 1e-5);
+}
+
+test "SkewNormal: mode is near location when alpha near zero" {
+    const sn = try SkewNormal(f64).init(3.0, 1.0, 0.1);
+    const mode = sn.mode();
+    const mean = sn.mean();
+    // Mode and mean should be close for small alpha
+    try expectApproxEqAbs(mode, mean, 0.2);
+}
+
+test "SkewNormal: mode near location when alpha=0" {
+    const dist = try SkewNormal(f64).init(5.0, 1.0, 0.0);
+    const mode = dist.mode();
+    try expectApproxEqAbs(mode, 5.0, 1e-5);
+}
+
+test "SkewNormal: pdf at mode is maximum" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.5);
+    const mode = dist.mode();
+    const pdf_mode = dist.pdf(mode);
+
+    var max_pdf = pdf_mode;
+    var x: f64 = -5.0;
+    while (x <= 5.0) : (x += 0.1) {
+        const pdf_val = dist.pdf(x);
+        if (pdf_val > max_pdf) {
+            max_pdf = pdf_val;
+        }
+    }
+    try expectApproxEqAbs(pdf_mode, max_pdf, 1e-5);
+}
+
+test "SkewNormal: entropy is finite and positive" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.5);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h > 0.0);
+}
+
+test "SkewNormal: sample returns finite values" {
+    const dist = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try expect(math.isFinite(s));
+    }
+}
+
+test "SkewNormal: sample mean approaches theoretical mean" {
+    const dist = try SkewNormal(f64).init(2.0, 1.5, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+
+    var sum: f64 = 0.0;
+    const n = 10000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+
+    try expectApproxEqRel(sample_mean, theoretical_mean, 0.05);
+}
+
+test "SkewNormal: variance decreases as |alpha| increases" {
+    const sn0 = try SkewNormal(f64).init(0.0, 1.0, 0.0);
+    const sn2 = try SkewNormal(f64).init(0.0, 1.0, 2.0);
+    const sn5 = try SkewNormal(f64).init(0.0, 1.0, 5.0);
+
+    const var0 = sn0.variance();
+    const var2 = sn2.variance();
+    const var5 = sn5.variance();
+
+    try expect(var0 > var2);
+    try expect(var2 > var5);
+}
+
+test "SkewNormal: location parameter shifts pdf" {
+    const sn1 = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const sn2 = try SkewNormal(f64).init(5.0, 1.0, 1.0);
+
+    const pdf1 = sn1.pdf(2.0);
+    const pdf2 = sn2.pdf(7.0);
+    try expectApproxEqAbs(pdf1, pdf2, 1e-10);
+}
+
+test "SkewNormal: scale parameter rescales pdf" {
+    const sn1 = try SkewNormal(f64).init(0.0, 1.0, 1.0);
+    const sn2 = try SkewNormal(f64).init(0.0, 2.0, 1.0);
+
+    const pdf1_at_0 = sn1.pdf(0.0);
+    const pdf2_at_0 = sn2.pdf(0.0);
+    // PDF scales inversely with omega
+    try expectApproxEqAbs(pdf1_at_0, pdf2_at_0 * 2.0, 1e-10);
+}
+
+test "SkewNormal: extreme alpha values" {
+    const sn_large = try SkewNormal(f64).init(0.0, 1.0, 100.0);
+    const sn_small = try SkewNormal(f64).init(0.0, 1.0, 0.01);
+
+    const mean_large = sn_large.mean();
+    const mean_small = sn_small.mean();
+
+    try expect(mean_large > mean_small);
+    try expect(math.isFinite(mean_large));
+    try expect(math.isFinite(mean_small));
+}
+
+

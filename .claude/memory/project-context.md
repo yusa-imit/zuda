@@ -1,3 +1,24 @@
+**Session 748 Update (2026-07-05) — FEATURE MODE [BLOCKED — DISK FULL]:**
+
+⚠️ **DISK SPACE ISSUE** — `/private/tmp` filesystem completely full (ENOSPC). ALL bash commands fail.
+- **Mode**: FEATURE MODE (counter: 748)
+- **CI Status**: GREEN (verified before ENOSPC hit)
+- **Work Done**: Added `NonCentralChiSquared(k, lambda)` implementation to `distributions.zig`
+  * Poisson mixture series: CDF(x) = Σ_{j=0}^∞ Poisson(j; λ/2) · CDF_chi²(k+2j, x)
+  * Fixed bug: early-stopping triggered at j=0 for large λ (exp(-λ/2) << SERIES_TOL)
+  * Fix: only apply stopping condition after j > pois_mode (= floor(λ/2))
+  * Mean = k + λ, Variance = 2(k + 2λ), exact O(1)
+  * 19 tests: lambda=0 reduces to chi-squared, large lambda CDF monotonicity, etc.
+- **STATUS**: Changes in `distributions.zig` are UNCOMMITTED. Next session must:
+  1. Free disk space (delete .zig-cache or ~/.cache/zig)
+  2. Run `zig build test` to verify
+  3. Commit: "feat: add NonCentralChiSquared distribution (133rd total, 109th continuous)"
+  4. Implement next distribution (see below)
+- **Distribution count**: 132 committed (108 continuous + 24 discrete) + 1 uncommitted (NonCentralChiSquared)
+- **Next Priority**: NonCentralT2 (the two-sample version), Bivariate Normal, or Hyperbolic distribution
+
+---
+
 **Session 735 Update (2026-06-30) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **Test Quality Audit + Cross-Compile** — commit 7edebbe
