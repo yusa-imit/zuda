@@ -6955,6 +6955,24 @@ test "Bernoulli: validate passes for valid p" {
     try dist3.validate();
 }
 
+test "Bernoulli: validate fails for p out of range" {
+    var dist = try Bernoulli(f64).init(0.5);
+    dist.p = 0.0;
+    try expectError(error.InvalidProbability, dist.validate());
+    dist.p = -0.1;
+    try expectError(error.InvalidProbability, dist.validate());
+    dist.p = 1.1;
+    try expectError(error.InvalidProbability, dist.validate());
+}
+
+test "Bernoulli: validate fails for non-finite p" {
+    var dist = try Bernoulli(f64).init(0.5);
+    dist.p = math.nan(f64);
+    try expectError(error.InvalidProbability, dist.validate());
+    dist.p = math.inf(f64);
+    try expectError(error.InvalidProbability, dist.validate());
+}
+
 test "Bernoulli: sample proportion converges to p (N=5000)" {
     var prng = std.Random.DefaultPrng.init(0xFEEDFACE);
     const rng = prng.random();
@@ -7190,6 +7208,22 @@ test "Geometric: validate passes for valid p" {
     try dist.validate();
     const dist2 = try Geometric(f64).init(1.0);
     try dist2.validate();
+}
+
+test "Geometric: validate fails for p out of range" {
+    var dist = try Geometric(f64).init(0.5);
+    dist.p = 0.0;
+    try expectError(error.InvalidProbability, dist.validate());
+    dist.p = -0.1;
+    try expectError(error.InvalidProbability, dist.validate());
+    dist.p = 1.1;
+    try expectError(error.InvalidProbability, dist.validate());
+}
+
+test "Geometric: validate fails for non-finite p" {
+    var dist = try Geometric(f64).init(0.5);
+    dist.p = math.nan(f64);
+    try expectError(error.InvalidProbability, dist.validate());
 }
 
 test "Geometric: sample mean converges to 1/p (N=5000)" {
