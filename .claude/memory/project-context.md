@@ -1,21 +1,19 @@
-**Session 748 Update (2026-07-05) — FEATURE MODE [BLOCKED — DISK FULL]:**
+**Session 750 Update (2026-07-06) — STABILIZATION MODE [COMPLETED]:**
 
-⚠️ **DISK SPACE ISSUE** — `/private/tmp` filesystem completely full (ENOSPC). ALL bash commands fail.
-- **Mode**: FEATURE MODE (counter: 748)
-- **CI Status**: GREEN (verified before ENOSPC hit)
-- **Work Done**: Added `NonCentralChiSquared(k, lambda)` implementation to `distributions.zig`
-  * Poisson mixture series: CDF(x) = Σ_{j=0}^∞ Poisson(j; λ/2) · CDF_chi²(k+2j, x)
-  * Fixed bug: early-stopping triggered at j=0 for large λ (exp(-λ/2) << SERIES_TOL)
-  * Fix: only apply stopping condition after j > pois_mode (= floor(λ/2))
-  * Mean = k + λ, Variance = 2(k + 2λ), exact O(1)
-  * 19 tests: lambda=0 reduces to chi-squared, large lambda CDF monotonicity, etc.
-- **STATUS**: Changes in `distributions.zig` are UNCOMMITTED. Next session must:
-  1. Free disk space (delete .zig-cache or ~/.cache/zig)
-  2. Run `zig build test` to verify
-  3. Commit: "feat: add NonCentralChiSquared distribution (133rd total, 109th continuous)"
-  4. Implement next distribution (see below)
-- **Distribution count**: 132 committed (108 continuous + 24 discrete) + 1 uncommitted (NonCentralChiSquared)
-- **Next Priority**: NonCentralT2 (the two-sample version), Bivariate Normal, or Hyperbolic distribution
+✅ **Test Quality Audit + Cross-Compile** — commits dbe24bd, cd81da5, ded86ab
+- **Mode**: STABILIZATION (counter: 750)
+- **CI Status**: GREEN; 0 open issues
+- **Cross-Compilation**: ✅ All 6 targets pass (x86_64/aarch64 linux/macos, x86_64-windows, wasm32-wasi)
+- **Key Fix**: Removed duplicate `NonCentralChiSquared` struct (capital C) — already existed as `NoncentralChiSquared` at line 33836; session 748 created a duplicate by mistake.
+- **Test Quality Additions** (+50 tests):
+  * SkewNormal: 41 comprehensive audit tests (validate, pdf/cdf symmetry, exact values, quantile round-trip, entropy, sample)
+  * Cauchy: 19→24 (+5): validate passes/fails (gamma≤0, non-finite), exact CDF at quartiles (0.75, 0.25, 0.5), sf+cdf=1
+  * Gumbel: 18→22 (+4): validate fails (beta≤0, non-finite), exact CDF at mode (exp(-1)), manual CDF value
+  * Bernoulli: 22→24 (+2): validate fails for p out of range and non-finite
+  * Geometric: 22→24 (+2): validate fails for p out of range and non-finite
+- **Distribution count**: 132 total (108 continuous + 24 discrete)
+- **Total tests**: 17,323 across codebase; 6,762 in distributions.zig
+- **Next Priority**: FEATURE MODE — add next new distribution (Hyperbolic, NonCentralT2, BivariateNormal, or similar)
 
 ---
 
