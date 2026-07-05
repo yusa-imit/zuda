@@ -6272,6 +6272,49 @@ test "Cauchy: memory safety" {
     }
 }
 
+test "Cauchy: validate passes for valid parameters" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+    try dist.validate();
+    const dist2 = try Cauchy(f64).init(-5.0, 3.0);
+    try dist2.validate();
+}
+
+test "Cauchy: validate fails for gamma <= 0" {
+    var dist = try Cauchy(f64).init(0.0, 1.0);
+    dist.gamma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.gamma = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Cauchy: validate fails for non-finite x0 or gamma" {
+    var dist = try Cauchy(f64).init(0.0, 1.0);
+    dist.x0 = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.x0 = 0.0;
+    dist.gamma = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Cauchy: exact CDF values at quartiles" {
+    // Cauchy(0,1): CDF(x) = 0.5 + atan(x)/pi
+    // CDF(+1) = 0.5 + atan(1)/pi = 0.5 + (pi/4)/pi = 0.5 + 0.25 = 0.75
+    // CDF(-1) = 0.5 + atan(-1)/pi = 0.5 - 0.25 = 0.25
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+    try expectApproxEqAbs(0.75, dist.cdf(1.0), 1e-12);
+    try expectApproxEqAbs(0.25, dist.cdf(-1.0), 1e-12);
+    // CDF(0) = 0.5 (median)
+    try expectApproxEqAbs(0.5, dist.cdf(0.0), 1e-12);
+}
+
+test "Cauchy: sf + cdf = 1" {
+    const dist = try Cauchy(f64).init(1.0, 2.0);
+    const test_points = [_]f64{ -10.0, -1.0, 0.0, 1.0, 5.0, 100.0 };
+    for (test_points) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
 // ============================================================================
 // Gumbel Distribution
 // ============================================================================
@@ -6664,6 +6707,39 @@ test "Gumbel: sample mean convergence (N=10000)" {
     const sample_mean = sum / @as(f64, @floatFromInt(n));
     // 5% relative error tolerance (Gumbel has moderate tail, N=10000 should converge well)
     try testing.expect(@abs(sample_mean - expected_mean) / expected_mean < 0.05);
+}
+
+test "Gumbel: validate fails for beta <= 0" {
+    var dist = try Gumbel(f64).init(0.0, 1.0);
+    dist.beta = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.beta = -2.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Gumbel: validate fails for non-finite parameters" {
+    var dist = try Gumbel(f64).init(0.0, 1.0);
+    dist.mu = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.mu = 0.0;
+    dist.beta = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Gumbel: exact CDF at location parameter" {
+    // CDF(mu; mu, beta) = exp(-exp(0)) = exp(-1) = 1/e ≈ 0.36788
+    const dist1 = try Gumbel(f64).init(0.0, 1.0);
+    try expectApproxEqAbs(@exp(-1.0), dist1.cdf(0.0), 1e-12);
+
+    const dist2 = try Gumbel(f64).init(3.0, 2.0);
+    try expectApproxEqAbs(@exp(-1.0), dist2.cdf(3.0), 1e-12);
+}
+
+test "Gumbel: exact CDF manual value" {
+    // CDF(1; 0, 1) = exp(-exp(-1)) = exp(-1/e) ≈ 0.69220
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    const expected = @exp(-@exp(-1.0));
+    try expectApproxEqAbs(expected, dist.cdf(1.0), 1e-12);
 }
 
 // ============================================================================
