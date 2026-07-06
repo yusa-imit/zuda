@@ -78965,3 +78965,529 @@ test "QExponential: q=1 matches Exponential(rate=1) pdf at x=0.5" {
     try std.testing.expectApproxEqAbs(dist.pdf(0.5), exp_dist.pdf(0.5), 1e-10);
 }
 
+
+// ExGaussian Distribution (136th total, 112th continuous)
+// ============================================================================
+// Exponentially Modified Gaussian (EMG) distribution.
+//
+// X = N(mu, sigma²) + Exp(lambda) — convolution of Gaussian and exponential.
+// Widely used for reaction time modelling (psychology, neuroscience),
+// chromatography peak analysis, and any process with Gaussian noise plus
+// a one-sided exponential delay.
+//
+// Parameters:
+//   mu     ∈ ℝ       — Gaussian location
+//   sigma  > 0       — Gaussian scale
+//   lambda > 0       — Exponential rate (mean exponential component = 1/lambda)
+//
+// Support: (-∞, +∞)
+
+/// Exponentially Modified Gaussian (EMG) distribution EMG(mu, sigma, lambda).
+///
+/// Models the sum X = N(mu, sigma²) + Exp(lambda).
+/// Used in reaction time research, chromatography, and queuing theory.
+///
+/// Parameters: mu ∈ ℝ (location), sigma > 0 (Gaussian scale), lambda > 0 (exponential rate)
+/// Support: (-∞, +∞)
+pub fn ExGaussian(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        mu: T,
+        sigma: T,
+        lambda: T,
+
+        // Pre-computed constants
+        lambda_sigma_sq_2: T, // λ²σ²/2
+        sigma_sq: T, // σ²
+
+        /// Initialize ExGaussian distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, lambda: T) DistributionError!Self {
+            if (!(sigma > 0.0)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(sigma) or !math.isFinite(lambda))
+                return error.InvalidParameter;
+            const sig2 = sigma * sigma;
+            return Self{
+                .mu = mu,
+                .sigma = sigma,
+                .lambda = lambda,
+                .sigma_sq = sig2,
+                .lambda_sigma_sq_2 = lambda * lambda * sig2 / 2.0,
+            };
+        }
+
+        /// Standard normal CDF: Φ(z) = (1 + erf(z/√2)) / 2
+        inline fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        /// log(1 - erf(u)) = log(erfc(u)), stable for large u via asymptotic series.
+        /// For large u: erfc(u) ≈ exp(-u²) / (u·√π), so log(erfc(u)) ≈ -u²-log(u)-½log(π)
+        inline fn logErfc(u: T) T {
+            const erfc_val = 1.0 - erf(u);
+            if (erfc_val > 0.0) return @log(erfc_val);
+            // Asymptotic expansion for large u (erfc underflowed to 0)
+            return -u * u - @log(u) - 0.5 * @log(math.pi);
+        }
+
+        /// Probability density function.
+        ///
+        /// f(x) = (λ/2) · exp(λ(μ-x) + λ²σ²/2) · erfc((μ + λσ² - x) / (σ√2))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const u = (self.mu + self.lambda * self.sigma_sq - x) / (self.sigma * @sqrt(@as(T, 2.0)));
+            const erfc_val = 1.0 - erf(u);
+            if (erfc_val <= 0.0) return 0.0;
+            const exponent = self.lambda * (self.mu - x) + self.lambda_sigma_sq_2;
+            return (self.lambda / 2.0) * @exp(exponent) * erfc_val;
+        }
+
+        /// Log probability density function, numerically stable for all finite x.
+        ///
+        /// Uses asymptotic log(erfc(u)) expansion when 1-erf(u) underflows.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const u = (self.mu + self.lambda * self.sigma_sq - x) / (self.sigma * @sqrt(@as(T, 2.0)));
+            const exponent = self.lambda * (self.mu - x) + self.lambda_sigma_sq_2;
+            return @log(self.lambda / 2.0) + exponent + logErfc(u);
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// F(x) = Φ(z₁) − exp(−λ(x−μ) + λ²σ²/2) · Φ(z₂)
+        ///   z₁ = (x−μ)/σ,  z₂ = z₁ − λσ = (x−μ−λσ²)/σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z1 = (x - self.mu) / self.sigma;
+            const z2 = z1 - self.lambda * self.sigma;
+            const exponent = -self.lambda * (x - self.mu) + self.lambda_sigma_sq_2;
+            const term1 = normalCdf(z1);
+            const term2 = @exp(exponent) * normalCdf(z2);
+            const result = term1 - term2;
+            return @max(@as(T, 0.0), @min(@as(T, 1.0), result));
+        }
+
+        /// Survival function S(x) = 1 − F(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return @max(@as(T, 0.0), @min(@as(T, 1.0), 1.0 - self.cdf(x)));
+        }
+
+        /// Quantile function (inverse CDF) via bisection.
+        ///
+        /// Time: O(80) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            const m = self.mean();
+            const s = self.stdDev();
+            var lo = m - 12.0 * s;
+            var hi = m + 12.0 * s;
+            for (0..80) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Mean: E[X] = μ + 1/λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.mu + 1.0 / self.lambda;
+        }
+
+        /// Variance: Var[X] = σ² + 1/λ²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.sigma_sq + 1.0 / (self.lambda * self.lambda);
+        }
+
+        /// Standard deviation: √(σ² + 1/λ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Mode via ternary search (distribution is unimodal).
+        ///
+        /// Time: O(100) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            var lo = m - 5.0 * s;
+            var hi = m;
+            for (0..100) |_| {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.pdf(m1) < self.pdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Shannon entropy via 500-point midpoint quadrature.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const m = self.mean();
+            const s = self.stdDev();
+            const a = m - 8.0 * s;
+            const b = m + 8.0 * s;
+            const n: usize = 500;
+            const dx = (b - a) / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n) |i| {
+                const xi = a + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                const fi = self.pdf(xi);
+                if (fi > 0.0) sum -= fi * @log(fi);
+            }
+            return sum * dx;
+        }
+
+        /// Generate a random sample: Normal(mu, sigma²) + Exponential(lambda).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Box-Muller for normal component
+            const bm1 = rng.float(T);
+            const bm2 = rng.float(T);
+            const z = @sqrt(-2.0 * @log(bm1)) * @cos(2.0 * math.pi * bm2);
+            const normal_sample = self.mu + self.sigma * z;
+            // Inverse CDF for exponential component
+            const ue = rng.float(T);
+            const exp_sample = -@log(1.0 - ue) / self.lambda;
+            return normal_sample + exp_sample;
+        }
+
+        /// Validate distribution parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!(self.sigma > 0.0) or !math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("ExGaussian(μ={d}, σ={d}, λ={d})", .{ self.mu, self.sigma, self.lambda });
+        }
+    };
+}
+
+// ExGaussian Distribution Tests (136th total, 112th continuous)
+
+test "ExGaussian: validate passes for mu=0, sigma=1, lambda=1" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "ExGaussian: validate passes for mu=5, sigma=2, lambda=0.5" {
+    const dist = try ExGaussian(f64).init(5.0, 2.0, 0.5);
+    try dist.validate();
+}
+
+test "ExGaussian: validate passes for mu=-10, sigma=0.1, lambda=10" {
+    const dist = try ExGaussian(f64).init(-10.0, 0.1, 10.0);
+    try dist.validate();
+}
+
+test "ExGaussian: validate fails for sigma=0" {
+    const result = ExGaussian(f64).init(0.0, 0.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for sigma=-1" {
+    const result = ExGaussian(f64).init(0.0, -1.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for lambda=0" {
+    const result = ExGaussian(f64).init(0.0, 1.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for lambda=-0.5" {
+    const result = ExGaussian(f64).init(0.0, 1.0, -0.5);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for mu=inf" {
+    const result = ExGaussian(f64).init(math.inf(f64), 1.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for mu=nan" {
+    const result = ExGaussian(f64).init(math.nan(f64), 1.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for sigma=inf" {
+    const result = ExGaussian(f64).init(0.0, math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for sigma=nan" {
+    const result = ExGaussian(f64).init(0.0, math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for lambda=inf" {
+    const result = ExGaussian(f64).init(0.0, 1.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: validate fails for lambda=nan" {
+    const result = ExGaussian(f64).init(0.0, 1.0, math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "ExGaussian: pdf exact value at x=0; mu=0, sigma=1, lambda=1 is ~0.26158" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(0.0), 0.26158, 1e-4);
+}
+
+test "ExGaussian: pdf exact value at x=1; mu=0, sigma=1, lambda=1 is ~0.30327" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(1.0), 0.30327, 1e-5);
+}
+
+test "ExGaussian: pdf positive in active range" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    // Use values where pdf doesn't numerically underflow (within ~5 stddevs of mean)
+    const x_vals = [_]f64{ -3.0, -1.0, 0.0, 1.0, 5.0 };
+    for (x_vals) |x| {
+        try std.testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "ExGaussian: pdf is finite for all finite x" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const x_vals = [_]f64{ -100.0, -10.0, 0.0, 10.0, 100.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try std.testing.expect(math.isFinite(p));
+    }
+}
+
+test "ExGaussian: logpdf equals log(pdf) at x=0" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try std.testing.expectApproxEqAbs(dist.logpdf(0.0), @log(pdf_val), 1e-10);
+}
+
+test "ExGaussian: logpdf equals log(pdf) at x=1" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try std.testing.expectApproxEqAbs(dist.logpdf(1.0), @log(pdf_val), 1e-10);
+}
+
+test "ExGaussian: logpdf equals log(pdf) at x=-5" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(-5.0);
+    try std.testing.expectApproxEqAbs(dist.logpdf(-5.0), @log(pdf_val), 1e-10);
+}
+
+test "ExGaussian: logpdf equals log(pdf) at x=10" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(10.0);
+    try std.testing.expectApproxEqAbs(dist.logpdf(10.0), @log(pdf_val), 1e-10);
+}
+
+test "ExGaussian: logpdf is finite for all finite x" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const x_vals = [_]f64{ -50.0, -10.0, 0.0, 10.0, 50.0 };
+    for (x_vals) |x| {
+        try std.testing.expect(math.isFinite(dist.logpdf(x)));
+    }
+}
+
+test "ExGaussian: CDF exact value at x=0; mu=0, sigma=1, lambda=1 is ~0.23842" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(0.0), 0.23842, 1e-5);
+}
+
+test "ExGaussian: CDF exact value at x=1; mu=0, sigma=1, lambda=1 is ~0.53807" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(1.0), 0.53807, 1e-5);
+}
+
+test "ExGaussian: CDF exact value at x=2; mu=0, sigma=1, lambda=1 is ~0.78952" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(2.0), 0.78952, 1e-5);
+}
+
+test "ExGaussian: CDF monotone increasing" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const x_vals = [_]f64{ -10.0, -5.0, -1.0, 0.0, 1.0, 5.0, 10.0 };
+    var prev: f64 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try std.testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "ExGaussian: CDF approaches 0 for very negative x" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.cdf(-100.0) < 0.01);
+}
+
+test "ExGaussian: CDF approaches 1 for very positive x" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.cdf(100.0) > 0.99);
+}
+
+test "ExGaussian: quantile roundtrip at x=0" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const p = dist.cdf(0.0);
+    const x_recovered = try dist.quantile(p);
+    try std.testing.expectApproxEqAbs(x_recovered, 0.0, 1e-5);
+}
+
+test "ExGaussian: quantile roundtrip at x=1" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const p = dist.cdf(1.0);
+    const x_recovered = try dist.quantile(p);
+    try std.testing.expectApproxEqAbs(x_recovered, 1.0, 1e-5);
+}
+
+test "ExGaussian: quantile roundtrip at x=-5" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const p = dist.cdf(-5.0);
+    const x_recovered = try dist.quantile(p);
+    try std.testing.expectApproxEqAbs(x_recovered, -5.0, 1e-5);
+}
+
+test "ExGaussian: mean exact for mu=0, sigma=1, lambda=1 is 1.0" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.mean(), 1.0, 1e-10);
+}
+
+test "ExGaussian: mean exact for mu=0, sigma=2, lambda=0.5 is 2.0" {
+    const dist = try ExGaussian(f64).init(0.0, 2.0, 0.5);
+    try std.testing.expectApproxEqAbs(dist.mean(), 2.0, 1e-10);
+}
+
+test "ExGaussian: mean equals mu + 1/lambda for mu=5, sigma=1, lambda=0.5" {
+    const dist = try ExGaussian(f64).init(5.0, 1.0, 0.5);
+    try std.testing.expectApproxEqAbs(dist.mean(), 5.0 + 2.0, 1e-10);
+}
+
+test "ExGaussian: mean greater than mu for all positive lambda" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.mean() > 0.0);
+}
+
+test "ExGaussian: variance exact for mu=0, sigma=1, lambda=1 is 2.0" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.variance(), 2.0, 1e-10);
+}
+
+test "ExGaussian: variance exact for mu=0, sigma=2, lambda=0.5 is 8.0" {
+    const dist = try ExGaussian(f64).init(0.0, 2.0, 0.5);
+    try std.testing.expectApproxEqAbs(dist.variance(), 8.0, 1e-10);
+}
+
+test "ExGaussian: variance equals sigma^2 + 1/lambda^2" {
+    const dist = try ExGaussian(f64).init(0.0, 1.5, 0.75);
+    const expected = 1.5 * 1.5 + 1.0 / (0.75 * 0.75);
+    try std.testing.expectApproxEqAbs(dist.variance(), expected, 1e-10);
+}
+
+test "ExGaussian: variance greater than sigma^2 for all positive lambda" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.variance() > 1.0);
+}
+
+test "ExGaussian: stdDev equals sqrt(variance)" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.stdDev(), @sqrt(dist.variance()), 1e-10);
+}
+
+test "ExGaussian: mode is finite" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(math.isFinite(dist.mode()));
+}
+
+test "ExGaussian: mode is less than mean (right-skewed)" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.mode() < dist.mean());
+}
+
+test "ExGaussian: entropy is finite" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(math.isFinite(dist.entropy()));
+}
+
+test "ExGaussian: entropy positive" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.entropy() > 0.0);
+}
+
+test "ExGaussian: entropy increases with sigma" {
+    const d1 = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    const d2 = try ExGaussian(f64).init(0.0, 2.0, 1.0);
+    try std.testing.expect(d1.entropy() < d2.entropy());
+}
+
+test "ExGaussian: sample is finite" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(math.isFinite(s));
+    }
+}
+
+test "ExGaussian: sample mean converges to mean over 5000 draws" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try std.testing.expectApproxEqAbs(sample_mean, dist.mean(), 0.3);
+}
+
+test "ExGaussian: f32 type support" {
+    const dist = try ExGaussian(f32).init(0.0, 1.0, 1.0);
+    try dist.validate();
+    const pdf_val = dist.pdf(0.0);
+    try std.testing.expect(pdf_val > 0.0);
+}
+
+test "ExGaussian: format works" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try std.testing.expect(output.len > 0);
+}
+
+test "ExGaussian: right-skewed — mode less than mean for standard parameters" {
+    const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
+    try std.testing.expect(dist.mode() < dist.mean());
+}

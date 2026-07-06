@@ -633,3 +633,6 @@
 {"timestamp":"2026-07-02T15:49:30Z","action":"subagent","agent_type":"zig-developer","task":"Implement GeneralizedHyperbolic distribution (132nd total, 108th continuous)","project":"zuda"}
 {"timestamp":"2026-07-03T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Test quality audit for VarianceGamma and GeneralizedHyperbolic distributions","project":"zuda"}
 {"timestamp":"2026-07-03T00:00:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement NonCentralChiSquared distribution (133rd)","project":"zuda"}
+{"timestamp":"2026-07-06T03:43:59Z","action":"subagent","agent_type":"test-writer","task":"Write WrappedNormal distribution tests (Red phase TDD)","project":"zuda"}
+{"timestamp":"2026-07-06T03:45:27Z","action":"subagent","agent_type":"zig-developer","task":"Implement WrappedNormal distribution (Green phase TDD)","project":"zuda"}
+{"timestamp":"2026-07-07T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write tests for ExGaussian distribution (136th total, 112th continuous)","project":"zuda"}
