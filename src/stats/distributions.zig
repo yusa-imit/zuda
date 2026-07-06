@@ -78504,4 +78504,464 @@ test "WrappedLaplace: concentrated distribution (b=0.1) has samples near mu" {
     }
 }
 
+/// QExponential (Tsallis q-Exponential) distribution.
+///
+/// Generalization of the exponential distribution via Tsallis q-deformed
+/// exponentials. Interpolates between bounded distributions (q < 1),
+/// the exponential (q → 1), and power-law / Pareto-like tails (1 < q < 2).
+///
+/// **PDF**: f(x; q, λ) = (2-q)/λ · [1-(1-q)x/λ]^{1/(1-q)}
+///   - For q=1 (limit): f(x) = exp(-x/λ)/λ
+///
+/// **Parameters**:
+/// - `q` < 2: deformation parameter; q → 1 recovers Exponential(rate=1/λ)
+/// - `lambda` > 0: scale parameter (= mean when q=1)
+///
+/// **Support**:
+/// - [0, λ/(1-q)] for q < 1 (finite)
+/// - [0, ∞)      for 1 ≤ q < 2
+///
+/// **Special cases**:
+/// - q → 1: Exponential(rate=1/λ)
+/// - q = 0: Right-triangular on [0, λ]; f(x)=2(λ-x)/λ²
+/// - q ≥ 3/2: Mean infinite (power-law tail)
+/// - q > 1: Related to Lomax with shape (2-q)/(q-1) and scale λ/(q-1)
+pub fn QExponential(comptime T: type) type {
+    return struct {
+        q: T,      // deformation parameter (q < 2)
+        lambda: T, // scale parameter (lambda > 0)
+
+        const Self = @This();
+        const EPS: T = 1e-12;
+
+        /// Initialize QExponential distribution.
+        /// Requires q < 2 and lambda > 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(q: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(q) or q >= 2.0) return error.InvalidParameter;
+            if (!(lambda > 0.0) or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .q = q, .lambda = lambda };
+        }
+
+        /// Upper bound of support. Finite (= λ/(1-q)) for q < 1, +∞ for q ≥ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn supportMax(self: Self) T {
+            if (self.q < 1.0) return self.lambda / (1.0 - self.q);
+            return math.inf(T);
+        }
+
+        fn qBase(self: Self, x: T) T {
+            return 1.0 - (1.0 - self.q) * x / self.lambda;
+        }
+
+        /// Probability density function.
+        ///
+        /// f(x) = (2-q)/λ · [1-(1-q)x/λ]^{1/(1-q)}
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            if (self.q < 1.0 and x >= self.lambda / (1.0 - self.q)) return 0.0;
+            if (@abs(self.q - 1.0) < EPS) return @exp(-x / self.lambda) / self.lambda;
+            const base = self.qBase(x);
+            if (base <= 0.0) return 0.0;
+            return (2.0 - self.q) / self.lambda * math.pow(T, base, 1.0 / (1.0 - self.q));
+        }
+
+        /// Log probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            if (self.q < 1.0 and x >= self.lambda / (1.0 - self.q)) return -math.inf(T);
+            if (@abs(self.q - 1.0) < EPS) return -x / self.lambda - @log(self.lambda);
+            const base = self.qBase(x);
+            if (base <= 0.0) return -math.inf(T);
+            return @log((2.0 - self.q) / self.lambda) + @log(base) / (1.0 - self.q);
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// F(x) = 1 - [1-(1-q)x/λ]^{(2-q)/(1-q)}
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (self.q < 1.0 and x >= self.lambda / (1.0 - self.q)) return 1.0;
+            if (@abs(self.q - 1.0) < EPS) return 1.0 - @exp(-x / self.lambda);
+            const base = self.qBase(x);
+            if (base <= 0.0) return 1.0;
+            return 1.0 - math.pow(T, base, (2.0 - self.q) / (1.0 - self.q));
+        }
+
+        /// Survival function (1 - CDF).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            if (self.q < 1.0 and x >= self.lambda / (1.0 - self.q)) return 0.0;
+            if (@abs(self.q - 1.0) < EPS) return @exp(-x / self.lambda);
+            const base = self.qBase(x);
+            if (base <= 0.0) return 0.0;
+            return math.pow(T, base, (2.0 - self.q) / (1.0 - self.q));
+        }
+
+        /// Quantile function (inverse CDF).
+        ///
+        /// Q(p) = λ/(1-q) · (1 - (1-p)^{(1-q)/(2-q)})
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidParameter;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return self.supportMax();
+            if (@abs(self.q - 1.0) < EPS) return -self.lambda * @log(1.0 - p);
+            const exp = (1.0 - self.q) / (2.0 - self.q);
+            return self.lambda / (1.0 - self.q) * (1.0 - math.pow(T, 1.0 - p, exp));
+        }
+
+        /// Mean: E[X] = λ/(3-2q) for q < 3/2, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.q >= 1.5) return math.inf(T);
+            return self.lambda / (3.0 - 2.0 * self.q);
+        }
+
+        /// Variance: Var[X] = λ²(2-q)/((3-2q)²(4-3q)) for q < 4/3, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.q >= 4.0 / 3.0) return math.inf(T);
+            const d1 = 3.0 - 2.0 * self.q;
+            const d2 = 4.0 - 3.0 * self.q;
+            return self.lambda * self.lambda * (2.0 - self.q) / (d1 * d1 * d2);
+        }
+
+        /// Standard deviation.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Mode: always 0 — PDF is strictly decreasing for all valid q.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Shannon entropy: H = ln(λ/(2-q)) + 1/(2-q).
+        ///
+        /// Closed-form exact result derived via substitution u = 1-(1-q)x/λ;
+        /// the same formula holds for all q < 2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return @log(self.lambda) - @log(2.0 - self.q) + 1.0 / (2.0 - self.q);
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable;
+        }
+
+        /// Validate distribution parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.q) or self.q >= 2.0) return error.InvalidParameter;
+            if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("QExponential(q={d}, λ={d})", .{ self.q, self.lambda });
+        }
+    };
+}
+
+test "QExponential: validate passes for q=0.5, lambda=1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try dist.validate();
+}
+
+test "QExponential: validate passes for q=1.0, lambda=1" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "QExponential: validate passes for q=1.5, lambda=1" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try dist.validate();
+}
+
+test "QExponential: validate passes for q=1.8, lambda=2" {
+    const dist = try QExponential(f64).init(1.8, 2.0);
+    try dist.validate();
+}
+
+test "QExponential: validate passes for negative q=-10" {
+    const dist = try QExponential(f64).init(-10.0, 1.0);
+    try dist.validate();
+}
+
+test "QExponential: validate fails for q=2.0" {
+    const result = QExponential(f64).init(2.0, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for q=2.5" {
+    const result = QExponential(f64).init(2.5, 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for q=inf" {
+    const result = QExponential(f64).init(math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for q=nan" {
+    const result = QExponential(f64).init(math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for lambda=0" {
+    const result = QExponential(f64).init(0.5, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for lambda=-1" {
+    const result = QExponential(f64).init(0.5, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for lambda=inf" {
+    const result = QExponential(f64).init(0.5, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: validate fails for lambda=nan" {
+    const result = QExponential(f64).init(0.5, math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "QExponential: pdf(0; q=0.5, lambda=1) exactly 1.5" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(0.0), 1.5, 1e-10);
+}
+
+test "QExponential: pdf(0; q=1.0, lambda=1) exactly 1.0" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(0.0), 1.0, 1e-10);
+}
+
+test "QExponential: pdf(0; q=1.5, lambda=1) exactly 0.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(0.0), 0.5, 1e-10);
+}
+
+test "QExponential: pdf=0 for x<0" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(-1.0), 0.0, 1e-15);
+    try std.testing.expectApproxEqAbs(dist.pdf(-0.1), 0.0, 1e-15);
+}
+
+test "QExponential: pdf=0 outside support for q<1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const x_max = 1.0 / (1.0 - 0.5); // = 2.0
+    try std.testing.expectApproxEqAbs(dist.pdf(x_max + 0.1), 0.0, 1e-15);
+}
+
+test "QExponential: logpdf = log(pdf) at x=0.5, q=0.5, lambda=1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const pdf_val = dist.pdf(0.5);
+    try std.testing.expectApproxEqAbs(dist.logpdf(0.5), @log(pdf_val), 1e-10);
+}
+
+test "QExponential: logpdf = log(pdf) at x=1.0, q=1.5, lambda=1" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try std.testing.expectApproxEqAbs(dist.logpdf(1.0), @log(pdf_val), 1e-10);
+}
+
+test "QExponential: logpdf=-inf for x<0" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expect(dist.logpdf(-1.0) == -math.inf(f64));
+}
+
+test "QExponential: logpdf=-inf outside support for q<1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const x_max = 1.0 / (1.0 - 0.5); // = 2.0
+    try std.testing.expect(dist.logpdf(x_max + 0.1) == -math.inf(f64));
+}
+
+test "QExponential: CDF(1; q=0.5, lambda=1) exactly 0.875" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(1.0), 0.875, 1e-10);
+}
+
+test "QExponential: CDF(2; q=1.5, lambda=1) exactly 0.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(2.0), 0.5, 1e-10);
+}
+
+test "QExponential: CDF(0)=0" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(0.0), 0.0, 1e-15);
+}
+
+test "QExponential: CDF approaches 1 for large x with power-law q=1.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    // CDF(x) = x/(x+2); CDF(10000) = 10000/10002 > 0.999
+    try std.testing.expect(dist.cdf(10000.0) > 0.999);
+}
+
+test "QExponential: CDF + SF = 1 at x=0.5, q=0.5" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(0.5) + dist.sf(0.5), 1.0, 1e-10);
+}
+
+test "QExponential: CDF + SF = 1 at x=1.5, q=1.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(1.5) + dist.sf(1.5), 1.0, 1e-10);
+}
+
+test "QExponential: CDF monotone increasing" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.2, 0.5, 0.8, 1.0, 1.5 };
+    var prev: f64 = -1.0;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try std.testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "QExponential: quantile roundtrip at x=0.5, q=0.5, lambda=1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const p = dist.cdf(0.5);
+    const x_recovered = try dist.quantile(p);
+    try std.testing.expectApproxEqAbs(x_recovered, 0.5, 1e-5);
+}
+
+test "QExponential: quantile exact Q(0.875; q=0.5, lambda=1) = 1.0" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(try dist.quantile(0.875), 1.0, 1e-10);
+}
+
+test "QExponential: quantile exact Q(0.5; q=1.5, lambda=1) = 2.0" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expectApproxEqAbs(try dist.quantile(0.5), 2.0, 1e-10);
+}
+
+test "QExponential: quantile(0)=0" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(try dist.quantile(0.0), 0.0, 1e-15);
+}
+
+test "QExponential: quantile(1)=x_max for q<1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const x_max = 1.0 / (1.0 - 0.5); // = 2.0
+    try std.testing.expectApproxEqAbs(try dist.quantile(1.0), x_max, 1e-10);
+}
+
+test "QExponential: mean exact q=0.5, lambda=1 is 0.5" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.mean(), 0.5, 1e-10);
+}
+
+test "QExponential: mean exact q=1.0, lambda=1 is 1.0" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.mean(), 1.0, 1e-10);
+}
+
+test "QExponential: mean is +inf for q=1.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expect(dist.mean() == math.inf(f64));
+}
+
+test "QExponential: mean is +inf for q=1.8" {
+    const dist = try QExponential(f64).init(1.8, 1.0);
+    try std.testing.expect(dist.mean() == math.inf(f64));
+}
+
+test "QExponential: variance exact q=0.5, lambda=1 is 0.15" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.variance(), 0.15, 1e-10);
+}
+
+test "QExponential: variance exact q=1.0, lambda=1 is 1.0" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.variance(), 1.0, 1e-10);
+}
+
+test "QExponential: variance is +inf for q=1.35 (> 4/3)" {
+    const dist = try QExponential(f64).init(1.35, 1.0);
+    try std.testing.expect(dist.variance() == math.inf(f64));
+}
+
+test "QExponential: mode=0 for q=0.5" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.mode(), 0.0, 1e-15);
+}
+
+test "QExponential: mode=0 for q=1.0" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.mode(), 0.0, 1e-15);
+}
+
+test "QExponential: mode=0 for q=1.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.mode(), 0.0, 1e-15);
+}
+
+test "QExponential: entropy exact q=1.0, lambda=1 is 1.0" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.entropy(), 1.0, 1e-10);
+}
+
+test "QExponential: entropy exact q=1.5, lambda=1 is ln(2)+2" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.entropy(), @log(2.0) + 2.0, 1e-10);
+}
+
+test "QExponential: entropy increases with lambda" {
+    const d1 = try QExponential(f64).init(1.0, 1.0);
+    const d2 = try QExponential(f64).init(1.0, 2.0);
+    try std.testing.expect(d1.entropy() < d2.entropy());
+}
+
+test "QExponential: sample in support [0, x_max] for q<1" {
+    const dist = try QExponential(f64).init(0.5, 1.0);
+    const x_max = 1.0 / (1.0 - 0.5); // = 2.0
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(s >= 0.0 and s <= x_max);
+    }
+}
+
+test "QExponential: sample finite and non-negative for q=1.5" {
+    const dist = try QExponential(f64).init(1.5, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(math.isFinite(s) and s >= 0.0);
+    }
+}
+
+test "QExponential: q=1 matches Exponential(rate=1) pdf at x=0.5" {
+    const dist = try QExponential(f64).init(1.0, 1.0);
+    const exp_dist = try Exponential(f64).init(1.0);
+    try std.testing.expectApproxEqAbs(dist.pdf(0.5), exp_dist.pdf(0.5), 1e-10);
+}
 
