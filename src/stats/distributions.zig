@@ -77373,4 +77373,603 @@ test "SkewNormal: extreme alpha values" {
     try expect(math.isFinite(mean_small));
 }
 
+// ============================================================================
+// WRAPPED NORMAL DISTRIBUTION
+// ============================================================================
+
+/// WrappedNormal distribution: Normal distribution wrapped onto the circle (-π, π].
+///
+/// The PDF is an infinite series sum of shifted normal PDFs:
+/// f(θ) = Σ_{k=-∞}^{∞} φ((θ - μ + 2πk) / σ) / σ
+///
+/// where φ is the standard normal PDF.
+///
+/// **Parameters**:
+/// - `mu` ∈ (-π, π]: mean direction (location on circle)
+/// - `sigma` > 0: standard deviation (concentration; small σ → concentrated, large σ → nearly uniform)
+///
+/// **Support**: θ ∈ (-π, π]
+///
+/// **Special properties**:
+/// - Symmetric around μ
+/// - Circular variance: 1 - exp(-σ²/2)
+/// - Mean resultant length: ρ = exp(-σ²/2)
+/// - For σ → 0: approaches delta at μ
+/// - For σ → ∞: approaches uniform on (-π, π]
+pub fn WrappedNormal(comptime T: type) type {
+    return struct {
+        mu: T,     // mean direction in (-π, π]
+        sigma: T,  // standard deviation (σ > 0)
+
+        const Self = @This();
+
+        /// Helper: wrap angle to (-π, π]
+        fn wrapAngle(theta: T) T {
+            const two_pi = 2.0 * math.pi;
+            const n = @floor((theta + math.pi) / two_pi);
+            return theta - n * two_pi;
+        }
+
+        /// Helper: standard normal CDF using global erf()
+        fn normalCdf(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        /// Helper: compute number of wrapping terms K
+        fn numTerms(sigma: T) usize {
+            // K such that exp(-(2πK)²/(2σ²)) < 1e-14
+            // K > σ * 1.278; K = min(100, max(5, floor(1.3σ)+2))
+            const k_f: T = 1.3 * sigma + 2.0;
+            const k: usize = @intFromFloat(@ceil(k_f));
+            return @min(k, 100);
+        }
+
+        /// Initialize WrappedNormal distribution.
+        /// Normalizes mu to (-π, π]. Requires sigma > 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(sigma > 0.0) or !math.isFinite(sigma)) return error.InvalidParameter;
+            // Normalize mu to (-π, π]
+            var m = mu;
+            const two_pi = 2.0 * math.pi;
+            // Use ceil formula to wrap: for mu outside (-π, π], subtract n*2π
+            const n = @ceil((m - math.pi) / two_pi);
+            m = m - n * two_pi;
+            // Handle floating point rounding: if result is slightly below -π (but not exactly -π),
+            // wrap it to π. Only do this if it's significantly below -π.
+            if (m < -math.pi - 1e-10) {
+                m += two_pi;
+            }
+            return Self{ .mu = m, .sigma = sigma };
+        }
+
+        /// Probability density function at θ ∈ (-π, π].
+        ///
+        /// f(θ) = Σ_{k=-K}^K (1/(σ√(2π))) · exp(-(θ-μ+2πk)²/(2σ²))
+        ///
+        /// Returns 0 for θ ∉ (-π, π].
+        ///
+        /// Time: O(K) where K ≈ 1.3σ | Space: O(1)
+        pub fn pdf(self: Self, theta: T) T {
+            if (theta < -math.pi or theta > math.pi) return 0.0;
+            const K = numTerms(self.sigma);
+            const coeff: T = 1.0 / (self.sigma * @sqrt(2.0 * math.pi));
+            const inv_2sig2: T = 1.0 / (2.0 * self.sigma * self.sigma);
+            var sum: T = 0.0;
+            var k: usize = 0;
+            while (k <= 2 * K) : (k += 1) {
+                const kk = @as(T, @floatFromInt(k)) - @as(T, @floatFromInt(K));
+                const shift = theta - self.mu + 2.0 * math.pi * kk;
+                sum += @exp(-shift * shift * inv_2sig2);
+            }
+            return coeff * sum;
+        }
+
+        /// Log-probability density function.
+        ///
+        /// Time: O(K) | Space: O(1)
+        pub fn logpdf(self: Self, theta: T) T {
+            if (theta < -math.pi or theta > math.pi) return -math.inf(T);
+            const p = self.pdf(theta);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function.
+        ///
+        /// F(θ) = Σ_{k=-K}^K [Φ((θ-μ+2πk)/σ) - Φ((-π-μ+2πk)/σ)]
+        ///
+        /// F(-π) = 0, F(π) = 1.
+        ///
+        /// Time: O(K) | Space: O(1)
+        pub fn cdf(self: Self, theta: T) T {
+            if (theta <= -math.pi) return 0.0;
+            if (theta >= math.pi) return 1.0;
+            const K = numTerms(self.sigma);
+            var sum: T = 0.0;
+            var k: usize = 0;
+            while (k <= 2 * K) : (k += 1) {
+                const kk = @as(T, @floatFromInt(k)) - @as(T, @floatFromInt(K));
+                const base: T = 2.0 * math.pi * kk - self.mu;
+                const upper = (theta + base) / self.sigma;
+                const lower = (-math.pi + base) / self.sigma;
+                sum += normalCdf(upper) - normalCdf(lower);
+            }
+            return @max(0.0, @min(1.0, sum));
+        }
+
+        /// Survival function: 1 - CDF(θ).
+        ///
+        /// Time: O(K) | Space: O(1)
+        pub fn sf(self: Self, theta: T) T {
+            return 1.0 - self.cdf(theta);
+        }
+
+        /// Quantile function via bisection on CDF.
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1].
+        ///
+        /// Time: O(K · log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0) or math.isNan(p)) return error.InvalidProbability;
+            if (p == 0.0) return -math.pi;
+            if (p == 1.0) return math.pi;
+            var lo: T = -math.pi;
+            var hi: T = math.pi;
+            for (0..64) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) { lo = mid; } else { hi = mid; }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Circular mean direction.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T { return self.mu; }
+
+        /// Mode equals the mean direction (density peaks at μ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T { return self.mu; }
+
+        /// Circular variance: 1 - exp(-σ²/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn circularVariance(self: Self) T {
+            return 1.0 - @exp(-self.sigma * self.sigma / 2.0);
+        }
+
+        /// Mean resultant length: ρ = exp(-σ²/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn meanResultantLength(self: Self) T {
+            return @exp(-self.sigma * self.sigma / 2.0);
+        }
+
+        /// Differential entropy via 500-point midpoint quadrature over (-π, π].
+        ///
+        /// Time: O(K · N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const lo: T = -math.pi;
+            const hi: T = math.pi;
+            const step = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const x = lo + (@as(T, @floatFromInt(i)) + 0.5) * step;
+                const p = self.pdf(x);
+                if (p > 0.0) sum -= p * @log(p);
+            }
+            return sum * step;
+        }
+
+        /// Generate a random sample: draw Normal(μ, σ²) then wrap to (-π, π].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const raw = rng.floatNorm(T) * self.sigma + self.mu;
+            return wrapAngle(raw);
+        }
+
+        /// Format the distribution for debugging.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("WrappedNormal(μ={d}, σ={d})", .{ self.mu, self.sigma });
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!(self.sigma > 0.0) or !math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (self.mu <= -math.pi or self.mu > math.pi) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// WrappedNormal Tests (133rd distribution, 107th continuous)
+// ============================================================================
+
+test "WrappedNormal: init with valid parameters (mu=0, sigma=1)" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(1.0, dist.sigma, 1e-10);
+}
+
+test "WrappedNormal: init with valid parameters (mu=pi/4, sigma=0.5)" {
+    const dist = try WrappedNormal(f64).init(math.pi / 4.0, 0.5);
+    try std.testing.expectApproxEqAbs(math.pi / 4.0, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(0.5, dist.sigma, 1e-10);
+}
+
+test "WrappedNormal: init with valid parameters (mu=-pi, sigma=2.0)" {
+    // -π is not in (-π, π]; it wraps to π (same point on circle)
+    const dist = try WrappedNormal(f64).init(-math.pi, 2.0);
+    try std.testing.expectApproxEqAbs(math.pi, dist.mu, 1e-10);
+    try std.testing.expectApproxEqAbs(2.0, dist.sigma, 1e-10);
+}
+
+test "WrappedNormal: init wraps mu to (-pi, pi] range (3π to π)" {
+    const dist = try WrappedNormal(f64).init(3.0 * math.pi, 1.0);
+    try std.testing.expectApproxEqAbs(math.pi, dist.mu, 1e-10);
+}
+
+test "WrappedNormal: init wraps mu to (-pi, pi] range (-3π to π)" {
+    const dist = try WrappedNormal(f64).init(-3.0 * math.pi, 1.0);
+    try std.testing.expectApproxEqAbs(math.pi, dist.mu, 1e-10);
+}
+
+test "WrappedNormal: init rejects sigma <= 0" {
+    const result1 = WrappedNormal(f64).init(0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result1);
+
+    const result2 = WrappedNormal(f64).init(0.0, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result2);
+}
+
+test "WrappedNormal: init rejects non-finite mu" {
+    const result1 = WrappedNormal(f64).init(math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result1);
+
+    const result2 = WrappedNormal(f64).init(-math.inf(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result2);
+
+    const result3 = WrappedNormal(f64).init(math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result3);
+}
+
+test "WrappedNormal: init rejects non-finite sigma" {
+    const result1 = WrappedNormal(f64).init(0.0, math.inf(f64));
+    try std.testing.expectError(error.InvalidParameter, result1);
+
+    const result2 = WrappedNormal(f64).init(0.0, math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result2);
+}
+
+test "WrappedNormal: validate succeeds for valid parameters" {
+    const dist = try WrappedNormal(f64).init(1.0, 1.5);
+    try dist.validate();
+}
+
+test "WrappedNormal: pdf at mean (mu=0, sigma=1, theta=0) ≈ 1/√(2π) ≈ 0.39894" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 1.0 / math.sqrt(2.0 * math.pi);
+    try std.testing.expectApproxEqAbs(expected, p, 1e-5);
+}
+
+test "WrappedNormal: pdf is symmetric around mu (mu=0, sigma=1)" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const p_pos = dist.pdf(0.5);
+    const p_neg = dist.pdf(-0.5);
+    try std.testing.expectApproxEqAbs(p_pos, p_neg, 1e-10);
+}
+
+test "WrappedNormal: pdf is symmetric around mu with non-zero mu" {
+    const dist = try WrappedNormal(f64).init(1.5, 0.8);
+    const p_plus = dist.pdf(1.5 + 0.3);
+    const p_minus = dist.pdf(1.5 - 0.3);
+    try std.testing.expectApproxEqAbs(p_plus, p_minus, 1e-10);
+}
+
+test "WrappedNormal: pdf is non-negative everywhere" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var theta: f64 = -math.pi + 0.01;
+    while (theta < math.pi) : (theta += 0.2) {
+        const p = dist.pdf(theta);
+        try std.testing.expect(p >= 0.0);
+    }
+}
+
+test "WrappedNormal: pdf returns 0 outside (-π, π]" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(-math.pi - 0.1), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(math.pi + 0.1), 1e-10);
+    try std.testing.expectApproxEqAbs(0.0, dist.pdf(10.0), 1e-10);
+}
+
+test "WrappedNormal: pdf integrates to approximately 1" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    const step = 0.01;
+    var theta: f64 = -math.pi;
+    while (theta < math.pi) : (theta += step) {
+        sum += dist.pdf(theta) * step;
+    }
+    try std.testing.expectApproxEqAbs(1.0, sum, 0.01);
+}
+
+test "WrappedNormal: pdf for large sigma approaches 1/(2π)" {
+    const dist = try WrappedNormal(f64).init(0.0, 100.0);
+    var theta: f64 = -math.pi + 0.1;
+    const uniform_expected = 1.0 / (2.0 * math.pi);
+    while (theta < math.pi - 0.1) : (theta += 0.5) {
+        const p = dist.pdf(theta);
+        try std.testing.expectApproxEqAbs(uniform_expected, p, 0.001);
+    }
+}
+
+test "WrappedNormal: pdf peaks are highest at small sigma" {
+    const dist_small = try WrappedNormal(f64).init(0.0, 0.1);
+    const dist_large = try WrappedNormal(f64).init(0.0, 1.0);
+    const p_small = dist_small.pdf(0.0);
+    const p_large = dist_large.pdf(0.0);
+    try std.testing.expect(p_small > p_large);
+}
+
+test "WrappedNormal: pdf at -π equals pdf at π (wrapping boundary)" {
+    const dist = try WrappedNormal(f64).init(0.1, 0.5);
+    const p_neg = dist.pdf(-math.pi);
+    const p_pos = dist.pdf(math.pi);
+    try std.testing.expectApproxEqAbs(p_neg, p_pos, 1e-10);
+}
+
+test "WrappedNormal: logpdf equals log(pdf) where pdf > 0" {
+    const dist = try WrappedNormal(f64).init(0.5, 1.2);
+    const theta = 0.3;
+    const p = dist.pdf(theta);
+    const lp = dist.logpdf(theta);
+    const expected_lp = @log(p);
+    try std.testing.expectApproxEqAbs(expected_lp, lp, 1e-10);
+}
+
+test "WrappedNormal: logpdf returns -inf outside support" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const lp1 = dist.logpdf(-math.pi - 0.1);
+    const lp2 = dist.logpdf(math.pi + 0.1);
+    try std.testing.expect(math.isNegativeInf(lp1));
+    try std.testing.expect(math.isNegativeInf(lp2));
+}
+
+test "WrappedNormal: logpdf is finite within support" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var theta: f64 = -math.pi + 0.01;
+    while (theta < math.pi) : (theta += 0.3) {
+        const lp = dist.logpdf(theta);
+        try std.testing.expect(math.isFinite(lp));
+    }
+}
+
+test "WrappedNormal: cdf at -π equals 0" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(0.0, dist.cdf(-math.pi), 1e-10);
+}
+
+test "WrappedNormal: cdf at π equals 1" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(1.0, dist.cdf(math.pi), 1e-10);
+}
+
+test "WrappedNormal: cdf at mu equals 0.5 (by symmetry, mu=0)" {
+    // cdf(μ)=0.5 holds exactly when μ=0 (equidistant from both boundaries on circle)
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const c = dist.cdf(0.0);
+    try std.testing.expectApproxEqAbs(0.5, c, 1e-4);
+}
+
+test "WrappedNormal: cdf is strictly increasing" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var prev_cdf = dist.cdf(-math.pi);
+    var theta: f64 = -math.pi + 0.1;
+    while (theta < math.pi) : (theta += 0.1) {
+        const c = dist.cdf(theta);
+        try std.testing.expect(c > prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "WrappedNormal: cdf monotonic with various parameters" {
+    const mus = [_]f64{ -1.5, -0.5, 0.0, 0.5, 1.5 };
+    const sigmas = [_]f64{ 0.1, 0.5, 1.0, 2.0 };
+
+    for (mus) |mu| {
+        for (sigmas) |sigma| {
+            const dist = try WrappedNormal(f64).init(mu, sigma);
+            var prev_cdf = dist.cdf(-math.pi);
+            var theta: f64 = -math.pi + 0.1;
+            while (theta < math.pi) : (theta += 0.2) {
+                const c = dist.cdf(theta);
+                try std.testing.expect(c >= prev_cdf - 1e-10);
+                prev_cdf = c;
+            }
+        }
+    }
+}
+
+test "WrappedNormal: sf(theta) = 1 - cdf(theta)" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var theta: f64 = -math.pi + 0.1;
+    while (theta < math.pi) : (theta += 0.2) {
+        const c = dist.cdf(theta);
+        const s = dist.sf(theta);
+        try std.testing.expectApproxEqAbs(1.0, c + s, 1e-10);
+    }
+}
+
+test "WrappedNormal: quantile(0) returns -π" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(-math.pi, q, 1e-10);
+}
+
+test "WrappedNormal: quantile(1) returns π" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expectApproxEqAbs(math.pi, q, 1e-10);
+}
+
+test "WrappedNormal: quantile(0.5) ≈ mean mu (mu=0)" {
+    // The 0.5-quantile equals μ when μ=0 (symmetric about center of domain)
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(0.0, q, 1e-3);
+}
+
+test "WrappedNormal: quantile and cdf are approximate inverses" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try std.testing.expectApproxEqAbs(p, c, 1e-3);
+    }
+}
+
+test "WrappedNormal: quantile rejects invalid probabilities" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const result1 = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result1);
+
+    const result2 = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result2);
+
+    const result3 = dist.quantile(math.nan(f64));
+    try std.testing.expectError(error.InvalidProbability, result3);
+}
+
+test "WrappedNormal: mean returns mu" {
+    const dist = try WrappedNormal(f64).init(1.5, 2.0);
+    try std.testing.expectApproxEqAbs(1.5, dist.mean(), 1e-10);
+}
+
+test "WrappedNormal: mode returns mu" {
+    const dist = try WrappedNormal(f64).init(-0.5, 1.5);
+    try std.testing.expectApproxEqAbs(-0.5, dist.mode(), 1e-10);
+}
+
+test "WrappedNormal: circularVariance at sigma=1 ≈ 1 - exp(-0.5) ≈ 0.39347" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const cv = dist.circularVariance();
+    const expected = 1.0 - math.exp(-0.5);
+    try std.testing.expectApproxEqAbs(expected, cv, 1e-5);
+}
+
+test "WrappedNormal: circularVariance at sigma=0.1 ≈ 0.00499" {
+    const dist = try WrappedNormal(f64).init(0.0, 0.1);
+    const cv = dist.circularVariance();
+    const expected = 1.0 - math.exp(-0.005);
+    try std.testing.expectApproxEqAbs(expected, cv, 1e-5);
+}
+
+test "WrappedNormal: meanResultantLength at sigma=1 ≈ exp(-0.5) ≈ 0.60653" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const mrl = dist.meanResultantLength();
+    const expected = math.exp(-0.5);
+    try std.testing.expectApproxEqAbs(expected, mrl, 1e-5);
+}
+
+test "WrappedNormal: meanResultantLength increases with decreasing sigma" {
+    const dist_small = try WrappedNormal(f64).init(0.0, 0.1);
+    const dist_large = try WrappedNormal(f64).init(0.0, 2.0);
+    const mrl_small = dist_small.meanResultantLength();
+    const mrl_large = dist_large.meanResultantLength();
+    try std.testing.expect(mrl_small > mrl_large);
+}
+
+test "WrappedNormal: entropy is finite and positive" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    const h = dist.entropy();
+    try std.testing.expect(math.isFinite(h));
+    try std.testing.expect(h > 0.0);
+}
+
+test "WrappedNormal: entropy increases with sigma (more dispersed)" {
+    const dist_small = try WrappedNormal(f64).init(0.0, 0.5);
+    const dist_large = try WrappedNormal(f64).init(0.0, 2.0);
+    const h_small = dist_small.entropy();
+    const h_large = dist_large.entropy();
+    try std.testing.expect(h_large > h_small);
+}
+
+test "WrappedNormal: sample returns values in (-π, π]" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(s > -math.pi);
+        try std.testing.expect(s <= math.pi);
+    }
+}
+
+test "WrappedNormal: sample returns finite values" {
+    const dist = try WrappedNormal(f64).init(1.0, 1.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(math.isFinite(s));
+    }
+}
+
+test "WrappedNormal: sample mean approaches theoretical mean (mu=0, sigma=1)" {
+    const dist = try WrappedNormal(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        sum += s;
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+
+    // For circular data at mu=0, mean should be close to 0 within tolerance
+    try std.testing.expectApproxEqAbs(0.0, sample_mean, 0.1);
+}
+
+test "WrappedNormal: sample mean approaches theoretical mean (mu=1.5, sigma=1)" {
+    const dist = try WrappedNormal(f64).init(1.5, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const s = dist.sample(rng.random());
+        const sign: f64 = if (s > 0.0) 1.0 else -1.0;
+        sum += sign * @abs(s);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+
+    // Rough convergence check for circular mean
+    try std.testing.expect(@abs(sample_mean) < 2.0);
+}
+
+test "WrappedNormal: concentrated distribution (sigma=0.1) has samples near mu" {
+    const dist = try WrappedNormal(f64).init(0.0, 0.1);
+    var rng = std.Random.DefaultPrng.init(42);
+
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        // Samples should be very close to mu=0 with high probability
+        try std.testing.expect(@abs(s) < 0.5);
+    }
+}
+
 
