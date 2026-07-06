@@ -1,3 +1,28 @@
+**Session 754 Update (2026-07-07) — FEATURE MODE [COMPLETED]:**
+
+✅ **ExGaussian Distribution** — 136th total, 112th continuous — commit b38ed91
+- **Mode**: FEATURE MODE (counter: 754)
+- **CI Status**: GREEN; 0 open issues
+- **Distribution**: ExGaussian(mu, sigma, lambda) — Exponentially Modified Gaussian
+  * X = N(mu, sigma²) + Exp(lambda) — convolution of Gaussian and exponential
+  * Parameters: mu ∈ ℝ, sigma > 0 (Gaussian scale), lambda > 0 (exponential rate)
+  * PDF: (λ/2)·exp(λ(μ-x)+λ²σ²/2)·erfc((μ+λσ²-x)/(σ√2)) — exact O(1)
+  * CDF: Φ(z₁)−exp(−λ(x−μ)+λ²σ²/2)·Φ(z₂) where z₁=(x-μ)/σ, z₂=z₁-λσ — exact O(1)
+  * Mean: μ+1/λ — exact O(1); Variance: σ²+1/λ² — exact O(1)
+  * logpdf: asymptotically stable via -u²-log(u)-½log(π) when 1-erf(u) underflows
+  * Mode: ternary search in [mean-5σ, mean]; Entropy: 500-pt quadrature; Quantile: bisection
+  * Sample: Box-Muller normal + inverse-CDF exponential
+  * KEY: math.erfc/math.erf not in std.math — use local erf() function defined at line 1922
+  * KEY: u1/u2/u3 variable names clash with Zig primitive types u1,u2,u3; rename to bm1,bm2,ue
+  * Key values: PDF(0;0,1,1)≈0.26158; PDF(1;0,1,1)=0.5e^{-0.5}≈0.30327
+  * CDF(0;0,1,1)≈0.23842; CDF(1;0,1,1)≈0.53807; CDF(2;0,1,1)≈0.78952
+  * Applications: reaction time modelling (psychology/neuroscience), chromatography peak analysis
+  * 50 tests passing
+- **Total**: 136 distributions (112 continuous + 24 discrete); ~10,016 tests (est.)
+- **Next Priority**: FEATURE MODE — QGaussian (Tsallis), NonCentralBeta, Delaporte (discrete), or another
+
+---
+
 **Session 750 Update (2026-07-06) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **Test Quality Audit + Cross-Compile** — commits dbe24bd, cd81da5, ded86ab
