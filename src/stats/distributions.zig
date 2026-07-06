@@ -77972,4 +77972,536 @@ test "WrappedNormal: concentrated distribution (sigma=0.1) has samples near mu" 
     }
 }
 
+/// WrappedLaplace distribution: Laplace distribution wrapped onto the circle (-π, π].
+///
+/// The PDF is a sum of shifted Laplace PDFs:
+/// f(θ) = Σ_{k=-∞}^{∞} L((θ - μ + 2πk) / b) / b
+///
+/// where L is the standard Laplace PDF: L(x) = 0.5·exp(-|x|).
+///
+/// Equivalently, for d = |wrap(θ - μ)| ∈ [0, π]:
+/// f(θ) = (exp(-d/b) + r·exp(d/b)) / (2b(1-r))
+/// where r = exp(-2π/b).
+///
+/// **Parameters**:
+/// - `mu` ∈ (-π, π]: mean direction (location on circle)
+/// - `b` > 0: scale parameter (concentration; small b → concentrated, large b → nearly uniform)
+///
+/// **Support**: θ ∈ (-π, π]
+///
+/// **Special properties**:
+/// - Symmetric around μ
+/// - Mean resultant length: ρ = 1 / (1 + b²)
+/// - Circular variance: 1 - 1/(1+b²) = b²/(1+b²)
+/// - Simpler closed forms than WrappedNormal (no infinite series needed)
+pub fn WrappedLaplace(comptime T: type) type {
+    return struct {
+        mu: T,  // mean direction in (-π, π]
+        b: T,   // scale parameter (b > 0)
+        r: T,   // pre-computed r = exp(-2π/b)
+
+        const Self = @This();
+
+        /// Helper: wrap angle to (-π, π]
+        fn wrapAngle(theta: T) T {
+            const two_pi = 2.0 * math.pi;
+            const n = @floor((theta + math.pi) / two_pi);
+            return theta - n * two_pi;
+        }
+
+        /// Initialize WrappedLaplace distribution.
+        /// Normalizes mu to (-π, π]. Requires b > 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, b: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(b > 0.0) or !math.isFinite(b)) return error.InvalidParameter;
+            // Normalize mu to (-π, π]
+            var m = mu;
+            const two_pi = 2.0 * math.pi;
+            const n = @ceil((m - math.pi) / two_pi);
+            m = m - n * two_pi;
+            if (m < -math.pi - 1e-10) {
+                m += two_pi;
+            }
+            const r = @exp(-two_pi / b);
+            return Self{ .mu = m, .b = b, .r = r };
+        }
+
+        /// Probability density function at θ ∈ (-π, π].
+        ///
+        /// f(θ) = (exp(-d/b) + r·exp(d/b)) / (2b(1-r))
+        /// where d = |wrap(θ - μ)| ∈ [0, π], r = exp(-2π/b)
+        ///
+        /// Returns 0 for θ ∉ (-π, π].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, theta: T) T {
+            if (theta <= -math.pi or theta > math.pi) return 0.0;
+            const d = @abs(wrapAngle(theta - self.mu));
+            const inv_b = 1.0 / self.b;
+            const denom = 2.0 * self.b * (1.0 - self.r);
+            return (@exp(-d * inv_b) + self.r * @exp(d * inv_b)) / denom;
+        }
+
+        /// Log-probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, theta: T) T {
+            if (theta <= -math.pi or theta > math.pi) return -math.inf(T);
+            const p = self.pdf(theta);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function via exact closed form.
+        ///
+        /// F(-π) = 0, F(π) = 1, F(μ) = 0.5.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, theta: T) T {
+            if (theta <= -math.pi) return 0.0;
+            if (theta >= math.pi) return 1.0;
+
+            const inv_b = 1.0 / self.b;
+            const denom = 2.0 * (1.0 - self.r);
+
+            // Helper: F₀(t; b, r) for the standard wrapped Laplace (μ=0, b)
+            // F₀(t) = (exp(t/b) - r·exp(-t/b)) / (2(1-r))  for t ≤ 0
+            //       = 1 + (r·exp(t/b) - exp(-t/b)) / (2(1-r))  for t > 0
+            const f0 = struct {
+                fn eval(t: T, r_param: T, inv_b_param: T, denom_param: T) T {
+                    if (t <= 0.0) {
+                        return (@exp(t * inv_b_param) - r_param * @exp(-t * inv_b_param)) / denom_param;
+                    } else {
+                        return 1.0 + (r_param * @exp(t * inv_b_param) - @exp(-t * inv_b_param)) / denom_param;
+                    }
+                }
+            };
+
+            // Transform theta to standard form relative to μ, wrapped to (-π, π]
+            const diff = wrapAngle(theta - self.mu);
+
+            // Now apply F₀ to diff (which is in (-π, π] and represents θ-μ wrapped)
+            return f0.eval(diff, self.r, inv_b, denom);
+        }
+
+        /// Survival function: 1 - CDF(θ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, theta: T) T {
+            return 1.0 - self.cdf(theta);
+        }
+
+        /// Quantile function via bisection on CDF (64 iterations).
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1].
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0) or math.isNan(p)) return error.InvalidProbability;
+            if (p == 0.0) return -math.pi;
+            if (p == 1.0) return math.pi;
+            var lo: T = -math.pi;
+            var hi: T = math.pi;
+            for (0..64) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < p) { lo = mid; } else { hi = mid; }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        /// Circular mean direction.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T { return self.mu; }
+
+        /// Mode equals the mean direction (density peaks at μ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T { return self.mu; }
+
+        /// Mean resultant length: ρ = 1 / (1 + b²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn meanResultantLength(self: Self) T {
+            return 1.0 / (1.0 + self.b * self.b);
+        }
+
+        /// Circular variance: b² / (1 + b²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn circularVariance(self: Self) T {
+            const b2 = self.b * self.b;
+            return b2 / (1.0 + b2);
+        }
+
+        /// Differential entropy via 500-point midpoint quadrature over (-π, π].
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const lo: T = -math.pi;
+            const hi: T = math.pi;
+            const step = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const x = lo + (@as(T, @floatFromInt(i)) + 0.5) * step;
+                const p = self.pdf(x);
+                if (p > 0.0) sum -= p * @log(p);
+            }
+            return sum * step;
+        }
+
+        /// Generate a random sample via inverse CDF method.
+        /// U ~ Uniform(0,1):
+        ///   if U < 0.5: X = μ + b·log(2U)
+        ///   else: X = μ - b·log(2(1-U))
+        /// Then wrap to (-π, π].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const x = if (u < 0.5)
+                self.mu + self.b * @log(2.0 * u)
+            else
+                self.mu - self.b * @log(2.0 * (1.0 - u));
+            return wrapAngle(x);
+        }
+
+        /// Format the distribution for debugging.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("WrappedLaplace(μ={d}, b={d})", .{ self.mu, self.b });
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!(self.b > 0.0) or !math.isFinite(self.b)) return error.InvalidParameter;
+            if (self.mu <= -math.pi or self.mu > math.pi) return error.InvalidParameter;
+            // Validate pre-computed r
+            const expected_r = @exp(-2.0 * math.pi / self.b);
+            if (@abs(self.r - expected_r) > 1e-10 * expected_r) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// WrappedLaplace Tests (134th distribution, 108th continuous)
+// ============================================================================
+
+test "WrappedLaplace: init valid params" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expect(dist.mu == 0.0);
+    try std.testing.expect(dist.b == 1.0);
+}
+
+test "WrappedLaplace: init wraps mu to (-π, π]" {
+    const dist = try WrappedLaplace(f64).init(4.0 * math.pi + 0.5, 1.0);
+    try std.testing.expect(@abs(dist.mu - 0.5) < 1e-10);
+}
+
+test "WrappedLaplace: init rejects b=0" {
+    const result = WrappedLaplace(f64).init(0.0, 0.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "WrappedLaplace: init rejects negative b" {
+    const result = WrappedLaplace(f64).init(0.0, -1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "WrappedLaplace: init rejects NaN b" {
+    const result = WrappedLaplace(f64).init(0.0, math.nan(f64));
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "WrappedLaplace: init rejects NaN mu" {
+    const result = WrappedLaplace(f64).init(math.nan(f64), 1.0);
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "WrappedLaplace: validate passes for valid distribution" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "WrappedLaplace: validate fails for b=0" {
+    var dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    dist.b = 0.0;
+    dist.r = @exp(-2.0 * math.pi / 1e-10); // Keep r consistent with invalid b
+    const result = dist.validate();
+    try std.testing.expectError(error.InvalidParameter, result);
+}
+
+test "WrappedLaplace: pdf is non-negative at multiple points" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const points = [_]f64{ 0.0, 0.5, 1.0, -1.0, -2.0, math.pi - 0.1, -math.pi + 0.1 };
+    for (points) |p| {
+        try std.testing.expect(dist.pdf(p) >= 0.0);
+    }
+}
+
+test "WrappedLaplace: pdf maximum at mean equals 1/(2b*tanh(pi/b))" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const pdf_at_mean = dist.pdf(0.0);
+    const b: f64 = 1.0;
+    const expected = 1.0 / (2.0 * b * math.tanh(math.pi / b));
+    try std.testing.expectApproxEqAbs(pdf_at_mean, expected, 1e-10);
+}
+
+test "WrappedLaplace: pdf minimum at boundary equals 1/(2b*sinh(pi/b))" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const pdf_at_boundary = dist.pdf(math.pi - 1e-8);
+    const b: f64 = 1.0;
+    const expected = 1.0 / (2.0 * b * math.sinh(math.pi / b));
+    try std.testing.expectApproxEqAbs(pdf_at_boundary, expected, 1e-5);
+}
+
+test "WrappedLaplace: pdf symmetry: pdf(mu+d) == pdf(mu-d)" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const d = 0.5;
+    const pdf_pos = dist.pdf(d);
+    const pdf_neg = dist.pdf(-d);
+    try std.testing.expectApproxEqAbs(pdf_pos, pdf_neg, 1e-12);
+}
+
+test "WrappedLaplace: pdf is zero outside support" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expect(dist.pdf(-math.pi - 0.1) == 0.0);
+    try std.testing.expect(dist.pdf(math.pi + 0.1) == 0.0);
+}
+
+test "WrappedLaplace: pdf at theta=-pi is zero (boundary, not in support)" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expect(dist.pdf(-math.pi) == 0.0);
+}
+
+test "WrappedLaplace: pdf integrates to approx 1 (500-pt midpoint)" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const N: usize = 500;
+    const lo = -math.pi;
+    const hi = math.pi;
+    const step = (hi - lo) / @as(f64, @floatFromInt(N));
+    var sum: f64 = 0.0;
+    for (0..N) |i| {
+        const x = lo + (@as(f64, @floatFromInt(i)) + 0.5) * step;
+        sum += dist.pdf(x) * step;
+    }
+    try std.testing.expectApproxEqAbs(sum, 1.0, 0.01);
+}
+
+test "WrappedLaplace: logpdf equals log of pdf" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.5);
+    const theta = 0.3;
+    const pdf_val = dist.pdf(theta);
+    const logpdf_val = dist.logpdf(theta);
+    try std.testing.expectApproxEqAbs(logpdf_val, @log(pdf_val), 1e-10);
+}
+
+test "WrappedLaplace: logpdf is -inf outside support" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expect(math.isInf(dist.logpdf(-math.pi - 0.1)));
+    try std.testing.expect(math.isInf(dist.logpdf(math.pi + 0.1)));
+}
+
+test "WrappedLaplace: cdf at -pi is 0" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(-math.pi), 0.0, 1e-10);
+}
+
+test "WrappedLaplace: cdf at pi is 1" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(math.pi), 1.0, 1e-10);
+}
+
+test "WrappedLaplace: cdf at mu is 0.5 (symmetry)" {
+    const dist = try WrappedLaplace(f64).init(0.5, 1.0);
+    try std.testing.expectApproxEqAbs(dist.cdf(dist.mu), 0.5, 1e-6);
+}
+
+test "WrappedLaplace: cdf is monotone increasing" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    var prev: f64 = dist.cdf(-math.pi + 1e-10);
+    for (1..100) |i| {
+        const theta = -math.pi + @as(f64, @floatFromInt(i)) * (2.0 * math.pi) / 100.0;
+        const curr = dist.cdf(theta);
+        try std.testing.expect(curr >= prev);
+        prev = curr;
+    }
+}
+
+test "WrappedLaplace: sf = 1 - cdf" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const theta = 0.3;
+    const sf_val = dist.sf(theta);
+    const cdf_val = dist.cdf(theta);
+    try std.testing.expectApproxEqAbs(sf_val, 1.0 - cdf_val, 1e-10);
+}
+
+test "WrappedLaplace: cdf + sf = 1" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.5);
+    const theta = 0.7;
+    try std.testing.expectApproxEqAbs(dist.cdf(theta) + dist.sf(theta), 1.0, 1e-10);
+}
+
+test "WrappedLaplace: cdf symmetry: for symmetric dist, cdf(mu+d) + cdf(mu-d) = 1" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const d = 0.5;
+    try std.testing.expectApproxEqAbs(dist.cdf(d) + dist.cdf(-d), 1.0, 1e-5);
+}
+
+test "WrappedLaplace: quantile(0) = -pi" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try std.testing.expectApproxEqAbs(q, -math.pi, 1e-10);
+}
+
+test "WrappedLaplace: quantile(1) = pi" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try std.testing.expectApproxEqAbs(q, math.pi, 1e-10);
+}
+
+test "WrappedLaplace: quantile(0.5) ≈ mu" {
+    const dist = try WrappedLaplace(f64).init(0.3, 1.0);
+    const q = try dist.quantile(0.5);
+    try std.testing.expectApproxEqAbs(q, dist.mu, 1e-6);
+}
+
+test "WrappedLaplace: quantile rejects p<0" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "WrappedLaplace: quantile rejects p>1" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const result = dist.quantile(1.1);
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "WrappedLaplace: quantile rejects NaN" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try std.testing.expectError(error.InvalidProbability, result);
+}
+
+test "WrappedLaplace: quantile(cdf(x)) ≈ x roundtrip" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const x = 0.5;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try std.testing.expectApproxEqAbs(x_recovered, x, 1e-5);
+}
+
+test "WrappedLaplace: cdf(quantile(p)) ≈ p roundtrip" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const p = 0.6;
+    const q = try dist.quantile(p);
+    const p_recovered = dist.cdf(q);
+    try std.testing.expectApproxEqAbs(p_recovered, p, 1e-5);
+}
+
+test "WrappedLaplace: mean returns mu" {
+    const dist = try WrappedLaplace(f64).init(0.5, 1.0);
+    try std.testing.expect(dist.mean() == dist.mu);
+}
+
+test "WrappedLaplace: mode returns mu" {
+    const dist = try WrappedLaplace(f64).init(0.5, 1.0);
+    try std.testing.expect(dist.mode() == dist.mu);
+}
+
+test "WrappedLaplace: meanResultantLength b=1 exactly 0.5" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.meanResultantLength(), 0.5, 1e-10);
+}
+
+test "WrappedLaplace: meanResultantLength b=2 exactly 0.2" {
+    const dist = try WrappedLaplace(f64).init(0.0, 2.0);
+    try std.testing.expectApproxEqAbs(dist.meanResultantLength(), 0.2, 1e-10);
+}
+
+test "WrappedLaplace: meanResultantLength decreases as b increases" {
+    const dist1 = try WrappedLaplace(f64).init(0.0, 0.5);
+    const dist2 = try WrappedLaplace(f64).init(0.0, 2.0);
+    try std.testing.expect(dist1.meanResultantLength() > dist2.meanResultantLength());
+}
+
+test "WrappedLaplace: meanResultantLength in (0, 1)" {
+    const b_values = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (b_values) |b| {
+        const dist = try WrappedLaplace(f64).init(0.0, b);
+        const mrl = dist.meanResultantLength();
+        try std.testing.expect(mrl > 0.0 and mrl < 1.0);
+    }
+}
+
+test "WrappedLaplace: circularVariance b=1 exactly 0.5" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    try std.testing.expectApproxEqAbs(dist.circularVariance(), 0.5, 1e-10);
+}
+
+test "WrappedLaplace: circularVariance b=2 exactly 0.8" {
+    const dist = try WrappedLaplace(f64).init(0.0, 2.0);
+    try std.testing.expectApproxEqAbs(dist.circularVariance(), 0.8, 1e-10);
+}
+
+test "WrappedLaplace: circularVariance + meanResultantLength = 1" {
+    const b_values = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (b_values) |b| {
+        const dist = try WrappedLaplace(f64).init(0.0, b);
+        const sum = dist.circularVariance() + dist.meanResultantLength();
+        try std.testing.expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+test "WrappedLaplace: entropy is finite and positive" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    const h = dist.entropy();
+    try std.testing.expect(math.isFinite(h) and h > 0.0);
+}
+
+test "WrappedLaplace: entropy increases with b" {
+    const dist1 = try WrappedLaplace(f64).init(0.0, 0.5);
+    const dist2 = try WrappedLaplace(f64).init(0.0, 2.0);
+    try std.testing.expect(dist1.entropy() < dist2.entropy());
+}
+
+test "WrappedLaplace: sample returns values in (-pi, pi]" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(s > -math.pi and s <= math.pi);
+    }
+}
+
+test "WrappedLaplace: sample returns finite values" {
+    const dist = try WrappedLaplace(f64).init(0.0, 1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try std.testing.expect(math.isFinite(s));
+    }
+}
+
+test "WrappedLaplace: concentrated distribution (b=0.1) has samples near mu" {
+    const dist = try WrappedLaplace(f64).init(0.0, 0.1);
+    var rng = std.Random.DefaultPrng.init(42);
+
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        // Samples should be very close to mu=0 with high probability
+        try std.testing.expect(@abs(s) < 0.5);
+    }
+}
+
 
