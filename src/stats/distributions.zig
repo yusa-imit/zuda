@@ -4876,6 +4876,35 @@ test "Weibull: memory safety" {
     }
 }
 
+test "Weibull: validate passes for valid parameters" {
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    try dist.validate();
+    const dist2 = try Weibull(f64).init(0.5, 3.0);
+    try dist2.validate();
+}
+
+test "Weibull: validate fails for invalid shape" {
+    var dist = try Weibull(f64).init(2.0, 1.0);
+    dist.shape = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.shape = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.shape = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.shape = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Weibull: validate fails for invalid scale" {
+    var dist = try Weibull(f64).init(2.0, 1.0);
+    dist.scale = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.scale = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.scale = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
 // ============================================================================
 // Pareto Distribution (Type I)
 // ============================================================================
@@ -5333,6 +5362,35 @@ test "Pareto: memory safety" {
         _ = dist.median();
         _ = dist.sf(2.0);
     }
+}
+
+test "Pareto: validate passes for valid parameters" {
+    const dist = try Pareto(f64).init(1.0, 2.0);
+    try dist.validate();
+    const dist2 = try Pareto(f64).init(0.5, 0.5);
+    try dist2.validate();
+}
+
+test "Pareto: validate fails for invalid x_m" {
+    var dist = try Pareto(f64).init(1.0, 2.0);
+    dist.x_m = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.x_m = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.x_m = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.x_m = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Pareto: validate fails for invalid alpha" {
+    var dist = try Pareto(f64).init(1.0, 2.0);
+    dist.alpha = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.alpha = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.alpha = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
 }
 
 // ============================================================================
@@ -9860,6 +9918,24 @@ test "Dirichlet: numCategories" {
     defer dist.deinit();
 
     try expectEqual(4, dist.numCategories());
+}
+
+test "Dirichlet: validate fails when an alpha is non-positive" {
+    const allocator = testing.allocator;
+    var dist = try Dirichlet(f64).init(allocator, &[_]f64{ 1.0, 2.0, 3.0 });
+    defer dist.deinit();
+    dist.alphas[1] = 0.0; // zero alpha is invalid
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.alphas[1] = -1.0; // negative alpha is invalid
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Dirichlet: validate fails when alpha0 is inconsistent with alphas sum" {
+    const allocator = testing.allocator;
+    var dist = try Dirichlet(f64).init(allocator, &[_]f64{ 1.0, 2.0 });
+    defer dist.deinit();
+    dist.alpha0 = 0.5; // actual sum is 3.0, inconsistency triggers validate failure
+    try expectError(error.InvalidParameter, dist.validate());
 }
 
 // ============================================================================
@@ -33378,6 +33454,30 @@ test "InverseGamma: increasing alpha tightens distribution" {
 test "InverseGamma: cdf(mode) < 0.5 (right-skewed distribution)" {
     const dist = try InverseGamma(f64).init(5.0, 2.0);
     try testing.expect(dist.cdf(dist.mode()) < 0.5);
+}
+
+test "InverseGamma: validate fails for invalid alpha" {
+    var dist = try InverseGamma(f64).init(3.0, 1.0);
+    dist.alpha = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.alpha = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.alpha = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.alpha = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGamma: validate fails for invalid beta" {
+    var dist = try InverseGamma(f64).init(3.0, 1.0);
+    dist.beta = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.beta = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.beta = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+    dist.beta = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
 }
 
 /// Chi(k) distribution — generalization of Rayleigh, HalfNormal, and Maxwell-Boltzmann.
