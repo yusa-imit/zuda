@@ -79591,3 +79591,601 @@ test "ExGaussian: right-skewed — mode less than mean for standard parameters" 
     const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
     try std.testing.expect(dist.mode() < dist.mean());
 }
+
+pub fn GB2(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+        p: T,
+        q: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize GB2(a, b, p, q) distribution.
+        /// Returns error.InvalidParameter if any param ≤ 0 or not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T, p: T, q: T) DistributionError!Self {
+            if (a <= 0.0 or math.isNan(a) or math.isInf(a)) return error.InvalidParameter;
+            if (b <= 0.0 or math.isNan(b) or math.isInf(b)) return error.InvalidParameter;
+            if (p <= 0.0 or math.isNan(p) or math.isInf(p)) return error.InvalidParameter;
+            if (q <= 0.0 or math.isNan(q) or math.isInf(q)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b, .p = p, .q = q };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = (a / (b·B(p,q))) · (x/b)^(ap−1) / (1+(x/b)^a)^(p+q) for x > 0; 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = log(a) − log(b) − logBeta(p,q) + (ap−1)·log(z) − (p+q)·log(1+z^a), where z = x/b.
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const z = x / self.b;
+            const za = math.pow(T, z, self.a);
+            return @log(self.a) - @log(self.b) - logBeta(self.p, self.q) +
+                (self.a * self.p - 1.0) * @log(z) -
+                (self.p + self.q) * @log(1.0 + za);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = I_u(p,q) where u = x^a / (x^a + b^a).
+        /// Returns 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const z = x / self.b;
+            const za = math.pow(T, z, self.a);
+            const u = za / (1.0 + za);
+            return regularizedBetaI(self.p, self.q, u);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            return self.quantileRaw(prob);
+        }
+
+        fn quantileRaw(self: Self, prob: T) T {
+            if (prob <= 0.0) return 0.0;
+            if (prob >= 1.0) return math.inf(T);
+
+            // Bisection: find u such that regularizedBetaI(p, q, u) = prob
+            var lo: T = 0.0;
+            var hi: T = 1.0;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                const cdf_mid = regularizedBetaI(self.p, self.q, mid);
+                if (hi - lo < 1e-10) break;
+                if (cdf_mid < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            const u = (lo + hi) / 2.0;
+            // x = b · (u/(1−u))^(1/a)
+            const ratio = u / (1.0 - u);
+            return self.b * math.pow(T, ratio, 1.0 / self.a);
+        }
+
+        // --- Moments ---
+
+        /// Mean: b · B(p + 1/a, q − 1/a) / B(p, q) when a·q > 1; NaN otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.a * self.q <= 1.0) return math.nan(T);
+            return self.b * @exp(logBeta(self.p + 1.0 / self.a, self.q - 1.0 / self.a) - logBeta(self.p, self.q));
+        }
+
+        /// Variance: E[X²] − E[X]² where E[X²] = b² · B(p + 2/a, q − 2/a) / B(p, q).
+        /// NaN when a·q ≤ 2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.a * self.q <= 2.0) return math.nan(T);
+            const ex = self.mean();
+            const ex2 = self.b * self.b * @exp(logBeta(self.p + 2.0 / self.a, self.q - 2.0 / self.a) - logBeta(self.p, self.q));
+            return ex2 - ex * ex;
+        }
+
+        /// Mode: b · ((ap−1)/(aq+1))^(1/a) when a·p > 1; 0 otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.a * self.p <= 1.0) return 0.0;
+            const ratio = (self.a * self.p - 1.0) / (self.a * self.q + 1.0);
+            return self.b * math.pow(T, ratio, 1.0 / self.a);
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy estimated via 500-point midpoint quadrature.
+        ///
+        /// H ≈ −(1/500)·Σ_i logpdf(Q((i+0.5)/500))
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                const x = self.quantileRaw(p);
+                sum -= self.logpdf(x);
+            }
+            return sum / Nf;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantileRaw(rng.float(T));
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: a > 0, b > 0, p > 0, q > 0, all finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= 0.0 or math.isNan(self.a) or math.isInf(self.a)) return error.InvalidParameter;
+            if (self.b <= 0.0 or math.isNan(self.b) or math.isInf(self.b)) return error.InvalidParameter;
+            if (self.p <= 0.0 or math.isNan(self.p) or math.isInf(self.p)) return error.InvalidParameter;
+            if (self.q <= 0.0 or math.isNan(self.q) or math.isInf(self.q)) return error.InvalidParameter;
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "GB2(a=..., b=..., p=..., q=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("GB2(a={d:.4}, b={d:.4}, p={d:.4}, q={d:.4})", .{ self.a, self.b, self.p, self.q });
+        }
+    };
+}
+
+// GB2 (Generalized Beta Distribution of the Second Kind) Tests (137th distribution, 113th continuous)
+
+test "GB2: init with valid params (a=2, b=1, p=1, q=1) succeeds" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.a == 2.0);
+    try testing.expect(dist.b == 1.0);
+    try testing.expect(dist.p == 1.0);
+    try testing.expect(dist.q == 1.0);
+}
+
+test "GB2: init with a <= 0 returns error" {
+    const result = GB2(f64).init(-1.0, 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with a = 0 returns error" {
+    const result = GB2(f64).init(0.0, 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with b <= 0 returns error" {
+    const result = GB2(f64).init(2.0, -1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with b = 0 returns error" {
+    const result = GB2(f64).init(2.0, 0.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with p <= 0 returns error" {
+    const result = GB2(f64).init(2.0, 1.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with p = 0 returns error" {
+    const result = GB2(f64).init(2.0, 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with q <= 0 returns error" {
+    const result = GB2(f64).init(2.0, 1.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with q = 0 returns error" {
+    const result = GB2(f64).init(2.0, 1.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with a=inf returns error" {
+    const result = GB2(f64).init(math.inf(f64), 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with a=nan returns error" {
+    const result = GB2(f64).init(math.nan(f64), 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with b=inf returns error" {
+    const result = GB2(f64).init(2.0, math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with b=nan returns error" {
+    const result = GB2(f64).init(2.0, math.nan(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with p=inf returns error" {
+    const result = GB2(f64).init(2.0, 1.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with p=nan returns error" {
+    const result = GB2(f64).init(2.0, 1.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with q=inf returns error" {
+    const result = GB2(f64).init(2.0, 1.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: init with q=nan returns error" {
+    const result = GB2(f64).init(2.0, 1.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: pdf at x <= 0 returns 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+}
+
+test "GB2: pdf positive for x > 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = dist.pdf(0.5);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "GB2(2,1,1,1): pdf(1) = 0.5 (Burr equivalence)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.5, p, 1e-9);
+}
+
+test "GB2(2,1,1,2): pdf(1) = 0.5 (Burr equivalence)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.5, p, 1e-9);
+}
+
+test "GB2(1,1,1,2): pdf(1) = 0.25 (Burr equivalence)" {
+    const dist = try GB2(f64).init(1.0, 1.0, 1.0, 2.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.25, p, 1e-9);
+}
+
+test "GB2: pdf finite for all x > 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 10.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(math.isFinite(p));
+    }
+}
+
+test "GB2: logpdf at x <= 0 returns -inf" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isInf(lp) and lp < 0);
+    const lp2 = dist.logpdf(-1.0);
+    try testing.expect(math.isInf(lp2) and lp2 < 0);
+}
+
+test "GB2: logpdf finite for x > 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 10.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        try testing.expect(math.isFinite(lp));
+    }
+}
+
+test "GB2: logpdf equals log(pdf) at x=0.5" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(dist.logpdf(0.5), @log(pdf_val), 1e-10);
+}
+
+test "GB2: logpdf equals log(pdf) at x=1" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(dist.logpdf(1.0), @log(pdf_val), 1e-10);
+}
+
+test "GB2: cdf at x <= 0 returns 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+    try testing.expect(dist.cdf(-1.0) == 0.0);
+}
+
+test "GB2: cdf monotone increasing" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev: f64 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "GB2: cdf approaches 1 for large x" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.cdf(100.0) > 0.99);
+}
+
+test "GB2: cdf + sf = 1" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try testing.expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+test "GB2: sf monotone decreasing" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev: f64 = 2.0;
+    for (x_vals) |x| {
+        const s = dist.sf(x);
+        try testing.expect(s <= prev);
+        prev = s;
+    }
+}
+
+test "GB2: quantile at p=0 returns 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(q, 0.0, 1e-10);
+}
+
+test "GB2: quantile at p=1 returns inf" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0);
+}
+
+test "GB2: quantile at p<0 returns error" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GB2: quantile at p>1 returns error" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GB2: quantile roundtrip at x=0.5" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = dist.cdf(0.5);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 0.5, 1e-4);
+}
+
+test "GB2: quantile roundtrip at x=1" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = dist.cdf(1.0);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 1.0, 1e-4);
+}
+
+test "GB2: quantile roundtrip at x=2" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = dist.cdf(2.0);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 2.0, 1e-4);
+}
+
+test "GB2: mean finite when q*a > 1" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+    try testing.expect(m > 0.0);
+}
+
+test "GB2: mean is NaN when q*a <= 1" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 0.4);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "GB2(2,1,1,2): mean = pi/4 (exact value ~0.7854)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(m, math.pi / 4.0, 1e-9);
+}
+
+test "GB2: variance finite when q*a > 2" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 3.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+    try testing.expect(v > 0.0);
+}
+
+test "GB2: variance is NaN when q*a <= 2 (but q*a > 1 so mean finite)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 0.8);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+test "GB2(2,1,1,3): variance = 0.5 - (3*B(2.5,1.5))^2 (exact value ~0.1530)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 3.0);
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(v, 0.1530217202742024, 1e-6);
+}
+
+test "GB2: mode = 0 when a*p <= 1" {
+    const dist = try GB2(f64).init(1.0, 1.0, 1.0, 2.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(m, 0.0, 1e-10);
+}
+
+test "GB2: mode > 0 when a*p > 1" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const m = dist.mode();
+    try testing.expect(m > 0.0);
+    try testing.expect(math.isFinite(m));
+}
+
+test "GB2(2,1,1,2): mode = 1/sqrt(5) (exact value ~0.4472)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(m, 1.0 / @sqrt(5.0), 1e-9);
+}
+
+test "GB2: entropy finite" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "GB2: entropy positive" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "GB2: entropy increases with scale b" {
+    const d1 = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    const d2 = try GB2(f64).init(2.0, 2.0, 1.0, 2.0);
+    try testing.expect(d1.entropy() < d2.entropy());
+}
+
+test "GB2: sample is finite" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "GB2: sample values > 0" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+    }
+}
+
+test "GB2: sample mean converges over 5000 draws (when mean exists)" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    try testing.expectApproxEqAbs(sample_mean, dist.mean(), 0.3);
+}
+
+test "GB2: validate passes for valid params" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    try dist.validate();
+}
+
+test "GB2: validate fails for a <= 0" {
+    const dist = GB2(f64){ .a = -1.0, .b = 1.0, .p = 1.0, .q = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: validate fails for b <= 0" {
+    const dist = GB2(f64){ .a = 2.0, .b = -1.0, .p = 1.0, .q = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: validate fails for p <= 0" {
+    const dist = GB2(f64){ .a = 2.0, .b = 1.0, .p = -1.0, .q = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: validate fails for q <= 0" {
+    const dist = GB2(f64){ .a = 2.0, .b = 1.0, .p = 1.0, .q = -1.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: validate fails for a=nan" {
+    const dist = GB2(f64){ .a = math.nan(f64), .b = 1.0, .p = 1.0, .q = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: validate fails for a=inf" {
+    const dist = GB2(f64){ .a = math.inf(f64), .b = 1.0, .p = 1.0, .q = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB2: format works" {
+    const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "GB2: f32 type support" {
+    const dist = try GB2(f32).init(2.0, 1.0, 1.0, 2.0);
+    try dist.validate();
+    const pdf_val = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+}
