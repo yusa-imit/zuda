@@ -80189,3 +80189,599 @@ test "GB2: f32 type support" {
     const pdf_val = dist.pdf(0.5);
     try testing.expect(pdf_val > 0.0);
 }
+
+// ============================================================================
+// Chen Distribution (138th total, 114th continuous)
+// ============================================================================
+
+/// Chen(λ, β) — two-parameter lifetime distribution (Chen, 2000) with
+/// exponentially increasing (β>1) or decreasing (β<1) hazard rate.
+///
+/// f(x) = λβ·x^(β−1)·e^(x^β)·exp(λ(1−e^(x^β))) for x > 0; 0 otherwise.
+///
+/// Parameters:
+///   - lambda (λ): scale-like parameter, λ > 0
+///   - beta (β): shape parameter, β > 0
+pub fn Chen(comptime T: type) type {
+    return struct {
+        lambda: T,
+        beta: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize Chen(lambda, beta) distribution.
+        /// Returns error.InvalidParameter if either param ≤ 0 or not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(lambda: T, beta: T) DistributionError!Self {
+            if (lambda <= 0.0 or math.isNan(lambda) or math.isInf(lambda)) return error.InvalidParameter;
+            if (beta <= 0.0 or math.isNan(beta) or math.isInf(beta)) return error.InvalidParameter;
+            return Self{ .lambda = lambda, .beta = beta };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = λβ·x^(β−1)·e^(x^β)·exp(λ(1−e^(x^β))) for x > 0; 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = log(λ) + log(β) + (β−1)·log(x) + x^β + λ(1−e^(x^β)).
+        /// Returns −∞ for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            const xb = math.pow(T, x, self.beta);
+            return @log(self.lambda) + @log(self.beta) + (self.beta - 1.0) * @log(x) + xb + self.lambda * (1.0 - @exp(xb));
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = 1 − exp(λ(1−e^(x^β))) for x > 0; 0 for x ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const xb = math.pow(T, x, self.beta);
+            return 1.0 - @exp(self.lambda * (1.0 - @exp(xb)));
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Q(p) = [ln(1 − ln(1−p)/λ)]^(1/β), exact closed form.
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            return self.quantileRaw(prob);
+        }
+
+        fn quantileRaw(self: Self, prob: T) T {
+            if (prob <= 0.0) return 0.0;
+            if (prob >= 1.0) return math.inf(T);
+            const inner = @log(1.0 - @log(1.0 - prob) / self.lambda);
+            return math.pow(T, inner, 1.0 / self.beta);
+        }
+
+        // --- Moments ---
+
+        /// Mean via 500-point quantile quadrature: E[X] = ∫₀¹ Q(p) dp.
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                sum += self.quantileRaw(p);
+            }
+            return sum / Nf;
+        }
+
+        /// Variance via 500-point quantile quadrature: E[X²] − E[X]².
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var sum2: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                const x = self.quantileRaw(p);
+                sum += x;
+                sum2 += x * x;
+            }
+            const m = sum / Nf;
+            return sum2 / Nf - m * m;
+        }
+
+        // d/dx log f(x) = (β−1)/x + β·x^(β−1)·(1−λ·e^(x^β))
+        fn modeDeriv(self: Self, x: T) T {
+            const xb = math.pow(T, x, self.beta);
+            return (self.beta - 1.0) / x + self.beta * math.pow(T, x, self.beta - 1.0) * (1.0 - self.lambda * @exp(xb));
+        }
+
+        /// Mode of the distribution.
+        /// For β < 1: density is unbounded/decreasing at x=0 → mode = 0.
+        /// For β = 1: mode = −ln(λ) when λ < 1, else 0 (monotone decreasing density).
+        /// For β > 1: unique interior root of d/dx log f(x) = 0, found via bisection.
+        ///
+        /// Time: O(1) or O(200) bisection | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.beta < 1.0) return 0.0;
+            if (self.beta == 1.0) {
+                if (self.lambda < 1.0) return @log(1.0 / self.lambda);
+                return 0.0;
+            }
+            var lo: T = 1e-9;
+            var hi: T = 1.0;
+            var guard: usize = 0;
+            while (self.modeDeriv(hi) > 0.0 and guard < 100) : (guard += 1) {
+                hi *= 2.0;
+            }
+            var iter: usize = 0;
+            while (iter < 200) : (iter += 1) {
+                if (hi - lo < 1e-12) break;
+                const mid = (lo + hi) / 2.0;
+                if (self.modeDeriv(mid) > 0.0) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy estimated via 500-point quantile quadrature.
+        ///
+        /// H ≈ −(1/500)·Σ_i logpdf(Q((i+0.5)/500))
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                const x = self.quantileRaw(p);
+                sum -= self.logpdf(x);
+            }
+            return sum / Nf;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantileRaw(rng.float(T));
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: lambda > 0, beta > 0, both finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.lambda <= 0.0 or math.isNan(self.lambda) or math.isInf(self.lambda)) return error.InvalidParameter;
+            if (self.beta <= 0.0 or math.isNan(self.beta) or math.isInf(self.beta)) return error.InvalidParameter;
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "Chen(λ=..., β=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Chen(λ={d:.4}, β={d:.4})", .{ self.lambda, self.beta });
+        }
+    };
+}
+
+// ============================================================================
+// Chen Distribution Tests
+// ============================================================================
+
+test "Chen: init with valid lambda and beta" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "Chen: init with lambda = 0 returns error" {
+    const result = Chen(f64).init(0.0, 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with lambda < 0 returns error" {
+    const result = Chen(f64).init(-1.0, 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with lambda = nan returns error" {
+    const result = Chen(f64).init(math.nan(f64), 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with lambda = inf returns error" {
+    const result = Chen(f64).init(math.inf(f64), 2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with beta = 0 returns error" {
+    const result = Chen(f64).init(1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with beta < 0 returns error" {
+    const result = Chen(f64).init(1.0, -2.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with beta = nan returns error" {
+    const result = Chen(f64).init(1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: init with beta = inf returns error" {
+    const result = Chen(f64).init(1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: pdf at x <= 0 returns 0" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+    try testing.expect(dist.pdf(-10.0) == 0.0);
+}
+
+test "Chen(1,2): pdf(1) ≈ 0.9752 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqRel(0.975178597438522, p, 1e-6);
+}
+
+test "Chen(0.5,1): pdf(0.5) ≈ 0.5960 (reference value)" {
+    const dist = try Chen(f64).init(0.5, 1.0);
+    const p = dist.pdf(0.5);
+    try testing.expectApproxEqRel(0.596004050433803, p, 1e-6);
+}
+
+test "Chen: pdf positive for all x > 0" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    // Chen(1,2) decays doubly-exponentially; x beyond ~1.5 underflows f64 to exactly 0,
+    // which is the mathematically correct limit, not a bug — keep x in the representable range.
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 1.5 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p > 0.0);
+        try testing.expect(math.isFinite(p));
+    }
+}
+
+test "Chen: logpdf at x <= 0 returns -inf" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const lp = dist.logpdf(0.0);
+    try testing.expect(math.isInf(lp) and lp < 0);
+    const lp2 = dist.logpdf(-1.0);
+    try testing.expect(math.isInf(lp2) and lp2 < 0);
+}
+
+test "Chen: logpdf finite for x > 0" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        try testing.expect(math.isFinite(lp));
+    }
+}
+
+test "Chen: logpdf equals log(pdf) at x=0.5" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const pdf_val = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(dist.logpdf(0.5), @log(pdf_val), 1e-9);
+}
+
+test "Chen: logpdf equals log(pdf) at x=1" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(dist.logpdf(1.0), @log(pdf_val), 1e-9);
+}
+
+test "Chen: cdf at x <= 0 returns 0" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+    try testing.expect(dist.cdf(-1.0) == 0.0);
+}
+
+test "Chen(1,2): cdf(1) ≈ 0.8206 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqRel(0.8206259212659828, c, 1e-6);
+}
+
+test "Chen(0.5,1): cdf(0.5) ≈ 0.2770 (reference value)" {
+    const dist = try Chen(f64).init(0.5, 1.0);
+    const c = dist.cdf(0.5);
+    try testing.expectApproxEqRel(0.27701054019796767, c, 1e-6);
+}
+
+test "Chen: cdf monotone increasing" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev: f64 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "Chen: cdf approaches 1 for large x" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    try testing.expect(dist.cdf(100.0) > 0.99);
+}
+
+test "Chen: cdf + sf = 1" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try testing.expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+test "Chen(1,2): sf(1) ≈ 0.1794 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const s = dist.sf(1.0);
+    try testing.expectApproxEqRel(0.17937407873401723, s, 1e-6);
+}
+
+test "Chen: sf monotone decreasing" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    var prev: f64 = 2.0;
+    for (x_vals) |x| {
+        const s = dist.sf(x);
+        try testing.expect(s <= prev);
+        prev = s;
+    }
+}
+
+test "Chen: quantile at p=0 returns 0" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(q, 0.0, 1e-10);
+}
+
+test "Chen: quantile at p=1 returns inf" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0);
+}
+
+test "Chen: quantile at p<0 returns error" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Chen: quantile at p>1 returns error" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "Chen(1,2): quantile(0.5) ≈ 0.7257 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqRel(0.725664546563386, q, 1e-5);
+}
+
+test "Chen: quantile roundtrip at x=0.5" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const p = dist.cdf(0.5);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 0.5, 1e-4);
+}
+
+test "Chen: quantile roundtrip at x=1" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const p = dist.cdf(1.0);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 1.0, 1e-4);
+}
+
+test "Chen: quantile roundtrip at x=1.5" {
+    // x=2.0 pushed cdf() to exactly 1.0 in f64 (true tail mass ~1e-24, below f64 precision
+    // near 1.0), making the roundtrip ill-posed; 1.5 stays within representable precision.
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const p = dist.cdf(1.5);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 1.5, 1e-4);
+}
+
+test "Chen(1,2): mean ≈ 0.7157 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+    try testing.expectApproxEqAbs(m, 0.7157047366762732, 1e-2);
+}
+
+test "Chen(0.5,1): mean finite and positive" {
+    const dist = try Chen(f64).init(0.5, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+    try testing.expect(m > 0.0);
+}
+
+test "Chen(1,2): variance ≈ 0.0840 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+    try testing.expectApproxEqAbs(v, 0.08404011358644747, 1e-2);
+}
+
+test "Chen(0.5,1): variance finite and positive" {
+    const dist = try Chen(f64).init(0.5, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+    try testing.expect(v > 0.0);
+}
+
+test "Chen(0.5,1): mode = -ln(0.5) ≈ 0.6931 (β=1, λ<1 case)" {
+    const dist = try Chen(f64).init(0.5, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqRel(-@log(0.5), mode_val, 1e-9);
+}
+
+test "Chen(0.5,1): mode peak verified by neighboring pdfs" {
+    const dist = try Chen(f64).init(0.5, 1.0);
+    const mode_val = dist.mode();
+    const pdf_at_mode = dist.pdf(mode_val);
+    const pdf_before = dist.pdf(mode_val - 0.1);
+    const pdf_after = dist.pdf(mode_val + 0.1);
+    try testing.expect(pdf_at_mode > pdf_before);
+    try testing.expect(pdf_at_mode > pdf_after);
+}
+
+test "Chen(2,1): mode = 0 (β=1, λ≥1 case, monotonic decrease)" {
+    const dist = try Chen(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectApproxEqAbs(0.0, mode_val, 1e-10);
+}
+
+test "Chen(2,1): pdf monotonically decreasing (β=1, λ≥1)" {
+    const dist = try Chen(f64).init(2.0, 1.0);
+    const x_vals = [_]f64{ 0.01, 0.5, 1.0 };
+    var prev: f64 = 10.0;
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p < prev);
+        prev = p;
+    }
+}
+
+test "Chen(1,2): mode ≈ 0.7769 (β>1, interior root)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const mode_val = dist.mode();
+    try testing.expect(mode_val > 0.0);
+    try testing.expectApproxEqRel(0.7768512219732477, mode_val, 1e-6);
+}
+
+test "Chen(1,2): entropy ≈ 0.1582 (reference value)" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+    try testing.expectApproxEqAbs(e, 0.15821148794243464, 1e-2);
+}
+
+test "Chen: entropy positive" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "Chen: entropy finite for various params" {
+    const params = [_][2]f64{ .{ 0.5, 0.5 }, .{ 1.0, 1.0 }, .{ 2.0, 2.0 }, .{ 0.5, 2.0 } };
+    for (params) |param| {
+        const dist = try Chen(f64).init(param[0], param[1]);
+        const e = dist.entropy();
+        try testing.expect(math.isFinite(e));
+    }
+}
+
+test "Chen: validate passes for valid params" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    try dist.validate();
+}
+
+test "Chen: validate fails for lambda <= 0" {
+    const dist = Chen(f64){ .lambda = -1.0, .beta = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: validate fails for lambda = nan" {
+    const dist = Chen(f64){ .lambda = math.nan(f64), .beta = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: validate fails for lambda = inf" {
+    const dist = Chen(f64){ .lambda = math.inf(f64), .beta = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: validate fails for beta <= 0" {
+    const dist = Chen(f64){ .lambda = 1.0, .beta = -2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: validate fails for beta = nan" {
+    const dist = Chen(f64){ .lambda = 1.0, .beta = math.nan(f64) };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: validate fails for beta = inf" {
+    const dist = Chen(f64){ .lambda = 1.0, .beta = math.inf(f64) };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "Chen: format works" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "Chen: format contains 'Chen'" {
+    const dist = try Chen(f64).init(1.0, 2.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_chen = std.mem.containsAtLeast(u8, output, 1, "Chen");
+    try testing.expect(contains_chen);
+}
+
+test "Chen: f32 type support" {
+    const dist = try Chen(f32).init(1.0, 2.0);
+    try dist.validate();
+    const pdf_val = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+    try testing.expect(math.isFinite(pdf_val));
+}
