@@ -70092,6 +70092,8 @@ pub fn JohnsonSB(comptime T: type) type {
         }
 
         /// Format for display.
+        ///
+        /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             _ = fmt;
             _ = options;
