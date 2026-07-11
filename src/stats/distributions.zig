@@ -81384,3 +81384,589 @@ test "SkewCauchy: f32 type support" {
     try testing.expect(pdf_val > 0.0);
     try testing.expect(math.isFinite(pdf_val));
 }
+
+/// Generalized Poisson distribution (Consul & Jain, 1973).
+/// Generalizes the Poisson distribution with an additional dispersion parameter.
+/// Arises in overdispersed count data and queuing theory.
+///
+/// Parameters:
+///   theta ∈ (0, ∞) — shape parameter (mean when lambda=0)
+///   lambda ∈ [0, 1) — dispersion parameter (lambda=0 reduces to Poisson)
+///
+/// Support: k = 0, 1, 2, ...
+///
+/// PMF: P(X=k) = theta · (theta + lambda·k)^(k-1) · exp(−theta − lambda·k) / k!
+///
+/// Special cases:
+///   lambda=0 → Poisson(theta)
+///   theta→0 → degenerate at k=0
+pub fn GeneralizedPoisson(comptime T: type) type {
+    return struct {
+        theta: T,
+        lambda: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a GeneralizedPoisson distribution.
+        ///
+        /// Errors: theta ≤ 0, theta non-finite, lambda < 0, lambda ≥ 1, or lambda non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(theta)) return error.InvalidParameter;
+            if (!(theta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(lambda >= 0.0 and lambda < 1.0)) return error.InvalidParameter;
+            return Self{ .theta = theta, .lambda = lambda };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// logPMF(k) = log(theta) + (k-1)·log(theta + lambda·k) - theta - lambda·k - logΓ(k+1)
+        /// Special case k=0: logPMF(0) = -theta
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -self.theta;
+            const kf: T = @floatFromInt(k);
+            const theta_plus_lambda_k = self.theta + self.lambda * kf;
+            return @log(self.theta) + (kf - 1.0) * @log(theta_plus_lambda_k) - self.theta - self.lambda * kf - logGamma(kf + 1.0);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p = self.pmf(j);
+                sum += p;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= p) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 0;
+        }
+
+        /// Mean: theta / (1 - lambda).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.theta / (1.0 - self.lambda);
+        }
+
+        /// Variance: theta / (1 - lambda)^3.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const one_minus_lambda = 1.0 - self.lambda;
+            return self.theta / (one_minus_lambda * one_minus_lambda * one_minus_lambda);
+        }
+
+        /// Mode: numeric scan via PMF ratio.
+        /// When multiple modes exist (e.g., bimodal Poisson), returns the larger one.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                // Use tolerance for tie detection to handle floating-point rounding
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p < 1e-300) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.theta)) return error.InvalidParameter;
+            if (!(self.theta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!(self.lambda >= 0.0 and self.lambda < 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("GeneralizedPoisson(θ={d:.4}, λ={d:.4})", .{self.theta, self.lambda});
+        }
+    };
+}
+
+// ============================================================================
+// GeneralizedPoisson Distribution Tests (140th distribution, 25th discrete)
+// ============================================================================
+
+test "GeneralizedPoisson: init valid theta=2.0, lambda=0.0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    try dist.validate();
+}
+
+test "GeneralizedPoisson: init valid theta=1.0, lambda=0.5" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    try dist.validate();
+}
+
+test "GeneralizedPoisson: init valid theta=3.0, lambda=0.0" {
+    const dist = try GeneralizedPoisson(f64).init(3.0, 0.0);
+    try dist.validate();
+}
+
+test "GeneralizedPoisson: init valid theta=0.5, lambda=0.2" {
+    const dist = try GeneralizedPoisson(f64).init(0.5, 0.2);
+    try dist.validate();
+}
+
+test "GeneralizedPoisson: init valid f32 type" {
+    const dist = try GeneralizedPoisson(f32).init(2.0, 0.3);
+    try dist.validate();
+}
+
+test "GeneralizedPoisson: init fails for theta=0" {
+    const result = GeneralizedPoisson(f64).init(0.0, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for theta < 0" {
+    const result = GeneralizedPoisson(f64).init(-1.0, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for NaN theta" {
+    const result = GeneralizedPoisson(f64).init(math.nan(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for infinite theta" {
+    const result = GeneralizedPoisson(f64).init(math.inf(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for lambda < 0" {
+    const result = GeneralizedPoisson(f64).init(2.0, -0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for lambda >= 1" {
+    const result = GeneralizedPoisson(f64).init(2.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for lambda > 1" {
+    const result = GeneralizedPoisson(f64).init(2.0, 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for NaN lambda" {
+    const result = GeneralizedPoisson(f64).init(2.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: init fails for infinite lambda" {
+    const result = GeneralizedPoisson(f64).init(2.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "GeneralizedPoisson: pmf(0) = exp(-theta)" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    try expectApproxEqAbs(@exp(-2.0), dist.pmf(0), 1e-12);
+}
+
+test "GeneralizedPoisson: pmf(0) = exp(-1.0) for theta=1, lambda=0.5" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    try expectApproxEqAbs(@exp(-1.0), dist.pmf(0), 1e-12);
+}
+
+test "GeneralizedPoisson: pmf(1) = theta*exp(-theta-lambda) for theta=2, lambda=0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    // P(1) = 2*exp(-2-0) = 2*exp(-2)
+    try expectApproxEqAbs(2.0 * @exp(-2.0), dist.pmf(1), 1e-12);
+}
+
+test "GeneralizedPoisson: pmf(1) = exp(-1.5) for theta=1, lambda=0.5" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    // P(1) = 1 * exp(-1-0.5) = exp(-1.5)
+    try expectApproxEqAbs(@exp(-1.5), dist.pmf(1), 1e-12);
+}
+
+test "GeneralizedPoisson: pmf Poisson reduction lambda=0 theta=2" {
+    // lambda=0 reduces exactly to Poisson(theta)
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    try expectApproxEqAbs(2.0 * @exp(-2.0), dist.pmf(2), 1e-12);
+    // Poisson: P(2) = 2^2 / 2! * exp(-2) = 4/2 * exp(-2) = 2 * exp(-2)
+}
+
+test "GeneralizedPoisson: pmf Poisson reduction lambda=0 theta=3" {
+    const dist = try GeneralizedPoisson(f64).init(3.0, 0.0);
+    // P(0) = exp(-3)
+    try expectApproxEqAbs(@exp(-3.0), dist.pmf(0), 1e-12);
+    // P(1) = 3*exp(-3)
+    try expectApproxEqAbs(3.0 * @exp(-3.0), dist.pmf(1), 1e-12);
+    // P(2) = 3^2/2! * exp(-3) = 4.5 * exp(-3)
+    try expectApproxEqAbs(4.5 * @exp(-3.0), dist.pmf(2), 1e-12);
+}
+
+test "GeneralizedPoisson: pmf positive for all k" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "GeneralizedPoisson: logpmf = log(pmf)" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.3);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "GeneralizedPoisson: pmf sums to 1 (truncated)" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 500) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "GeneralizedPoisson: cdf(0) = pmf(0)" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "GeneralizedPoisson: cdf is monotonically non-decreasing" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.4);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "GeneralizedPoisson: cdf approaches 1 for large k" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.4);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "GeneralizedPoisson: quantile(0) = 0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    try expect(try dist.quantile(0.0) == 0);
+}
+
+test "GeneralizedPoisson: quantile(1) is defined" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.4);
+    const q = try dist.quantile(1.0);
+    try expect(q >= 0);
+}
+
+test "GeneralizedPoisson: quantile fails for p < 0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "GeneralizedPoisson: quantile fails for p > 1" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "GeneralizedPoisson: quantile fails for NaN" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "GeneralizedPoisson: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.4);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "GeneralizedPoisson: mean = theta/(1-lambda) for theta=2, lambda=0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    // mean = 2/(1-0) = 2
+    try expectApproxEqAbs(2.0, dist.mean(), 1e-10);
+}
+
+test "GeneralizedPoisson: mean = theta/(1-lambda) for theta=1, lambda=0.5" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    // mean = 1/(1-0.5) = 2
+    try expectApproxEqAbs(2.0, dist.mean(), 1e-10);
+}
+
+test "GeneralizedPoisson: mean = theta/(1-lambda) for theta=3, lambda=0" {
+    const dist = try GeneralizedPoisson(f64).init(3.0, 0.0);
+    // mean = 3/(1-0) = 3
+    try expectApproxEqAbs(3.0, dist.mean(), 1e-10);
+}
+
+test "GeneralizedPoisson: mean increases with lambda for fixed theta" {
+    const dist1 = try GeneralizedPoisson(f64).init(2.0, 0.2);
+    const dist2 = try GeneralizedPoisson(f64).init(2.0, 0.5);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "GeneralizedPoisson: variance = theta/(1-lambda)^3 for theta=2, lambda=0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    // variance = 2/(1-0)^3 = 2
+    try expectApproxEqAbs(2.0, dist.variance(), 1e-10);
+}
+
+test "GeneralizedPoisson: variance = theta/(1-lambda)^3 for theta=1, lambda=0.5" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    // variance = 1/(1-0.5)^3 = 1/0.125 = 8
+    try expectApproxEqAbs(8.0, dist.variance(), 1e-10);
+}
+
+test "GeneralizedPoisson: variance = theta/(1-lambda)^3 for theta=3, lambda=0" {
+    const dist = try GeneralizedPoisson(f64).init(3.0, 0.0);
+    // variance = 3/(1-0)^3 = 3
+    try expectApproxEqAbs(3.0, dist.variance(), 1e-10);
+}
+
+test "GeneralizedPoisson: variance > mean (generalized Poisson property)" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.5);
+    try expect(dist.variance() > dist.mean());
+}
+
+test "GeneralizedPoisson: mode is non-negative integer" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.3);
+    const m = dist.mode();
+    try expect(m >= 0);
+}
+
+test "GeneralizedPoisson: mode Poisson reduction for lambda=0" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    // For Poisson(2), mode is 2
+    try expect(dist.mode() == 2);
+}
+
+test "GeneralizedPoisson: entropy is positive and finite" {
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.3);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "GeneralizedPoisson: entropy is positive for theta=1, lambda=0.5" {
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "GeneralizedPoisson: entropy increases with lambda (more uncertain)" {
+    const dist1 = try GeneralizedPoisson(f64).init(2.0, 0.2);
+    const dist2 = try GeneralizedPoisson(f64).init(2.0, 0.5);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "GeneralizedPoisson: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try GeneralizedPoisson(f64).init(1.5, 0.3);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0);
+    }
+}
+
+test "GeneralizedPoisson: sample empirical mean close to theoretical for theta=2, lambda=0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 2
+    try expectApproxEqAbs(2.0, sample_mean, 0.15);
+}
+
+test "GeneralizedPoisson: sample empirical mean close to theoretical for theta=1, lambda=0.5" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 1/(1-0.5) = 2
+    try expectApproxEqAbs(2.0, sample_mean, 0.15);
+}
+
+test "GeneralizedPoisson: validate passes for valid theta and lambda" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    try dist.validate();
+}
+
+test "GeneralizedPoisson: validate fails for theta=0 (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = 0.0, .lambda = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: validate fails for theta < 0 (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = -1.0, .lambda = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: validate fails for NaN theta (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = math.nan(f64), .lambda = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: validate fails for infinite theta (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = math.inf(f64), .lambda = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: validate fails for lambda < 0 (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = 2.0, .lambda = -0.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: validate fails for lambda >= 1 (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = 2.0, .lambda = 1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: validate fails for NaN lambda (unsafe struct)" {
+    const dist = GeneralizedPoisson(f64){ .theta = 2.0, .lambda = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "GeneralizedPoisson: format works" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "GeneralizedPoisson: format contains 'GeneralizedPoisson'" {
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "GeneralizedPoisson");
+    try testing.expect(contains_name);
+}
+
+test "GeneralizedPoisson: f32 type support" {
+    const dist = try GeneralizedPoisson(f32).init(2.0, 0.3);
+    try dist.validate();
+    try expect(dist.pmf(0) > 0.0);
+    try expect(math.isFinite(dist.pmf(0)));
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 0);
+    try expect(math.isFinite(dist.entropy()));
+}
+
+test "GeneralizedPoisson: sample empirical variance close to theoretical for theta=2, lambda=0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try GeneralizedPoisson(f64).init(2.0, 0.0);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 2
+    try expectApproxEqAbs(2.0, v, 0.5);
+}
+
+test "GeneralizedPoisson: sample empirical variance close to theoretical for theta=1, lambda=0.5" {
+    var prng = std.Random.DefaultPrng.init(55555);
+    const rng = prng.random();
+    const dist = try GeneralizedPoisson(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 8
+    try expectApproxEqAbs(8.0, v, 1.5);
+}
