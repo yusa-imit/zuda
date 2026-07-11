@@ -80785,3 +80785,602 @@ test "Chen: f32 type support" {
     try testing.expect(pdf_val > 0.0);
     try testing.expect(math.isFinite(pdf_val));
 }
+
+/// SkewCauchy(a) — skewed Cauchy distribution.
+///
+/// A Cauchy-like distribution asymmetric in a skewness parameter a ∈ (-1, 1).
+/// When a=0, reduces to standard Cauchy(0,1).
+/// Support: all reals ℝ.
+///
+/// Let s(x) = 1+a for x ≥ 0, s(x) = 1-a for x < 0.
+/// PDF: f(x; a) = s(x)² / (π(x² + s(x)²))
+/// CDF (piecewise):
+///   x ≥ 0: F(x) = (1-a)/2 + (1+a)/π · atan(x/(1+a))
+///   x < 0: F(x) = (1-a)/2 + (1-a)/π · atan(x/(1-a))
+/// Quantile (piecewise, p₀ = (1-a)/2):
+///   p < p₀: Q(p) = (1-a) · tan((p - p₀)π / (1-a))
+///   p ≥ p₀: Q(p) = (1+a) · tan((p - p₀)π / (1+a))
+///
+/// Parameters:
+///   - a: skewness parameter, -1 < a < 1
+pub fn SkewCauchy(comptime T: type) type {
+    return struct {
+        a: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize SkewCauchy(a) distribution.
+        /// Returns error.InvalidParameter if a ≤ -1, a ≥ 1, or a not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T) DistributionError!Self {
+            if (a <= -1.0 or a >= 1.0 or math.isNan(a) or math.isInf(a)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .a = a };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x; a) = s(x)² / (π(x² + s(x)²)), where s(x) = 1+a for x≥0, 1-a for x<0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const s = if (x >= 0.0) 1.0 + self.a else 1.0 - self.a;
+            return s * s / (math.pi * (x * x + s * s));
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = 2·log(s) − log(π) − log(x² + s²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const s = if (x >= 0.0) 1.0 + self.a else 1.0 - self.a;
+            return 2.0 * @log(s) - @log(math.pi) - @log(x * x + s * s);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// x ≥ 0: F(x) = (1-a)/2 + (1+a)/π · atan(x/(1+a))
+        /// x < 0: F(x) = (1-a)/2 + (1-a)/π · atan(x/(1-a))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const p0 = (1.0 - self.a) / 2.0;
+            if (x >= 0.0) {
+                return p0 + (1.0 + self.a) / math.pi * math.atan(x / (1.0 + self.a));
+            } else {
+                return p0 + (1.0 - self.a) / math.pi * math.atan(x / (1.0 - self.a));
+            }
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// p₀ = (1-a)/2
+        /// p < p₀: Q(p) = (1-a) · tan((p - p₀)π / (1-a))
+        /// p ≥ p₀: Q(p) = (1+a) · tan((p - p₀)π / (1+a))
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            return self.quantileRaw(prob);
+        }
+
+        fn quantileRaw(self: Self, prob: T) T {
+            if (prob <= 0.0) return -math.inf(T);
+            if (prob >= 1.0) return math.inf(T);
+
+            const p0 = (1.0 - self.a) / 2.0;
+            if (prob < p0) {
+                return (1.0 - self.a) * @tan((prob - p0) * math.pi / (1.0 - self.a));
+            } else {
+                return (1.0 + self.a) * @tan((prob - p0) * math.pi / (1.0 + self.a));
+            }
+        }
+
+        // --- Moments ---
+
+        /// Mean (expected value) — undefined for SkewCauchy (undefined like Cauchy).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Variance — undefined for SkewCauchy (infinite like Cauchy).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Mode of the distribution — always 0 for SkewCauchy.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy estimated via 500-point quantile quadrature.
+        ///
+        /// H ≈ −(1/500)·Σ_i logpdf(Q((i+0.5)/500))
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                const x = self.quantileRaw(p);
+                sum -= self.logpdf(x);
+            }
+            return sum / Nf;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
+            return self.quantileRaw(safe_u);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: -1 < a < 1, a finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= -1.0 or self.a >= 1.0 or math.isNan(self.a) or math.isInf(self.a)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "SkewCauchy(a=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("SkewCauchy(a={d:.4})", .{self.a});
+        }
+    };
+}
+
+// ============================================================================
+// SkewCauchy Distribution Tests
+// ============================================================================
+
+test "SkewCauchy: init with valid a values" {
+    const a_vals = [_]f64{ 0.0, 0.5, -0.5, 0.9, -0.9 };
+    for (a_vals) |a_val| {
+        const dist = try SkewCauchy(f64).init(a_val);
+        try dist.validate();
+    }
+}
+
+test "SkewCauchy: init with a <= -1 returns error" {
+    const result = SkewCauchy(f64).init(-1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: init with a < -1 returns error" {
+    const result = SkewCauchy(f64).init(-1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: init with a >= 1 returns error" {
+    const result = SkewCauchy(f64).init(1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: init with a > 1 returns error" {
+    const result = SkewCauchy(f64).init(1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: init with a = nan returns error" {
+    const result = SkewCauchy(f64).init(math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: init with a = inf returns error" {
+    const result = SkewCauchy(f64).init(math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: init with a = -inf returns error" {
+    const result = SkewCauchy(f64).init(-math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy(a=0): pdf(0) = 1/π (standard Cauchy)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(p, 1.0 / math.pi, 1e-10);
+}
+
+test "SkewCauchy(a=0): pdf(1) = 1/(2π) (standard Cauchy)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(p, 1.0 / (2.0 * math.pi), 1e-10);
+}
+
+test "SkewCauchy(a=0): pdf(-1) = 1/(2π) (standard Cauchy, symmetric)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(p, 1.0 / (2.0 * math.pi), 1e-10);
+}
+
+test "SkewCauchy(a=0.5): pdf(1) ≈ 0.2204 (asymmetric)" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(p, 0.2203683827, 1e-8);
+}
+
+test "SkewCauchy(a=0.5): pdf(-1) ≈ 0.0637" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const p = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(p, 0.0636619772, 1e-8);
+}
+
+test "SkewCauchy(a=-0.5): pdf(1) and pdf(-1) symmetric swap" {
+    const dist_pos = try SkewCauchy(f64).init(0.5);
+    const dist_neg = try SkewCauchy(f64).init(-0.5);
+    const pdf_pos_1 = dist_pos.pdf(1.0);
+    const pdf_neg_neg1 = dist_neg.pdf(-1.0);
+    try testing.expectApproxEqAbs(pdf_pos_1, pdf_neg_neg1, 1e-10);
+}
+
+test "SkewCauchy: pdf always positive" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (x_vals) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p > 0.0);
+        try testing.expect(math.isFinite(p));
+    }
+}
+
+test "SkewCauchy: logpdf finite for typical x" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (x_vals) |x| {
+        const lp = dist.logpdf(x);
+        try testing.expect(math.isFinite(lp));
+    }
+}
+
+test "SkewCauchy: logpdf equals log(pdf) at x=0" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const pdf_val = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(dist.logpdf(0.0), @log(pdf_val), 1e-10);
+}
+
+test "SkewCauchy: logpdf equals log(pdf) at x=1" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const pdf_val = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(dist.logpdf(1.0), @log(pdf_val), 1e-10);
+}
+
+test "SkewCauchy: logpdf equals log(pdf) at x=-1" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const pdf_val = dist.pdf(-1.0);
+    try testing.expectApproxEqAbs(dist.logpdf(-1.0), @log(pdf_val), 1e-10);
+}
+
+test "SkewCauchy(a=0): cdf(0) = 0.5 (standard Cauchy)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(c, 0.5, 1e-10);
+}
+
+test "SkewCauchy(a=0): cdf(1) = 0.75 (standard Cauchy)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(c, 0.75, 1e-10);
+}
+
+test "SkewCauchy(a=0): cdf(-1) = 0.25 (standard Cauchy)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(c, 0.25, 1e-10);
+}
+
+test "SkewCauchy(a=0.5): cdf(0) = 0.25" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(c, 0.25, 1e-10);
+}
+
+test "SkewCauchy(a=0.5): cdf(1) ≈ 0.5308" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const c = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(c, 0.5307505627, 1e-8);
+}
+
+test "SkewCauchy(a=0.5): cdf(-1) ≈ 0.0738" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(c, 0.0737918088, 1e-8);
+}
+
+test "SkewCauchy: cdf monotone increasing" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    var prev: f64 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "SkewCauchy: cdf approaches 0 as x -> -inf" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    try testing.expect(dist.cdf(-1000.0) < 0.01);
+}
+
+test "SkewCauchy: cdf approaches 1 as x -> +inf" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    try testing.expect(dist.cdf(1000.0) > 0.99);
+}
+
+test "SkewCauchy: cdf + sf = 1" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const x_vals = [_]f64{ -10.0, -1.0, 0.0, 1.0, 10.0 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try testing.expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+test "SkewCauchy: quantile at p=0 returns -inf" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const q = try dist.quantile(0.0);
+    try testing.expect(math.isInf(q) and q < 0);
+}
+
+test "SkewCauchy: quantile at p=1 returns +inf" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0);
+}
+
+test "SkewCauchy: quantile at p<0 returns error" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "SkewCauchy: quantile at p>1 returns error" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "SkewCauchy(a=0.5): quantile(0.5) ≈ 0.866 (not 0, skewed)" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(q, 0.8660254038, 1e-8);
+}
+
+test "SkewCauchy(a=0.5): quantile(0.25) = 0 (p0 point)" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const q = try dist.quantile(0.25);
+    try testing.expectApproxEqAbs(q, 0.0, 1e-10);
+}
+
+test "SkewCauchy(a=0.5): quantile(0.75) ≈ 2.598" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const q = try dist.quantile(0.75);
+    try testing.expectApproxEqAbs(q, 2.5980762114, 1e-8);
+}
+
+test "SkewCauchy(a=0.5): quantile(0.10) ≈ -0.688" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const q = try dist.quantile(0.10);
+    try testing.expectApproxEqAbs(q, -0.6881909602, 1e-8);
+}
+
+test "SkewCauchy: quantile roundtrip at x=0.5" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const p = dist.cdf(0.5);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 0.5, 1e-4);
+}
+
+test "SkewCauchy: quantile roundtrip at x=1" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const p = dist.cdf(1.0);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, 1.0, 1e-4);
+}
+
+test "SkewCauchy: quantile roundtrip at x=-1" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const p = dist.cdf(-1.0);
+    const x_recovered = try dist.quantile(p);
+    try testing.expectApproxEqAbs(x_recovered, -1.0, 1e-4);
+}
+
+test "SkewCauchy(a=0): quantile(0.5) = 0 (symmetric Cauchy)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(q, 0.0, 1e-10);
+}
+
+test "SkewCauchy: mean returns NaN" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "SkewCauchy(a=0): mean returns NaN" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "SkewCauchy(a=-0.5): mean returns NaN" {
+    const dist = try SkewCauchy(f64).init(-0.5);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "SkewCauchy: variance returns +inf" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const v = dist.variance();
+    try testing.expect(math.isInf(v) and v > 0);
+}
+
+test "SkewCauchy(a=0): variance returns +inf" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const v = dist.variance();
+    try testing.expect(math.isInf(v) and v > 0);
+}
+
+test "SkewCauchy(a=-0.5): variance returns +inf" {
+    const dist = try SkewCauchy(f64).init(-0.5);
+    const v = dist.variance();
+    try testing.expect(math.isInf(v) and v > 0);
+}
+
+test "SkewCauchy: mode always 0" {
+    const a_vals = [_]f64{ -0.5, 0.0, 0.5, 0.9, -0.9 };
+    for (a_vals) |a_val| {
+        const dist = try SkewCauchy(f64).init(a_val);
+        const m = dist.mode();
+        try testing.expectApproxEqAbs(m, 0.0, 1e-10);
+    }
+}
+
+test "SkewCauchy: mode is a local maximum" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const pdf_at_mode = dist.pdf(0.0);
+    const pdf_left = dist.pdf(-0.1);
+    const pdf_right = dist.pdf(0.1);
+    try testing.expect(pdf_at_mode >= pdf_left);
+    try testing.expect(pdf_at_mode >= pdf_right);
+}
+
+test "SkewCauchy(a=0): entropy ≈ ln(4π) ≈ 2.531 (Cauchy reference)" {
+    const dist = try SkewCauchy(f64).init(0.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+    try testing.expectApproxEqAbs(e, 2.5310242470, 1e-2);
+}
+
+test "SkewCauchy: entropy finite for various a values" {
+    const a_vals = [_]f64{ -0.5, 0.0, 0.5 };
+    for (a_vals) |a_val| {
+        const dist = try SkewCauchy(f64).init(a_val);
+        const e = dist.entropy();
+        try testing.expect(math.isFinite(e));
+    }
+}
+
+test "SkewCauchy: entropy positive" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "SkewCauchy: validate passes for valid a" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    try dist.validate();
+}
+
+test "SkewCauchy: validate fails for a <= -1" {
+    const dist = SkewCauchy(f64){ .a = -1.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: validate fails for a < -1" {
+    const dist = SkewCauchy(f64){ .a = -2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: validate fails for a >= 1" {
+    const dist = SkewCauchy(f64){ .a = 1.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: validate fails for a > 1" {
+    const dist = SkewCauchy(f64){ .a = 2.0 };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: validate fails for a = nan" {
+    const dist = SkewCauchy(f64){ .a = math.nan(f64) };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: validate fails for a = inf" {
+    const dist = SkewCauchy(f64){ .a = math.inf(f64) };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: validate fails for a = -inf" {
+    const dist = SkewCauchy(f64){ .a = -math.inf(f64) };
+    const result = dist.validate();
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "SkewCauchy: format works" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "SkewCauchy: format contains 'SkewCauchy'" {
+    const dist = try SkewCauchy(f64).init(0.5);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "SkewCauchy");
+    try testing.expect(contains_name);
+}
+
+test "SkewCauchy: f32 type support" {
+    const dist = try SkewCauchy(f32).init(0.5);
+    try dist.validate();
+    const pdf_val = dist.pdf(0.0);
+    try testing.expect(pdf_val > 0.0);
+    try testing.expect(math.isFinite(pdf_val));
+}
