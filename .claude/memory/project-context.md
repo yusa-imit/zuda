@@ -1,3 +1,23 @@
+**Session 758 Update (2026-07-11) — FEATURE MODE [COMPLETED]:**
+
+✅ **SkewCauchy Distribution** — 139th total, 115th continuous — commit a79223b
+- **Mode**: FEATURE MODE (counter: 758)
+- **CI Status**: GREEN (10206/10213 tests passed, 0 failures, 7 skipped); 0 open issues
+- **Note**: session resumed prior interrupted run — test-writer + zig-developer output for
+  SkewCauchy already existed complete and passing in the uncommitted working tree; this
+  session verified (`zig build test`) and committed/pushed it rather than re-implementing
+- **Distribution**: SkewCauchy(a) — skewed Cauchy, a ∈ (-1,1); reduces to standard Cauchy at a=0
+  * s(x) = 1+a for x≥0, 1-a for x<0; PDF = s²/(π(x²+s²))
+  * CDF/quantile: exact closed-form piecewise atan/tan — O(1), no bisection needed
+  * Mean: NaN (undefined, like Cauchy); Variance: +inf; Mode: always 0
+  * Entropy: 500-pt quantile quadrature
+  * Key values: quantile(0.5; a=0.5)≈0.866, quantile(0.25; a=0.5)=0 (the p0 crossover point)
+  * 51 tests passing
+- **Total**: 139 distributions (115 continuous + 24 discrete); ~10,213 tests
+- **Next Priority**: Next FEATURE — check root.zig export list before implementing; several
+  suggested names (VarianceGamma, GeneralizedHyperbolic, WrappedNormal, WrappedLaplace,
+  QExponential, ExGaussian, GB2) already appear in the list — verify with grep first
+
 **Session 757 Update (2026-07-11) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Chen Distribution** — 138th total, 114th continuous — commit a94db41
