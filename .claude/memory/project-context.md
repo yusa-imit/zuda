@@ -1,3 +1,24 @@
+**Session 759 Update (2026-07-11) — FEATURE MODE [COMPLETED]:**
+
+✅ **GeneralizedPoisson Distribution** — 140th total, 25th discrete — commit 8d28c6c
+- **Mode**: FEATURE MODE (counter: 759)
+- **CI Status**: GREEN; 0 open issues; `zig build test` exit code 0 after change
+- **Distribution**: GeneralizedPoisson(θ,λ) — Consul & Jain (1973) GPD; reduces exactly to
+  Poisson(θ) at λ=0
+  * Deliberately restricted λ ∈ [0,1) only (verified formula via WebSearch before implementing)
+    — negative λ needs truncated-support handling since θ+λk can go negative, out of scope
+  * PMF: P(k)=θ(θ+λk)^(k-1)e^(-θ-λk)/k!, P(0)=exp(-θ) special-cased (same pattern as Borel)
+  * Mean=θ/(1-λ), Variance=θ/(1-λ)³ — both exact closed form, no numerical integration
+  * Mode: numeric PMF scan with tolerance-based tie detection (1e-12 relative) — needed because
+    floating-point rounding can make theoretically-equal adjacent pmf values spuriously unequal
+    (e.g. Poisson(2) bimodal at k=1,2)
+  * Implementation followed Borel distribution as structural template
+  * 61 tests passing
+- **Total**: 140 distributions (115 continuous + 25 discrete)
+- **Next Priority**: Next FEATURE — Xgamma, Kappa (Hosking 4-param), Champernowne,
+  Polya-Aeppli(discrete), Waring(discrete), Delaporte(discrete), Meixner — verify formulas via
+  WebSearch before implementing (obscure-distribution formulas from memory are unreliable)
+
 **Session 758 Update (2026-07-11) — FEATURE MODE [COMPLETED]:**
 
 ✅ **SkewCauchy Distribution** — 139th total, 115th continuous — commit a79223b
