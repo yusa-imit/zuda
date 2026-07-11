@@ -81972,3 +81972,611 @@ test "GeneralizedPoisson: sample empirical variance close to theoretical for the
     // Theoretical variance = 8
     try expectApproxEqAbs(8.0, v, 1.5);
 }
+
+/// Xgamma(θ) — mixture of Exponential and Gamma distributions.
+///
+/// A continuous distribution on [0, ∞) that arises as a mixture of Exponential(θ)
+/// and Gamma(shape=3, rate=θ) with mixing probability θ/(1+θ).
+/// Support: x ≥ 0.
+///
+/// PDF: f(x; θ) = [θ²/(1+θ)] · (1 + θx²/2) · e^(−θx)
+/// CDF: F(x; θ) = 1 − [(1 + θ + θx + θ²x²/2)/(1+θ)] · e^(−θx)
+/// SF:  S(x; θ) = [(1 + θ + θx + θ²x²/2)/(1+θ)] · e^(−θx)
+///
+/// Parameters:
+///   - θ: rate/shape parameter, θ > 0
+pub fn Xgamma(comptime T: type) type {
+    return struct {
+        theta: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize Xgamma(θ) distribution.
+        /// Returns error.InvalidParameter if θ ≤ 0, or θ not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta: T) DistributionError!Self {
+            if (theta <= 0.0 or math.isNan(theta) or math.isInf(theta)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .theta = theta };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x; θ) = [θ²/(1+θ)] · (1 + θx²/2) · e^(−θx), for x ≥ 0; 0 for x < 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const coeff = self.theta * self.theta / (1.0 + self.theta);
+            const factor = 1.0 + self.theta * x * x / 2.0;
+            return coeff * factor * @exp(-self.theta * x);
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = 2·log(θ) − log(1+θ) + log(1 + θx²/2) − θx
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            return 2.0 * @log(self.theta) - @log(1.0 + self.theta) +
+                   @log(1.0 + self.theta * x * x / 2.0) - self.theta * x;
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x; θ) = 1 − [(1 + θ + θx + θ²x²/2)/(1+θ)] · e^(−θx), for x ≥ 0; 0 for x < 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const numer = 1.0 + self.theta + self.theta * x + self.theta * self.theta * x * x / 2.0;
+            const sf_val = (numer / (1.0 + self.theta)) * @exp(-self.theta * x);
+            return 1.0 - sf_val;
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            const numer = 1.0 + self.theta + self.theta * x + self.theta * self.theta * x * x / 2.0;
+            return (numer / (1.0 + self.theta)) * @exp(-self.theta * x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Uses bisection search on CDF. Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            return self.quantileRaw(prob);
+        }
+
+        fn quantileRaw(self: Self, prob: T) T {
+            if (prob <= 0.0) return 0.0;
+            if (prob >= 1.0) return math.inf(T);
+
+            // Initial guess for upper bound
+            var upper: T = @max(1.0, -@log(1.0 - @min(prob, 1.0 - 1e-15)) / self.theta);
+
+            // Double until CDF(upper) >= prob, with safety limit
+            var count: usize = 0;
+            while (self.cdf(upper) < prob and count < 100) : (count += 1) {
+                upper = upper * 2.0;
+                if (upper > 1000.0) upper = 1000.0; // Cap to avoid numerical issues
+            }
+
+            // Fixed-iteration bisection
+            var lo: T = 0.0;
+            var hi: T = upper;
+            for (0..64) |_| {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(mid) < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // --- Moments ---
+
+        /// Mean (expected value).
+        /// E[X] = (θ+3) / (θ(1+θ))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (self.theta + 3.0) / (self.theta * (1.0 + self.theta));
+        }
+
+        /// Variance.
+        /// Var[X] = (θ² + 8θ + 3) / (θ²(1+θ)²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const theta_sq = self.theta * self.theta;
+            const one_plus_theta_sq = (1.0 + self.theta) * (1.0 + self.theta);
+            return (theta_sq + 8.0 * self.theta + 3.0) / (theta_sq * one_plus_theta_sq);
+        }
+
+        /// Mode of the distribution.
+        /// Mode = 0 if θ ≥ 0.5; else (1 + √(1−2θ)) / θ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.theta >= 0.5) {
+                return 0.0;
+            } else {
+                return (1.0 + @sqrt(1.0 - 2.0 * self.theta)) / self.theta;
+            }
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy via numerical integration on quantiles.
+        ///
+        /// H ≈ E[-log p(X)], computed using 200-point Riemann sum on [0,1]
+        ///
+        /// Time: O(200) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: i32 = 200;
+            var sum: T = 0.0;
+
+            for (1..@intCast(N)) |i| {
+                const pi: T = @as(T, @floatFromInt(i)) / @as(T, @floatFromInt(N));
+                const qi = self.quantileRaw(pi);
+
+                // Skip if quantile is invalid
+                if (!math.isFinite(qi) or qi < 0.0) continue;
+
+                const pdf_val = self.pdf(qi);
+                if (pdf_val > 1e-300 and math.isFinite(pdf_val)) {
+                    const lp = @log(pdf_val);
+                    sum -= lp / @as(T, @floatFromInt(N));
+                }
+            }
+
+            return sum;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
+            return self.quantileRaw(safe_u);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: θ > 0, θ finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.theta <= 0.0 or math.isNan(self.theta) or math.isInf(self.theta)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "Xgamma(θ=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Xgamma(theta={d:.4})", .{self.theta});
+        }
+    };
+}
+
+// ============================================================================
+// Xgamma Distribution Tests (141st distribution, 116th continuous)
+// ============================================================================
+
+test "Xgamma: init valid theta=1.0" {
+    const dist = try Xgamma(f64).init(1.0);
+    try dist.validate();
+}
+
+test "Xgamma: init valid theta=2.0" {
+    const dist = try Xgamma(f64).init(2.0);
+    try dist.validate();
+}
+
+test "Xgamma: init valid theta=0.5" {
+    const dist = try Xgamma(f64).init(0.5);
+    try dist.validate();
+}
+
+test "Xgamma: init valid theta=0.25" {
+    const dist = try Xgamma(f64).init(0.25);
+    try dist.validate();
+}
+
+test "Xgamma: init valid theta=3.0" {
+    const dist = try Xgamma(f64).init(3.0);
+    try dist.validate();
+}
+
+test "Xgamma: init valid f32 type" {
+    const dist = try Xgamma(f32).init(1.5);
+    try dist.validate();
+}
+
+test "Xgamma: init fails for theta=0" {
+    const result = Xgamma(f64).init(0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Xgamma: init fails for theta < 0" {
+    const result = Xgamma(f64).init(-1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Xgamma: init fails for NaN theta" {
+    const result = Xgamma(f64).init(math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Xgamma: init fails for infinite theta" {
+    const result = Xgamma(f64).init(math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Xgamma: pdf(0) exact for theta=1.0" {
+    const dist = try Xgamma(f64).init(1.0);
+    // f(0) = [1²/(1+1)] * 1 = 0.5
+    try expectApproxEqAbs(0.5, dist.pdf(0.0), 1e-12);
+}
+
+test "Xgamma: pdf(1) exact for theta=1.0" {
+    const dist = try Xgamma(f64).init(1.0);
+    // f(1) = [0.5 * (1 + 0.5)] * exp(-1) = 0.5 * 1.5 * exp(-1) ≈ 0.275909581
+    try expectApproxEqAbs(0.275909581, dist.pdf(1.0), 1e-8);
+}
+
+test "Xgamma: pdf positive for x >= 0" {
+    const dist = try Xgamma(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 3.0, 5.0 };
+    for (x_vals) |x| {
+        try expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "Xgamma: pdf zero for x < 0" {
+    const dist = try Xgamma(f64).init(1.0);
+    try expect(dist.pdf(-0.5) == 0.0);
+    try expect(dist.pdf(-1.0) == 0.0);
+}
+
+test "Xgamma: logpdf equals log(pdf)" {
+    const dist = try Xgamma(f64).init(1.5);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 3.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+    }
+}
+
+test "Xgamma: cdf and sf sum to 1" {
+    const dist = try Xgamma(f64).init(1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqAbs(1.0, sum, 1e-12);
+    }
+}
+
+test "Xgamma: cdf(0) = 0 (boundary)" {
+    const dist = try Xgamma(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-12);
+}
+
+test "Xgamma: cdf monotonically increasing" {
+    const dist = try Xgamma(f64).init(1.0);
+    var prev_cdf = dist.cdf(0.0);
+    const x_vals = [_]f64{ 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        const cur_cdf = dist.cdf(x);
+        try expect(cur_cdf >= prev_cdf);
+        prev_cdf = cur_cdf;
+    }
+}
+
+test "Xgamma: cdf approaches 1 for large x" {
+    const dist = try Xgamma(f64).init(1.0);
+    try expect(dist.cdf(20.0) > 0.999);
+    try expect(dist.cdf(50.0) > 0.9999);
+}
+
+test "Xgamma: sf positive and decreasing" {
+    const dist = try Xgamma(f64).init(1.0);
+    var prev_sf = dist.sf(0.0);
+    try expectApproxEqAbs(1.0, prev_sf, 1e-12);
+    const x_vals = [_]f64{ 0.5, 1.0, 1.5, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        const cur_sf = dist.sf(x);
+        try expect(cur_sf > 0.0);
+        try expect(cur_sf <= prev_sf);
+        prev_sf = cur_sf;
+    }
+}
+
+test "Xgamma: quantile(0) = 0" {
+    const dist = try Xgamma(f64).init(1.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(0.0, q, 1e-12);
+}
+
+test "Xgamma: quantile(1) is large" {
+    const dist = try Xgamma(f64).init(1.0);
+    const q = try dist.quantile(1.0);
+    try expect(q > 20.0);
+}
+
+test "Xgamma: quantile(0.5) is in valid range" {
+    const dist = try Xgamma(f64).init(1.0);
+    const q = try dist.quantile(0.5);
+    try expect(q > 0.0 and q < 100.0);
+}
+
+test "Xgamma: quantile fails for p < 0" {
+    const dist = try Xgamma(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Xgamma: quantile fails for p > 1" {
+    const dist = try Xgamma(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Xgamma: quantile fails for NaN" {
+    const dist = try Xgamma(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Xgamma: cdf(quantile(p)) roundtrip" {
+    const dist = try Xgamma(f64).init(1.0);
+    const p_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqAbs(p, cdf_q, 1e-8);
+    }
+}
+
+test "Xgamma: mean exact for theta=1.0" {
+    const dist = try Xgamma(f64).init(1.0);
+    // mean = (1+3) / (1*(1+1)) = 4/2 = 2.0
+    try expectApproxEqAbs(2.0, dist.mean(), 1e-10);
+}
+
+test "Xgamma: mean exact for theta=2.0" {
+    const dist = try Xgamma(f64).init(2.0);
+    // mean = (2+3) / (2*(1+2)) = 5/6 ≈ 0.833333
+    try expectApproxEqAbs(5.0 / 6.0, dist.mean(), 1e-10);
+}
+
+test "Xgamma: variance exact for theta=1.0" {
+    const dist = try Xgamma(f64).init(1.0);
+    // variance = (1 + 8 + 3) / (1 * 4) = 12/4 = 3.0
+    try expectApproxEqAbs(3.0, dist.variance(), 1e-10);
+}
+
+test "Xgamma: variance exact for theta=2.0" {
+    const dist = try Xgamma(f64).init(2.0);
+    // variance = (4 + 16 + 3) / (4 * 9) = 23/36 ≈ 0.638889
+    try expectApproxEqAbs(23.0 / 36.0, dist.variance(), 1e-10);
+}
+
+test "Xgamma: variance positive and finite" {
+    const dist = try Xgamma(f64).init(1.5);
+    const v = dist.variance();
+    try expect(v > 0.0 and math.isFinite(v));
+}
+
+test "Xgamma: mode exact for theta=1.0 (boundary theta >= 0.5)" {
+    const dist = try Xgamma(f64).init(1.0);
+    // mode = 0 for theta >= 0.5
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "Xgamma: mode exact for theta=0.5 (boundary)" {
+    const dist = try Xgamma(f64).init(0.5);
+    // mode = 0 for theta >= 0.5
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-12);
+}
+
+test "Xgamma: mode interior for theta=0.25 (< 0.5)" {
+    const dist = try Xgamma(f64).init(0.25);
+    // mode = (1 + sqrt(1-2*0.25)) / 0.25 = (1 + sqrt(0.5)) / 0.25
+    // sqrt(0.5) ≈ 0.70710678
+    // mode ≈ (1 + 0.70710678) / 0.25 ≈ 6.8284271
+    try expectApproxEqAbs(6.8284271, dist.mode(), 1e-6);
+}
+
+test "Xgamma: mode is non-negative" {
+    const theta_vals = [_]f64{ 0.1, 0.25, 0.5, 1.0, 2.0, 5.0 };
+    for (theta_vals) |theta| {
+        const dist = try Xgamma(f64).init(theta);
+        try expect(dist.mode() >= 0.0);
+    }
+}
+
+test "Xgamma: entropy is positive and finite" {
+    const dist = try Xgamma(f64).init(1.0);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "Xgamma: entropy positive for various theta" {
+    const theta_vals = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (theta_vals) |theta| {
+        const dist = try Xgamma(f64).init(theta);
+        const h = dist.entropy();
+        try expect(h > 0.0 and math.isFinite(h));
+    }
+}
+
+test "Xgamma: sample is non-negative" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Xgamma(f64).init(1.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0.0);
+    }
+}
+
+test "Xgamma: sample empirical mean close to theoretical for theta=1.0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Xgamma(f64).init(1.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 2.0
+    try expectApproxEqAbs(2.0, sample_mean, 0.2);
+}
+
+test "Xgamma: sample empirical mean close to theoretical for theta=2.0" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try Xgamma(f64).init(2.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 5/6 ≈ 0.833333
+    try expectApproxEqAbs(5.0 / 6.0, sample_mean, 0.15);
+}
+
+test "Xgamma: sample empirical variance close to theoretical for theta=1.0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Xgamma(f64).init(1.0);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 3.0
+    try expectApproxEqAbs(3.0, v, 0.5);
+}
+
+test "Xgamma: sample empirical variance close to theoretical for theta=2.0" {
+    var prng = std.Random.DefaultPrng.init(55555);
+    const rng = prng.random();
+    const dist = try Xgamma(f64).init(2.0);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 23/36 ≈ 0.638889
+    try expectApproxEqAbs(23.0 / 36.0, v, 0.2);
+}
+
+test "Xgamma: validate passes for valid theta" {
+    const dist = try Xgamma(f64).init(1.5);
+    try dist.validate();
+}
+
+test "Xgamma: validate fails for theta=0 (unsafe struct)" {
+    const dist = Xgamma(f64){ .theta = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Xgamma: validate fails for theta < 0 (unsafe struct)" {
+    const dist = Xgamma(f64){ .theta = -1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Xgamma: validate fails for NaN theta (unsafe struct)" {
+    const dist = Xgamma(f64){ .theta = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Xgamma: validate fails for infinite theta (unsafe struct)" {
+    const dist = Xgamma(f64){ .theta = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Xgamma: format works" {
+    const dist = try Xgamma(f64).init(1.5);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "Xgamma: format contains 'Xgamma'" {
+    const dist = try Xgamma(f64).init(1.5);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "Xgamma");
+    try testing.expect(contains_name);
+}
+
+test "Xgamma: f32 type support basic operations" {
+    const dist = try Xgamma(f32).init(1.5);
+    try dist.validate();
+    try expect(dist.pdf(0.5) > 0.0);
+    try expect(math.isFinite(dist.pdf(0.5)));
+    try expect(dist.cdf(1.0) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q > 0.0 and q < 100.0);
+    try expect(math.isFinite(dist.mean()));
+    try expect(math.isFinite(dist.variance()));
+}
+
+test "Xgamma: f32 type sample statistical sanity" {
+    var prng = std.Random.DefaultPrng.init(77777);
+    const rng = prng.random();
+    const dist = try Xgamma(f32).init(1.0);
+    var sum: f32 = 0.0;
+    const n = 1000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f32, @floatFromInt(n));
+    // Theoretical mean = 2.0, allow looser tolerance for f32
+    try expectApproxEqAbs(2.0, sample_mean, 0.4);
+}
