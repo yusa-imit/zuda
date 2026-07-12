@@ -83211,3 +83211,505 @@ test "PolyaAeppli: sample empirical variance close to theoretical for lambda=1, 
     // Theoretical variance = 1 * (2 - 0.5) / 0.25 = 6.0
     try expectApproxEqAbs(6.0, v, 1.5);
 }
+
+// ============================================================================
+// Delaporte Distribution (143rd distribution, 27th discrete)
+// ============================================================================
+// Delaporte = Negative-Binomial ⊛ Poisson compound/convolution distribution
+// Generative model: Λ ~ Gamma(shape=alpha, scale=beta); D | Λ ~ Poisson(lambda + Λ)
+// Equivalently D = Y + Z, Y ~ Poisson(lambda) independent of Z ~ NegBinomial(r=alpha, p=1/(1+beta))
+// PMF: P(D=j) = Σ_{i=0}^{j} NB(i; alpha, p=1/(1+beta)) * Poisson(j-i; lambda)
+//   NB(i; alpha, p) = Γ(alpha+i)/(Γ(alpha)·i!) · (beta/(1+beta))^i · (1/(1+beta))^alpha
+// Mean = lambda + alpha*beta
+// Variance = lambda + alpha*beta*(1+beta)
+// Reduces to NegativeBinomial(r=alpha, p=1/(1+beta)) exactly when lambda=0.
+// Source: Vose (2008); CRAN "Delaporte" package (Aadler); Wikipedia "Delaporte distribution"
+
+pub fn Delaporte(comptime T: type) type {
+    return struct {
+        alpha: T,
+        beta: T,
+        lambda: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a Delaporte distribution.
+        ///
+        /// Parameters: alpha > 0 (Gamma shape), beta > 0 (Gamma scale), lambda ≥ 0 (fixed Poisson rate)
+        ///
+        /// Errors: any parameter non-finite; alpha ≤ 0; beta ≤ 0; lambda < 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, beta: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            if (!(alpha > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(beta)) return error.InvalidParameter;
+            if (!(beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(lambda >= 0.0)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .beta = beta, .lambda = lambda };
+        }
+
+        /// Log-PMF at k via the NegativeBinomial ⊛ Poisson convolution sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const kf: T = @floatFromInt(k);
+            const log_beta_ratio = @log(self.beta) - @log(1.0 + self.beta);
+            const log_1_ratio = -@log(1.0 + self.beta);
+            const log_gamma_alpha = logGamma(self.alpha);
+
+            // lambda=0: Poisson(0) is a point mass at 0, so only i=k survives —
+            // this reduces exactly to the NegativeBinomial(r=alpha, p=1/(1+beta)) term.
+            if (self.lambda == 0.0) {
+                return logGamma(self.alpha + kf) - log_gamma_alpha - logFactorial(T, k) + kf * log_beta_ratio + self.alpha * log_1_ratio;
+            }
+
+            const log_lambda = @log(self.lambda);
+
+            var sum_direct: T = 0.0;
+            var i: u64 = 0;
+            while (i <= k) : (i += 1) {
+                const if_: T = @floatFromInt(i);
+                const m = k - i;
+                const mf: T = @floatFromInt(m);
+                const log_nb = logGamma(self.alpha + if_) - log_gamma_alpha - logFactorial(T, i) + if_ * log_beta_ratio + self.alpha * log_1_ratio;
+                const log_poisson = mf * log_lambda - self.lambda - logFactorial(T, m);
+                sum_direct += @exp(log_nb + log_poisson);
+            }
+
+            if (sum_direct > 0.0) return @log(sum_direct);
+
+            // Fallback log-sum-exp for parameter regimes where every term
+            // underflows in linear space before summation.
+            var max_log_term: T = -math.inf(T);
+            i = 0;
+            while (i <= k) : (i += 1) {
+                const if_: T = @floatFromInt(i);
+                const m = k - i;
+                const mf: T = @floatFromInt(m);
+                const log_nb = logGamma(self.alpha + if_) - log_gamma_alpha - logFactorial(T, i) + if_ * log_beta_ratio + self.alpha * log_1_ratio;
+                const log_poisson = mf * log_lambda - self.lambda - logFactorial(T, m);
+                const log_term = log_nb + log_poisson;
+                if (log_term > max_log_term) max_log_term = log_term;
+            }
+
+            var sum_exp: T = 0.0;
+            i = 0;
+            while (i <= k) : (i += 1) {
+                const if_: T = @floatFromInt(i);
+                const m = k - i;
+                const mf: T = @floatFromInt(m);
+                const log_nb = logGamma(self.alpha + if_) - log_gamma_alpha - logFactorial(T, i) + if_ * log_beta_ratio + self.alpha * log_1_ratio;
+                const log_poisson = mf * log_lambda - self.lambda - logFactorial(T, m);
+                sum_exp += @exp(log_nb + log_poisson - max_log_term);
+            }
+
+            return max_log_term + @log(sum_exp);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k²) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*²) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const pk = self.pmf(k);
+                cumsum += pk;
+                if (cumsum >= p) return k;
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (see PolyaAeppli for the O(MAX_K^2)
+                // hang this caused when done wrong).
+                if (k > 0 and pk == 0.0) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample via the exact generative composition: draw Λ ~ Gamma(alpha, beta),
+        /// then D ~ Poisson(lambda + Λ). Exact and O(1) amortized, unlike inverse-CDF.
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const gamma_sample = noncentralFGammaSample(T, rng, self.alpha) * self.beta;
+            return poissonKnuth(T, rng, self.lambda + gamma_sample);
+        }
+
+        /// Mean: lambda + alpha*beta.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.lambda + self.alpha * self.beta;
+        }
+
+        /// Variance: lambda + alpha*beta*(1+beta).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.lambda + self.alpha * self.beta * (1.0 + self.beta);
+        }
+
+        /// Mode: numeric scan via PMF.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p == 0.0) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (!(self.alpha > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.beta)) return error.InvalidParameter;
+            if (!(self.beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!(self.lambda >= 0.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Delaporte(α={d:.4}, β={d:.4}, λ={d:.4})", .{ self.alpha, self.beta, self.lambda });
+        }
+    };
+}
+
+// ============================================================================
+// Delaporte Distribution Tests (143rd distribution, 27th discrete)
+// ============================================================================
+
+test "Delaporte: init valid alpha=2.0, beta=1.0, lambda=1.0" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Delaporte: init valid lambda=0 (NegBinomial boundary)" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "Delaporte: init valid f32 type" {
+    const dist = try Delaporte(f32).init(1.5, 0.6, 0.5);
+    try dist.validate();
+}
+
+test "Delaporte: init fails for alpha=0" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(0.0, 1.0, 1.0));
+}
+
+test "Delaporte: init fails for alpha < 0" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(-1.0, 1.0, 1.0));
+}
+
+test "Delaporte: init fails for beta=0" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(2.0, 0.0, 1.0));
+}
+
+test "Delaporte: init fails for beta < 0" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(2.0, -1.0, 1.0));
+}
+
+test "Delaporte: init fails for lambda < 0" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(2.0, 1.0, -0.1));
+}
+
+test "Delaporte: init fails for NaN alpha" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "Delaporte: init fails for infinite beta" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(2.0, math.inf(f64), 1.0));
+}
+
+test "Delaporte: init fails for NaN lambda" {
+    try expectError(error.InvalidParameter, Delaporte(f64).init(2.0, 1.0, math.nan(f64)));
+}
+
+test "Delaporte: pmf positive for all k" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "Delaporte: logpmf = log(pmf)" {
+    const dist = try Delaporte(f64).init(1.5, 0.8, 1.2);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-9);
+    }
+}
+
+test "Delaporte: pmf sums to 1 (truncated)" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 500) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15 and k > 20) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "Delaporte: reduces to NegativeBinomial when lambda=0" {
+    // alpha=3 (integer), beta=2 -> NB(r=3, p=1/(1+2)=1/3)
+    const dist = try Delaporte(f64).init(3.0, 2.0, 0.0);
+    const nb = try NegativeBinomial(f64).init(3, 1.0 / 3.0);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(nb.pmf(k), dist.pmf(k), 1e-9);
+    }
+}
+
+test "Delaporte: pmf(0) matches direct formula" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.5);
+    // P(0) = NB(0) * Poisson(0) = (1/(1+beta))^alpha * exp(-lambda)
+    const expected = math.pow(f64, 1.0 / (1.0 + 1.0), 2.0) * @exp(-1.5);
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "Delaporte: cdf is monotonically non-decreasing" {
+    const dist = try Delaporte(f64).init(1.5, 0.7, 1.0);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "Delaporte: cdf(0) = pmf(0)" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "Delaporte: cdf approaches 1 for large k" {
+    const dist = try Delaporte(f64).init(1.5, 0.7, 1.0);
+    try expect(dist.cdf(200) > 0.999);
+}
+
+test "Delaporte: quantile(0) = 0" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try expect(try dist.quantile(0.0) == 0);
+}
+
+test "Delaporte: quantile fails for p < 0" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Delaporte: quantile fails for p > 1" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Delaporte: quantile fails for NaN" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Delaporte: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try Delaporte(f64).init(1.5, 0.7, 1.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-9);
+    }
+}
+
+test "Delaporte: mean = lambda + alpha*beta" {
+    const dist = try Delaporte(f64).init(2.0, 1.5, 1.0);
+    // mean = 1.0 + 2.0*1.5 = 4.0
+    try expectApproxEqAbs(4.0, dist.mean(), 1e-10);
+}
+
+test "Delaporte: mean increases with lambda for fixed alpha,beta" {
+    const dist1 = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    const dist2 = try Delaporte(f64).init(2.0, 1.0, 3.0);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "Delaporte: variance = lambda + alpha*beta*(1+beta)" {
+    const dist = try Delaporte(f64).init(2.0, 1.5, 1.0);
+    // variance = 1.0 + 2.0*1.5*(1+1.5) = 1.0 + 7.5 = 8.5
+    try expectApproxEqAbs(8.5, dist.variance(), 1e-10);
+}
+
+test "Delaporte: variance exceeds mean (overdispersion)" {
+    const dist = try Delaporte(f64).init(2.0, 1.5, 1.0);
+    try expect(dist.variance() > dist.mean());
+}
+
+test "Delaporte: mode is non-negative integer" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    const m = dist.mode();
+    try expect(m >= 0);
+}
+
+test "Delaporte: entropy is positive and finite" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "Delaporte: entropy increases with lambda (more uncertain)" {
+    const dist1 = try Delaporte(f64).init(2.0, 1.0, 0.5);
+    const dist2 = try Delaporte(f64).init(2.0, 1.0, 3.0);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "Delaporte: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0);
+    }
+}
+
+test "Delaporte: sample empirical mean close to theoretical" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 1.5 + 2.0*1.0 = 3.5
+    try expectApproxEqAbs(3.5, sample_mean, 0.3);
+}
+
+test "Delaporte: sample empirical variance close to theoretical" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.5);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 1.5 + 2.0*1.0*(1+1.0) = 5.5
+    try expectApproxEqAbs(5.5, v, 1.5);
+}
+
+test "Delaporte: validate passes for valid parameters" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Delaporte: validate fails for alpha=0 (unsafe struct)" {
+    const dist = Delaporte(f64){ .alpha = 0.0, .beta = 1.0, .lambda = 1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Delaporte: validate fails for beta < 0 (unsafe struct)" {
+    const dist = Delaporte(f64){ .alpha = 1.0, .beta = -1.0, .lambda = 1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Delaporte: validate fails for lambda < 0 (unsafe struct)" {
+    const dist = Delaporte(f64){ .alpha = 1.0, .beta = 1.0, .lambda = -1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Delaporte: validate fails for NaN alpha (unsafe struct)" {
+    const dist = Delaporte(f64){ .alpha = math.nan(f64), .beta = 1.0, .lambda = 1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Delaporte: format works" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "Delaporte: format contains 'Delaporte'" {
+    const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "Delaporte");
+    try testing.expect(contains_name);
+}
+
+test "Delaporte: f32 type support" {
+    const dist = try Delaporte(f32).init(2.0, 1.0, 1.0);
+    try dist.validate();
+    try expect(dist.pmf(0) > 0.0);
+    try expect(math.isFinite(dist.pmf(0)));
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 0);
+    try expect(math.isFinite(dist.entropy()));
+}
