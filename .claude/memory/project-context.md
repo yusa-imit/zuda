@@ -1,3 +1,30 @@
+**Session 767 Update (2026-07-13) — FEATURE MODE [COMPLETED]:**
+
+✅ **PolyaAeppli Distribution** — 142nd total, 26th discrete — commit 524ead7
+- **Mode**: FEATURE MODE (counter: 767)
+- **CI Status**: GREEN; 0 open issues; `zig build test` exit code 0 after fix
+- Resumed a prior interrupted session's uncommitted PolyaAeppli implementation + 61 tests
+  (same pattern as sessions 758/762). Verification (`zig build test`) hung indefinitely —
+  bisected with `zig test --test-filter` down to two O(MAX_K²) bugs:
+  1. `quantile()`/`entropy()` used a hardcoded `< 1e-300` literal to detect PMF-series
+     convergence. For `T=f32` this literal underflows to exact `0.0` at compile time, so the
+     check silently became `< 0.0` (never true) — hit by the "f32 type support" test.
+  2. `quantile(1.0)` also hung for f64: the truncated tail sum plateaus ~7e-6 short of 1.0
+     (accumulated Lanczos/Stirling approximation error), far more than a naive `1e-9` tolerance
+     fix could cover.
+  - **Fix**: replaced both magnitude checks with exact `pk == 0.0` comparisons — every
+    strictly-decaying float series eventually underflows to exact zero regardless of T's
+    dynamic range, so this reliably terminates without a magic per-type constant.
+  - 2 other distributions in the file (~line 71325, ~81533) share the same `< 1e-300` pattern
+    and were NOT touched (already passing in CI, out of scope) — flagged for a future
+    STABILIZATION audit.
+- **Total**: 142 distributions (116 continuous + 26 discrete)
+- **Next Priority**: audit the other 2 `1e-300`-pattern distributions for f32 risk; then Kappa
+  (Hosking 4-param), Champernowne, Waring(discrete), Delaporte(discrete), Meixner — verify
+  formulas via WebSearch first
+
+---
+
 **Session 759 Update (2026-07-11) — FEATURE MODE [COMPLETED]:**
 
 ✅ **GeneralizedPoisson Distribution** — 140th total, 25th discrete — commit 8d28c6c

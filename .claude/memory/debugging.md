@@ -2,6 +2,25 @@
 
 ## Fixed Issues
 
+### PolyaAeppli quantile()/entropy() O(MAX_K²) hang from f32-underflowing epsilon literal (session 767, fixed in 524ead7)
+**Symptoms**: `zig build test` hung indefinitely (observed 5+ min at 99.5% CPU on the test binary, no output). Bisected with `zig test src/stats/distributions.zig --test-filter "PolyaAeppli"` down to the "f32 type support" test and, separately, the "quantile(1) is defined" test.
+
+**Root Cause**: Two independent bugs in the same pattern — a truncated-series-convergence check meant to break out of a `while (k <= MAX_K)` loop early once `pmf(k)` becomes negligible:
+1. `if (p < 1e-300) break;` (in `entropy()`) and `if (k > 0 and pk < 1e-300) return k;` (in `quantile()`) used a comptime-float literal that gets coerced to `T` at the comparison site. For `T = f32`, `1e-300` underflows to exactly `0.0` (f32's minimum subnormal is ~1.4e-45), so the check silently became `p < 0.0` — never true for a non-negative PMF. The loop then ran the full `MAX_K = 50000` iterations, each O(k) (via `logpmf`'s inner sum), for O(MAX_K²) ≈ 2.5 billion ops.
+2. Independently, even for `T = f64`, `quantile(1.0)` hung: the truncated PMF sum asymptotically plateaus around `0.99999294`, short of `1.0` by ~7e-6 — much larger than float epsilon, caused by accumulated approximation error in the Lanczos `logGamma` / Stirling `logFactorial` helpers used by `logpmf`. A first-attempt fix using a fixed `1e-9` absolute tolerance (`cumsum >= p - 1e-9`) was insufficient because the real gap exceeded it.
+
+**Fix**: for both checks, compare against exact `0.0` instead of a magnitude literal:
+```zig
+// entropy(): was `if (p < 1e-300) break;`
+if (p == 0.0) break;
+
+// quantile(): was `if (k > 0 and pk < 1e-300) return k;`
+if (k > 0 and pk == 0.0) return k;
+```
+Every strictly-decaying float series eventually underflows to exact zero at *some* k regardless of T's dynamic range — so `== 0.0` reliably terminates the loop without needing a per-type magic constant. `mode()` in the same file was already safe because its tolerance (`best_pmf * 1e-12`) is *relative* to the current best PMF, not absolute, so it scales automatically with T.
+
+**Generalizable lesson**: never use a hardcoded absolute epsilon literal (`1e-300`, `1e-15`, ...) to detect "this float value has become negligible" when the code is generic over float type T — for narrower types (f32) the literal can underflow to `0.0` at compile time and silently disable the check. Use `== 0.0` for "has this series converged to nothing" or a tolerance relative to another value of the same type for "are these two values of the same type close". Two other distributions in `distributions.zig` (~line 71325, ~81533 as of this session) have the identical `if (p < 1e-300) break;` pattern; not fixed this session (already passing in CI, so no live bug — but only because their f32 test coverage doesn't currently exercise the same path). Flagged for a future STABILIZATION audit.
+
 ### SuffixTree Edge Splitting Bug (Issue #1, fixed in d17ca50)
 **Symptoms**: `findAll()` returned duplicate suffix indices (e.g., 3 instead of 2 for "ana" in "banana"); `longestRepeatedSubstring()` returned null for strings with repeated substrings.
 
