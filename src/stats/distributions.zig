@@ -82580,3 +82580,634 @@ test "Xgamma: f32 type sample statistical sanity" {
     // Theoretical mean = 2.0, allow looser tolerance for f32
     try expectApproxEqAbs(2.0, sample_mean, 0.4);
 }
+
+// ============================================================================
+// PolyaAeppli Distribution (142nd distribution, 26th discrete)
+// ============================================================================
+// Pólya–Aeppli = Geometric-Poisson compound distribution
+// P(X=0) = exp(-lambda)
+// P(X=n) = exp(-lambda) * Σ_{k=1}^{n} C(n-1,k-1) * (lambda^k/k!) * theta^k * (1-theta)^(n-k)
+// Mean = lambda/theta
+// Variance = lambda*(2-theta)/theta^2
+
+pub fn PolyaAeppli(comptime T: type) type {
+    return struct {
+        lambda: T,
+        theta: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a PolyaAeppli distribution.
+        ///
+        /// Parameters: lambda > 0, theta ∈ (0, 1)
+        ///
+        /// Errors: lambda ≤ 0, lambda non-finite, theta ≤ 0, theta ≥ 1, or theta non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(lambda: T, theta: T) DistributionError!Self {
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(theta)) return error.InvalidParameter;
+            if (!(theta > 0.0 and theta < 1.0)) return error.InvalidParameter;
+            return Self{ .lambda = lambda, .theta = theta };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// Special case k=0: logPMF(0) = -lambda
+        /// For k≥1: logPMF(k) = -lambda + log(Σ_{j=1}^{k} C(k-1,j-1) * (lambda^j/j!) * theta^j * (1-theta)^(k-j))
+        ///
+        /// Uses log-sum-exp trick for numerical stability and direct summation for better precision.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -self.lambda;
+
+            const kf: T = @floatFromInt(k);
+            const one_minus_theta = 1.0 - self.theta;
+
+            // Compute Σ_{j=1}^{k} term_j directly in linear space first
+            // to avoid accumulated log-space errors for small k
+            var sum_direct: T = 0.0;
+            var j: u64 = 1;
+            var has_significant_term = false;
+
+            while (j <= k) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const log_binom = logBinomialCoeff(T, k - 1, j - 1);
+                const log_term = log_binom + jf * @log(self.lambda) - logGamma(jf + 1.0) + jf * @log(self.theta) + (kf - jf) * @log(one_minus_theta);
+                const term = @exp(log_term);
+                sum_direct += term;
+                if (term > 1e-300) {
+                    has_significant_term = true;
+                }
+            }
+
+            if (sum_direct > 0.0 and has_significant_term) {
+                return -self.lambda + @log(sum_direct);
+            }
+
+            // Fallback to log-sum-exp for very small values
+            var max_log_term: T = -math.inf(T);
+            j = 1;
+            while (j <= k) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const log_binom = logBinomialCoeff(T, k - 1, j - 1);
+                const log_term = log_binom + jf * @log(self.lambda) - logGamma(jf + 1.0) + jf * @log(self.theta) + (kf - jf) * @log(one_minus_theta);
+                if (log_term > max_log_term) {
+                    max_log_term = log_term;
+                }
+            }
+
+            var sum_exp: T = 0.0;
+            j = 1;
+            while (j <= k) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const log_binom = logBinomialCoeff(T, k - 1, j - 1);
+                const log_term = log_binom + jf * @log(self.lambda) - logGamma(jf + 1.0) + jf * @log(self.theta) + (kf - jf) * @log(one_minus_theta);
+                sum_exp += @exp(log_term - max_log_term);
+            }
+
+            return -self.lambda + max_log_term + @log(sum_exp);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k²) (k iterations, each computing O(k) logpmf) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p = self.pmf(j);
+                sum += p;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k* * k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const pk = self.pmf(k);
+                cumsum += pk;
+                if (cumsum >= p) return k;
+                // The truncated tail has numerically converged (pk underflows
+                // to exactly 0 in T): the accumulated sum plateaus below 1.0 by
+                // an amount that depends on lambda/theta (often ~1e-6, far
+                // larger than machine epsilon) because of approximation error
+                // in logGamma/logFactorial, so no larger p is reachable.
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check and forcing the O(k) pmf() calls all
+                // the way to MAX_K (O(MAX_K^2) total).
+                if (k > 0 and pk == 0.0) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Time: O(E[X] * E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 0;
+        }
+
+        /// Mean: lambda / theta.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.lambda / self.theta;
+        }
+
+        /// Variance: lambda * (2 - theta) / theta^2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const theta_sq = self.theta * self.theta;
+            return self.lambda * (2.0 - self.theta) / theta_sq;
+        }
+
+        /// Mode: numeric scan via PMF ratio.
+        /// When multiple modes exist (bimodal), returns the larger one.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                // Use tolerance for tie detection to handle floating-point rounding
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p == 0.0) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!(self.lambda > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.theta)) return error.InvalidParameter;
+            if (!(self.theta > 0.0 and self.theta < 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("PolyaAeppli(λ={d:.4}, θ={d:.4})", .{ self.lambda, self.theta });
+        }
+    };
+}
+
+// ============================================================================
+// PolyaAeppli Distribution Tests (142nd distribution, 26th discrete)
+// ============================================================================
+
+test "PolyaAeppli: init valid lambda=1.0, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    try dist.validate();
+}
+
+test "PolyaAeppli: init valid lambda=2.0, theta=0.3" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    try dist.validate();
+}
+
+test "PolyaAeppli: init valid lambda=0.5, theta=0.9" {
+    const dist = try PolyaAeppli(f64).init(0.5, 0.9);
+    try dist.validate();
+}
+
+test "PolyaAeppli: init valid f32 type" {
+    const dist = try PolyaAeppli(f32).init(1.5, 0.6);
+    try dist.validate();
+}
+
+test "PolyaAeppli: init fails for lambda=0" {
+    const result = PolyaAeppli(f64).init(0.0, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for lambda < 0" {
+    const result = PolyaAeppli(f64).init(-1.0, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for NaN lambda" {
+    const result = PolyaAeppli(f64).init(math.nan(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for infinite lambda" {
+    const result = PolyaAeppli(f64).init(math.inf(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for theta=0" {
+    const result = PolyaAeppli(f64).init(1.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for theta=1" {
+    const result = PolyaAeppli(f64).init(1.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for theta < 0" {
+    const result = PolyaAeppli(f64).init(1.0, -0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for theta > 1" {
+    const result = PolyaAeppli(f64).init(1.0, 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for NaN theta" {
+    const result = PolyaAeppli(f64).init(1.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: init fails for infinite theta" {
+    const result = PolyaAeppli(f64).init(1.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PolyaAeppli: pmf(0) = exp(-lambda)" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    try expectApproxEqAbs(@exp(-2.0), dist.pmf(0), 1e-12);
+}
+
+test "PolyaAeppli: pmf(0) = exp(-1.0) for lambda=1" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    try expectApproxEqAbs(@exp(-1.0), dist.pmf(0), 1e-12);
+}
+
+test "PolyaAeppli: pmf(1) = exp(-lambda) * lambda * theta for lambda=2, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    // P(1) = exp(-2) * 2 * 0.5 = exp(-2)
+    try expectApproxEqAbs(@exp(-2.0), dist.pmf(1), 1e-12);
+}
+
+test "PolyaAeppli: pmf(1) = exp(-lambda) * lambda * theta for lambda=1, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    // P(1) = exp(-1) * 1 * 0.5 = 0.5 * exp(-1)
+    try expectApproxEqAbs(0.5 * @exp(-1.0), dist.pmf(1), 1e-12);
+}
+
+test "PolyaAeppli: pmf positive for all k" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "PolyaAeppli: logpmf = log(pmf)" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.6);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "PolyaAeppli: pmf sums to 1 (truncated)" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 500) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "PolyaAeppli: cdf(0) = pmf(0)" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "PolyaAeppli: cdf is monotonically non-decreasing" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.4);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "PolyaAeppli: cdf approaches 1 for large k" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.4);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "PolyaAeppli: quantile(0) = 0" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    try expect(try dist.quantile(0.0) == 0);
+}
+
+test "PolyaAeppli: quantile(1) is defined" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.4);
+    const q = try dist.quantile(1.0);
+    try expect(q >= 0);
+}
+
+test "PolyaAeppli: quantile fails for p < 0" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "PolyaAeppli: quantile fails for p > 1" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "PolyaAeppli: quantile fails for NaN" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "PolyaAeppli: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.4);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "PolyaAeppli: mean = lambda / theta for lambda=2, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    // mean = 2 / 0.5 = 4.0
+    try expectApproxEqAbs(4.0, dist.mean(), 1e-10);
+}
+
+test "PolyaAeppli: mean = lambda / theta for lambda=1, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    // mean = 1 / 0.5 = 2.0
+    try expectApproxEqAbs(2.0, dist.mean(), 1e-10);
+}
+
+test "PolyaAeppli: mean = lambda / theta for lambda=3, theta=0.3" {
+    const dist = try PolyaAeppli(f64).init(3.0, 0.3);
+    // mean = 3 / 0.3 = 10.0
+    try expectApproxEqAbs(10.0, dist.mean(), 1e-10);
+}
+
+test "PolyaAeppli: mean increases with lambda for fixed theta" {
+    const dist1 = try PolyaAeppli(f64).init(1.0, 0.5);
+    const dist2 = try PolyaAeppli(f64).init(2.0, 0.5);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "PolyaAeppli: mean decreases with theta for fixed lambda" {
+    const dist1 = try PolyaAeppli(f64).init(2.0, 0.9);
+    const dist2 = try PolyaAeppli(f64).init(2.0, 0.3);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "PolyaAeppli: variance = lambda * (2 - theta) / theta^2 for lambda=2, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    // variance = 2 * (2 - 0.5) / 0.25 = 2 * 1.5 / 0.25 = 12.0
+    try expectApproxEqAbs(12.0, dist.variance(), 1e-10);
+}
+
+test "PolyaAeppli: variance = lambda * (2 - theta) / theta^2 for lambda=1, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    // variance = 1 * (2 - 0.5) / 0.25 = 1.5 / 0.25 = 6.0
+    try expectApproxEqAbs(6.0, dist.variance(), 1e-10);
+}
+
+test "PolyaAeppli: variance > mean (over-dispersed compound Poisson)" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    try expect(dist.variance() > dist.mean());
+}
+
+test "PolyaAeppli: mode is non-negative integer" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.3);
+    const m = dist.mode();
+    try expect(m >= 0);
+}
+
+test "PolyaAeppli: entropy is positive and finite" {
+    const dist = try PolyaAeppli(f64).init(1.5, 0.3);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "PolyaAeppli: entropy is positive for lambda=1, theta=0.5" {
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "PolyaAeppli: entropy increases with lambda (more uncertain)" {
+    const dist1 = try PolyaAeppli(f64).init(1.0, 0.5);
+    const dist2 = try PolyaAeppli(f64).init(2.0, 0.5);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "PolyaAeppli: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try PolyaAeppli(f64).init(1.5, 0.3);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0);
+    }
+}
+
+test "PolyaAeppli: sample empirical mean close to theoretical for lambda=2, theta=0.5" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 2 / 0.5 = 4.0
+    try expectApproxEqAbs(4.0, sample_mean, 0.3);
+}
+
+test "PolyaAeppli: sample empirical mean close to theoretical for lambda=1, theta=0.5" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 1 / 0.5 = 2.0
+    try expectApproxEqAbs(2.0, sample_mean, 0.2);
+}
+
+test "PolyaAeppli: validate passes for valid lambda and theta" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    try dist.validate();
+}
+
+test "PolyaAeppli: validate fails for lambda=0 (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 0.0, .theta = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for lambda < 0 (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = -1.0, .theta = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for NaN lambda (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = math.nan(f64), .theta = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for infinite lambda (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = math.inf(f64), .theta = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for theta=0 (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 1.0, .theta = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for theta=1 (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 1.0, .theta = 1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for theta < 0 (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 1.0, .theta = -0.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for theta > 1 (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 1.0, .theta = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for NaN theta (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 1.0, .theta = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: validate fails for infinite theta (unsafe struct)" {
+    const dist = PolyaAeppli(f64){ .lambda = 1.0, .theta = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PolyaAeppli: format works" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "PolyaAeppli: format contains 'PolyaAeppli'" {
+    const dist = try PolyaAeppli(f64).init(2.0, 0.3);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "PolyaAeppli");
+    try testing.expect(contains_name);
+}
+
+test "PolyaAeppli: f32 type support" {
+    const dist = try PolyaAeppli(f32).init(2.0, 0.3);
+    try dist.validate();
+    try expect(dist.pmf(0) > 0.0);
+    try expect(math.isFinite(dist.pmf(0)));
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 0);
+    try expect(math.isFinite(dist.entropy()));
+}
+
+test "PolyaAeppli: sample empirical variance close to theoretical for lambda=2, theta=0.5" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try PolyaAeppli(f64).init(2.0, 0.5);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 2 * (2 - 0.5) / 0.25 = 12.0
+    try expectApproxEqAbs(12.0, v, 2.0);
+}
+
+test "PolyaAeppli: sample empirical variance close to theoretical for lambda=1, theta=0.5" {
+    var prng = std.Random.DefaultPrng.init(55555);
+    const rng = prng.random();
+    const dist = try PolyaAeppli(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 1 * (2 - 0.5) / 0.25 = 6.0
+    try expectApproxEqAbs(6.0, v, 1.5);
+}
