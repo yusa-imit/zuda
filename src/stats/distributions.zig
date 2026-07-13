@@ -83713,3 +83713,525 @@ test "Delaporte: f32 type support" {
     try expect(q >= 0);
     try expect(math.isFinite(dist.entropy()));
 }
+
+// ============================================================================
+// Generalized Waring Distribution
+// ============================================================================
+
+/// Generalized Waring distribution GWD(a, k; ρ) — a heavy-tailed discrete
+/// distribution arising as a Beta-NegativeBinomial mixture: if p ~ Beta(ρ, a)
+/// and X|p ~ NegativeBinomial(r=k, p), then X ~ GWD(a, k; ρ).
+///
+/// PMF: P(n) = [ρ_(k) / (ρ+a)_(k)] · [a_(n)·k_(n) / (ρ+a+k)_(n)] · (1/n!)
+/// where x_(m) = Γ(x+m)/Γ(x) is the Pochhammer rising factorial.
+///
+/// Parameters: a > 0, k > 0, ρ > 0 (tail parameter — need not be integers)
+///
+/// Time: O(1) for pdf/cdf per term
+pub fn Waring(comptime T: type) type {
+    return struct {
+        a: T,
+        k: T,
+        rho: T,
+
+        const Self = @This();
+        const MAX_N: usize = 50000;
+
+        /// Create a Generalized Waring distribution.
+        ///
+        /// Errors: any parameter non-finite; a ≤ 0; k ≤ 0; rho ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, k: T, rho: T) DistributionError!Self {
+            if (!math.isFinite(a)) return error.InvalidParameter;
+            if (!(a > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(k)) return error.InvalidParameter;
+            if (!(k > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(rho)) return error.InvalidParameter;
+            if (!(rho > 0.0)) return error.InvalidParameter;
+            return Self{ .a = a, .k = k, .rho = rho };
+        }
+
+        /// Log-PMF at n via the closed-form log-gamma expansion of the
+        /// Pochhammer ratios (independent-of-n terms cancel algebraically).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, n: u64) T {
+            const nf: T = @floatFromInt(n);
+            return logGamma(self.rho + self.k) - logGamma(self.rho) +
+                logGamma(self.rho + self.a) - logGamma(self.rho + self.a + self.k + nf) +
+                logGamma(self.a + nf) - logGamma(self.a) +
+                logGamma(self.k + nf) - logGamma(self.k) -
+                logGamma(nf + 1.0);
+        }
+
+        /// PMF at n.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, n: u64) T {
+            return @exp(self.logpmf(n));
+        }
+
+        /// CDF: P(X ≤ n) via partial sum.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn cdf(self: Self, n: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= n and j <= MAX_N) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest n such that CDF(n) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var n: u64 = 0;
+            while (n <= MAX_N) : (n += 1) {
+                const pn = self.pmf(n);
+                cumsum += pn;
+                if (cumsum >= p) return n;
+                if (n > 0 and pn == 0.0) return n;
+            }
+            return MAX_N;
+        }
+
+        /// Sample via the exact Beta-NegativeBinomial composition: draw
+        /// p ~ Beta(rho, a) as G1/(G1+G2) with G1~Gamma(rho,1), G2~Gamma(a,1),
+        /// then Λ ~ Gamma(k, scale=(1-p)/p), then X ~ Poisson(Λ) — the
+        /// standard Gamma-Poisson mixture identity for NegativeBinomial(k, p).
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const g1 = noncentralFGammaSample(T, rng, self.rho);
+            const g2 = noncentralFGammaSample(T, rng, self.a);
+            const p = g1 / (g1 + g2);
+            const lambda = noncentralFGammaSample(T, rng, self.k) * ((1.0 - p) / p);
+            return poissonKnuth(T, rng, lambda);
+        }
+
+        /// Mean: a*k/(rho-1), undefined (NaN) for rho ≤ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.rho <= 1.0) return math.nan(T);
+            return self.a * self.k / (self.rho - 1.0);
+        }
+
+        /// Variance: μ[2] + mean - mean², where μ[2] is the 2nd factorial
+        /// moment a(a+1)k(k+1)/[(rho-1)(rho-2)]. Undefined (NaN) for rho ≤ 2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.rho <= 2.0) return math.nan(T);
+            const m = self.mean();
+            const mu2 = self.a * (self.a + 1.0) * self.k * (self.k + 1.0) / ((self.rho - 1.0) * (self.rho - 2.0));
+            return mu2 + m - m * m;
+        }
+
+        /// Mode: numeric scan via PMF.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_n: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var n: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (n <= MAX_N) : (n += 1) {
+                const p = self.pmf(n);
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_n = n;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_n;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(n)·log P(n).
+        ///
+        /// Time: O(MAX_N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var n: u64 = 0;
+            while (n <= MAX_N) : (n += 1) {
+                const p = self.pmf(n);
+                if (p == 0.0) break;
+                sum -= p * self.logpmf(n);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.a)) return error.InvalidParameter;
+            if (!(self.a > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.k)) return error.InvalidParameter;
+            if (!(self.k > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.rho)) return error.InvalidParameter;
+            if (!(self.rho > 0.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Waring(a={d:.4}, k={d:.4}, ρ={d:.4})", .{ self.a, self.k, self.rho });
+        }
+    };
+}
+
+// ============================================================================
+// Waring Distribution Tests (144th distribution, 28th discrete)
+// ============================================================================
+// Waring = Generalized Waring Distribution GWD(a,k;ρ)
+// A discrete distribution arising from Beta-NegativeBinomial mixture.
+// If p ~ Beta(ρ, a) and X|p ~ NegativeBinomial(r=k, p), then X ~ Waring(a,k,ρ).
+// PMF: P(n) = [ρ_(k) / (ρ+a)_(k)] · [a_(n)·k_(n) / (ρ+a+k)_(n)] · (1/n!)
+// where x_(m) is Pochhammer rising factorial.
+// Simplifies to closed-form log-space formula:
+// logpmf(n) = lgamma(ρ+k) − lgamma(ρ) + lgamma(ρ+a) − lgamma(ρ+a+k+n)
+//           + lgamma(a+n) − lgamma(a) + lgamma(k+n) − lgamma(k) − lgamma(n+1)
+// Mean = a·k/(ρ−1), valid for ρ > 1, else NaN
+// Variance = a(a+1)·k(k+1)/[(ρ−1)(ρ−2)] + mean − mean², valid for ρ > 2, else NaN
+// Source: Xekalaki, Irwin. Generalized Waring Distribution. Journal of Royal Stat Society (1975).
+
+test "Waring: init valid a=1.0, k=1.0, rho=2.0" {
+    const dist = try Waring(f64).init(1.0, 1.0, 2.0);
+    try dist.validate();
+}
+
+test "Waring: init valid a=2.0, k=1.5, rho=3.0" {
+    const dist = try Waring(f64).init(2.0, 1.5, 3.0);
+    try dist.validate();
+}
+
+test "Waring: init valid f32 type" {
+    const dist = try Waring(f32).init(1.0, 1.0, 2.5);
+    try dist.validate();
+}
+
+test "Waring: init fails for a=0" {
+    try expectError(error.InvalidParameter, Waring(f64).init(0.0, 1.0, 2.0));
+}
+
+test "Waring: init fails for a < 0" {
+    try expectError(error.InvalidParameter, Waring(f64).init(-0.5, 1.0, 2.0));
+}
+
+test "Waring: init fails for k=0" {
+    try expectError(error.InvalidParameter, Waring(f64).init(1.0, 0.0, 2.0));
+}
+
+test "Waring: init fails for k < 0" {
+    try expectError(error.InvalidParameter, Waring(f64).init(1.0, -1.5, 2.0));
+}
+
+test "Waring: init fails for rho=0" {
+    try expectError(error.InvalidParameter, Waring(f64).init(1.0, 1.0, 0.0));
+}
+
+test "Waring: init fails for rho < 0" {
+    try expectError(error.InvalidParameter, Waring(f64).init(1.0, 1.0, -1.0));
+}
+
+test "Waring: init fails for NaN a" {
+    try expectError(error.InvalidParameter, Waring(f64).init(math.nan(f64), 1.0, 2.0));
+}
+
+test "Waring: init fails for infinite k" {
+    try expectError(error.InvalidParameter, Waring(f64).init(1.0, math.inf(f64), 2.0));
+}
+
+test "Waring: init fails for NaN rho" {
+    try expectError(error.InvalidParameter, Waring(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+test "Waring: pmf positive for all n" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |n| {
+        try expect(dist.pmf(n) > 0.0);
+    }
+}
+
+test "Waring: pmf(0) exact value a=1, k=1, rho=2" {
+    // P(0) = ρ_(k)/(ρ+a)_(k) = Γ(3)Γ(3)/(Γ(2)Γ(4)) = (2!·2!)/(1!·3!) = 4/6 = 2/3
+    const dist = try Waring(f64).init(1.0, 1.0, 2.0);
+    const expected: f64 = 2.0 / 3.0; // 0.666...
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "Waring: pmf(1) exact value a=2, k=1, rho=3" {
+    // P(1) = [ρ_(k)/(ρ+a)_(k)] · [a_(1)·k_(1)/(ρ+a+k)_(1)] · (1/1!)
+    // ρ_(1) = Γ(4)/Γ(3) = 3!/2! = 3
+    // (ρ+a)_(1) = Γ(6)/Γ(5) = 5!/4! = 5
+    // a_(1) = Γ(3)/Γ(2) = 2!/1! = 2
+    // k_(1) = Γ(2)/Γ(1) = 1
+    // (ρ+a+k)_(1) = Γ(7)/Γ(6) = 6!/5! = 6
+    // P(1) = (3/5) · (2·1/6) = (3/5) · (1/3) = 1/5 = 0.2
+    const dist = try Waring(f64).init(2.0, 1.0, 3.0);
+    const expected: f64 = 0.2; // 1/5
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-12);
+}
+
+test "Waring: logpmf = log(pmf)" {
+    const dist = try Waring(f64).init(1.5, 1.2, 2.8);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |n| {
+        try expectApproxEqAbs(@log(dist.pmf(n)), dist.logpmf(n), 1e-9);
+    }
+}
+
+test "Waring: pmf sums to 1 (truncated)" {
+    const dist = try Waring(f64).init(1.0, 1.0, 3.0);
+    var sum: f64 = 0.0;
+    var n: u64 = 0;
+    while (n <= 500) : (n += 1) {
+        sum += dist.pmf(n);
+        if (dist.pmf(n) < 1e-15 and n > 20) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "Waring: cdf is monotonically non-decreasing" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |n| {
+        const cur = dist.cdf(n);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "Waring: cdf(0) = pmf(0)" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "Waring: cdf approaches 1 for large n" {
+    const dist = try Waring(f64).init(2.0, 2.0, 4.0);
+    try expect(dist.cdf(500) > 0.99);
+}
+
+test "Waring: quantile(0) = 0" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    try expect((try dist.quantile(0.0)) == 0);
+}
+
+test "Waring: quantile fails for p < 0" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Waring: quantile fails for p > 1" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Waring: quantile fails for NaN" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Waring: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.8);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-9);
+    }
+}
+
+test "Waring: mean = a*k/(rho-1) for rho > 1" {
+    // mean = 2.0 * 1.5 / (3.0 - 1.0) = 3.0 / 2.0 = 1.5
+    const dist = try Waring(f64).init(2.0, 1.5, 3.0);
+    try expectApproxEqAbs(1.5, dist.mean(), 1e-10);
+}
+
+test "Waring: mean returns NaN when rho=1" {
+    const dist = try Waring(f64).init(1.5, 1.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "Waring: mean returns NaN when rho < 1" {
+    const dist = try Waring(f64).init(1.5, 1.0, 0.5);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "Waring: mean increases with a for fixed k,rho" {
+    const dist1 = try Waring(f64).init(1.0, 1.0, 3.0);
+    const dist2 = try Waring(f64).init(2.0, 1.0, 3.0);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "Waring: variance exact formula for rho > 2" {
+    // variance = a(a+1)·k(k+1)/[(ρ−1)(ρ−2)] + mean − mean²
+    // a=2, k=1, rho=4
+    // mean = 2*1/(4-1) = 2/3
+    // μ[2] = 2*3*1*2/[(4-1)(4-2)] = 12/6 = 2
+    // variance = 2 + 2/3 - (2/3)² = 2 + 2/3 - 4/9 = 18/9 + 6/9 - 4/9 = 20/9 ≈ 2.222...
+    const dist = try Waring(f64).init(2.0, 1.0, 4.0);
+    const expected: f64 = 20.0 / 9.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "Waring: variance returns NaN when rho=2" {
+    const dist = try Waring(f64).init(1.5, 1.0, 2.0);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "Waring: variance returns NaN when rho < 2" {
+    const dist = try Waring(f64).init(1.5, 1.0, 1.5);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "Waring: variance exceeds mean (overdispersion)" {
+    const dist = try Waring(f64).init(2.0, 2.0, 5.0);
+    try expect(dist.variance() > dist.mean());
+}
+
+test "Waring: mode is non-negative integer" {
+    const dist = try Waring(f64).init(2.0, 1.5, 3.0);
+    const m = dist.mode();
+    try expect(m >= 0);
+}
+
+test "Waring: mode increases with mean" {
+    const dist1 = try Waring(f64).init(5.0, 5.0, 2.0);
+    const dist2 = try Waring(f64).init(15.0, 5.0, 2.0);
+    try expect(dist2.mode() > dist1.mode());
+}
+
+test "Waring: entropy is positive and finite" {
+    const dist = try Waring(f64).init(2.0, 1.5, 3.0);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "Waring: entropy increases with dispersion" {
+    const dist1 = try Waring(f64).init(2.0, 1.0, 10.0);
+    const dist2 = try Waring(f64).init(2.0, 1.0, 3.0);
+    try expect(dist2.entropy() > dist1.entropy());
+}
+
+test "Waring: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Waring(f64).init(1.5, 1.0, 2.5);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0);
+    }
+}
+
+test "Waring: sample empirical mean close to theoretical" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Waring(f64).init(2.0, 1.0, 4.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 2.0 * 1.0 / (4.0 - 1.0) = 2/3 ≈ 0.667
+    try expectApproxEqAbs(2.0 / 3.0, sample_mean, 0.2);
+}
+
+test "Waring: sample empirical variance close to theoretical" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Waring(f64).init(2.0, 1.0, 4.0);
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, n);
+    const v = sum_sq / @as(f64, n) - m * m;
+    // Theoretical variance = 2*3*1*2/[(4-1)(4-2)] + 2/3 - (2/3)² = 2 + 2/3 - 4/9 = 20/9
+    const expected_var: f64 = 20.0 / 9.0;
+    try expectApproxEqAbs(expected_var, v, 1.0);
+}
+
+test "Waring: validate passes for valid parameters" {
+    const dist = try Waring(f64).init(2.0, 1.0, 3.0);
+    try dist.validate();
+}
+
+test "Waring: validate fails for a=0 (unsafe struct)" {
+    const dist = Waring(f64){ .a = 0.0, .k = 1.0, .rho = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Waring: validate fails for k < 0 (unsafe struct)" {
+    const dist = Waring(f64){ .a = 1.0, .k = -1.0, .rho = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Waring: validate fails for rho=0 (unsafe struct)" {
+    const dist = Waring(f64){ .a = 1.0, .k = 1.0, .rho = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Waring: validate fails for NaN a (unsafe struct)" {
+    const dist = Waring(f64){ .a = math.nan(f64), .k = 1.0, .rho = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Waring: validate fails for infinite k (unsafe struct)" {
+    const dist = Waring(f64){ .a = 1.0, .k = math.inf(f64), .rho = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Waring: format works" {
+    const dist = try Waring(f64).init(2.0, 1.0, 3.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "Waring: format contains 'Waring'" {
+    const dist = try Waring(f64).init(2.0, 1.0, 3.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "Waring");
+    try testing.expect(contains_name);
+}
+
+test "Waring: f32 type support" {
+    const dist = try Waring(f32).init(2.0, 1.0, 3.0);
+    try dist.validate();
+    try expect(dist.pmf(0) > 0.0);
+    try expect(math.isFinite(dist.pmf(0)));
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 0);
+    try expect(math.isFinite(dist.entropy()));
+}
