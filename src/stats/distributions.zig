@@ -84258,3 +84258,813 @@ test "Waring: f32 type support" {
     try expect(q >= 0);
     try expect(math.isFinite(dist.entropy()));
 }
+
+/// Kappa distribution (Hosking's four-parameter kappa distribution) Kappa(ξ, α, κ, h)
+/// — location ξ, scale α > 0, shape parameters κ and h.
+///
+/// Defined primarily via its quantile function:
+///   Q(p) = ξ + α·Q_std(p; κ, h)
+///   Q_std(p; κ, h) = (1/κ)·(1 − A(p)^κ)   for κ ≠ 0
+///   Q_std(p; 0, h)  = −ln(A(p))            for κ = 0
+///   A(p) = (1 − p^h)/h for h ≠ 0, A(p) = −ln(p) for h = 0.
+///
+/// Special cases: (κ=0,h=0)=Gumbel, (κ=0,h=−1)=Logistic, (κ=0,h=1)=Exponential,
+/// (h=0)=GEV-type family, (h=1)=GPA-type family, (κ=1,h=1)=Uniform(0,1).
+///
+/// CDF/PDF are obtained by inverting the quantile function (bisection), following
+/// the same primary-definition-is-the-quantile pattern used by TukeyLambda in this file.
+pub fn Kappa(comptime T: type) type {
+    return struct {
+        xi: T,
+        alpha: T,
+        kappa: T,
+        h: T,
+
+        const Self = @This();
+        const eps_shape: T = 1e-10;
+        // Probability-space epsilon for boundary clamping / quadrature limits.
+        // 1e-6 rather than 1e-15: near p=1, (1-p) below ~1e-7 rounds to exactly
+        // 1.0 in f32 (24-bit mantissa), collapsing A(p) to a 0/0 singularity.
+        const p_eps: T = 1e-6;
+
+        /// Initialize Kappa(ξ, α, κ, h). Errors if α ≤ 0 or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, alpha: T, kappa: T, h: T) DistributionError!Self {
+            if (!(alpha > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(xi) or !math.isFinite(alpha) or !math.isFinite(kappa) or !math.isFinite(h))
+                return error.InvalidParameter;
+            return Self{ .xi = xi, .alpha = alpha, .kappa = kappa, .h = h };
+        }
+
+        /// Validate that parameters are still well-formed.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.xi) or !math.isFinite(self.alpha) or !math.isFinite(self.kappa) or !math.isFinite(self.h))
+                return error.InvalidParameter;
+        }
+
+        // A(p) = (1 - p^h)/h for h != 0, -ln(p) for h == 0. Requires p in (0, 1).
+        fn aVal(p: T, h: T) T {
+            if (@abs(h) < eps_shape) return -@log(p);
+            return (1.0 - math.pow(T, p, h)) / h;
+        }
+
+        // Standard (ξ=0, α=1) quantile function Q_std(p; κ, h).
+        fn quantileStd(p: T, kappa: T, h: T) T {
+            const a = aVal(p, h);
+            if (@abs(kappa) < eps_shape) return -@log(a);
+            return (1.0 / kappa) * (1.0 - math.pow(T, a, kappa));
+        }
+
+        // dQ_std/dp = p^(h-1) * A(p)^(kappa-1). Always positive for p in (0,1).
+        fn quantileStdDeriv(p: T, kappa: T, h: T) T {
+            const a = aVal(p, h);
+            return math.pow(T, p, h - 1.0) * math.pow(T, a, kappa - 1.0);
+        }
+
+        // Analytic lower boundary Q_std(0+); -inf when the lower tail is unbounded.
+        fn boundaryLow(kappa: T, h: T) T {
+            if (h > 0.0) {
+                if (@abs(kappa) < eps_shape) return @log(h);
+                return (1.0 / kappa) * (1.0 - math.pow(T, 1.0 / h, kappa));
+            }
+            if (kappa < -eps_shape) return 1.0 / kappa;
+            return -math.inf(T);
+        }
+
+        // Analytic upper boundary Q_std(1-); +inf when the upper tail is unbounded.
+        fn boundaryHigh(kappa: T) T {
+            if (kappa > eps_shape) return 1.0 / kappa;
+            return math.inf(T);
+        }
+
+        /// Quantile function (inverse CDF) Q(p).
+        ///
+        /// Errors: p outside [0, 1] (or NaN) → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.xi + self.alpha * boundaryLow(self.kappa, self.h);
+            if (p == 1.0) return self.xi + self.alpha * boundaryHigh(self.kappa);
+            return self.xi + self.alpha * quantileStd(p, self.kappa, self.h);
+        }
+
+        /// Cumulative distribution function F(x), via bisection on the quantile function.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.alpha;
+            const lo_b = boundaryLow(self.kappa, self.h);
+            const hi_b = boundaryHigh(self.kappa);
+            if (math.isFinite(lo_b) and z <= lo_b) return 0.0;
+            if (math.isFinite(hi_b) and z >= hi_b) return 1.0;
+            var lo: T = p_eps;
+            var hi: T = 1.0 - p_eps;
+            var mid: T = undefined;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                mid = (lo + hi) * 0.5;
+                const q = quantileStd(mid, self.kappa, self.h);
+                if (q < z) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Survival function S(x) = 1 − F(x).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Probability density function f(x) = 1/(α·Q'_std(F(x))).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.alpha;
+            const lo_b = boundaryLow(self.kappa, self.h);
+            const hi_b = boundaryHigh(self.kappa);
+            if (math.isFinite(lo_b) and z <= lo_b) return 0.0;
+            if (math.isFinite(hi_b) and z >= hi_b) return 0.0;
+            const p = self.cdf(x);
+            const p_safe = @max(p_eps, @min(1.0 - p_eps, p));
+            const deriv = quantileStdDeriv(p_safe, self.kappa, self.h);
+            if (!(deriv > 0.0)) return 0.0;
+            return 1.0 / (self.alpha * deriv);
+        }
+
+        /// Log probability density function ln f(x).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p_val = self.pdf(x);
+            if (!(p_val > 0.0)) return -math.inf(T);
+            return @log(p_val);
+        }
+
+        // Simpson quadrature of Q_std over p in (eps, 1-eps).
+        fn meanStdIntegral(kappa: T, h: T) T {
+            const N: usize = 2000;
+            const a: T = p_eps;
+            const b: T = 1.0 - p_eps;
+            const width = b - a;
+            const step = width / @as(T, @floatFromInt(N));
+            var sum: T = quantileStd(a, kappa, h) + quantileStd(b, kappa, h);
+            var k: usize = 1;
+            while (k < N) : (k += 1) {
+                const p = a + @as(T, @floatFromInt(k)) * step;
+                const w: T = if (k % 2 == 0) 2.0 else 4.0;
+                sum += w * quantileStd(p, kappa, h);
+            }
+            return (step / 3.0) * sum;
+        }
+
+        // Simpson quadrature of Q_std^2 over p in (eps, 1-eps).
+        fn meanSqStdIntegral(kappa: T, h: T) T {
+            const N: usize = 2000;
+            const a: T = p_eps;
+            const b: T = 1.0 - p_eps;
+            const width = b - a;
+            const step = width / @as(T, @floatFromInt(N));
+            const qa = quantileStd(a, kappa, h);
+            const qb = quantileStd(b, kappa, h);
+            var sum: T = qa * qa + qb * qb;
+            var k: usize = 1;
+            while (k < N) : (k += 1) {
+                const p = a + @as(T, @floatFromInt(k)) * step;
+                const w: T = if (k % 2 == 0) 2.0 else 4.0;
+                const q = quantileStd(p, kappa, h);
+                sum += w * q * q;
+            }
+            return (step / 3.0) * sum;
+        }
+
+        /// Mean E[X], via numerical quadrature of the quantile function.
+        /// Returns NaN when the mean diverges: κ ≤ −1, or (h < 0 and κ·(−h) ≥ 1).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (!(self.kappa > -1.0)) return math.nan(T);
+            if (self.h < 0.0 and !(self.kappa * (-self.h) < 1.0)) return math.nan(T);
+            return self.xi + self.alpha * meanStdIntegral(self.kappa, self.h);
+        }
+
+        /// Variance Var[X], via numerical quadrature of the quantile function.
+        /// Returns NaN when the variance diverges: κ ≤ −0.5, or (h < 0 and 2·κ·(−h) ≥ 1).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (!(self.kappa > -0.5)) return math.nan(T);
+            if (self.h < 0.0 and !(self.kappa * (-self.h) * 2.0 < 1.0)) return math.nan(T);
+            const m1 = meanStdIntegral(self.kappa, self.h);
+            const m2 = meanSqStdIntegral(self.kappa, self.h);
+            return self.alpha * self.alpha * (m2 - m1 * m1);
+        }
+
+        /// Mode (x that maximizes f(x)), found by scanning for the p that minimizes Q'_std(p).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const N: usize = 2000;
+            const a: T = 1e-6;
+            const b: T = 1.0 - 1e-6;
+            var best_p: T = a;
+            var best_deriv: T = quantileStdDeriv(a, self.kappa, self.h);
+            var k: usize = 1;
+            while (k <= N) : (k += 1) {
+                const p = a + (b - a) * @as(T, @floatFromInt(k)) / @as(T, @floatFromInt(N));
+                const d = quantileStdDeriv(p, self.kappa, self.h);
+                if (d < best_deriv) {
+                    best_deriv = d;
+                    best_p = p;
+                }
+            }
+            return self.xi + self.alpha * quantileStd(best_p, self.kappa, self.h);
+        }
+
+        /// Differential entropy H = ln(α) + ∫₀¹ ln(Q'_std(p)) dp (Simpson quadrature).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 2000;
+            const a: T = p_eps;
+            const b: T = 1.0 - p_eps;
+            const width = b - a;
+            const step = width / @as(T, @floatFromInt(N));
+            var sum: T = @log(quantileStdDeriv(a, self.kappa, self.h)) + @log(quantileStdDeriv(b, self.kappa, self.h));
+            var k: usize = 1;
+            while (k < N) : (k += 1) {
+                const p = a + @as(T, @floatFromInt(k)) * step;
+                const w: T = if (k % 2 == 0) 2.0 else 4.0;
+                sum += w * @log(quantileStdDeriv(p, self.kappa, self.h));
+            }
+            const integral = (step / 3.0) * sum;
+            return @log(self.alpha) + integral;
+        }
+
+        /// Generate a random sample via the inverse CDF (quantile) method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            u = @max(p_eps, @min(1.0 - p_eps, u));
+            return self.xi + self.alpha * quantileStd(u, self.kappa, self.h);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Kappa(xi={d}, alpha={d}, kappa={d}, h={d})", .{ self.xi, self.alpha, self.kappa, self.h });
+        }
+    };
+}
+
+// ============================================================================
+// Kappa Distribution Tests (Hosking's four-parameter kappa distribution)
+// ============================================================================
+// Kappa(ξ, α, κ, h) — location ξ, scale α > 0, shape1 κ, shape2 h
+// Q(p) = ξ + α·Q_std(p; κ, h) where:
+//   Q_std(p, κ, h) = (1/κ)(1 - A(p)^κ) for κ ≠ 0
+//   Q_std(p, 0, h)  = -ln(A(p)) for κ = 0
+// and A(p) = (1 - p^h)/h for h ≠ 0, A(p) = -ln(p) for h = 0.
+// Special cases: (κ=0,h=0)=Gumbel; (κ=0,h=-1)=Logistic; (κ=0,h=1)=Exponential.
+
+test "Kappa: init succeeds for valid params Gumbel case (κ=0, h=0)" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.0), dist.kappa);
+    try testing.expectEqual(@as(f64, 0.0), dist.h);
+}
+
+test "Kappa: init succeeds for valid params Logistic case (κ=0, h=-1)" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, -1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.0), dist.kappa);
+    try testing.expectEqual(@as(f64, -1.0), dist.h);
+}
+
+test "Kappa: init succeeds for valid params Exponential case (κ=0, h=1)" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.0), dist.kappa);
+    try testing.expectEqual(@as(f64, 1.0), dist.h);
+}
+
+test "Kappa: init succeeds for valid params general case (κ=0.5, h=0.5)" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.5), dist.kappa);
+    try testing.expectEqual(@as(f64, 0.5), dist.h);
+}
+
+test "Kappa: init succeeds with shifted location" {
+    const dist = try Kappa(f64).init(5.0, 1.0, 0.5, 0.5);
+    try testing.expectEqual(@as(f64, 5.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+}
+
+test "Kappa: init succeeds with scaled alpha" {
+    const dist = try Kappa(f64).init(0.0, 2.5, 0.3, -0.2);
+    try testing.expectEqual(@as(f64, 2.5), dist.alpha);
+}
+
+test "Kappa: init fails for alpha = 0" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 0.0, 0.5, 0.5));
+}
+
+test "Kappa: init fails for alpha < 0" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, -1.0, 0.5, 0.5));
+}
+
+test "Kappa: init fails for alpha = NaN" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, math.nan(f64), 0.5, 0.5));
+}
+
+test "Kappa: init fails for alpha = +Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, math.inf(f64), 0.5, 0.5));
+}
+
+test "Kappa: init fails for alpha = -Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, -math.inf(f64), 0.5, 0.5));
+}
+
+test "Kappa: init fails for xi = NaN" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(math.nan(f64), 1.0, 0.5, 0.5));
+}
+
+test "Kappa: init fails for xi = +Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(math.inf(f64), 1.0, 0.5, 0.5));
+}
+
+test "Kappa: init fails for xi = -Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(-math.inf(f64), 1.0, 0.5, 0.5));
+}
+
+test "Kappa: init fails for kappa = NaN" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 1.0, math.nan(f64), 0.5));
+}
+
+test "Kappa: init fails for kappa = +Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 1.0, math.inf(f64), 0.5));
+}
+
+test "Kappa: init fails for kappa = -Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 1.0, -math.inf(f64), 0.5));
+}
+
+test "Kappa: init fails for h = NaN" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 1.0, 0.5, math.nan(f64)));
+}
+
+test "Kappa: init fails for h = +Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 1.0, 0.5, math.inf(f64)));
+}
+
+test "Kappa: init fails for h = -Inf" {
+    try testing.expectError(error.InvalidParameter, Kappa(f64).init(0.0, 1.0, 0.5, -math.inf(f64)));
+}
+
+test "Kappa: validate succeeds for valid Gumbel case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    try dist.validate();
+}
+
+test "Kappa: validate succeeds for valid general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    try dist.validate();
+}
+
+test "Kappa: validate fails for alpha = 0" {
+    var dist: Kappa(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 0.0;
+    dist.kappa = 0.5;
+    dist.h = 0.5;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kappa: validate fails for alpha < 0" {
+    var dist: Kappa(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = -1.0;
+    dist.kappa = 0.5;
+    dist.h = 0.5;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kappa: validate fails for xi = NaN" {
+    var dist: Kappa(f64) = undefined;
+    dist.xi = math.nan(f64);
+    dist.alpha = 1.0;
+    dist.kappa = 0.5;
+    dist.h = 0.5;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kappa: validate fails for kappa = Inf" {
+    var dist: Kappa(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 1.0;
+    dist.kappa = math.inf(f64);
+    dist.h = 0.5;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kappa: validate fails for h = NaN" {
+    var dist: Kappa(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 1.0;
+    dist.kappa = 0.5;
+    dist.h = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Kappa: CDF Gumbel (κ=0, h=0) at x=0 ≈ 0.36788" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const expected = @exp(-1.0); // e^(-1) ≈ 0.36787944117144233
+    try testing.expectApproxEqAbs(expected, dist.cdf(0.0), 1e-9);
+}
+
+test "Kappa: CDF Gumbel (κ=0, h=0) at x=1 ≈ 0.69220" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const expected = 0.6922006275553463; // hand-verified Gumbel CDF(1)
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "Kappa: CDF Logistic (κ=0, h=-1) at x=0 = 0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, -1.0);
+    try testing.expectApproxEqAbs(0.5, dist.cdf(0.0), 1e-9);
+}
+
+test "Kappa: CDF Logistic (κ=0, h=-1) at x=1 ≈ 0.73106" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, -1.0);
+    const expected = 0.7310585786300049; // 1/(1+e^-1)
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "Kappa: CDF Exponential (κ=0, h=1) at x=1 ≈ 0.63212" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 1.0);
+    const expected = 0.6321205588285577; // 1 - e^(-1)
+    try testing.expectApproxEqAbs(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "Kappa: CDF general case (κ=0.5, h=0.5) at x=0.5 ≈ 0.516602" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const expected = 0.5166015625; // 529/1024 (exact rational)
+    try testing.expectApproxEqAbs(expected, dist.cdf(0.5), 1e-9);
+}
+
+test "Kappa: CDF is monotone increasing general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const c1 = dist.cdf(-1.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(0.5);
+    const c4 = dist.cdf(1.0);
+    try testing.expect(c1 < c2);
+    try testing.expect(c2 < c3);
+    try testing.expect(c3 < c4);
+}
+
+test "Kappa: CDF bounded support (κ=2.0, h=0.5) upper bound at x=0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 2.0, 0.5);
+    // Upper bound: ξ + α/κ = 0 + 1/2 = 0.5
+    const c_at_bound = dist.cdf(0.5);
+    try testing.expect(c_at_bound >= 0.999);
+    const c_beyond = dist.cdf(0.6);
+    try testing.expectApproxEqAbs(1.0, c_beyond, 1e-6);
+}
+
+test "Kappa: CDF within [0, 1] for multiple points general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    for ([_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 }) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "Kappa: PDF Gumbel (κ=0, h=0) at x=0 ≈ 0.36788" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const expected = @exp(-1.0); // e^(-1) ≈ 0.36787944117144233
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.0), 1e-6);
+}
+
+test "Kappa: PDF general case (κ=0.5, h=0.5) at x=0.5 ≈ 0.53906" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const expected = 0.5390625; // 69/128 (exact rational)
+    try testing.expectApproxEqAbs(expected, dist.pdf(0.5), 1e-6);
+}
+
+test "Kappa: PDF is non-negative at multiple points" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    for ([_]f64{ -2.0, -1.0, 0.0, 0.5, 1.0, 2.0 }) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "Kappa: PDF bounded support (κ=2.0, h=0.5) near upper bound" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 2.0, 0.5);
+    // Upper bound: 0.5; beyond should have pdf ≈ 0
+    const p_beyond = dist.pdf(0.6);
+    try testing.expect(p_beyond == 0.0 or p_beyond < 1e-10);
+}
+
+test "Kappa: PDF finite-difference matches CDF derivative Gumbel" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const y = 1.0;
+    const h = 1e-5;
+    const fd = (dist.cdf(y + h) - dist.cdf(y - h)) / (2.0 * h);
+    try testing.expectApproxEqAbs(dist.pdf(y), fd, 1e-3);
+}
+
+test "Kappa: Quantile Gumbel (κ=0, h=0) at p=0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const q = try dist.quantile(0.5);
+    // Q_std(0.5, 0, 0) = -ln(-ln(0.5)) = -ln(ln(2))
+    const expected = -@log(@log(2.0)); // ≈ 0.36651292592892825
+    try testing.expectApproxEqAbs(expected, q, 1e-8);
+}
+
+test "Kappa: Quantile Logistic (κ=0, h=-1) at p=0.5 = 0" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, -1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(0.0, q, 1e-8);
+}
+
+test "Kappa: Quantile Exponential (κ=0, h=1) at p=0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    const expected = -@log(0.5); // -ln(0.5) = ln(2) ≈ 0.693147
+    try testing.expectApproxEqAbs(expected, q, 1e-8);
+}
+
+test "Kappa: Quantile general case (κ=0.5, h=0.5) at p=0.5166015625 ≈ 0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const p = 0.5166015625; // Exact — this is 529/1024
+    const q = try dist.quantile(p);
+    try testing.expectApproxEqAbs(0.5, q, 1e-6);
+}
+
+test "Kappa: Quantile is monotone increasing general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.3);
+    const q3 = try dist.quantile(0.5);
+    const q4 = try dist.quantile(0.7);
+    const q5 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+    try testing.expect(q3 < q4);
+    try testing.expect(q4 < q5);
+}
+
+test "Kappa: Quantile bounded support (κ=2.0, h=0.5) at p=1 returns upper bound 0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 2.0, 0.5);
+    const q = try dist.quantile(1.0);
+    // Upper bound: ξ + α/κ = 0 + 1/2 = 0.5
+    try testing.expectApproxEqAbs(0.5, q, 1e-6);
+}
+
+test "Kappa: Quantile at p=0 returns -Inf for Gumbel" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const q = try dist.quantile(0.0);
+    try testing.expect(q == -math.inf(f64));
+}
+
+test "Kappa: Quantile at p=1 returns +Inf for Gumbel" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(q == math.inf(f64));
+}
+
+test "Kappa: Quantile rejects p < 0" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Kappa: Quantile rejects p > 1" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Kappa: Quantile rejects p = NaN" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Kappa: Quantile roundtrip cdf(quantile(p)) ≈ p at p=0.36788 Gumbel" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    const p = 0.36788;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "Kappa: Quantile roundtrip cdf(quantile(p)) ≈ p at p=0.5 general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-6);
+}
+
+test "Kappa: Quantile roundtrip cdf(quantile(p)) ≈ p at p=0.9 general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const p = 0.9;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-5);
+}
+
+test "Kappa: logpdf is finite for valid inputs" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const lp = dist.logpdf(0.5);
+    try testing.expect(math.isFinite(lp));
+}
+
+test "Kappa: logpdf ≈ log(pdf) at x=0.5 general case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const p = dist.pdf(0.5);
+    const lp = dist.logpdf(0.5);
+    const expected_lp = @log(p);
+    try testing.expectApproxEqAbs(expected_lp, lp, 1e-6);
+}
+
+test "Kappa: logpdf handles bounded support (κ=2.0, h=0.5) beyond upper bound" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 2.0, 0.5);
+    const lp = dist.logpdf(0.6); // Beyond upper bound 0.5
+    try testing.expect(math.isFinite(lp) or lp == -math.inf(f64));
+}
+
+test "Kappa: mean returns NaN for κ ≤ -1 (mean diverges)" {
+    const dist = try Kappa(f64).init(0.0, 1.0, -2.0, 0.5);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Kappa: mean is finite for κ > -1" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+}
+
+test "Kappa: mean Uniform(0,1) case (κ=1, h=1) ≈ 0.5 with loose tolerance" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 1.0, 1.0);
+    const m = dist.mean();
+    // Loose tolerance 0.05 for numeric quadrature
+    try testing.expectApproxEqAbs(0.5, m, 0.05);
+}
+
+test "Kappa: variance returns NaN for κ ≤ -0.5 (variance diverges)" {
+    const dist = try Kappa(f64).init(0.0, 1.0, -0.7, 0.5);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+test "Kappa: variance is finite for κ > -0.5" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+}
+
+test "Kappa: variance Uniform(0,1) case (κ=1, h=1) ≈ 1/12 with loose tolerance" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 1.0, 1.0);
+    const v = dist.variance();
+    const expected = 1.0 / 12.0; // ≈ 0.0833
+    // Loose tolerance 0.05 for numeric quadrature
+    try testing.expectApproxEqAbs(expected, v, 0.05);
+}
+
+test "Kappa: mode is finite for valid case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const m = dist.mode();
+    try testing.expect(math.isFinite(m));
+}
+
+test "Kappa: entropy is finite for valid case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "Kappa: entropy is positive for valid case" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "Kappa: sample returns finite values Gumbel case" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.0, 0.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Kappa: sample returns finite values general case" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Kappa: sample respects bounded support (κ=2.0, h=0.5)" {
+    var prng = std.Random.DefaultPrng.init(999);
+    const rng = prng.random();
+    const dist = try Kappa(f64).init(0.0, 1.0, 2.0, 0.5);
+    const upper_bound = 0.5; // ξ + α/κ
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try testing.expect(s <= upper_bound + 1e-6); // tolerance for floating-point rounding
+    }
+}
+
+test "Kappa: sample empirical mean close to theoretical Uniform(0,1) case" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Kappa(f64).init(0.0, 1.0, 1.0, 1.0); // Reduces to Uniform(0,1)
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    // Theoretical mean of Uniform(0,1) is 0.5
+    try testing.expectApproxEqAbs(0.5, sample_mean, 0.05);
+}
+
+test "Kappa: sample empirical variance close to theoretical Uniform(0,1) case" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try Kappa(f64).init(0.0, 1.0, 1.0, 1.0); // Reduces to Uniform(0,1)
+    var sum: f64 = 0.0;
+    var sum_sq: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = dist.sample(rng);
+        sum += s;
+        sum_sq += s * s;
+    }
+    const m = sum / @as(f64, @floatFromInt(n));
+    const v = sum_sq / @as(f64, @floatFromInt(n)) - m * m;
+    // Theoretical variance of Uniform(0,1) is 1/12 ≈ 0.0833
+    const expected_var = 1.0 / 12.0;
+    try testing.expectApproxEqAbs(expected_var, v, 0.05);
+}
+
+test "Kappa: format works" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try testing.expect(output.len > 0);
+}
+
+test "Kappa: format contains 'Kappa'" {
+    const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "Kappa");
+    try testing.expect(contains_name);
+}
+
+test "Kappa: f32 type support" {
+    const dist = try Kappa(f32).init(0.0, 1.0, 0.5, 0.5);
+    try dist.validate();
+    try testing.expect(math.isFinite(dist.pdf(0.5)));
+    try testing.expect(math.isFinite(dist.cdf(0.5)));
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+    try testing.expect(math.isFinite(dist.entropy()));
+    try testing.expect(math.isFinite(dist.mean()));
+    try testing.expect(math.isFinite(dist.variance()));
+}
