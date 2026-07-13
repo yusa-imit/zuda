@@ -647,3 +647,5 @@
 {"timestamp":"2026-07-13T00:00:00Z","action":"subagent","agent_type":"general-purpose","task":"Research Delaporte distribution PMF/mean/variance formula and parameterization via WebSearch","project":"zuda"}
 {"timestamp":"2026-07-13T03:33:19Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Generalized Waring discrete distribution (144th dist)","project":"zuda"}
 {"timestamp":"2026-07-13T15:38:09Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Kappa (Hosking 4-param) distribution","project":"zuda"}
+{"timestamp":"2026-07-13T19:36:05Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for NegativeHypergeometric discrete distribution (146th dist)","project":"zuda"}
+{"timestamp":"2026-07-13T19:38:31Z","action":"subagent","agent_type":"zig-developer","task":"Implement NegativeHypergeometric distribution to pass failing tests","project":"zuda"}

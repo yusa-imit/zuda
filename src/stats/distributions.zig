@@ -85068,3 +85068,424 @@ test "Kappa: f32 type support" {
     try testing.expect(math.isFinite(dist.mean()));
     try testing.expect(math.isFinite(dist.variance()));
 }
+
+/// NegativeHypergeometric(N, K, r) distribution
+///
+/// Discrete distribution modeling the number of successes (from K available)
+/// drawn before the r-th failure in sampling without replacement from a
+/// finite population of size N.
+///
+/// Parameters:
+///   - N: u64, total population size (N >= 1)
+///   - K: u64, number of "success" elements (0 <= K <= N)
+///   - r: u64, number of failures at which sampling stops (1 <= r <= N-K)
+///
+/// Support: k ∈ {0, 1, ..., K}
+///
+/// PMF: f(k) = C(k+r-1, k) * C(N-r-k, K-k) / C(N, K)
+///      where C(a,b) is the binomial coefficient
+///
+/// Mean: E[X] = r*K / (N-K+1)
+/// Variance: Var[X] = r*K*(N+1)*(N-K-r+1) / [(N-K+1)^2 * (N-K+2)]
+pub fn NegativeHypergeometric(comptime T: type) type {
+    return struct {
+        N: u64,
+        K: u64,
+        r: u64,
+
+        const Self = @This();
+
+        /// Initialize NegativeHypergeometric(N, K, r)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(N: u64, K: u64, r: u64) error{InvalidParameter}!Self {
+            if (N < 1) return error.InvalidParameter;
+            if (K > N) return error.InvalidParameter;
+            if (r == 0) return error.InvalidParameter;
+            if (r > N - K) return error.InvalidParameter;
+            return Self{ .N = N, .K = K, .r = r };
+        }
+
+        /// Log probability mass function at k
+        /// logPMF(k) = logBinom(k+r-1, k) + logBinom(N-r-k, K-k) - logBinom(N, K)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k > self.K) return @as(T, -std.math.inf(T));
+
+            const k_f = @as(T, @floatFromInt(k));
+            const r_f = @as(T, @floatFromInt(self.r));
+            const K_f = @as(T, @floatFromInt(self.K));
+            const N_f = @as(T, @floatFromInt(self.N));
+
+            // logBinom(k+r-1, k) = lgamma(k+r) - lgamma(k+1) - lgamma(r)
+            const log_binom_kr = logGamma(k_f + r_f) - logGamma(k_f + 1.0) - logGamma(r_f);
+
+            // logBinom(N-r-k, K-k) = lgamma(N-r-k+1) - lgamma(K-k+1) - lgamma(N-r-2k+1)
+            const Nrk: u64 = self.N - self.r - k;  // safe by construction
+            const Km: u64 = self.K - k;            // safe by construction
+            const Nrk_f = @as(T, @floatFromInt(Nrk));
+            const Km_f = @as(T, @floatFromInt(Km));
+            const log_binom_Nrk_Km = logGamma(Nrk_f + 1.0) - logGamma(Km_f + 1.0) - logGamma(Nrk_f - Km_f + 1.0);
+
+            // logBinom(N, K) = lgamma(N+1) - lgamma(K+1) - lgamma(N-K+1)
+            const NK_f = @as(T, @floatFromInt(self.N - self.K));
+            const log_binom_N_K = logGamma(N_f + 1.0) - logGamma(K_f + 1.0) - logGamma(NK_f + 1.0);
+
+            return log_binom_kr + log_binom_Nrk_Km - log_binom_N_K;
+        }
+
+        /// Probability mass function at k
+        /// PMF(k) = C(k+r-1, k) * C(N-r-k, K-k) / C(N, K)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            const lp = self.logpmf(k);
+            if (lp == @as(T, -std.math.inf(T))) return 0.0;
+            return @exp(lp);
+        }
+
+        /// Cumulative distribution function P(X <= k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k >= self.K) return 1.0;
+
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k) : (j += 1) {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - CDF(k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function — smallest k such that CDF(k) >= prob
+        ///
+        /// Time: O(K) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) error{OutOfDomain}!u64 {
+            if (prob < 0.0 or prob > 1.0) return error.OutOfDomain;
+            if (prob == 0.0) return 0;
+            if (prob >= 1.0) return self.K;
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k <= self.K) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= prob) return k;
+            }
+            return self.K;
+        }
+
+        /// Mean: r * K / (N-K+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const r_f = @as(T, @floatFromInt(self.r));
+            const K_f = @as(T, @floatFromInt(self.K));
+            const NK_f = @as(T, @floatFromInt(self.N - self.K + 1));
+            return r_f * K_f / NK_f;
+        }
+
+        /// Variance: r*K*(N+1)*(N-K-r+1) / [(N-K+1)^2 * (N-K+2)]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const r_f = @as(T, @floatFromInt(self.r));
+            const K_f = @as(T, @floatFromInt(self.K));
+            const N_f = @as(T, @floatFromInt(self.N));
+            const NK_f = @as(T, @floatFromInt(self.N - self.K + 1));
+            const NKr_f = @as(T, @floatFromInt(self.N - self.K - self.r + 1));
+            const NK2_f = @as(T, @floatFromInt(self.N - self.K + 2));
+
+            const numerator = r_f * K_f * (N_f + 1.0) * NKr_f;
+            const denominator = NK_f * NK_f * NK2_f;
+            return numerator / denominator;
+        }
+
+        /// Mode: numeric PMF scan over support [0, K]
+        ///
+        /// Time: O(K) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_pmf: T = 0.0;
+            var best_k: u64 = 0;
+            var k: u64 = 0;
+            while (k <= self.K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p > best_pmf) {
+                    best_pmf = p;
+                    best_k = k;
+                }
+            }
+            return best_k;
+        }
+
+        /// Sample using inverse-transform method (quantile of uniform)
+        ///
+        /// Time: O(K) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 0;
+        }
+
+        /// Format the distribution for display
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("NegativeHypergeometric(N={d}, K={d}, r={d})", .{ self.N, self.K, self.r });
+        }
+
+        /// Assert internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            std.debug.assert(self.K <= self.N);
+            std.debug.assert(self.r >= 1);
+            std.debug.assert(self.r <= self.N - self.K);
+            std.debug.assert(self.N >= 1);
+        }
+    };
+}
+
+// ============================================================================
+// NegativeHypergeometric Distribution Tests
+// ============================================================================
+// NegativeHypergeometric(N, K, r) — discrete distribution modeling the number of
+// successes (from K available) drawn before the r-th failure in sampling without
+// replacement from a finite population of size N.
+//
+// Parameters:
+//   - N: u64, total population size, N >= 1
+//   - K: u64, number of "success" elements, 0 <= K <= N
+//   - r: u64, number of failures at which sampling stops, 1 <= r <= N-K (r=0 rejected)
+//
+// Support: k ∈ {0, 1, ..., K}
+//
+// PMF: f(k) = C(k+r-1, k) * C(N-r-k, K-k) / C(N, K)
+//      where C(a,b) is the binomial coefficient
+//
+// Mean: E[X] = r*K / (N-K+1)
+// Variance: Var[X] = r*K*(N+1)*(N-K-r+1) / [(N-K+1)^2 * (N-K+2)]
+//
+// Worked example (verified by hand): N=4, K=2, r=1
+//   pmf(0) = 0.5
+//   pmf(1) ≈ 0.33333333333333
+//   pmf(2) ≈ 0.16666666666667
+//   sum(pmf) = 1.0
+//   mean ≈ 0.66666666666667
+//   variance ≈ 0.55555555555556
+
+test "NegativeHypergeometric: init with valid parameters stores N,K,r" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectEqual(dist.N, 10);
+    try expectEqual(dist.K, 4);
+    try expectEqual(dist.r, 3);
+}
+
+test "NegativeHypergeometric: init rejects K > N" {
+    const result = NegativeHypergeometric(f64).init(10, 15, 3);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeHypergeometric: init rejects r == 0" {
+    const result = NegativeHypergeometric(f64).init(10, 4, 0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeHypergeometric: init rejects r > N-K" {
+    const result = NegativeHypergeometric(f64).init(10, 4, 7);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeHypergeometric: init rejects N == 0" {
+    const result = NegativeHypergeometric(f64).init(0, 4, 3);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeHypergeometric: pmf(0) oracle N=4 K=2 r=1 equals 0.5" {
+    const dist = try NegativeHypergeometric(f64).init(4, 2, 1);
+    const expected: f64 = 0.5;
+    try expectApproxEqRel(expected, dist.pmf(0), 1e-10);
+}
+
+test "NegativeHypergeometric: pmf(1) oracle N=4 K=2 r=1 ≈ 0.33333333333333" {
+    const dist = try NegativeHypergeometric(f64).init(4, 2, 1);
+    const expected: f64 = 1.0 / 3.0;
+    try expectApproxEqRel(expected, dist.pmf(1), 1e-10);
+}
+
+test "NegativeHypergeometric: pmf(2) oracle N=4 K=2 r=1 ≈ 0.16666666666667" {
+    const dist = try NegativeHypergeometric(f64).init(4, 2, 1);
+    const expected: f64 = 1.0 / 6.0;
+    try expectApproxEqRel(expected, dist.pmf(2), 1e-10);
+}
+
+test "NegativeHypergeometric: pmf sums to 1.0 for N=4 K=2 r=1" {
+    const dist = try NegativeHypergeometric(f64).init(4, 2, 1);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= dist.K) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "NegativeHypergeometric: pmf sums to 1.0 for N=10 K=4 r=2" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 2);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= dist.K) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-10);
+}
+
+test "NegativeHypergeometric: pmf outside support (k > K) returns 0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectEqual(dist.pmf(5), 0.0);
+    try expectEqual(dist.pmf(10), 0.0);
+    try expectEqual(dist.pmf(100), 0.0);
+}
+
+test "NegativeHypergeometric: cdf is monotonically non-decreasing" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    var prev_cdf: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= dist.K) : (k += 1) {
+        const cur_cdf = dist.cdf(k);
+        try expect(cur_cdf >= prev_cdf);
+        prev_cdf = cur_cdf;
+    }
+}
+
+test "NegativeHypergeometric: cdf(K) ≈ 1.0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectApproxEqAbs(1.0, dist.cdf(dist.K), 1e-10);
+}
+
+test "NegativeHypergeometric: cdf(large k beyond K) returns ≈1.0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectApproxEqAbs(1.0, dist.cdf(100), 1e-10);
+}
+
+test "NegativeHypergeometric: mean matches oracle N=4 K=2 r=1 ≈ 0.66666666666667" {
+    const dist = try NegativeHypergeometric(f64).init(4, 2, 1);
+    const expected: f64 = 2.0 / 3.0;
+    try expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "NegativeHypergeometric: variance matches oracle N=4 K=2 r=1 ≈ 0.55555555555556" {
+    const dist = try NegativeHypergeometric(f64).init(4, 2, 1);
+    const expected: f64 = 5.0 / 9.0;
+    try expectApproxEqRel(expected, dist.variance(), 1e-10);
+}
+
+test "NegativeHypergeometric: quantile(0.0) == 0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    const q = try dist.quantile(0.0);
+    try expectEqual(q, 0);
+}
+
+test "NegativeHypergeometric: quantile(1.0) == K" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    const q = try dist.quantile(1.0);
+    try expectEqual(q, dist.K);
+}
+
+test "NegativeHypergeometric: quantile consistent with cdf at p=0.5" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    const q = try dist.quantile(0.5);
+    const cdf_at_q = dist.cdf(q);
+    try expect(cdf_at_q >= 0.5);
+}
+
+test "NegativeHypergeometric: quantile consistent with cdf at p=0.1" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    const q = try dist.quantile(0.1);
+    const cdf_at_q = dist.cdf(q);
+    try expect(cdf_at_q >= 0.1);
+}
+
+test "NegativeHypergeometric: quantile consistent with cdf at p=0.9" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    const q = try dist.quantile(0.9);
+    const cdf_at_q = dist.cdf(q);
+    try expect(cdf_at_q >= 0.9);
+}
+
+test "NegativeHypergeometric: quantile rejects p < 0.0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectError(error.OutOfDomain, dist.quantile(-0.1));
+}
+
+test "NegativeHypergeometric: quantile rejects p > 1.0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectError(error.OutOfDomain, dist.quantile(1.1));
+}
+
+test "NegativeHypergeometric: validate passes for well-formed instance" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try dist.validate();
+}
+
+test "NegativeHypergeometric: mode returns value within [0, K]" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    const m = dist.mode();
+    try expect(m <= dist.K);
+}
+
+test "NegativeHypergeometric: mode matches hand-computed argmax N=10 K=4 r=3" {
+    // pmf(0..4) = 0.16667, 0.28571, 0.28571, 0.19048, 0.07143 (hand-derived
+    // via f(k)=C(k+2,k)*C(7-k,4-k)/C(10,4)); true argmax is tied at k=1,2 —
+    // mode() must return the first (smallest) tied index, not the last k
+    // with non-negligible probability.
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    try expectEqual(@as(u64, 1), dist.mode());
+}
+
+test "NegativeHypergeometric: sample produces values within [0, K]" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try NegativeHypergeometric(f64).init(20, 8, 5);
+
+    for (0..200) |_| {
+        const sample = dist.sample(rng);
+        try expect(sample <= dist.K);
+    }
+}
+
+test "NegativeHypergeometric: format contains NegativeHypergeometric string" {
+    const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
+    var buf: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try dist.format("", .{}, fbs.writer());
+    const output = fbs.getWritten();
+    try expect(std.mem.containsAtLeast(u8, output, 1, "NegativeHypergeometric"));
+}
+
+test "NegativeHypergeometric: f32 type support" {
+    const dist = try NegativeHypergeometric(f32).init(10, 4, 3);
+    try dist.validate();
+    try expect(math.isFinite(dist.pmf(2)));
+    try expect(math.isFinite(dist.cdf(2)));
+    const q = try dist.quantile(0.5);
+    try expect(q <= dist.K);
+    try expect(math.isFinite(dist.mean()));
+    try expect(math.isFinite(dist.variance()));
+}
+
+test "NegativeHypergeometric: K == 0 edge case pmf(0) = 1.0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 0, 5);
+    try expectApproxEqRel(1.0, dist.pmf(0), 1e-10);
+}
+
+test "NegativeHypergeometric: K == 0 edge case mean = 0.0" {
+    const dist = try NegativeHypergeometric(f64).init(10, 0, 5);
+    try expectApproxEqRel(0.0, dist.mean(), 1e-10);
+}
