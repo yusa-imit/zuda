@@ -1,3 +1,30 @@
+**Session 769 Update (2026-07-13) — FEATURE MODE [COMPLETED]:**
+
+✅ **Generalized Waring Distribution** — 144th total, 28th discrete — commit 37fee3a
+- **Mode**: FEATURE MODE (counter: 769)
+- **CI Status**: GREEN before and after; 0 open issues; `zig build test` exit code 0
+- Resumed a prior interrupted session's uncommitted work — `test-writer` and `zig-developer`
+  had already produced a complete, passing implementation in the working tree (same pattern as
+  sessions 758/762/767). This session verified (build+test), added the `root.zig` doc-comment
+  entry (module is re-exported wholesale via `pub const distributions = @import(...)`, so no
+  separate export line needed), committed, and pushed.
+- **Distribution**: Waring(a, k, ρ) — Generalized Waring GWD(a,k;ρ), Xekalaki (1975);
+  Beta-NegativeBinomial mixture: p ~ Beta(ρ,a), X|p ~ NegativeBinomial(r=k,p) ⟹ X ~ GWD(a,k;ρ)
+  * PMF via closed-form log-gamma expansion of Pochhammer ratios — O(1) per term, no series needed
+  * Mean = ak/(ρ−1), NaN for ρ≤1; Variance = μ[2]+mean−mean², NaN for ρ≤2 — both exact closed form
+  * Sample: exact composition reusing `noncentralFGammaSample` (twice, for the Beta numerator/
+    denominator) + `poissonKnuth` — third distribution in a row (after Delaporte, PolyaAeppli)
+    built from this same reusable-sampler pattern instead of inverse-CDF
+  * Mode/entropy via numeric PMF scan with relative tolerance (`best_pmf * 1e-12`) — follows the
+    f32-underflow-safe convention, no absolute epsilon literals
+  * 50 tests passing
+- **Total**: 144 distributions (116 continuous + 28 discrete)
+- **Next Priority**: Kappa (Hosking 4-param), Champernowne, Meixner — verify formulas via
+  WebSearch first. Still pending: audit 2 distributions with the `if (p < 1e-300) break` pattern
+  (~lines 71325, 81533 in distributions.zig) for f32 risk — next STABILIZATION session is 770.
+
+---
+
 **Session 768 Update (2026-07-13) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Delaporte Distribution** — 143rd total, 27th discrete — commit 1a16556
