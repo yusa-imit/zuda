@@ -1,3 +1,21 @@
+**Session 770 Update (2026-07-13) — STABILIZATION [COMPLETED]:**
+
+✅ **f32-underflow epsilon audit** — commit 5370a48
+- **Mode**: STABILIZATION (counter: 770)
+- **CI Status**: GREEN before and after; 0 open issues; `zig build test` exit code 0
+- Closed out the pending audit item from session 767/769 memory: checked all 18 `1e-300`
+  sites in `distributions.zig`, not just the 2 originally flagged. Found the bug class was
+  broader than "series converged" break checks — also hit zero-replacement idioms before
+  `@log` and `@max` clamps. Fixed 4 genuine bugs: `Borel.entropy()`, `GeneralizedPoisson.entropy()`,
+  `ExponentiatedWeibull.hMode()`, `LogitNormal.sample()`, `ExponentialModifiedGaussian.sample()`,
+  `gigLogBesselK`. Verified via a standalone f32 harness (200k samples, 0 NaN/Inf) rather than
+  just reasoning about it. See `.claude/memory/debugging.md` for the full breakdown of which
+  idioms are actually broken vs. safe-as-written.
+- Skipped cross-compile check this cycle: another Zig project's `zig build test` was running
+  concurrently (`pgrep -f "zig build"` was non-empty) — deferred per the concurrent-execution
+  policy in CLAUDE.md. Next stabilization session (775) should pick this up if still pending.
+- **Total**: 144 distributions (unchanged, no new distribution this session)
+
 **Session 769 Update (2026-07-13) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Generalized Waring Distribution** — 144th total, 28th discrete — commit 37fee3a

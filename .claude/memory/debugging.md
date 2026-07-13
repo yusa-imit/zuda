@@ -226,3 +226,18 @@ while (true) {
 **YuleSimon Variance Formula (2026-06-15)**: The Wikipedia article on Yule-Simon sometimes lists Var = ρ²(ρ+1)/((ρ-1)²(ρ-2)) but the correct formula derived by telescoping sums is Var = ρ²/((ρ-1)²(ρ-2)). For ρ=3: correct value is 2.25, not 9.0. Verified via partial fraction decomposition of E[X²] = Σ 18k/((k+3)(k+2)(k+1)) where the partial fractions telescope to a finite constant.
 
 **YuleSimon Entropy ρ=1 (2026-06-15)**: Entropy ≈ 2·Σ log(k)/(k²-1) ≈ 2.026 nats. The test-writer guessed 2.5 which is wrong. Computed via integral approximation: 2·∫_1^∞ log(x)/x² dx = 2 with correction for lower terms.
+
+## f32-Underflow Epsilon Bugs, Full Audit (Session 770, 2026-07-13)
+
+**Issue**: `1e-300` as a literal compared/used at `T = f32` underflows to exact `0.0` at compile time (f32's smallest subnormal is ~1.4e-45). This silently breaks several distinct idioms in `distributions.zig`, not just loop-break checks (see the PolyaAeppli O(MAX_K²) hang from session 767).
+
+**Full audit result** (18 `1e-300` sites checked):
+- **`x < 1e-300` break checks** in unbounded-but-capped loops (`MAX_K = 50000`): becomes `x < 0.0`, never true. If `x` is a probability that itself underflows to exact `0.0` in f32, and the loop body does `sum -= x * @log(x)` or similar, this produces `0 * (-inf) = NaN`. **Fixed**: `Borel.entropy()`, `GeneralizedPoisson.entropy()` — now `if (p == 0.0) break`.
+- **`x < 1e-300` division guards**: e.g. `ExponentiatedWeibull.hMode()` had `if (g < 1e-300) return <limit formula>` before dividing by `g`; vacuous for f32 means it divides by a value that may itself be exact `0.0`. **Fixed**: now `if (g == 0.0) return ...`.
+- **`x == 0.0 ? 1e-300 : x` zero-replacement idiom** before `@log(x)`: the replacement value itself underflows to `0.0` in f32, so `@log` still sees `0` → `-inf`. Found in Box-Muller sampling: `LogitNormal.sample()`, `ExponentialModifiedGaussian.sample()`. **Fixed**: use `std.math.floatMin(T)` instead (the pattern already used correctly elsewhere in the file, e.g. `~line 14816`).
+- **`@max(x, 1e-300)` clamp** before `@log(x)`: same issue, found in `gigLogBesselK` (GIG Bessel-K helper used by GeneralizedInverseGaussian/NormalInverseGaussian). **Fixed**: `@max(x, std.math.floatMin(T))`.
+- **Safe, left unchanged**: guards written as `x > 1e-300` (underflowing to `x > 0.0` still correctly excludes the one bad case `x == 0`), and break checks inside loops with a small fixed bound (≤ ~500 iterations) where a vacuous check just means the loop runs to its bound instead of exiting early (no hang, no NaN).
+
+**Verification method**: confirmed `@as(f32, 1e-300) == 0.0` and `@log(@as(f32,0.0)) == -inf` empirically via a throwaway `zig run` snippet, then compiled a small harness importing `zuda` as a module (`zig run --dep zuda -Mroot=... -Mzuda=src/root.zig`) exercising all 4 fixed paths at `T = f32` (200k Box-Muller samples each) — 0 NaN/Inf after the fix. Don't just reason about whether an f32 path is broken; compile and run it.
+
+Commit: 5370a48.
