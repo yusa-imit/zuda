@@ -47362,7 +47362,10 @@ pub fn LogitNormal(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const r1 = rng.float(T);
             const r2 = rng.float(T);
-            const r1_safe = if (r1 == 0.0) @as(T, 1e-300) else r1;
+            // Replace 0 with floatMin(T) rather than a literal like 1e-300 —
+            // such a literal underflows to exact 0 in f32, so @log would
+            // still see a 0 argument and produce -inf.
+            const r1_safe = if (r1 == 0.0) std.math.floatMin(T) else r1;
             const z = @sqrt(-2.0 * @log(r1_safe)) * @cos(2.0 * math.pi * r2);
             return sigmoidFn(self.mu + self.sigma * z);
         }
@@ -49363,13 +49366,16 @@ pub fn ExponentialModifiedGaussian(comptime T: type) type {
             // Box-Muller for Normal: use two uniforms to generate one standard normal
             const unif1 = rng.float(T);
             const unif2 = rng.float(T);
-            const safe_unif1 = if (unif1 == 0.0) 1e-300 else unif1;
+            // Replace 0 with floatMin(T) rather than a literal like 1e-300 —
+            // such a literal underflows to exact 0 in f32, so @log would
+            // still see a 0 argument and produce -inf.
+            const safe_unif1 = if (unif1 == 0.0) std.math.floatMin(T) else unif1;
             const z_std = @sqrt(-2.0 * @log(safe_unif1)) * @cos(2.0 * math.pi * unif2);
             const y = self.sigma * z_std + self.mu;
 
             // Exponential: Z = -ln(U)/λ
             const unif3 = rng.float(T);
-            const safe_unif3 = if (unif3 == 0.0) 1e-300 else unif3;
+            const safe_unif3 = if (unif3 == 0.0) std.math.floatMin(T) else unif3;
             const z = -@log(safe_unif3) / self.lambda;
 
             return y + z;
@@ -66422,7 +66428,11 @@ pub fn ExponentiatedWeibull(comptime T: type) type {
         fn hMode(alpha_: T, shape_: T, u: T) T {
             const eu = @exp(-u);
             const g = 1.0 - eu;
-            if (g < 1e-300) return alpha_ * shape_ - 1.0;
+            // Compare against exact 0 rather than a fixed epsilon like
+            // 1e-300 — such a literal underflows to 0 in f32, silently
+            // disabling this guard and letting the division below hit a
+            // genuine 0/0 or x/0 once g itself underflows to exact 0 in T.
+            if (g == 0.0) return alpha_ * shape_ - 1.0;
             return (shape_ - 1.0) - shape_ * u + (alpha_ - 1.0) * shape_ * u * eu / g;
         }
 
@@ -71322,7 +71332,12 @@ pub fn Borel(comptime T: type) type {
             var k: u64 = 1;
             while (k <= MAX_K) : (k += 1) {
                 const p = self.pmf(k);
-                if (p < 1e-300) break;
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (p < 0.0 is never true) and, worse,
+                // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
+                // once pmf() itself underflows to exact 0 in T.
+                if (p == 0.0) break;
                 sum -= p * self.logpmf(k);
             }
             return sum;
@@ -74605,7 +74620,10 @@ fn gigLogBesselK(comptime T: type, nu: T, x: T) T {
         const a2 = (mu - 1.0) * (mu - 9.0) * inv8x * inv8x * 0.5;
         const a3 = (mu - 1.0) * (mu - 9.0) * (mu - 25.0) * inv8x * inv8x * inv8x / 6.0;
         const series = 1.0 + a1 + a2 + a3;
-        return 0.5 * @log(math.pi / (2.0 * x)) - x + @log(@max(series, @as(T, 1e-300)));
+        // Clamp with floatMin(T) rather than a literal like 1e-300 — such a
+        // literal underflows to exact 0 in f32, so @log would still see a
+        // non-positive argument and produce -inf/NaN if series <= 0.
+        return 0.5 * @log(math.pi / (2.0 * x)) - x + @log(@max(series, std.math.floatMin(T)));
     }
     return @log(gigBesselK(T, nu, x));
 }
@@ -81530,7 +81548,12 @@ pub fn GeneralizedPoisson(comptime T: type) type {
             var k: u64 = 0;
             while (k <= MAX_K) : (k += 1) {
                 const p = self.pmf(k);
-                if (p < 1e-300) break;
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (p < 0.0 is never true) and, worse,
+                // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
+                // once pmf() itself underflows to exact 0 in T.
+                if (p == 0.0) break;
                 sum -= p * self.logpmf(k);
             }
             return sum;
