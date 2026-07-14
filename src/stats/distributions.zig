@@ -85489,3 +85489,875 @@ test "NegativeHypergeometric: K == 0 edge case mean = 0.0" {
     const dist = try NegativeHypergeometric(f64).init(10, 0, 5);
     try expectApproxEqRel(0.0, dist.mean(), 1e-10);
 }
+
+// ============================================================================
+// CHAMPERNOWNE DISTRIBUTION
+// ============================================================================
+
+// Champernowne Distribution (146th total, 116th continuous)
+//
+// Generalization of logistic for income modeling (Champernowne, symmetric).
+// Reduces to standard logistic when λ = 1.
+//
+// Parameters:
+//   - alpha (α): scale parameter (α > 0, finite)
+//   - lambda (λ): shape parameter (λ ≥ 0, finite; λ=0 is valid boundary)
+//   - y0: location parameter (finite)
+//
+// PDF: f(y) = alpha / (I(λ) * (cosh(alpha*(y-y0)) + λ))
+//   where I(λ) is a complex normalizing integral depending on λ branch
+//
+// CDF: piecewise closed form (different for λ<1, λ=1, λ>1)
+//   For λ=1: standard logistic CDF = 1/(1 + exp(-z))
+//
+// Support: (-∞, +∞)
+//
+// Key properties:
+//   - Mean = y0 (exact, by symmetry)
+//   - Mode = y0 (exact, PDF maximum at z=0)
+//   - Median = y0 (exact, cdf(y0) = 0.5)
+//   - Symmetric about y0: pdf(y0+d) = pdf(y0-d)
+
+pub fn Champernowne(comptime T: type) type {
+    return struct {
+        alpha: T,
+        lambda: T,
+        y0: T,
+        n: T,         // normalization constant = alpha / I(lambda)
+        i_lambda: T,  // precomputed I(lambda)
+
+        const Self = @This();
+
+        /// Compute I(λ) — the normalizing integral constant.
+        /// Depends on lambda branch: λ < 1, λ = 1, or λ > 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn computeI(lambda: T) T {
+            if (lambda < 1.0) {
+                const k = @sqrt(1.0 - lambda * lambda);
+                return 2.0 * math.acos(lambda) / k;
+            } else if (lambda == 1.0) {
+                return 2.0;
+            } else { // lambda > 1.0
+                const m = @sqrt(lambda * lambda - 1.0);
+                const num = 1.0 + lambda + m;
+                const den = 1.0 + lambda - m;
+                return (2.0 / m) * @log(num / den);
+            }
+        }
+
+        /// Initialize Champernowne(alpha, lambda, y0).
+        /// Requires: alpha > 0 and finite, lambda >= 0 and finite, y0 finite.
+        ///
+        /// Precomputes n (normalization) and i_lambda.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, lambda: T, y0: T) DistributionError!Self {
+            if (!(alpha > 0.0) or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (!(lambda >= 0.0) or !math.isFinite(lambda)) return error.InvalidParameter;
+            if (!math.isFinite(y0)) return error.InvalidParameter;
+            const i_lambda = computeI(lambda);
+            const n = alpha / i_lambda;
+            return Self{
+                .alpha = alpha,
+                .lambda = lambda,
+                .y0 = y0,
+                .n = n,
+                .i_lambda = i_lambda,
+            };
+        }
+
+        /// Log probability density function (numerically stable).
+        ///
+        /// logpdf(y) = log(n) - log(cosh(z) + lambda)
+        ///   where z = alpha*(y - y0)
+        ///   and log(cosh(z) + lambda) is computed stably using
+        ///   log(cosh(z) + lambda) = |z| + log(0.5 + 0.5*exp(-2*|z|) + lambda*exp(-|z|))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, y: T) T {
+            const z = self.alpha * (y - self.y0);
+            const az = @abs(z);
+            // Stable computation of log(cosh(z) + lambda)
+            // = az + log(0.5 + 0.5*exp(-2*az) + lambda*exp(-az))
+            const exp_neg_az = @exp(-az);
+            const exp_neg_2az = exp_neg_az * exp_neg_az;
+            const inner = 0.5 + 0.5 * exp_neg_2az + self.lambda * exp_neg_az;
+            const log_denom = az + @log(inner);
+            return @log(self.n) - log_denom;
+        }
+
+        /// Probability density function.
+        ///
+        /// f(y) = exp(logpdf(y))  [returns 0 if result is non-finite]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, y: T) T {
+            const result = @exp(self.logpdf(y));
+            if (!math.isFinite(result)) return 0.0;
+            return result;
+        }
+
+        /// Cumulative distribution function — piecewise form depends on lambda.
+        ///
+        /// For lambda < 1.0:
+        ///   k = sqrt(1 - lambda^2)
+        ///   ez = exp(z)
+        ///   cdf = (atan((ez+lambda)/k) - asin(lambda)) / acos(lambda)
+        ///
+        /// For lambda == 1.0 (logistic):
+        ///   cdf = 1/(1 + exp(-z))
+        ///
+        /// For lambda > 1.0:
+        ///   m = sqrt(lambda^2 - 1)
+        ///   ez = exp(z)
+        ///   num = ez + lambda - m
+        ///   den = ez + lambda + m
+        ///   j = (1/m) * (log(num/den) - log((lambda-m)/(lambda+m)))
+        ///   cdf = j / i_lambda
+        ///
+        /// Result clamped to [0, 1] to handle floating-point residual NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, y: T) T {
+            const z = self.alpha * (y - self.y0);
+            var val: T = undefined;
+
+            if (self.lambda < 1.0) {
+                const k = @sqrt(1.0 - self.lambda * self.lambda);
+                const ez = @exp(z);
+                if (!math.isFinite(ez)) {
+                    // z very large → ez ≈ ∞ → atan(∞/k) = π/2
+                    val = math.acos(self.lambda) / math.acos(self.lambda); // = 1.0
+                } else {
+                    const num = ez + self.lambda;
+                    const arg = num / k;
+                    val = (math.atan(arg) - math.asin(self.lambda)) / math.acos(self.lambda);
+                }
+            } else if (self.lambda == 1.0) {
+                // Standard logistic: 1/(1 + exp(-z))
+                const exp_z = @exp(z);
+                if (!math.isFinite(exp_z)) {
+                    // z very large → exp_z ≈ ∞ → 1/(1+∞) ≈ 0
+                    val = 1.0;
+                } else {
+                    val = exp_z / (1.0 + exp_z);
+                }
+            } else { // lambda > 1.0
+                const m = @sqrt(self.lambda * self.lambda - 1.0);
+                const ez = @exp(z);
+                if (!math.isFinite(ez)) {
+                    // z very large → ez ≈ ∞
+                    // num/den ≈ ez/ez = 1, so log(1) = 0
+                    // then j ≈ 0 - (positive term) = negative
+                    // but we should clamp to [0,1]
+                    val = 1.0;
+                } else {
+                    const num = ez + self.lambda - m;
+                    const den = ez + self.lambda + m;
+                    const log_ratio = @log(num / den);
+                    const log_boundary = @log((self.lambda - m) / (self.lambda + m));
+                    const j = (1.0 / m) * (log_ratio - log_boundary);
+                    val = j / self.i_lambda;
+                }
+            }
+
+            // Handle NaN residual: check sign of z
+            if (math.isNan(val)) {
+                val = if (z >= 0.0) 1.0 else 0.0;
+            }
+
+            // Clamp to [0, 1]
+            return @max(0.0, @min(1.0, val));
+        }
+
+        /// Survival function: 1 - CDF(y).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, y: T) T {
+            return 1.0 - self.cdf(y);
+        }
+
+        /// Quantile function via bisection on CDF.
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or NaN.
+        ///
+        /// Time: O(80 · 1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0) or math.isNan(p)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            if (p == 0.5) return self.y0;
+
+            // Bisection in z-space (z = alpha*(y - y0))
+            // Start with small bracket around z=0
+            var lo: T = -10.0 / self.alpha;
+            var hi: T = 10.0 / self.alpha;
+
+            // Expand brackets until CDF encompasses p
+            while (self.cdf(self.y0 + hi) < p) hi *= 2.0;
+            while (self.cdf(self.y0 + lo) > p) lo /= 2.0;
+
+            var iter: usize = 0;
+            while (iter < 80) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (self.cdf(self.y0 + mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                // Use absolute tolerance in z-space
+                if (hi - lo < 1e-12 * (1.0 + @abs(lo) + @abs(hi))) break;
+            }
+
+            return self.y0 + (lo + hi) / 2.0;
+        }
+
+        /// Mean of the distribution: always y0 (by symmetry).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.y0;
+        }
+
+        /// Mode of the distribution: always y0 (PDF maximum at z=0).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.y0;
+        }
+
+        /// Variance via numerical integration in z-space.
+        ///
+        /// Var = 2*n ∫_0^∞ z²/(cosh(z) + λ) dz / α³
+        ///
+        /// Uses 2000-point midpoint rule with z ∈ [0, 60].
+        ///
+        /// Time: O(2000) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const N: usize = 2000;
+            const Z_MAX: T = 60.0;
+            const h: T = Z_MAX / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            var k: usize = 0;
+            while (k < N) : (k += 1) {
+                const z: T = (@as(T, @floatFromInt(k)) + 0.5) * h;
+                const cosh_z = math.cosh(z);
+                const denom = cosh_z + self.lambda;
+                if (math.isFinite(denom) and denom > 0.0) {
+                    const z_sq = z * z;
+                    sum += (z_sq / denom) * h;
+                }
+            }
+            return 2.0 * self.n * sum / (self.alpha * self.alpha * self.alpha);
+        }
+
+        /// Differential entropy (nats) via numerical integration in z-space.
+        ///
+        /// H = ∫_(-∞)^(+∞) -f(y) log(f(y)) dy
+        ///   = (2/α) ∫_0^∞ -pdf_z(z) log(pdf_z(z)) dz
+        ///
+        /// where pdf_z(z) = n/(cosh(z) + λ).
+        ///
+        /// Uses 2000-point midpoint rule with z ∈ [0, 60].
+        ///
+        /// Time: O(2000) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 2000;
+            const Z_MAX: T = 60.0;
+            const h: T = Z_MAX / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            var k: usize = 0;
+            while (k < N) : (k += 1) {
+                const z: T = (@as(T, @floatFromInt(k)) + 0.5) * h;
+                const cosh_z = math.cosh(z);
+                const denom = cosh_z + self.lambda;
+                if (math.isFinite(denom) and denom > 0.0) {
+                    const pdf_z = self.n / denom;
+                    if (pdf_z > 0.0 and math.isFinite(pdf_z)) {
+                        const log_pdf_z = @log(pdf_z);
+                        if (math.isFinite(log_pdf_z)) {
+                            sum += -pdf_z * log_pdf_z * h;
+                        }
+                    }
+                }
+            }
+            // Factor 2 for symmetry (integrated [0,∞) only), 1/α for dz→dy conversion
+            return 2.0 * sum / self.alpha;
+        }
+
+        /// Draw a random sample using the inverse-CDF method.
+        ///
+        /// Time: O(quantile) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            if (u <= 0.0) u = std.math.floatMin(T);
+            if (u >= 1.0) u = 1.0 - std.math.floatEps(T);
+            return self.quantile(u) catch self.mean();
+        }
+
+        /// Assert that parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0.0) or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (!(self.lambda >= 0.0) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!math.isFinite(self.y0)) return error.InvalidParameter;
+        }
+
+        /// Format distribution for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Champernowne(α={d}, λ={d}, y0={d})", .{ self.alpha, self.lambda, self.y0 });
+        }
+    };
+}
+
+test "Champernowne: init with lambda < 1" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    try expect(dist.alpha == 1.0);
+    try expect(dist.lambda == 0.3);
+    try expect(dist.y0 == 0.0);
+}
+
+test "Champernowne: init with lambda = 1" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    try expect(dist.alpha == 1.0);
+    try expect(dist.lambda == 1.0);
+}
+
+test "Champernowne: init with lambda > 1" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    try expect(dist.lambda == 2.5);
+}
+
+test "Champernowne: init with lambda = 0 (boundary case)" {
+    const dist = try Champernowne(f64).init(1.0, 0.0, 0.0);
+    try expect(dist.lambda == 0.0);
+}
+
+test "Champernowne: init with positive y0" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 5.0);
+    try expect(dist.y0 == 5.0);
+}
+
+test "Champernowne: init with negative y0" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, -3.5);
+    try expect(dist.y0 == -3.5);
+}
+
+test "Champernowne: init rejects alpha <= 0" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(0.0, 1.0, 0.0));
+    try expectError(error.InvalidParameter, Champernowne(f64).init(-1.0, 1.0, 0.0));
+}
+
+test "Champernowne: init rejects alpha = inf" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(math.inf(f64), 1.0, 0.0));
+}
+
+test "Champernowne: init rejects alpha = nan" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(math.nan(f64), 1.0, 0.0));
+}
+
+test "Champernowne: init rejects lambda < 0" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(1.0, -0.5, 0.0));
+}
+
+test "Champernowne: init rejects lambda = inf" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(1.0, math.inf(f64), 0.0));
+}
+
+test "Champernowne: init rejects lambda = nan" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(1.0, math.nan(f64), 0.0));
+}
+
+test "Champernowne: init rejects y0 = inf" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(1.0, 1.0, math.inf(f64)));
+}
+
+test "Champernowne: init rejects y0 = nan" {
+    try expectError(error.InvalidParameter, Champernowne(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+test "Champernowne: lambda=1 matches logistic(0,1) at pdf(0)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqRel(p, 0.25, 1e-12);
+}
+
+test "Champernowne: lambda=1 matches logistic(0,1) at cdf(0)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqRel(c, 0.5, 1e-12);
+}
+
+test "Champernowne: lambda=1 matches logistic(0,1) at pdf(1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const p = dist.pdf(1.0);
+    const expected = math.exp(1.0) / ((1.0 + math.exp(1.0)) * (1.0 + math.exp(1.0)));
+    try expectApproxEqRel(p, expected, 1e-12);
+}
+
+test "Champernowne: lambda=1 matches logistic(0,1) at cdf(1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const c = dist.cdf(1.0);
+    const expected = 1.0 / (1.0 + math.exp(-1.0));
+    try expectApproxEqRel(c, expected, 1e-12);
+}
+
+test "Champernowne: lambda=1 matches logistic(0,1) at cdf(-1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const c = dist.cdf(-1.0);
+    const expected = 1.0 / (1.0 + math.exp(1.0));
+    try expectApproxEqRel(c, expected, 1e-12);
+}
+
+test "Champernowne: lambda=0 gives hyperbolic-secant pdf(0)" {
+    const dist = try Champernowne(f64).init(math.pi / 2.0, 0.0, 0.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqRel(p, 0.5, 1e-11);
+}
+
+test "Champernowne: lambda=0 gives hyperbolic-secant cdf(0)" {
+    const dist = try Champernowne(f64).init(math.pi / 2.0, 0.0, 0.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqRel(c, 0.5, 1e-11);
+}
+
+test "Champernowne: pdf symmetry (lambda<1 branch)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const d = 0.5;
+    const p_right = dist.pdf(d);
+    const p_left = dist.pdf(-d);
+    try expectApproxEqRel(p_right, p_left, 1e-13);
+}
+
+test "Champernowne: pdf symmetry (lambda=1 branch)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const d = 1.5;
+    const p_right = dist.pdf(d);
+    const p_left = dist.pdf(-d);
+    try expectApproxEqRel(p_right, p_left, 1e-13);
+}
+
+test "Champernowne: pdf symmetry (lambda>1 branch)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const d = 0.7;
+    const p_right = dist.pdf(d);
+    const p_left = dist.pdf(-d);
+    try expectApproxEqRel(p_right, p_left, 1e-13);
+}
+
+test "Champernowne: cdf symmetry (lambda<1 branch)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const d = 0.8;
+    const c_right = dist.cdf(d);
+    const c_left = dist.cdf(-d);
+    try expectApproxEqRel(c_right + c_left, 1.0, 1e-13);
+}
+
+test "Champernowne: cdf symmetry (lambda=1 branch)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const d = 2.0;
+    const c_right = dist.cdf(d);
+    const c_left = dist.cdf(-d);
+    try expectApproxEqRel(c_right + c_left, 1.0, 1e-13);
+}
+
+test "Champernowne: cdf symmetry (lambda>1 branch)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const d = 1.2;
+    const c_right = dist.cdf(d);
+    const c_left = dist.cdf(-d);
+    try expectApproxEqRel(c_right + c_left, 1.0, 1e-13);
+}
+
+test "Champernowne: cdf(y0) = 0.5 for lambda<1" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqRel(c, 0.5, 1e-13);
+}
+
+test "Champernowne: cdf(y0) = 0.5 for lambda>1" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqRel(c, 0.5, 1e-13);
+}
+
+test "Champernowne: cdf monotonicity over range (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.5, 0.0);
+    var prev_cdf: f64 = 0.0;
+    var y: f64 = -5.0;
+    while (y <= 5.0) : (y += 0.5) {
+        const c = dist.cdf(y);
+        try expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "Champernowne: cdf monotonicity over range (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    var prev_cdf: f64 = 0.0;
+    var y: f64 = -5.0;
+    while (y <= 5.0) : (y += 0.5) {
+        const c = dist.cdf(y);
+        try expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "Champernowne: cdf monotonicity over range (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    var prev_cdf: f64 = 0.0;
+    var y: f64 = -5.0;
+    while (y <= 5.0) : (y += 0.5) {
+        const c = dist.cdf(y);
+        try expect(c >= prev_cdf);
+        prev_cdf = c;
+    }
+}
+
+test "Champernowne: cdf tail behavior left (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const c = dist.cdf(-100.0);
+    try expect(c < 1e-6);
+}
+
+test "Champernowne: cdf tail behavior right (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const c = dist.cdf(100.0);
+    try expect(c > 1.0 - 1e-6);
+}
+
+test "Champernowne: sf consistency (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const y = 0.5;
+    const sf = dist.sf(y);
+    const expected = 1.0 - dist.cdf(y);
+    try expectApproxEqRel(sf, expected, 1e-13);
+}
+
+test "Champernowne: quantile rejects p < 0" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Champernowne: quantile rejects p > 1" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Champernowne: quantile(0.5) equals y0" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(q, 0.0, 1e-12);
+}
+
+test "Champernowne: quantile(0.5) equals y0 with offset (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 2.5);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(q, 2.5, 1e-12);
+}
+
+test "Champernowne: quantile(0.5) equals y0 with offset (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, -1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(q, -1.0, 1e-12);
+}
+
+test "Champernowne: quantile roundtrip cdf(quantile(p)) ≈ p (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try expectApproxEqRel(c, p, 1e-6);
+}
+
+test "Champernowne: quantile roundtrip cdf(quantile(p)) ≈ p (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try expectApproxEqRel(c, p, 1e-6);
+}
+
+test "Champernowne: quantile roundtrip cdf(quantile(p)) ≈ p (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try expectApproxEqRel(c, p, 1e-6);
+}
+
+test "Champernowne: quantile(0.1) < quantile(0.5) < quantile(0.9)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const q10 = try dist.quantile(0.1);
+    const q50 = try dist.quantile(0.5);
+    const q90 = try dist.quantile(0.9);
+    try expect(q10 < q50 and q50 < q90);
+}
+
+test "Champernowne: mean equals y0 exactly (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const m = dist.mean();
+    try expectApproxEqRel(m, 0.0, 1e-14);
+}
+
+test "Champernowne: mean equals y0 exactly (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const m = dist.mean();
+    try expectApproxEqRel(m, 0.0, 1e-14);
+}
+
+test "Champernowne: mean equals y0 exactly (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const m = dist.mean();
+    try expectApproxEqRel(m, 0.0, 1e-14);
+}
+
+test "Champernowne: mean equals y0 with offset (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 3.7);
+    const m = dist.mean();
+    try expectApproxEqRel(m, 3.7, 1e-14);
+}
+
+test "Champernowne: mode equals y0 (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const mode = dist.mode();
+    try expectApproxEqRel(mode, 0.0, 1e-12);
+}
+
+test "Champernowne: mode equals y0 (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const mode = dist.mode();
+    try expectApproxEqRel(mode, 0.0, 1e-12);
+}
+
+test "Champernowne: mode equals y0 (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const mode = dist.mode();
+    try expectApproxEqRel(mode, 0.0, 1e-12);
+}
+
+test "Champernowne: mode is PDF maximum over scan (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const mode = dist.mode();
+    const p_mode = dist.pdf(mode);
+    var y: f64 = -2.0;
+    while (y <= 2.0) : (y += 0.1) {
+        const p = dist.pdf(y);
+        try expect(p <= p_mode or @abs(p - p_mode) < 1e-10);
+    }
+}
+
+test "Champernowne: variance positive and finite (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const v = dist.variance();
+    try expect(v > 0.0 and math.isFinite(v));
+}
+
+test "Champernowne: variance positive and finite (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const v = dist.variance();
+    try expect(v > 0.0 and math.isFinite(v));
+}
+
+test "Champernowne: variance positive and finite (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const v = dist.variance();
+    try expect(v > 0.0 and math.isFinite(v));
+}
+
+test "Champernowne: entropy finite (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h) and h > 0.0);
+}
+
+test "Champernowne: entropy finite (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h) and h > 0.0);
+}
+
+test "Champernowne: entropy finite (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h) and h > 0.0);
+}
+
+test "Champernowne: pdf integrates to ~1 (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    var sum: f64 = 0.0;
+    var y: f64 = -10.0;
+    const dy = 0.01;
+    while (y <= 10.0) : (y += dy) {
+        sum += dist.pdf(y) * dy;
+    }
+    try expect(sum > 0.95 and sum < 1.05);
+}
+
+test "Champernowne: pdf integrates to ~1 (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    var sum: f64 = 0.0;
+    var y: f64 = -10.0;
+    const dy = 0.01;
+    while (y <= 10.0) : (y += dy) {
+        sum += dist.pdf(y) * dy;
+    }
+    try expect(sum > 0.95 and sum < 1.05);
+}
+
+test "Champernowne: pdf integrates to ~1 (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    var sum: f64 = 0.0;
+    var y: f64 = -10.0;
+    const dy = 0.01;
+    while (y <= 10.0) : (y += dy) {
+        sum += dist.pdf(y) * dy;
+    }
+    try expect(sum > 0.95 and sum < 1.05);
+}
+
+test "Champernowne: sample produces finite values (lambda<1)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "Champernowne: sample produces finite values (lambda=1)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "Champernowne: sample produces finite values (lambda>1)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "Champernowne: sample mean approx y0 (lambda<1)" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 2000.0;
+    try expectApproxEqAbs(sample_mean, 0.0, 0.15);
+}
+
+test "Champernowne: sample mean approx y0 with offset (lambda=1)" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Champernowne(f64).init(1.0, 1.0, 2.5);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 2000.0;
+    try expectApproxEqRel(sample_mean, 2.5, 0.2);
+}
+
+test "Champernowne: sample mean approx y0 (lambda>1)" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    var sum: f64 = 0.0;
+    for (0..2000) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 2000.0;
+    try expectApproxEqAbs(sample_mean, 0.0, 0.15);
+}
+
+test "Champernowne: validate passes for valid params (lambda<1)" {
+    const dist = try Champernowne(f64).init(1.0, 0.3, 0.0);
+    try dist.validate();
+}
+
+test "Champernowne: validate passes for valid params (lambda=1)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "Champernowne: validate passes for valid params (lambda>1)" {
+    const dist = try Champernowne(f64).init(1.0, 2.5, 0.0);
+    try dist.validate();
+}
+
+test "Champernowne: format contains Champernowne string" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    var buf: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try dist.format("", .{}, fbs.writer());
+    const output = fbs.getWritten();
+    try expect(std.mem.containsAtLeast(u8, output, 1, "Champernowne"));
+}
+
+test "Champernowne: f32 type support comprehensive" {
+    const dist = try Champernowne(f32).init(1.0, 1.0, 0.0);
+    try dist.validate();
+
+    try expect(math.isFinite(dist.pdf(0.0)));
+    try expect(math.isFinite(dist.cdf(0.0)));
+    try expect(math.isFinite(dist.sf(0.0)));
+
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q));
+
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+
+    const mode = dist.mode();
+    try expect(math.isFinite(mode));
+
+    const v = dist.variance();
+    try expect(math.isFinite(v) and v > 0.0);
+
+    const h = dist.entropy();
+    try expect(math.isFinite(h) and h > 0.0);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(math.isFinite(s));
+}
+
+test "Champernowne: extreme z values do not produce NaN (large positive y)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const p = dist.pdf(1000.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+    const c = dist.cdf(1000.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "Champernowne: extreme z values do not produce NaN (large negative y)" {
+    const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
+    const p = dist.pdf(-1000.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+    const c = dist.cdf(-1000.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "Champernowne: lambda scale parameter effects variance (all lambda branches)" {
+    const dist_small = try Champernowne(f64).init(0.5, 1.0, 0.0);
+    const dist_large = try Champernowne(f64).init(2.0, 1.0, 0.0);
+    const v_small = dist_small.variance();
+    const v_large = dist_large.variance();
+    try expect(v_small > v_large);
+}
