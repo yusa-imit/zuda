@@ -86361,3 +86361,565 @@ test "Champernowne: lambda scale parameter effects variance (all lambda branches
     const v_large = dist_large.variance();
     try expect(v_small > v_large);
 }
+
+// ============================================================================
+// Meixner Distribution
+// ============================================================================
+
+/// Meixner distribution MD(a, b, m, d) — Schoutens (2003)
+///
+/// Probability density function (PDF):
+///   f(x) = (2cos(b/2))^(2d) / (2aπΓ(2d)) × exp(b(x-m)/a) × |Γ(d + i(x-m)/a)|²
+///
+/// Characteristic function:
+///   φ(t) = [cos(b/2) / cosh((at-ib)/2)]^(2d) × exp(imt)
+///
+/// Parameters:
+///   - a: scale parameter (a > 0)
+///   - b: shape/skewness parameter (-π < b < π)
+///   - m: location parameter (m ∈ ℝ)
+///   - d: shape parameter (d > 0)
+///
+/// Infinitely divisible with semiheavy tails; used in mathematical finance
+/// for modeling log-returns as a Lévy process.
+///
+/// Time: O(1) for pdf/mean/variance/skewness/excessKurtosis;
+///       O(500) for cdf/entropy; O(32000) for quantile/sample
+pub fn Meixner(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        a: T,
+        b: T,
+        m: T,
+        d: T,
+        log_norm_const: T, // 2d·log(2cos(b/2)) - log(2aπ) - logΓ(2d)
+
+        /// Initialize Meixner(a, b, m, d)
+        /// Time: O(1)
+        pub fn init(a: T, b: T, m: T, d: T) DistributionError!Self {
+            if (!(a > 0) or !math.isFinite(a) or
+                !math.isFinite(b) or !(b > -math.pi and b < math.pi) or
+                !math.isFinite(m) or
+                !(d > 0) or !math.isFinite(d))
+            {
+                return error.InvalidParameter;
+            }
+            const cos_half_b = @cos(b * 0.5);
+            const log_norm_const = 2.0 * d * @log(2.0 * cos_half_b) - @log(2.0 * a * math.pi) - logGamma(2.0 * d);
+            if (!math.isFinite(log_norm_const)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b, .m = m, .d = d, .log_norm_const = log_norm_const };
+        }
+
+        /// Log probability density function
+        /// Time: O(1)
+        pub fn logPdf(self: Self, x: T) T {
+            const y = (x - self.m) / self.a;
+            const clg = meixnerLogGammaC(T, self.d, y);
+            return self.log_norm_const + self.b * y + 2.0 * clg.re;
+        }
+
+        /// Probability density function
+        /// Time: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            return @exp(self.logPdf(x));
+        }
+
+        /// Mean E[X] = m + ad·tan(b/2)
+        /// Time: O(1)
+        pub fn mean(self: Self) T {
+            return self.m + self.a * self.d * @tan(self.b * 0.5);
+        }
+
+        /// Variance Var[X] = a²d / (2cos²(b/2))
+        /// Time: O(1)
+        pub fn variance(self: Self) T {
+            const c = @cos(self.b * 0.5);
+            return self.a * self.a * self.d / (2.0 * c * c);
+        }
+
+        /// Standard deviation
+        /// Time: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Skewness = √(2/d)·sin(b/2)
+        /// Time: O(1)
+        pub fn skewness(self: Self) T {
+            return @sqrt(2.0 / self.d) * @sin(self.b * 0.5);
+        }
+
+        /// Excess kurtosis = (2 - cos(b)) / d
+        /// Time: O(1)
+        pub fn excessKurtosis(self: Self) T {
+            return (2.0 - @cos(self.b)) / self.d;
+        }
+
+        /// Mode via ternary search (Meixner PDF is unimodal)
+        /// Time: O(100)
+        pub fn mode(self: Self) T {
+            const mu = self.mean();
+            const s = self.stdDev();
+            var lo: T = mu - 8.0 * s;
+            var hi: T = mu + 8.0 * s;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const m1 = lo + (hi - lo) / 3.0;
+                const m2 = hi - (hi - lo) / 3.0;
+                if (self.logPdf(m1) < self.logPdf(m2)) {
+                    lo = m1;
+                } else {
+                    hi = m2;
+                }
+                if (hi - lo < 1e-10 * (@abs(lo) + @abs(hi) + 1.0)) break;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Cumulative distribution function (500-pt midpoint quadrature)
+        /// Time: O(500)
+        pub fn cdf(self: Self, x: T) T {
+            const mu = self.mean();
+            const s = self.stdDev();
+            const lo = mu - 20.0 * s;
+            if (x <= lo) return 0.0;
+            const N: usize = 500;
+            const h = (x - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                sum += self.pdf(xi);
+            }
+            return @min(1.0, sum * h);
+        }
+
+        /// Quantile function (inverse CDF) via bisection
+        /// Time: O(32000)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            const mu = self.mean();
+            const s = self.stdDev();
+            var lo: T = mu - 20.0 * s;
+            var hi: T = mu + 20.0 * s;
+            var expand: usize = 0;
+            while (self.cdf(hi) < p and expand < 20) : (expand += 1) hi += s;
+            expand = 0;
+            while (self.cdf(lo) > p and expand < 20) : (expand += 1) lo -= s;
+            var iter: usize = 0;
+            while (iter < 64) : (iter += 1) {
+                const mid = (lo + hi) * 0.5;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if ((hi - lo) / (@abs(hi) + @abs(lo) + 1.0) < 1e-8) break;
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Entropy (500-pt numerical integration over ±10σ from mean)
+        /// Time: O(500)
+        pub fn entropy(self: Self) T {
+            const mu = self.mean();
+            const s = self.stdDev();
+            const lo = mu - 10.0 * s;
+            const hi = mu + 10.0 * s;
+            const N: usize = 500;
+            const h = (hi - lo) / @as(T, @floatFromInt(N));
+            var sum: T = 0.0;
+            for (0..N) |i| {
+                const xi = lo + (@as(T, @floatFromInt(i)) + 0.5) * h;
+                const p_val = self.pdf(xi);
+                if (p_val > 0) sum -= p_val * @log(p_val);
+            }
+            return sum * h;
+        }
+
+        /// Sample via inverse CDF
+        /// Time: O(32000)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch self.mean();
+        }
+
+        /// Validate internal invariants
+        /// Time: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.a > 0) or !(self.b > -math.pi and self.b < math.pi) or
+                !(self.d > 0) or !math.isFinite(self.m) or !math.isFinite(self.log_norm_const))
+            {
+                return error.InvalidParameter;
+            }
+        }
+
+        /// Format for printing
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Meixner(a={d}, b={d}, m={d}, d={d})", .{ self.a, self.b, self.m, self.d });
+        }
+    };
+}
+
+/// Complex-argument log-Gamma via Lanczos approximation (g=7, n=9), valid for
+/// any z = zre + i·zim, with the reflection formula covering Re(z) < 0.5.
+/// Used by Meixner's PDF to evaluate |Γ(d + iy)|² = exp(2·Re(logΓ(d+iy))).
+fn meixnerLogGammaC(comptime T: type, zre: T, zim: T) struct { re: T, im: T } {
+    if (zre < 0.5) {
+        // Reflection: logΓ(z) = log(π) - log(sin(πz)) - logΓ(1-z)
+        const pi_re = math.pi * zre;
+        const pi_im = math.pi * zim;
+        // sin(a+bi) = sin(a)cosh(b) + i·cos(a)sinh(b)
+        const sin_re = @sin(pi_re) * math.cosh(pi_im);
+        const sin_im = @cos(pi_re) * math.sinh(pi_im);
+        const log_sin_re = 0.5 * @log(sin_re * sin_re + sin_im * sin_im);
+        const log_sin_im = math.atan2(sin_im, sin_re);
+        const lg1mz = meixnerLogGammaC(T, 1.0 - zre, -zim);
+        return .{
+            .re = @log(math.pi) - log_sin_re - lg1mz.re,
+            .im = -log_sin_im - lg1mz.im,
+        };
+    }
+
+    const lanczos_g: T = 7.0;
+    const lanczos_coef = [_]T{
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    };
+
+    const zre1 = zre - 1.0; // z' = z - 1
+    var base_re: T = lanczos_coef[0];
+    var base_im: T = 0.0;
+    for (1..lanczos_coef.len) |i| {
+        const denom_re = zre1 + @as(T, @floatFromInt(i));
+        const denom_im = zim;
+        const denom_sq = denom_re * denom_re + denom_im * denom_im;
+        // p[i] / (denom_re + i·denom_im) = p[i]·(denom_re - i·denom_im) / denom_sq
+        base_re += lanczos_coef[i] * denom_re / denom_sq;
+        base_im += -lanczos_coef[i] * denom_im / denom_sq;
+    }
+
+    const t_re = zre1 + lanczos_g + 0.5;
+    const t_im = zim;
+    const log_sqrt_2pi: T = 0.5 * @log(2.0 * math.pi);
+
+    const log_base_re = 0.5 * @log(base_re * base_re + base_im * base_im);
+    const log_base_im = math.atan2(base_im, base_re);
+
+    const log_t_re = 0.5 * @log(t_re * t_re + t_im * t_im);
+    const log_t_im = math.atan2(t_im, t_re);
+
+    // (z'+0.5) * log(t)
+    const zh_re = zre1 + 0.5;
+    const zh_im = zim;
+    const prod_re = zh_re * log_t_re - zh_im * log_t_im;
+    const prod_im = zh_re * log_t_im + zh_im * log_t_re;
+
+    return .{
+        .re = log_sqrt_2pi + log_base_re - t_re + prod_re,
+        .im = log_base_im - t_im + prod_im,
+    };
+}
+
+// Meixner Distribution Tests
+// =============================================================================
+
+test "Meixner: init succeeds with valid params" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 0.0, 1.0);
+    try expect(dist.a == 1.0);
+    try expect(dist.b == 0.0);
+    try expect(dist.m == 0.0);
+    try expect(dist.d == 1.0);
+}
+
+test "Meixner: init fails when a is zero" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(0.0, 0.0, 0.0, 1.0));
+}
+
+test "Meixner: init fails when a is negative" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(-1.0, 0.0, 0.0, 1.0));
+}
+
+test "Meixner: init fails when b equals pi" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, math.pi, 0.0, 1.0));
+}
+
+test "Meixner: init fails when b equals -pi" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, -math.pi, 0.0, 1.0));
+}
+
+test "Meixner: init fails when b exceeds pi" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, 4.0, 0.0, 1.0));
+}
+
+test "Meixner: init fails when d is zero" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, 0.0, 0.0, 0.0));
+}
+
+test "Meixner: init fails when d is negative" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, 0.0, 0.0, -1.0));
+}
+
+test "Meixner: init fails when a is NaN" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(math.nan(f64), 0.0, 0.0, 1.0));
+}
+
+test "Meixner: init fails when b is NaN" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, math.nan(f64), 0.0, 1.0));
+}
+
+test "Meixner: init fails when m is infinite" {
+    try expectError(error.InvalidParameter, Meixner(f64).init(1.0, 0.0, math.inf(f64), 1.0));
+}
+
+test "Meixner: validate passes for valid distribution" {
+    const dist = try Meixner(f64).init(1.0, 0.5, 0.0, 2.0);
+    try dist.validate();
+}
+
+test "Meixner: complex logGamma matches |Gamma(0.5+iy)|^2 = pi/cosh(pi*y) anchor" {
+    // Known closed form: |Γ(1/2+iy)|² = π / cosh(πy)
+    const y: f64 = 1.0;
+    const clg = meixnerLogGammaC(f64, 0.5, y);
+    const got = @exp(2.0 * clg.re);
+    const expected = math.pi / math.cosh(math.pi * y);
+    try expectApproxEqAbs(got, expected, 1e-9);
+}
+
+test "Meixner: complex logGamma matches |Gamma(0.5+iy)|^2 anchor at y=2.5" {
+    const y: f64 = 2.5;
+    const clg = meixnerLogGammaC(f64, 0.5, y);
+    const got = @exp(2.0 * clg.re);
+    const expected = math.pi / math.cosh(math.pi * y);
+    try expectApproxEqAbs(got, expected, 1e-9);
+}
+
+test "Meixner: complex logGamma real axis matches real logGamma (d=2, y=0)" {
+    const clg = meixnerLogGammaC(f64, 2.0, 0.0);
+    const expected = logGamma(@as(f64, 2.0));
+    try expectApproxEqAbs(clg.re, expected, 1e-9);
+    try expectApproxEqAbs(clg.im, 0.0, 1e-9);
+}
+
+test "Meixner: complex logGamma with small d (<0.5) uses reflection correctly" {
+    // Gamma(1.3+iy) = (0.3+iy) * Gamma(0.3+iy) => |Gamma(1.3+iy)| = |0.3+iy|*|Gamma(0.3+iy)|
+    const y: f64 = 1.2;
+    const clg_small = meixnerLogGammaC(f64, 0.3, y);
+    const clg_next = meixnerLogGammaC(f64, 1.3, y);
+    const mod_z = @sqrt(0.3 * 0.3 + y * y);
+    const expected_next_re = clg_small.re + @log(mod_z);
+    try expectApproxEqAbs(clg_next.re, expected_next_re, 1e-9);
+}
+
+test "Meixner: pdf is symmetric when b=0" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 0.0, 2.0);
+    const p1 = dist.pdf(1.0);
+    const p2 = dist.pdf(-1.0);
+    try expectApproxEqAbs(p1, p2, 1e-9);
+}
+
+test "Meixner: pdf integrates to approximately 1" {
+    const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 1.5);
+    const s = dist.stdDev();
+    const mu = dist.mean();
+    const lo = mu - 15.0 * s;
+    const hi = mu + 15.0 * s;
+    const N: usize = 2000;
+    const h = (hi - lo) / @as(f64, @floatFromInt(N));
+    var sum: f64 = 0.0;
+    for (0..N) |i| {
+        const xi = lo + (@as(f64, @floatFromInt(i)) + 0.5) * h;
+        sum += dist.pdf(xi);
+    }
+    try expectApproxEqAbs(sum * h, 1.0, 1e-3);
+}
+
+test "Meixner: pdf is always non-negative" {
+    const dist = try Meixner(f64).init(2.0, -1.0, 3.0, 0.7);
+    var x: f64 = -20.0;
+    while (x <= 20.0) : (x += 0.5) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "Meixner: mean matches formula m + a*d*tan(b/2)" {
+    const dist = try Meixner(f64).init(2.0, 0.8, 1.0, 3.0);
+    const expected = 1.0 + 2.0 * 3.0 * @tan(0.4);
+    try expectApproxEqAbs(dist.mean(), expected, 1e-12);
+}
+
+test "Meixner: mean equals m when b=0 (symmetric case)" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 5.0, 2.0);
+    try expectApproxEqAbs(dist.mean(), 5.0, 1e-12);
+}
+
+test "Meixner: variance matches formula a^2*d/(2cos^2(b/2))" {
+    const dist = try Meixner(f64).init(2.0, 0.6, 0.0, 1.5);
+    const c = @cos(0.3);
+    const expected = 4.0 * 1.5 / (2.0 * c * c);
+    try expectApproxEqAbs(dist.variance(), expected, 1e-12);
+}
+
+test "Meixner: variance is always positive" {
+    const dist = try Meixner(f64).init(0.5, -1.5, 0.0, 0.3);
+    try expect(dist.variance() > 0.0);
+}
+
+test "Meixner: skewness matches formula sqrt(2/d)*sin(b/2)" {
+    const dist = try Meixner(f64).init(1.0, 1.0, 0.0, 4.0);
+    const expected = @sqrt(2.0 / 4.0) * @sin(0.5);
+    try expectApproxEqAbs(dist.skewness(), expected, 1e-12);
+}
+
+test "Meixner: skewness is zero when b=0" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 0.0, 2.0);
+    try expectApproxEqAbs(dist.skewness(), 0.0, 1e-12);
+}
+
+test "Meixner: skewness sign matches sign of b" {
+    const dist_pos = try Meixner(f64).init(1.0, 1.0, 0.0, 2.0);
+    const dist_neg = try Meixner(f64).init(1.0, -1.0, 0.0, 2.0);
+    try expect(dist_pos.skewness() > 0.0);
+    try expect(dist_neg.skewness() < 0.0);
+}
+
+test "Meixner: excessKurtosis matches formula (2-cos(b))/d" {
+    const dist = try Meixner(f64).init(1.0, 0.7, 0.0, 3.0);
+    const expected = (2.0 - @cos(0.7)) / 3.0;
+    try expectApproxEqAbs(dist.excessKurtosis(), expected, 1e-12);
+}
+
+test "Meixner: excessKurtosis is always positive" {
+    const dist = try Meixner(f64).init(1.0, 2.0, 0.0, 0.5);
+    try expect(dist.excessKurtosis() > 0.0);
+}
+
+test "Meixner: mode is near mean for near-symmetric distribution" {
+    const dist = try Meixner(f64).init(1.0, 0.01, 0.0, 5.0);
+    const mo = dist.mode();
+    const mu = dist.mean();
+    try expectApproxEqAbs(mo, mu, 0.05);
+}
+
+test "Meixner: mode maximizes pdf locally" {
+    const dist = try Meixner(f64).init(1.0, 0.4, 2.0, 2.0);
+    const mo = dist.mode();
+    const p_mode = dist.pdf(mo);
+    try expect(p_mode >= dist.pdf(mo - 0.1));
+    try expect(p_mode >= dist.pdf(mo + 0.1));
+}
+
+test "Meixner: cdf is monotonically non-decreasing" {
+    const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 1.5);
+    var prev = dist.cdf(-10.0);
+    var x: f64 = -9.0;
+    while (x <= 10.0) : (x += 1.0) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "Meixner: cdf approaches 0 far below mean and 1 far above" {
+    const dist = try Meixner(f64).init(1.0, 0.2, 0.0, 2.0);
+    const s = dist.stdDev();
+    const mu = dist.mean();
+    try expectApproxEqAbs(dist.cdf(mu - 20.0 * s), 0.0, 1e-6);
+    try expectApproxEqAbs(dist.cdf(mu + 20.0 * s), 1.0, 1e-6);
+}
+
+test "Meixner: quantile is approximate inverse of cdf" {
+    const dist = try Meixner(f64).init(1.0, 0.4, 1.0, 2.0);
+    const p: f64 = 0.7;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-3);
+}
+
+test "Meixner: quantile at p=0.5 near mean for symmetric case" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 0.0, 3.0);
+    const median = try dist.quantile(0.5);
+    try expectApproxEqAbs(median, dist.mean(), 0.05);
+}
+
+test "Meixner: quantile rejects invalid probability" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Meixner: quantile handles boundary probabilities" {
+    const dist = try Meixner(f64).init(1.0, 0.0, 0.0, 1.0);
+    try expect((try dist.quantile(0.0)) == -math.inf(f64));
+    try expect((try dist.quantile(1.0)) == math.inf(f64));
+}
+
+test "Meixner: entropy is finite" {
+    const dist = try Meixner(f64).init(1.0, 0.2, 0.0, 2.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+}
+
+test "Meixner: sample produces finite values" {
+    const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..20) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "Meixner: f32 does not produce NaN/Inf across pdf/cdf/quantile/entropy/sample" {
+    const dist = try Meixner(f32).init(1.0, 0.3, 0.0, 2.0);
+    const p = dist.pdf(1.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+    const c = dist.cdf(1.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+    const h = dist.entropy();
+    try expect(!math.isNan(h) and !math.isInf(h));
+    var prng = std.Random.DefaultPrng.init(7);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(!math.isNan(s) and !math.isInf(s));
+}
+
+test "Meixner: extreme x values do not produce NaN in pdf/cdf" {
+    const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 2.0);
+    const p = dist.pdf(1000.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+    const c = dist.cdf(1000.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+    const p2 = dist.pdf(-1000.0);
+    try expect(!math.isNan(p2) and !math.isInf(p2));
+}
+
+test "Meixner: format works" {
+    const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 2.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try expect(output.len > 0);
+}
+
+test "Meixner: format contains 'Meixner'" {
+    const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 2.0);
+    var buffer: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try expect(std.mem.indexOf(u8, output, "Meixner") != null);
+}
