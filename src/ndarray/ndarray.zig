@@ -8042,10 +8042,6 @@ test "ndarray: uninitialized array can be safely deinit'd" {
     arr.allocator = allocator;
     arr.data = &[_]f64{};
     arr.deinit();
-
-    // Verify deinit() completes without crash (test passes if no panic)
-    // The allocator would detect double-free or invalid free if present
-    try testing.expect(true); // explicit pass marker
 }
 
 // -- Edge Cases Tests (3 tests) --

@@ -615,7 +615,4 @@ test "LockFreeStack: init-deinit loop memory safety" {
         // Deinit will clean up all nodes
         stack.deinit();
     }
-
-    // If we reach here without memory leaks detected by testing.allocator, we're good
-    try testing.expect(true); // Memory leak detection is handled by allocator
 }

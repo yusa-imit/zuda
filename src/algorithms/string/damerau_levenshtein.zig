@@ -361,7 +361,4 @@ test "damerau_levenshtein: memory safety" {
         var result = try findAllSimilar(allocator, "test", &candidates, 3);
         result.deinit();
     }
-
-    // If we get here without leaks, memory is properly managed
-    try std.testing.expect(true);
 }

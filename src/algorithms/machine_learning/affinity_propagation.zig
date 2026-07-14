@@ -527,10 +527,6 @@ test "AffinityPropagation: memory safety" {
 
     var result = try affinityPropagation(f64, allocator, &data, .{});
     defer result.deinit();
-
-    // Memory leak sentinel: if result.deinit() leaks, std.testing.allocator panics.
-    // The expect(true) marks the end of the safety boundary — do not remove.
-    try testing.expect(true);
 }
 
 test "AffinityPropagation: empty data error" {

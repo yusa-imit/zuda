@@ -415,9 +415,6 @@ test "mean shift: memory safety" {
     const opts = MeanShiftOptions{ .bandwidth = 1.0 };
     var result = try meanShift(f64, allocator, bytes, 2, opts);
     result.deinit();
-    
-    // No memory leaks expected
-    try testing.expect(true);
 }
 
 test "mean shift: large dataset" {

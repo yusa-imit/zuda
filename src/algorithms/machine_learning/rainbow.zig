@@ -766,7 +766,4 @@ test "Rainbow: memory safety" {
         const reward = if (i % 2 == 0) @as(f64, 1.0) else -1.0;
         try rainbow.store(&state, action, reward, &state, i % 10 == 0);
     }
-
-    // Should not leak memory (tested by allocator)
-    try testing.expect(true);
 }
