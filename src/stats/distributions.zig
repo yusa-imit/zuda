@@ -86923,3 +86923,503 @@ test "Meixner: format contains 'Meixner'" {
     const output = stream.getWritten();
     try expect(std.mem.indexOf(u8, output, "Meixner") != null);
 }
+
+pub fn MarshallOlkinExponential(comptime T: type) type {
+    return struct {
+        alpha: T,
+        lambda: T,
+
+        const Self = @This();
+
+        /// Create a Marshall-Olkin Extended Exponential distribution.
+        ///
+        /// Errors: alpha ≤ 0, lambda ≤ 0, or any non-finite parameter.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, lambda: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (lambda <= 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .lambda = lambda };
+        }
+
+        /// Survival function S(x) = α·exp(-λ·x) / (1 - (1-α)·exp(-λ·x)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            const exp_term = @exp(-self.lambda * x);
+            const denom = 1.0 - (1.0 - self.alpha) * exp_term;
+            return self.alpha * exp_term / denom;
+        }
+
+        /// Cumulative distribution function F(x) = 1 - S(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return 1.0 - self.sf(x);
+        }
+
+        /// Probability density function f(x) = α·λ·exp(-λ·x) / (1 - (1-α)·exp(-λ·x))².
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const exp_term = @exp(-self.lambda * x);
+            const denom = 1.0 - (1.0 - self.alpha) * exp_term;
+            return self.alpha * self.lambda * exp_term / (denom * denom);
+        }
+
+        /// Quantile function via closed-form inversion: x = -(1/λ)·ln((1-p) / (α + (1-p)(1-α))).
+        ///
+        /// Errors: !(0 ≤ p ≤ 1) → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p >= 1.0) return math.inf(T);
+
+            // x = -(1/λ)·ln((1-p) / (α + (1-p)(1-α)))
+            const one_minus_p = 1.0 - p;
+            const denom = self.alpha + one_minus_p * (1.0 - self.alpha);
+            const ratio = one_minus_p / denom;
+            return -@log(ratio) / self.lambda;
+        }
+
+        /// Mode of the distribution: 0 if α ≤ 2, else ln(α-1)/λ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha <= 2.0) {
+                return 0.0;
+            }
+            return @log(self.alpha - 1.0) / self.lambda;
+        }
+
+        /// Mean: -α·ln(α) / (λ(1-α)) for α ≠ 1, else 1/λ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.alpha == 1.0) {
+                return 1.0 / self.lambda;
+            }
+            return -self.alpha * @log(self.alpha) / (self.lambda * (1.0 - self.alpha));
+        }
+
+        /// Upper bound x such that S(x) < tol. Used for numerical integration.
+        fn upperBound(self: Self, tol: T) T {
+            var u: T = 1.0;
+            var i: usize = 0;
+            while (self.sf(u) > tol and i < 200) : (i += 1) {
+                u *= 2.0;
+            }
+            return u;
+        }
+
+        /// Variance via E[X²] = 2·∫₀^∞ x·S(x) dx, then Var = E[X²] − E[X]².
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const ex1 = self.mean();
+            const ex2 = 2.0 * self.simpsonXSf(ub, 1000);
+            return ex2 - ex1 * ex1;
+        }
+
+        /// Standard deviation.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Shannon entropy H = −∫₀^∞ f(x)·ln f(x) dx via numerical integration.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const n: usize = 1000;
+            const h = ub / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const f = self.pdf(x);
+                const contrib: T = if (f > 0.0) -f * @log(f) else 0.0;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Assert distribution parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Format for printing.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("MarshallOlkinExponential(alpha={d}, lambda={d})", .{ self.alpha, self.lambda });
+        }
+
+        /// Simpson's rule: ∫₀^upper x·S(x) dx with n (even) subintervals.
+        fn simpsonXSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * (x * self.sf(x));
+            }
+            return sum * h / 3.0;
+        }
+    };
+}
+
+// ============================================================================
+// Marshall-Olkin Exponential Distribution Tests
+// ============================================================================
+//
+// Tests for Marshall-Olkin Extended Exponential: MO-Exp(α, λ) with support x ≥ 0
+// Parameters: α > 0 (tilt), λ > 0 (rate)
+// Reduces exactly to Exponential(λ) when α = 1
+//
+// Expected formulas (for zig-developer implementation):
+// Survival: S(x) = α·exp(-λx) / (1 - (1-α)·exp(-λx))
+// PDF: f(x) = α·λ·exp(-λx) / (1 - (1-α)·exp(-λx))²
+// CDF: F(x) = 1 - S(x)
+// Quantile (closed): x = -(1/λ)·ln( (1-p) / (α + (1-p)(1-α)) )
+// Mean: -α·ln(α) / (λ(1-α)) for α ≠ 1; 1/λ exactly when α = 1
+// Mode: 0 when α ≤ 2; ln(α-1)/λ when α > 2
+// Variance: via numerical integration (∫ x·S(x)dx pattern), using closed-form mean
+// Entropy: via numerical integration of -∫ f(x)ln(f(x))dx
+// Sample: via inverse CDF using closed-form quantile
+
+test "MarshallOlkinExponential: init succeeds with valid params alpha=1.0, lambda=1.0" {
+    const dist = try MarshallOlkinExponential(f64).init(1.0, 1.0);
+    try expect(dist.alpha == 1.0);
+    try expect(dist.lambda == 1.0);
+}
+
+test "MarshallOlkinExponential: init succeeds with alpha=2.0, lambda=0.5" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 0.5);
+    try expect(dist.alpha == 2.0);
+    try expect(dist.lambda == 0.5);
+}
+
+test "MarshallOlkinExponential: init fails when alpha is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(0.0, 1.0));
+}
+
+test "MarshallOlkinExponential: init fails when alpha is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(-1.0, 1.0));
+}
+
+test "MarshallOlkinExponential: init fails when lambda is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(1.0, 0.0));
+}
+
+test "MarshallOlkinExponential: init fails when lambda is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(1.0, -1.0));
+}
+
+test "MarshallOlkinExponential: init fails when alpha is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(math.nan(f64), 1.0));
+}
+
+test "MarshallOlkinExponential: init fails when alpha is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(math.inf(f64), 1.0));
+}
+
+test "MarshallOlkinExponential: init fails when lambda is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(1.0, math.nan(f64)));
+}
+
+test "MarshallOlkinExponential: init fails when lambda is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinExponential(f64).init(1.0, math.inf(f64)));
+}
+
+test "MarshallOlkinExponential: validate succeeds for valid distribution" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 2.0);
+    try dist.validate();
+}
+
+test "MarshallOlkinExponential: pdf at x=0 equals lambda/alpha" {
+    const dist = try MarshallOlkinExponential(f64).init(3.0, 2.0);
+    const expected = 2.0 / 3.0;
+    try expectApproxEqAbs(dist.pdf(0.0), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: pdf at negative x is zero" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    try expectApproxEqAbs(dist.pdf(-1.0), 0.0, 1e-15);
+}
+
+test "MarshallOlkinExponential: cdf at negative x is zero" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    try expectApproxEqAbs(dist.cdf(-1.0), 0.0, 1e-15);
+}
+
+test "MarshallOlkinExponential: sf at negative x is one" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    try expectApproxEqAbs(dist.sf(-1.0), 1.0, 1e-15);
+}
+
+test "MarshallOlkinExponential: cdf + sf = 1 for x >= 0" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    var x: f64 = 0.0;
+    while (x <= 5.0) : (x += 0.5) {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+test "MarshallOlkinExponential: alpha=1 reduces exactly to Exponential(lambda) for pdf" {
+    const dist = try MarshallOlkinExponential(f64).init(1.0, 1.0);
+    const x: f64 = 0.5;
+    const expected = 1.0 * @exp(-1.0 * x);
+    try expectApproxEqAbs(dist.pdf(x), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: alpha=1 reduces exactly to Exponential(lambda) for cdf" {
+    const dist = try MarshallOlkinExponential(f64).init(1.0, 2.0);
+    const x: f64 = 1.5;
+    const expected = 1.0 - @exp(-2.0 * x);
+    try expectApproxEqAbs(dist.cdf(x), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: alpha=1, lambda=2 mean equals 1/lambda" {
+    const dist = try MarshallOlkinExponential(f64).init(1.0, 2.0);
+    const expected = 1.0 / 2.0;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: alpha=2, lambda=1 mean equals 2*ln(2)" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    const expected = 2.0 * @log(2.0);
+    try expectApproxEqAbs(dist.mean(), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: alpha=0.5, lambda=1 mean equals ln(2)" {
+    const dist = try MarshallOlkinExponential(f64).init(0.5, 1.0);
+    const expected = @log(2.0);
+    try expectApproxEqAbs(dist.mean(), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: mode is 0 when alpha=1.5 (alpha <= 2)" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "MarshallOlkinExponential: mode is 0 when alpha=2.0 (boundary case)" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "MarshallOlkinExponential: mode equals ln(alpha-1)/lambda when alpha=5, lambda=2" {
+    const dist = try MarshallOlkinExponential(f64).init(5.0, 2.0);
+    const expected = @log(4.0) / 2.0;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-12);
+}
+
+test "MarshallOlkinExponential: quantile at p=0 equals 0" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    const result = try dist.quantile(0.0);
+    try expectApproxEqAbs(result, 0.0, 1e-12);
+}
+
+test "MarshallOlkinExponential: quantile at p=1 equals infinity" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    const result = try dist.quantile(1.0);
+    try expect(math.isInf(result));
+}
+
+test "MarshallOlkinExponential: quantile rejects p<0" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "MarshallOlkinExponential: quantile rejects p>1" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "MarshallOlkinExponential: quantile inverts cdf (alpha=1, lambda=1, p=0.5)" {
+    const dist = try MarshallOlkinExponential(f64).init(1.0, 1.0);
+    const p: f64 = 0.5;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinExponential: quantile inverts cdf (alpha=2, lambda=1, p=0.7)" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    const p: f64 = 0.7;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinExponential: cdf inverts quantile (alpha=1.5, lambda=2, x=1.0)" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 2.0);
+    const x: f64 = 1.0;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-9);
+}
+
+test "MarshallOlkinExponential: pdf is always non-negative for x>=0" {
+    const dist = try MarshallOlkinExponential(f64).init(3.0, 2.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "MarshallOlkinExponential: pdf integrates to approximately 1" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    const ub = 20.0;
+    const N: usize = 2000;
+    const h = ub / @as(f64, @floatFromInt(N));
+    var sum: f64 = 0.0;
+    for (0..N) |i| {
+        const x = (@as(f64, @floatFromInt(i)) + 0.5) * h;
+        sum += dist.pdf(x);
+    }
+    try expectApproxEqAbs(sum * h, 1.0, 1e-2);
+}
+
+test "MarshallOlkinExponential: cdf is monotonically non-decreasing" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 5.0) : (x += 0.2) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "MarshallOlkinExponential: variance is finite and non-negative" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v >= 0.0);
+}
+
+test "MarshallOlkinExponential: stdDev is positive" {
+    const dist = try MarshallOlkinExponential(f64).init(2.5, 1.5);
+    const sd = dist.stdDev();
+    try expect(sd > 0.0);
+}
+
+test "MarshallOlkinExponential: entropy is finite" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+}
+
+test "MarshallOlkinExponential: entropy is non-negative" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 1.0);
+    const h = dist.entropy();
+    try expect(h >= 0.0);
+}
+
+test "MarshallOlkinExponential: sample produces finite non-negative values" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 0.0);
+    }
+}
+
+test "MarshallOlkinExponential: sample produces values consistent with distribution" {
+    const dist = try MarshallOlkinExponential(f64).init(1.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const num_samples: usize = 5000;
+    for (0..num_samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(num_samples));
+    const theoretical_mean = dist.mean();
+    try expectApproxEqRel(empirical_mean, theoretical_mean, 0.10);
+}
+
+test "MarshallOlkinExponential: f32 pdf at x=0 does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(1.5, 1.0);
+    const p = dist.pdf(0.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "MarshallOlkinExponential: f32 cdf does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(2.0, 1.0);
+    const c = dist.cdf(1.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "MarshallOlkinExponential: f32 quantile does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(1.5, 2.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "MarshallOlkinExponential: f32 mean does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(2.0, 1.0);
+    const m = dist.mean();
+    try expect(!math.isNan(m) and !math.isInf(m));
+}
+
+test "MarshallOlkinExponential: f32 variance does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(1.5, 1.0);
+    const v = dist.variance();
+    try expect(!math.isNan(v) and !math.isInf(v));
+}
+
+test "MarshallOlkinExponential: f32 entropy does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(2.0, 1.0);
+    const h = dist.entropy();
+    try expect(!math.isNan(h) and !math.isInf(h));
+}
+
+test "MarshallOlkinExponential: f32 sample does not produce NaN/Inf" {
+    const dist = try MarshallOlkinExponential(f32).init(1.5, 1.0);
+    var prng = std.Random.DefaultPrng.init(7);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(!math.isNan(s) and !math.isInf(s));
+}
+
+test "MarshallOlkinExponential: format works" {
+    const dist = try MarshallOlkinExponential(f64).init(1.5, 2.0);
+    var buffer: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try expect(output.len > 0);
+}
+
+test "MarshallOlkinExponential: format contains 'MarshallOlkinExponential'" {
+    const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
+    var buffer: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try dist.format("", .{}, stream.writer());
+    const output = stream.getWritten();
+    try expect(std.mem.indexOf(u8, output, "MarshallOlkinExponential") != null);
+}
