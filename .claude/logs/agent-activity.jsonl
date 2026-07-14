@@ -649,3 +649,6 @@
 {"timestamp":"2026-07-13T15:38:09Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Kappa (Hosking 4-param) distribution","project":"zuda"}
 {"timestamp":"2026-07-13T19:36:05Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for NegativeHypergeometric discrete distribution (146th dist)","project":"zuda"}
 {"timestamp":"2026-07-13T19:38:31Z","action":"subagent","agent_type":"zig-developer","task":"Implement NegativeHypergeometric distribution to pass failing tests","project":"zuda"}
+{"timestamp":"2026-07-14T15:34:58Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for MarshallOlkinExponential distribution (149th)","project":"zuda"}
+{"timestamp":"2026-07-14T15:40:49Z","action":"subagent","agent_type":"zig-developer","task":"Implement MarshallOlkinExponential distribution to pass failing tests","project":"zuda"}
+{"timestamp":"2026-07-14T15:58:34Z","action":"subagent","agent_type":"code-reviewer","task":"Review MarshallOlkinExponential implementation for correctness and quality","project":"zuda"}
