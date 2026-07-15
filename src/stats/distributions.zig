@@ -88065,3 +88065,622 @@ test "FoldedCauchy: f32 sample() produces non-negative finite values" {
         try testing.expect(math.isFinite(s));
     }
 }
+
+// ============================================================================
+// Zero-Inflated Poisson Distribution
+// ============================================================================
+
+/// Zero-Inflated Poisson distribution ZIP(π, λ)
+///
+/// A mixture of a point mass at 0 (with probability π) and a Poisson(λ)
+/// distribution (with probability 1-π). Models count data with excess zeros.
+///
+/// Parameters:
+///   - π ∈ [0, 1): structural zero probability (inflation parameter)
+///   - λ > 0: Poisson rate parameter
+///
+/// PMF:
+///   P(X = 0) = π + (1-π)·e^(-λ)
+///   P(X = k) = (1-π)·λ^k·e^(-λ)/k!  for k ≥ 1
+///
+/// Reduces exactly to Poisson(λ) when π = 0.
+/// Moments: E[X] = (1-π)·λ, Var[X] = (1-π)·λ·(1 + π·λ)
+pub fn ZeroInflatedPoisson(comptime T: type) type {
+    return struct {
+        pi: T,
+        lambda: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a ZeroInflatedPoisson distribution.
+        ///
+        /// Errors: π < 0, π ≥ 1, π non-finite, λ ≤ 0, or λ non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(pi: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(pi)) return error.InvalidParameter;
+            if (!(pi >= 0.0 and pi < 1.0)) return error.InvalidParameter;
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            return Self{ .pi = pi, .lambda = lambda };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// log PMF(k) = log(π + (1-π)·e^(-λ))                    for k=0
+        /// log PMF(k) = log(1-π) + k·log(λ) - λ - logΓ(k+1)      for k≥1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) {
+                const one_minus_pi_exp = (1.0 - self.pi) * @exp(-self.lambda);
+                return @log(self.pi + one_minus_pi_exp);
+            }
+            const kf: T = @floatFromInt(k);
+            return @log(1.0 - self.pi) + kf * @log(self.lambda) - self.lambda - logGamma(kf + 1.0);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p = self.pmf(j);
+                sum += p;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= p) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Draw u ~ Uniform(0,1). If u < π, return 0 (structural zero).
+        /// Otherwise, sample from Poisson(λ).
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            if (u < self.pi) return 0;
+            const poisson = Poisson(T){ .rate = self.lambda };
+            return poisson.sample(rng);
+        }
+
+        /// Mean: (1-π)·λ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (1.0 - self.pi) * self.lambda;
+        }
+
+        /// Variance: (1-π)·λ·(1 + π·λ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const one_minus_pi = 1.0 - self.pi;
+            return one_minus_pi * self.lambda * (1.0 + self.pi * self.lambda);
+        }
+
+        /// Mode: numeric scan via PMF ratio.
+        /// When multiple modes exist, returns the larger one.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                // Use tolerance for tie detection to handle floating-point rounding
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (p < 0.0 is never true) and, worse,
+                // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
+                // once pmf() itself underflows to exact 0 in T.
+                if (p == 0.0) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.pi)) return error.InvalidParameter;
+            if (!(self.pi >= 0.0 and self.pi < 1.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!(self.lambda > 0.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("ZeroInflatedPoisson(π={d:.4}, λ={d:.4})", .{ self.pi, self.lambda });
+        }
+    };
+}
+
+// --- ZeroInflatedPoisson Tests ---
+
+test "ZeroInflatedPoisson: init valid pi=0 (Poisson boundary), lambda=1.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 1.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: init valid pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: init valid pi=0.5, lambda=0.5" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.5, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: init valid pi=0.9, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.9, 5.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: init valid pi=0.4, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 5.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: init valid f32 type" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: init fails for pi < 0" {
+    const result = ZeroInflatedPoisson(f64).init(-0.1, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for pi >= 1" {
+    const result = ZeroInflatedPoisson(f64).init(1.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for pi > 1" {
+    const result = ZeroInflatedPoisson(f64).init(1.5, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for NaN pi" {
+    const result = ZeroInflatedPoisson(f64).init(math.nan(f64), 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for infinite pi" {
+    const result = ZeroInflatedPoisson(f64).init(math.inf(f64), 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for lambda <= 0" {
+    const result = ZeroInflatedPoisson(f64).init(0.3, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for lambda < 0" {
+    const result = ZeroInflatedPoisson(f64).init(0.3, -0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for NaN lambda" {
+    const result = ZeroInflatedPoisson(f64).init(0.3, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: init fails for infinite lambda" {
+    const result = ZeroInflatedPoisson(f64).init(0.3, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedPoisson: pmf(0) = pi + (1-pi)*exp(-lambda) for pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    // pmf(0) = 0.3 + 0.7*exp(-2.0)
+    const expected = 0.3 + 0.7 * @exp(-2.0);
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedPoisson: pmf(1) = (1-pi)*lambda*exp(-lambda) for pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    // pmf(1) = 0.7*2.0*exp(-2.0)
+    const expected = 0.7 * 2.0 * @exp(-2.0);
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-12);
+}
+
+test "ZeroInflatedPoisson: pmf reduction to Poisson for pi=0, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 2.0);
+    const poisson = try Poisson(f64).init(2.0);
+    // For pi=0, ZIP should equal Poisson exactly
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(poisson.pmf(k), dist.pmf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedPoisson: pmf(0) = pi + (1-pi)*exp(-lambda) for pi=0.5, lambda=1.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.5, 1.0);
+    const expected = 0.5 + 0.5 * @exp(-1.0);
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedPoisson: pmf positive for all k" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "ZeroInflatedPoisson: logpmf = log(pmf)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 2.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "ZeroInflatedPoisson: pmf sums to 1 (truncated)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 500) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "ZeroInflatedPoisson: cdf(0) = pmf(0)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "ZeroInflatedPoisson: cdf is monotonically non-decreasing" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 2.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "ZeroInflatedPoisson: cdf approaches 1 for large k" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "ZeroInflatedPoisson: cdf reduction to Poisson for pi=0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 2.0);
+    const poisson = try Poisson(f64).init(2.0);
+    for ([_]u64{ 0, 5, 10, 20 }) |k| {
+        try expectApproxEqAbs(poisson.cdf(k), dist.cdf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedPoisson: quantile(0) = 0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try expect(try dist.quantile(0.0) == 0);
+}
+
+test "ZeroInflatedPoisson: quantile(1) is defined" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 2.5);
+    const q = try dist.quantile(1.0);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(q), 1e-9);
+}
+
+test "ZeroInflatedPoisson: quantile fails for p < 0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "ZeroInflatedPoisson: quantile fails for p > 1" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "ZeroInflatedPoisson: quantile fails for NaN" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "ZeroInflatedPoisson: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "ZeroInflatedPoisson: mean = (1-pi)*lambda for pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    // mean = 0.7 * 2.0 = 1.4
+    try expectApproxEqAbs(1.4, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: mean = (1-pi)*lambda for pi=0.4, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 5.0);
+    // mean = 0.6 * 5.0 = 3.0
+    try expectApproxEqAbs(3.0, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: mean = lambda for pi=0 (Poisson reduction)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 2.5);
+    // mean = 1.0 * 2.5 = 2.5
+    try expectApproxEqAbs(2.5, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: mean increases with lambda for fixed pi" {
+    const dist1 = try ZeroInflatedPoisson(f64).init(0.3, 1.0);
+    const dist2 = try ZeroInflatedPoisson(f64).init(0.3, 3.0);
+    try expect(dist2.mean() > dist1.mean());
+}
+
+test "ZeroInflatedPoisson: variance = (1-pi)*lambda*(1+pi*lambda) for pi=0.4, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 5.0);
+    // variance = 0.6 * 5.0 * (1 + 0.4*5.0) = 3.0 * 3.0 = 9.0
+    try expectApproxEqAbs(9.0, dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: variance = (1-pi)*lambda*(1+pi*lambda) for pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    // variance = 0.7 * 2.0 * (1 + 0.3*2.0) = 1.4 * 1.6 = 2.24
+    try expectApproxEqAbs(2.24, dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: variance = lambda for pi=0 (Poisson reduction)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 2.5);
+    // variance = 1.0 * 2.5 * (1 + 0.0*2.5) = 2.5
+    try expectApproxEqAbs(2.5, dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: variance > mean (overdispersion for pi > 0)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 4.0);
+    try expect(dist.variance() > dist.mean());
+}
+
+test "ZeroInflatedPoisson: variance = mean for pi=0 (Poisson, equidispersion)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 3.0);
+    try expectApproxEqAbs(dist.mean(), dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedPoisson: mode is non-negative integer" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    const m = dist.mode();
+    try expect(m >= 0);
+}
+
+test "ZeroInflatedPoisson: mode returns 0 for dominant inflation (pi=0.9, lambda=1.0)" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.9, 1.0);
+    try expect(dist.mode() == 0);
+}
+
+test "ZeroInflatedPoisson: entropy is positive and finite" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedPoisson: entropy is positive for pi=0.4, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.4, 5.0);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedPoisson: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 0);
+    }
+}
+
+test "ZeroInflatedPoisson: sample empirical mean close to theoretical for pi=0.3, lambda=2.0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 0.7 * 2.0 = 1.4
+    try expectApproxEqAbs(1.4, sample_mean, 0.15);
+}
+
+test "ZeroInflatedPoisson: sample with high pi produces majority zeros" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try ZeroInflatedPoisson(f64).init(0.99, 1.0);
+    var zero_count: usize = 0;
+    const n = 500;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        if (dist.sample(rng) == 0) zero_count += 1;
+    }
+    // At least 95% should be zero (very high pi), but not necessarily 100%
+    // (low chance of drawing from Poisson(1) and getting 0)
+    const ratio = @as(f64, @floatFromInt(zero_count)) / @as(f64, n);
+    try expect(ratio > 0.90);
+}
+
+test "ZeroInflatedPoisson: sample Poisson reduction for pi=0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try ZeroInflatedPoisson(f64).init(0.0, 2.0);
+    var sum: f64 = 0.0;
+    const n = 3000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    // Theoretical mean = 1.0 * 2.0 = 2.0
+    try expectApproxEqAbs(2.0, sample_mean, 0.15);
+}
+
+test "ZeroInflatedPoisson: validate passes for valid pi and lambda" {
+    const dist = try ZeroInflatedPoisson(f64).init(0.3, 2.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedPoisson: validate fails for pi < 0 (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = -0.1, .lambda = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for pi >= 1 (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = 1.0, .lambda = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for NaN pi (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = math.nan(f64), .lambda = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for infinite pi (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = math.inf(f64), .lambda = 2.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for lambda <= 0 (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = 0.3, .lambda = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for lambda < 0 (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = 0.3, .lambda = -0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for NaN lambda (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = 0.3, .lambda = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedPoisson: validate fails for infinite lambda (unsafe struct)" {
+    const dist = ZeroInflatedPoisson(f64){ .pi = 0.3, .lambda = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- f32 Type Tests ---
+
+test "ZeroInflatedPoisson: f32 init with valid parameters" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), dist.pi, 1e-6);
+}
+
+test "ZeroInflatedPoisson: f32 pmf(0) for pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    const expected: f32 = 0.3 + 0.7 * @exp(-2.0);
+    try testing.expectApproxEqAbs(expected, dist.pmf(0), 1e-6);
+}
+
+test "ZeroInflatedPoisson: f32 pmf(1) for pi=0.3, lambda=2.0" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    const expected: f32 = 0.7 * 2.0 * @exp(-2.0);
+    try testing.expectApproxEqAbs(expected, dist.pmf(1), 1e-6);
+}
+
+test "ZeroInflatedPoisson: f32 mean for pi=0.4, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.4, 5.0);
+    const expected: f32 = 3.0;
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-6);
+}
+
+test "ZeroInflatedPoisson: f32 variance for pi=0.4, lambda=5.0" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.4, 5.0);
+    const expected: f32 = 9.0;
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-5);
+}
+
+test "ZeroInflatedPoisson: f32 cdf(0) is positive" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.5, 2.0);
+    const c = dist.cdf(0);
+    try testing.expect(c > 0.0);
+}
+
+test "ZeroInflatedPoisson: f32 quantile(0.5) produces valid result" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0);
+}
+
+test "ZeroInflatedPoisson: f32 entropy is finite and positive" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "ZeroInflatedPoisson: f32 sample produces non-negative integers" {
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    const dist = try ZeroInflatedPoisson(f32).init(0.3, 2.0);
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try testing.expect(s >= 0);
+    }
+}
+
+test "ZeroInflatedPoisson: f32 validate() passes for valid parameters" {
+    const dist = try ZeroInflatedPoisson(f32).init(0.5, 2.0);
+    try dist.validate();
+}
