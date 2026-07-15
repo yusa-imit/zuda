@@ -105,10 +105,9 @@ pub fn mbPerSec(bytes: u64, nanoseconds: u64) f64 {
 /// Example:
 /// ```zig
 /// var tracker = perf.AllocTracker.init(std.heap.page_allocator);
-/// defer _ = tracker.report(); // Print stats
-///
 /// const allocator = tracker.allocator();
 /// // ... use allocator ...
+/// try tracker.report(writer); // Write stats to a writer
 /// ```
 pub const AllocTracker = struct {
     backing_allocator: std.mem.Allocator,
@@ -218,10 +217,11 @@ pub const AllocTracker = struct {
         };
     }
 
-    /// Print statistics report
-    pub fn report(self: *const Self) void {
+    /// Write statistics report to the given writer.
+    /// Time: O(1) | Space: O(1)
+    pub fn report(self: *const Self, writer: anytype) !void {
         const s = self.stats();
-        std.debug.print(
+        try writer.print(
             \\AllocTracker Report:
             \\  Allocations: {}
             \\  Deallocations: {}
@@ -269,10 +269,6 @@ pub fn expectFaster(
     const slow_time = try timeFnIters(allocator, slow_fn, slow_args, 10, iterations);
 
     if (fast_time >= slow_time) {
-        std.debug.print(
-            "Performance regression: fast_fn took {} ns, slow_fn took {} ns\n",
-            .{ fast_time, slow_time },
-        );
         return error.TestExpectedFaster;
     }
 }
@@ -380,6 +376,22 @@ test "AllocTracker basic tracking" {
     alloc.free(mem2);
     try testing.expectEqual(@as(usize, 2), tracker.deallocations);
     try testing.expectEqual(@as(usize, 0), tracker.current_bytes);
+}
+
+test "AllocTracker report writes to a writer" {
+    var tracker = AllocTracker.init(testing.allocator);
+    const alloc = tracker.allocator();
+
+    const mem = try alloc.alloc(u8, 64);
+    defer alloc.free(mem);
+
+    var buffer: [512]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    try tracker.report(stream.writer());
+    const output = stream.getWritten();
+
+    try testing.expect(std.mem.indexOf(u8, output, "AllocTracker Report") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "Allocations: 1") != null);
 }
 
 test "AllocTracker stats snapshot" {
