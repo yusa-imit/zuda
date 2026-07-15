@@ -87089,6 +87089,234 @@ pub fn MarshallOlkinExponential(comptime T: type) type {
 }
 
 // ============================================================================
+// FoldedCauchy Distribution
+// ============================================================================
+
+/// Folded Cauchy distribution FoldedCauchy(μ, γ)
+///
+/// FoldedCauchy is obtained by folding a Cauchy(μ, γ) distribution at 0.
+/// It represents the absolute value of a Cauchy random variable.
+///
+/// Parameters:
+///   - mu: location parameter (any finite real)
+///   - gamma: scale parameter (γ > 0)
+///
+/// Support: [0, ∞)
+///
+/// PDF: f(x; μ, γ) = (1/(π·γ)) · [1/(1+((x-μ)/γ)²) + 1/(1+((x+μ)/γ)²)] for x ≥ 0, else 0
+///
+/// Special cases:
+///   - FoldedCauchy(0, γ) coincides with HalfCauchy(γ)
+///   - Distribution depends only on |μ| due to symmetry
+///
+/// Mean: +∞ (integral diverges)
+/// Variance: +∞
+/// Mode: 0 if |μ| < γ/√3, else found via golden section search
+pub fn FoldedCauchy(comptime T: type) type {
+    return struct {
+        mu: T,
+        gamma: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize FoldedCauchy(μ, γ) distribution.
+        /// Returns error.InvalidParameter if γ ≤ 0, γ not finite, or μ not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, gamma: T) DistributionError!Self {
+            if (gamma <= 0.0 or !math.isFinite(gamma)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .gamma = gamma };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = (1/(π·γ)) · [1/(1+((x-μ)/γ)²) + 1/(1+((x+μ)/γ)²)] for x ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const inv_gamma = 1.0 / self.gamma;
+            const z1 = (x - self.mu) * inv_gamma;
+            const z2 = (x + self.mu) * inv_gamma;
+            const term1 = 1.0 / (1.0 + z1 * z1);
+            const term2 = 1.0 / (1.0 + z2 * z2);
+            return inv_gamma / math.pi * (term1 + term2);
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = -log(π·γ) + log(term1 + term2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = (1/π) · (atan((x-μ)/γ) + atan((x+μ)/γ)) for x ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const inv_gamma = 1.0 / self.gamma;
+            const arg1 = (x - self.mu) * inv_gamma;
+            const arg2 = (x + self.mu) * inv_gamma;
+            return (1.0 / math.pi) * (math.atan(arg1) + math.atan(arg2));
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function via bisection on [0, hi].
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(log(hi)) ≈ O(1) for standard ranges | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            if (prob == 0.0) return 0.0;
+            if (prob == 1.0) return math.inf(T);
+
+            var hi: T = @max(@abs(self.mu) + self.gamma, self.gamma);
+            while (self.cdf(hi) < prob) hi *= 2.0;
+            var lo: T = 0.0;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const mid = 0.5 * (lo + hi);
+                if (self.cdf(mid) < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        // --- Moments ---
+
+        /// Mean: +∞ (the integral diverges for one-sided support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Variance: +∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Mode of the distribution.
+        /// If |μ|/γ < 1/√3, mode = 0.
+        /// Otherwise, uses golden section search to find the peak on [0, |μ| + 3·γ].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const m = @abs(self.mu) / self.gamma;
+            const threshold = 1.0 / @sqrt(3.0);
+            if (m < threshold) return 0.0;
+
+            const upper = @abs(self.mu) + 3.0 * self.gamma;
+            const phi_inv: T = 2.0 / (1.0 + @sqrt(5.0));
+            var lo: T = 0.0;
+            var hi: T = upper;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const range = hi - lo;
+                const x1 = hi - phi_inv * range;
+                const x2 = lo + phi_inv * range;
+                if (self.pdf(x1) < self.pdf(x2)) {
+                    lo = x1;
+                } else {
+                    hi = x2;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy via composite Simpson's rule.
+        /// H ≈ ∫₀^upper -f(x)·log(f(x)) dx with 1000 subintervals.
+        /// upper = |μ| + 20·γ
+        ///
+        /// Time: O(1000) ≈ O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const upper = @abs(self.mu) + 20.0 * self.gamma;
+            const n: usize = 1000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+                if (f <= 0.0) continue;
+                const contrib = -f * @log(f);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample via folding a Cauchy sample.
+        /// u ~ Uniform(0,1), x = μ + γ·tan(π·(u-0.5)), return |x|
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const x = self.mu + self.gamma * @tan(math.pi * (u - 0.5));
+            return @abs(x);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: γ > 0, finite; μ finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.gamma <= 0.0 or !math.isFinite(self.gamma)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "FoldedCauchy(mu=..., gamma=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("FoldedCauchy(mu={d:.4}, gamma={d:.4})", .{ self.mu, self.gamma });
+        }
+    };
+}
+
+// ============================================================================
 // Marshall-Olkin Exponential Distribution Tests
 // ============================================================================
 //
@@ -87422,4 +87650,418 @@ test "MarshallOlkinExponential: format contains 'MarshallOlkinExponential'" {
     try dist.format("", .{}, stream.writer());
     const output = stream.getWritten();
     try expect(std.mem.indexOf(u8, output, "MarshallOlkinExponential") != null);
+}
+
+// ============================================================================
+// FoldedCauchy Distribution Tests
+// ============================================================================
+
+// --- Init Tests ---
+
+test "FoldedCauchy: init with valid mu=0, gamma=1" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.gamma);
+}
+
+test "FoldedCauchy: init with positive mu" {
+    const dist = try FoldedCauchy(f64).init(2.0, 1.5);
+    try testing.expectEqual(@as(f64, 2.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.5), dist.gamma);
+}
+
+test "FoldedCauchy: init with negative mu" {
+    const dist = try FoldedCauchy(f64).init(-3.0, 2.0);
+    try testing.expectEqual(@as(f64, -3.0), dist.mu);
+    try testing.expectEqual(@as(f64, 2.0), dist.gamma);
+}
+
+test "FoldedCauchy: init with large mu" {
+    const dist = try FoldedCauchy(f64).init(1000.0, 1.0);
+    try testing.expectEqual(@as(f64, 1000.0), dist.mu);
+}
+
+test "FoldedCauchy: init with very small gamma" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1e-10);
+    try testing.expectEqual(@as(f64, 1e-10), dist.gamma);
+}
+
+test "FoldedCauchy: init with large gamma" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1e10);
+    try testing.expectEqual(@as(f64, 1e10), dist.gamma);
+}
+
+test "FoldedCauchy: init rejects gamma <= 0" {
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(0.0, 0.0));
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(0.0, -1.0));
+}
+
+test "FoldedCauchy: init rejects non-finite gamma" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(0.0, inf));
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(0.0, -inf));
+    const nan = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(0.0, nan));
+}
+
+test "FoldedCauchy: init rejects non-finite mu" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(inf, 1.0));
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(-inf, 1.0));
+    const nan = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, FoldedCauchy(f64).init(nan, 1.0));
+}
+
+// --- PDF Tests ---
+
+test "FoldedCauchy: pdf(0) with mu=0, gamma=1 equals 2/pi (HalfCauchy match)" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 2.0 / math.pi;
+    try testing.expectApproxEqAbs(p, expected, 1e-10);
+}
+
+test "FoldedCauchy: pdf symmetry under mu -> -mu" {
+    const dist_pos = try FoldedCauchy(f64).init(2.0, 1.0);
+    const dist_neg = try FoldedCauchy(f64).init(-2.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        try testing.expectApproxEqRel(dist_pos.pdf(x), dist_neg.pdf(x), 1e-10);
+    }
+}
+
+test "FoldedCauchy: pdf non-negative everywhere" {
+    const dist = try FoldedCauchy(f64).init(1.0, 1.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "FoldedCauchy: pdf equals component formula at sample points" {
+    const dist = try FoldedCauchy(f64).init(1.0, 1.0);
+    const x = 2.0;
+    // Manual formula: f(x) = (1/(pi*gamma)) * [1/(1+((x-mu)/gamma)^2) + 1/(1+((x+mu)/gamma)^2)]
+    const gamma = 1.0;
+    const mu = 1.0;
+    const term1 = 1.0 / (1.0 + ((x - mu) / gamma) * ((x - mu) / gamma));
+    const term2 = 1.0 / (1.0 + ((x + mu) / gamma) * ((x + mu) / gamma));
+    const expected = (1.0 / (math.pi * gamma)) * (term1 + term2);
+    const computed = dist.pdf(x);
+    try testing.expectApproxEqRel(computed, expected, 1e-10);
+}
+
+test "FoldedCauchy: pdf(negative x) returns 0" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.1));
+}
+
+// --- CDF Tests ---
+
+test "FoldedCauchy: cdf(0) equals 0 exactly for any valid mu, gamma" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 1.0 },
+        [_]f64{ -1.0, 1.0 },
+        [_]f64{ 0.0, 2.0 },
+        [_]f64{ 5.0, 3.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try FoldedCauchy(f64).init(case[0], case[1]);
+        const c = dist.cdf(0.0);
+        try testing.expectEqual(@as(f64, 0.0), c);
+    }
+}
+
+test "FoldedCauchy: cdf is monotonically non-decreasing" {
+    const dist = try FoldedCauchy(f64).init(1.0, 1.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 10.0) : (x += 0.5) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "FoldedCauchy: cdf with mu=0, gamma=1 matches HalfCauchy at x=1" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const c = dist.cdf(1.0);
+    const expected = 0.5;  // HalfCauchy(1): (2/pi)*atan(1) = (2/pi)*(pi/4) = 0.5
+    try testing.expectApproxEqAbs(c, expected, 1e-10);
+}
+
+test "FoldedCauchy: cdf negative x returns 0" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "FoldedCauchy: cdf approaches 1 as x -> large" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const c = dist.cdf(1e6);
+    try testing.expect(c > 0.9999);
+}
+
+// --- Quantile Tests ---
+
+test "FoldedCauchy: quantile(0) returns 0" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-15);
+}
+
+test "FoldedCauchy: quantile(0.5) is finite and positive" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+    try testing.expect(q > 0.0);
+}
+
+test "FoldedCauchy: quantile(p) increases with p" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "FoldedCauchy: quantile(1) returns +inf" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "FoldedCauchy: quantile rejects p < 0" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "FoldedCauchy: quantile rejects p > 1" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "FoldedCauchy: cdf-quantile roundtrip consistency" {
+    const dist = try FoldedCauchy(f64).init(1.0, 2.0);
+    const p_vals = [_]f64{ 0.05, 0.25, 0.5, 0.75, 0.95 };
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-8);
+    }
+}
+
+test "FoldedCauchy: quantile-cdf roundtrip consistency" {
+    const dist = try FoldedCauchy(f64).init(0.5, 1.5);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        const q = try dist.quantile(c);
+        try testing.expectApproxEqAbs(x, q, 1e-8);
+    }
+}
+
+// --- Mode Tests ---
+
+test "FoldedCauchy: mode() returns 0 for small |mu|/gamma ratio" {
+    // When |mu|/gamma < 1/sqrt(3) ≈ 0.577, mode should be at 0
+    const dist = try FoldedCauchy(f64).init(0.1, 1.0);  // 0.1 < 0.577
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "FoldedCauchy: mode() with mu=0, gamma=1 returns 0" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-15);
+}
+
+test "FoldedCauchy: mode() returns positive value for large |mu|/gamma" {
+    // When |mu|/gamma > 1/sqrt(3), mode should be > 0
+    const dist = try FoldedCauchy(f64).init(5.0, 1.0);  // 5 > 0.577
+    const m = dist.mode();
+    try testing.expect(m > 0.0);
+}
+
+test "FoldedCauchy: mode() pdf value exceeds pdf at 0 in bimodal case" {
+    const dist = try FoldedCauchy(f64).init(5.0, 1.0);
+    const m = dist.mode();
+    const pdf_mode = dist.pdf(m);
+    const pdf_zero = dist.pdf(0.0);
+    try testing.expect(pdf_mode > pdf_zero);
+}
+
+// --- Mean / Variance Tests ---
+
+test "FoldedCauchy: mean() returns +inf" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const mean = dist.mean();
+    try testing.expect(math.isPositiveInf(mean));
+}
+
+test "FoldedCauchy: mean() returns +inf for any valid parameters" {
+    const dist = try FoldedCauchy(f64).init(3.0, 2.0);
+    const mean = dist.mean();
+    try testing.expect(math.isPositiveInf(mean));
+}
+
+test "FoldedCauchy: variance() returns +inf" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "FoldedCauchy: variance() returns +inf for any valid parameters" {
+    const dist = try FoldedCauchy(f64).init(2.0, 1.5);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+// --- Entropy Tests ---
+
+test "FoldedCauchy: entropy() is finite and positive" {
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "FoldedCauchy: entropy() is finite for various parameters" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 1.0 },
+        [_]f64{ 2.0, 0.5 },
+        [_]f64{ -3.0, 2.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try FoldedCauchy(f64).init(case[0], case[1]);
+        const h = dist.entropy();
+        try testing.expect(math.isFinite(h));
+    }
+}
+
+test "FoldedCauchy: entropy increases with gamma" {
+    const dist1 = try FoldedCauchy(f64).init(0.0, 1.0);
+    const dist2 = try FoldedCauchy(f64).init(0.0, 2.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try testing.expect(h2 > h1);  // larger gamma -> larger entropy
+}
+
+// --- Sampling Tests ---
+
+test "FoldedCauchy: sample() produces non-negative finite values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try testing.expect(s >= 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "FoldedCauchy: sample() with different seeds produces different values" {
+    const dist = try FoldedCauchy(f64).init(1.0, 1.0);
+    var prng1 = std.Random.DefaultPrng.init(42);
+    var prng2 = std.Random.DefaultPrng.init(43);
+    const s1 = dist.sample(prng1.random());
+    const s2 = dist.sample(prng2.random());
+    try testing.expect(s1 != s2);  // extremely unlikely to be equal with different seeds
+}
+
+test "FoldedCauchy: sample() rough empirical CDF check" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try FoldedCauchy(f64).init(0.0, 1.0);
+    var count_below_one: usize = 0;
+    const num_samples = 1000;
+    for (0..num_samples) |_| {
+        if (dist.sample(rng) <= 1.0) {
+            count_below_one += 1;
+        }
+    }
+    const empirical_cdf = @as(f64, @floatFromInt(count_below_one)) / @as(f64, @floatFromInt(num_samples));
+    const theoretical_cdf = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(empirical_cdf, theoretical_cdf, 0.05);  // loose tolerance for sampling
+}
+
+// --- Validate Tests ---
+
+test "FoldedCauchy: validate() passes for valid parameters" {
+    const dist = try FoldedCauchy(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "FoldedCauchy: validate() rejects gamma <= 0" {
+    var dist = FoldedCauchy(f64){ .mu = 0.0, .gamma = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+    dist.gamma = -1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "FoldedCauchy: validate() rejects non-finite gamma" {
+    const inf = math.inf(f64);
+    var dist = FoldedCauchy(f64){ .mu = 0.0, .gamma = inf };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+    dist.gamma = -inf;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "FoldedCauchy: validate() rejects non-finite mu" {
+    const inf = math.inf(f64);
+    var dist = FoldedCauchy(f64){ .mu = inf, .gamma = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- f32 Tests ---
+
+test "FoldedCauchy: f32 init with valid parameters" {
+    const dist = try FoldedCauchy(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.mu);
+}
+
+test "FoldedCauchy: f32 pdf(0) with mu=0, gamma=1" {
+    const dist = try FoldedCauchy(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 2.0 / math.pi;
+    try testing.expectApproxEqAbs(@as(f32, expected), p, 1e-6);
+}
+
+test "FoldedCauchy: f32 cdf(0) equals 0" {
+    const dist = try FoldedCauchy(f32).init(1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectEqual(@as(f32, 0.0), c);
+}
+
+test "FoldedCauchy: f32 mean() returns +inf" {
+    const dist = try FoldedCauchy(f32).init(0.0, 1.0);
+    const mean = dist.mean();
+    try testing.expect(math.isPositiveInf(mean));
+}
+
+test "FoldedCauchy: f32 variance() returns +inf" {
+    const dist = try FoldedCauchy(f32).init(1.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "FoldedCauchy: f32 entropy() is finite and positive" {
+    const dist = try FoldedCauchy(f32).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "FoldedCauchy: f32 sample() produces non-negative finite values" {
+    var prng = std.Random.DefaultPrng.init(99);
+    const rng = prng.random();
+    const dist = try FoldedCauchy(f32).init(0.0, 1.0);
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try testing.expect(s >= 0.0);
+        try testing.expect(math.isFinite(s));
+    }
 }
