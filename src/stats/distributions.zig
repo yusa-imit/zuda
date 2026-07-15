@@ -88684,3 +88684,650 @@ test "ZeroInflatedPoisson: f32 validate() passes for valid parameters" {
     const dist = try ZeroInflatedPoisson(f32).init(0.5, 2.0);
     try dist.validate();
 }
+
+pub fn ZeroInflatedNegativeBinomial(comptime T: type) type {
+    return struct {
+        pi: T,
+        r: u64,
+        p: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a ZeroInflatedNegativeBinomial distribution.
+        ///
+        /// Errors: π < 0, π ≥ 1, π non-finite, r < 1, p ≤ 0, p > 1, or p non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(pi: T, r: u64, p: T) DistributionError!Self {
+            if (!math.isFinite(pi)) return error.InvalidParameter;
+            if (!(pi >= 0.0 and pi < 1.0)) return error.InvalidParameter;
+            if (r < 1) return error.InvalidParameter;
+            if (!math.isFinite(p)) return error.InvalidParameter;
+            if (!(p > 0.0 and p <= 1.0)) return error.InvalidParameter;
+            return Self{ .pi = pi, .r = r, .p = p };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// log PMF(k) = log(π + (1-π)·nb.pmf(0))                  for k=0
+        /// log PMF(k) = log(1-π) + nb.logpmf(k)                  for k≥1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) {
+                const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+                const one_minus_pi_nb_pmf0 = (1.0 - self.pi) * nb.pmf(0);
+                return @log(self.pi + one_minus_pi_nb_pmf0);
+            }
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            return @log(1.0 - self.pi) + nb.logpmf(k);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p_val = self.pmf(j);
+                sum += p_val;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            if (prob == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= prob) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Draw u ~ Uniform(0,1). If u < π, return 0 (structural zero).
+        /// Otherwise, sample from NegativeBinomial(r, p).
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            if (u < self.pi) return 0;
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            return nb.sample(rng);
+        }
+
+        /// Mean: (1-π)·nb.mean().
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            return (1.0 - self.pi) * nb.mean();
+        }
+
+        /// Variance: (1-π)·nb.variance() + (1-π)·π·nb.mean()².
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const one_minus_pi = 1.0 - self.pi;
+            const nb_mean = nb.mean();
+            return one_minus_pi * nb.variance() + one_minus_pi * self.pi * nb_mean * nb_mean;
+        }
+
+        /// Mode: numeric scan via PMF ratio.
+        /// When multiple modes exist, returns the larger one.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p_val = self.pmf(k);
+                // Use tolerance for tie detection to handle floating-point rounding
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p_val >= best_pmf - pmf_tolerance) {
+                    best_pmf = p_val;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p_val < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p_val = self.pmf(k);
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (p < 0.0 is never true) and, worse,
+                // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
+                // once pmf() itself underflows to exact 0 in T.
+                if (p_val == 0.0) break;
+                sum -= p_val * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.pi)) return error.InvalidParameter;
+            if (!(self.pi >= 0.0 and self.pi < 1.0)) return error.InvalidParameter;
+            if (self.r < 1) return error.InvalidParameter;
+            if (!math.isFinite(self.p)) return error.InvalidParameter;
+            if (!(self.p > 0.0 and self.p <= 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("ZeroInflatedNegativeBinomial(π={d:.4}, r={d}, p={d:.4})", .{ self.pi, self.r, self.p });
+        }
+    };
+}
+
+// ============================================================================
+// Zero-Inflated Negative Binomial Distribution Tests (TDD RED phase)
+// ============================================================================
+//
+// NOTE: Implementation not yet present — tests are written first to define
+// the expected behavior of ZeroInflatedNegativeBinomial(comptime T: type) type.
+
+// --- ZeroInflatedNegativeBinomial Tests ---
+
+test "ZeroInflatedNegativeBinomial: init valid pi=0 (NB boundary), r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.0, 3, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init valid pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init valid pi=0.5, r=2, p=0.4" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.5, 2, 0.4);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init valid pi=0.9, r=5, p=0.3" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.9, 5, 0.3);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init valid pi=0.4, r=2, p=0.7" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 2, 0.7);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init valid p=1.0 (NB boundary), r=3, pi=0.2" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.2, 3, 1.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init valid f32 type" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for pi < 0" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(-0.1, 3, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for pi >= 1" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(1.0, 3, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for pi > 1" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(1.5, 3, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for NaN pi" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(math.nan(f64), 3, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for infinite pi" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(math.inf(f64), 3, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for r < 1" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(0.3, 0, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for p <= 0" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for p < 0" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(0.3, 3, -0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for p > 1" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 1.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for NaN p" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(0.3, 3, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: init fails for infinite p" {
+    const result = ZeroInflatedNegativeBinomial(f64).init(0.3, 3, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedNegativeBinomial: pmf reduction to NegativeBinomial for pi=0, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.0, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(nb.pmf(k), dist.pmf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: pmf(0) = pi + (1-pi)*nb.pmf(0) for pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    const expected = 0.3 + 0.7 * nb.pmf(0);
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedNegativeBinomial: pmf(1) = (1-pi)*nb.pmf(1) for pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    const expected = 0.7 * nb.pmf(1);
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-12);
+}
+
+test "ZeroInflatedNegativeBinomial: pmf(0) exact computation for pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    // nb.pmf(0) = p^r = 0.5^3 = 0.125
+    // pmf(0) = 0.3 + 0.7 * 0.125 = 0.3 + 0.0875 = 0.3875
+    const expected = 0.3 + 0.7 * (0.5 * 0.5 * 0.5);
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedNegativeBinomial: pmf positive for all k" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: logpmf = log(pmf)" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 3, 0.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: pmf sums to 1 (truncated)" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 500) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "ZeroInflatedNegativeBinomial: cdf(0) = pmf(0)" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "ZeroInflatedNegativeBinomial: cdf is monotonically non-decreasing" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 3, 0.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: cdf approaches 1 for large k" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "ZeroInflatedNegativeBinomial: cdf reduction to NegativeBinomial for pi=0" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.0, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    for ([_]u64{ 0, 5, 10, 20 }) |k| {
+        try expectApproxEqAbs(nb.cdf(@intCast(k)), dist.cdf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: quantile(0) = 0" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try expect((try dist.quantile(0.0)) == 0);
+}
+
+test "ZeroInflatedNegativeBinomial: quantile(1) is defined" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 3, 0.5);
+    const q = try dist.quantile(1.0);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(q), 1e-9);
+}
+
+test "ZeroInflatedNegativeBinomial: quantile fails for p < 0" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "ZeroInflatedNegativeBinomial: quantile fails for p > 1" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "ZeroInflatedNegativeBinomial: quantile fails for NaN" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "ZeroInflatedNegativeBinomial: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: mean = (1-pi)*nb.mean() for pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    const expected = 0.7 * nb.mean();
+    try expectApproxEqAbs(expected, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedNegativeBinomial: mean exact computation for pi=0.4, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 3, 0.5);
+    // nb.mean() = r*(1-p)/p = 3*0.5/0.5 = 3.0
+    // mean = 0.6 * 3.0 = 1.8
+    try expectApproxEqAbs(1.8, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedNegativeBinomial: mean = nb.mean() for pi=0 (NB reduction)" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.0, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    try expectApproxEqAbs(nb.mean(), dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedNegativeBinomial: mean increases with decreasing pi for fixed r, p" {
+    const dist1 = try ZeroInflatedNegativeBinomial(f64).init(0.1, 3, 0.5);
+    const dist2 = try ZeroInflatedNegativeBinomial(f64).init(0.5, 3, 0.5);
+    try expect(dist1.mean() > dist2.mean());
+}
+
+test "ZeroInflatedNegativeBinomial: variance exact computation for pi=0.4, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    // nb.mean() = 3.0, nb.variance() = 6.0
+    // variance = 0.6*6.0 + 0.6*0.4*9.0 = 3.6 + 2.16 = 5.76
+    const expected = 0.6 * nb.variance() + 0.6 * 0.4 * (nb.mean() * nb.mean());
+    try expectApproxEqAbs(expected, dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedNegativeBinomial: variance = nb.variance() for pi=0 (NB reduction)" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.0, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    try expectApproxEqAbs(nb.variance(), dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedNegativeBinomial: variance > 0 for all valid params" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 4, 0.4);
+    try expect(dist.variance() > 0.0);
+}
+
+test "ZeroInflatedNegativeBinomial: mode returns 0 for dominant inflation (pi=0.9, r=2, p=0.5)" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.9, 2, 0.5);
+    try expect(dist.mode() == 0);
+}
+
+test "ZeroInflatedNegativeBinomial: entropy is positive and finite" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedNegativeBinomial: entropy is positive for pi=0.4, r=5, p=0.3" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.4, 5, 0.3);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedNegativeBinomial: r=1 case (geometric-like base) works correctly" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 1, 0.5);
+    try expect(dist.pmf(0) > 0.0);
+    try expect(dist.mean() > 0.0);
+    try expect(dist.variance() > 0.0);
+}
+
+test "ZeroInflatedNegativeBinomial: p=1.0 boundary case gives pmf(0)=1.0" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 1.0);
+    // NB(r, 1.0) has all probability at k=0
+    // So ZINB.pmf(0) = pi + (1-pi)*1.0 = 1.0
+    try expectApproxEqAbs(1.0, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedNegativeBinomial: p=1.0 boundary case gives pmf(k>=1)=0.0" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 1.0);
+    for ([_]u64{ 1, 2, 3, 10 }) |k| {
+        try expectApproxEqAbs(0.0, dist.pmf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    for (0..200) |_| {
+        const s = dist.sample(rng);
+        try expect(s <= 1000000); // Bound check, not tautological >= 0 on u64
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: sample empirical mean close to theoretical for pi=0.3, r=3, p=0.5" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(theoretical_mean, sample_mean, 0.3);
+}
+
+test "ZeroInflatedNegativeBinomial: sample with high pi produces majority zeros" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.95, 2, 0.5);
+    var zero_count: usize = 0;
+    const n = 500;
+    for (0..n) |_| {
+        if (dist.sample(rng) == 0) zero_count += 1;
+    }
+    const ratio = @as(f64, @floatFromInt(zero_count)) / @as(f64, n);
+    try expect(ratio > 0.85); // Mostly zeros but not necessarily 100%
+}
+
+test "ZeroInflatedNegativeBinomial: sample NB reduction for pi=0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.0, 3, 0.5);
+    var sum: f64 = 0.0;
+    const n = 3000;
+    for (0..n) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(theoretical_mean, sample_mean, 0.3);
+}
+
+test "ZeroInflatedNegativeBinomial: validate passes for valid pi, r, p" {
+    const dist = try ZeroInflatedNegativeBinomial(f64).init(0.3, 3, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for pi < 0 (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = -0.1, .r = 3, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for pi >= 1 (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 1.0, .r = 3, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for NaN pi (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = math.nan(f64), .r = 3, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for infinite pi (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = math.inf(f64), .r = 3, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for r < 1 (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 0.3, .r = 0, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for p <= 0 (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 0.3, .r = 3, .p = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for p < 0 (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 0.3, .r = 3, .p = -0.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for p > 1 (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 0.3, .r = 3, .p = 1.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for NaN p (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 0.3, .r = 3, .p = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedNegativeBinomial: validate fails for infinite p (unsafe struct)" {
+    const dist = ZeroInflatedNegativeBinomial(f64){ .pi = 0.3, .r = 3, .p = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- f32 Type Tests ---
+
+test "ZeroInflatedNegativeBinomial: f32 init with valid parameters" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), dist.pi, 1e-6);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 pmf(0) for pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    const nb = try NegativeBinomial(f32).init(3, 0.5);
+    const expected: f32 = 0.3 + 0.7 * nb.pmf(0);
+    try testing.expectApproxEqAbs(expected, dist.pmf(0), 1e-6);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 pmf(1) for pi=0.3, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    const nb = try NegativeBinomial(f32).init(3, 0.5);
+    const expected: f32 = 0.7 * nb.pmf(1);
+    try testing.expectApproxEqAbs(expected, dist.pmf(1), 1e-6);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 mean for pi=0.4, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.4, 3, 0.5);
+    const nb = try NegativeBinomial(f32).init(3, 0.5);
+    const expected: f32 = 0.6 * nb.mean();
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-6);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 variance for pi=0.4, r=3, p=0.5" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.4, 3, 0.5);
+    const nb = try NegativeBinomial(f32).init(3, 0.5);
+    const expected: f32 = 0.6 * nb.variance() + 0.6 * 0.4 * (nb.mean() * nb.mean());
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-5);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 cdf(0) is positive" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.5, 3, 0.5);
+    const c = dist.cdf(0);
+    try testing.expect(c > 0.0);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 quantile(0.5) produces valid result" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q <= 1000000);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 entropy is finite and positive" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "ZeroInflatedNegativeBinomial: f32 sample produces valid results" {
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.3, 3, 0.5);
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try testing.expect(s <= 1000000);
+    }
+}
+
+test "ZeroInflatedNegativeBinomial: f32 validate() passes for valid parameters" {
+    const dist = try ZeroInflatedNegativeBinomial(f32).init(0.5, 3, 0.5);
+    try dist.validate();
+}
