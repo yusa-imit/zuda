@@ -657,3 +657,8 @@
 {"timestamp":"2026-07-15T07:35:26Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ZeroInflatedPoisson distribution (151st)","project":"zuda"}
 {"timestamp":"2026-07-15T07:39:12Z","action":"subagent","agent_type":"zig-developer","task":"Implement ZeroInflatedPoisson distribution to pass 68 tests","project":"zuda"}
 {"timestamp":"2026-07-15T07:55:19Z","action":"subagent","agent_type":"code-reviewer","task":"Review ZeroInflatedPoisson distribution implementation","project":"zuda"}
+{"timestamp":"2026-07-16T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ZeroInflatedBinomial distribution","project":"zuda"}
+{"timestamp":"2026-07-16T00:05:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement ZeroInflatedBinomial distribution to pass failing tests","project":"zuda"}
+{"timestamp":"2026-07-16T07:36:03Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for HurdlePoisson distribution (154th)","project":"zuda"}
+{"timestamp":"2026-07-16T07:41:32Z","action":"subagent","agent_type":"zig-developer","task":"Implement HurdlePoisson distribution to pass failing tests","project":"zuda"}
+{"timestamp":"2026-07-16T07:56:30Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 incorrect HurdlePoisson tests (tolerance + false monotonicity claim)","project":"zuda"}
