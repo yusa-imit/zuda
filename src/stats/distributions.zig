@@ -90845,3 +90845,888 @@ test "HurdlePoisson: f32 validate() passes for valid parameters" {
     const dist = try HurdlePoisson(f32).init(0.5, 3.0);
     try dist.validate();
 }
+
+// ============================================================================
+// Hurdle Negative Binomial Distribution
+// ============================================================================
+
+/// Hurdle Negative Binomial distribution: a two-stage process model for count data with
+/// excess zeros, using NegativeBinomial as the positive-count base distribution.
+///
+/// Unlike Zero-Inflated NegativeBinomial (a mixture), Hurdle NegativeBinomial implements a
+/// hurdle mechanism:
+/// - Stage 1 (Hurdle): A Bernoulli draw determines if crossing the hurdle (getting > 0).
+///   P(crossing) = 1 - π, P(staying at 0) = π (structural zero).
+/// - Stage 2 (Positive counts): If the hurdle is crossed, the count follows a zero-truncated
+///   NegativeBinomial distribution (NegativeBinomial(r, p) conditioned on being ≥ 1).
+///
+/// Parameters:
+///   - π ∈ [0, 1]: Probability of structural zero.
+///   - r ≥ 1: NegativeBinomial shape (number of failures).
+///   - p ∈ (0, 1]: NegativeBinomial success probability.
+///
+/// PMF:
+///   - P(X = 0) = π
+///   - P(X = k) = (1-π) × NB.pmf(k; r, p) / (1 - NB.pmf(0; r, p))   for k ≥ 1
+///
+/// Time: O(k) for CDF/quantile, O(1) for mean/variance, O(MAX_K) for entropy
+pub fn HurdleNegativeBinomial(comptime T: type) type {
+    return struct {
+        pi: T,
+        r: u64,
+        p: T,
+
+        const Self = @This();
+        const MAX_K: usize = 100000;
+
+        /// Create a HurdleNegativeBinomial distribution.
+        ///
+        /// Errors: π < 0, π > 1, π non-finite, r < 1, p ≤ 0, p > 1, or p non-finite.
+        /// Note: π ∈ [0, 1] is closed (includes both boundaries).
+        /// π = 0 reduces to zero-truncated NegativeBinomial; π = 1 is degenerate (all mass at 0).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(pi: T, r: u64, p: T) DistributionError!Self {
+            if (!math.isFinite(pi)) return error.InvalidParameter;
+            if (!(pi >= 0.0 and pi <= 1.0)) return error.InvalidParameter;
+            if (r < 1) return error.InvalidParameter;
+            if (!math.isFinite(p)) return error.InvalidParameter;
+            if (!(p > 0.0 and p <= 1.0)) return error.InvalidParameter;
+            return Self{ .pi = pi, .r = r, .p = p };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// log PMF(k) = log(π)                                                for k=0
+        /// log PMF(k) = log(1-π) + nb.logpmf(k) - log(1 - nb.pmf(0))         for k≥1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) {
+                return @log(self.pi);
+            }
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const denom = 1.0 - nb.pmf(0);
+            return @log(1.0 - self.pi) + nb.logpmf(k) - @log(denom);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum of pmf values.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p_val = self.pmf(j);
+                sum += p_val;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            if (prob == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= prob) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using the hurdle mechanism.
+        ///
+        /// Draw u ~ Uniform(0,1). If u < π, return 0 (structural zero).
+        /// Otherwise, rejection-sample from zero-truncated NegativeBinomial: repeatedly sample
+        /// from NegativeBinomial(r, p) until a non-zero value is obtained.
+        ///
+        /// Time: O(NB mean) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            if (u < self.pi) return 0;
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            while (true) {
+                const sample_val = nb.sample(rng);
+                if (sample_val != 0) return sample_val;
+            }
+        }
+
+        /// Mean: E[X] = (1-π) × μ_ztnb, where μ_ztnb = nb.mean() / (1 - nb.pmf(0)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const one_minus_pi = 1.0 - self.pi;
+            const denom = 1.0 - nb.pmf(0);
+            const mu_ztnb = nb.mean() / denom;
+            return one_minus_pi * mu_ztnb;
+        }
+
+        /// Variance: Var[X] = (1-π) × Var_ztnb + (1-π) × π × μ_ztnb².
+        ///
+        /// Where ZTNB is the zero-truncated NegativeBinomial(r, p):
+        ///   μ_ztnb = nb.mean() / (1 - nb.pmf(0))
+        ///   Var_ztnb = (nb.variance() + nb.mean()²) / (1 - nb.pmf(0)) - μ_ztnb²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const denom = 1.0 - nb.pmf(0);
+            const mu_nb = nb.mean();
+            const mu_ztnb = mu_nb / denom;
+            const var_nb = nb.variance();
+            const var_ztnb = (var_nb + mu_nb * mu_nb) / denom - mu_ztnb * mu_ztnb;
+            const one_minus_pi = 1.0 - self.pi;
+            return one_minus_pi * var_ztnb + one_minus_pi * self.pi * mu_ztnb * mu_ztnb;
+        }
+
+        /// Mode: numeric scan via PMF comparison.
+        /// When multiple modes exist, returns the larger one.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p_val = self.pmf(k);
+                // Use tolerance for tie detection to handle floating-point rounding
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p_val >= best_pmf - pmf_tolerance) {
+                    best_pmf = p_val;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p_val < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p_val = self.pmf(k);
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (p < 0.0 is never true) and, worse,
+                // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
+                // once pmf() itself underflows to exact 0 in T.
+                if (p_val == 0.0) break;
+                sum -= p_val * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.pi)) return error.InvalidParameter;
+            if (!(self.pi >= 0.0 and self.pi <= 1.0)) return error.InvalidParameter;
+            if (self.r < 1) return error.InvalidParameter;
+            if (!math.isFinite(self.p)) return error.InvalidParameter;
+            if (!(self.p > 0.0 and self.p <= 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("HurdleNegativeBinomial(π={d:.4}, r={d}, p={d:.4})", .{ self.pi, self.r, self.p });
+        }
+    };
+}
+
+// ============================================================================
+// HurdleNegativeBinomial Distribution Tests
+// ============================================================================
+
+test "HurdleNegativeBinomial: init valid pi=0 (zero-truncated boundary), r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.0, 2, 0.4);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: init valid pi=1 (degenerate all-zero), r=3, p=0.5" {
+    const dist = try HurdleNegativeBinomial(f64).init(1.0, 3, 0.5);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: init valid pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: init valid pi=0.5, r=5, p=0.6" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: init valid pi=0.7, r=1, p=0.3" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.7, 1, 0.3);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: init valid pi=0.2, r=10, p=0.8" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.2, 10, 0.8);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: init fails for pi < 0" {
+    const result = HurdleNegativeBinomial(f64).init(-0.1, 2, 0.4);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for pi > 1" {
+    const result = HurdleNegativeBinomial(f64).init(1.1, 2, 0.4);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for NaN pi" {
+    const result = HurdleNegativeBinomial(f64).init(math.nan(f64), 2, 0.4);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for infinite pi" {
+    const result = HurdleNegativeBinomial(f64).init(math.inf(f64), 2, 0.4);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for r < 1" {
+    const result = HurdleNegativeBinomial(f64).init(0.3, 0, 0.4);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for p <= 0" {
+    const result = HurdleNegativeBinomial(f64).init(0.3, 2, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for p < 0" {
+    const result = HurdleNegativeBinomial(f64).init(0.3, 2, -0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for p > 1" {
+    const result = HurdleNegativeBinomial(f64).init(0.3, 2, 1.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for NaN p" {
+    const result = HurdleNegativeBinomial(f64).init(0.3, 2, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: init fails for infinite p" {
+    const result = HurdleNegativeBinomial(f64).init(0.3, 2, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HurdleNegativeBinomial: pmf(0) equals pi exactly for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try expectApproxEqAbs(0.3, dist.pmf(0), 1e-15);
+}
+
+test "HurdleNegativeBinomial: pmf(0) equals pi exactly for pi=0.5, r=5, p=0.6" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    try expectApproxEqAbs(0.5, dist.pmf(0), 1e-15);
+}
+
+test "HurdleNegativeBinomial: pmf(0) equals pi exactly for pi=0.7, r=1, p=0.3" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.7, 1, 0.3);
+    try expectApproxEqAbs(0.7, dist.pmf(0), 1e-15);
+}
+
+test "HurdleNegativeBinomial: pmf(0) equals 0 when pi=0" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.0, 2, 0.4);
+    try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+}
+
+test "HurdleNegativeBinomial: pmf(0) equals 1 when pi=1" {
+    const dist = try HurdleNegativeBinomial(f64).init(1.0, 2, 0.4);
+    try expectApproxEqAbs(1.0, dist.pmf(0), 1e-15);
+}
+
+test "HurdleNegativeBinomial: pmf(k>=1) reduces to zero-truncated NB for pi=0" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.0, 2, 0.4);
+    const nb = try NegativeBinomial(f64).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0); // Should be 0.4^2 = 0.16
+    const denom = 1.0 - nb_pmf_0;
+
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const expected_pmf = nb.pmf(k) / denom;
+        try expectApproxEqAbs(expected_pmf, dist.pmf(k), 1e-12);
+    }
+}
+
+test "HurdleNegativeBinomial: pmf(k>=1) equals 0 when pi=1 (no positive counts)" {
+    const dist = try HurdleNegativeBinomial(f64).init(1.0, 2, 0.4);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(0.0, dist.pmf(k), 1e-15);
+    }
+}
+
+test "HurdleNegativeBinomial: pmf(1) exact formula for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const nb = try NegativeBinomial(f64).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0);
+    const denom = 1.0 - nb_pmf_0;
+    const expected_pmf = (1.0 - 0.3) * nb.pmf(1) / denom;
+    try expectApproxEqAbs(expected_pmf, dist.pmf(1), 1e-12);
+}
+
+test "HurdleNegativeBinomial: pmf(2) exact formula for pi=0.5, r=3, p=0.5" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 3, 0.5);
+    const nb = try NegativeBinomial(f64).init(3, 0.5);
+    const nb_pmf_0 = nb.pmf(0);
+    const denom = 1.0 - nb_pmf_0;
+    const expected_pmf = (1.0 - 0.5) * nb.pmf(2) / denom;
+    try expectApproxEqAbs(expected_pmf, dist.pmf(2), 1e-12);
+}
+
+test "HurdleNegativeBinomial: pmf positive for all valid k" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    for ([_]u64{ 0, 1, 2, 3, 5 }) |k| {
+        try expect(dist.pmf(k) >= 0.0);
+    }
+}
+
+test "HurdleNegativeBinomial: pmf sums to 1 (normalization, capped at MAX_K)" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    var sum: f64 = 0.0;
+    const MAX_K = 100000;
+    for (0..MAX_K) |k| {
+        const p = dist.pmf(k);
+        if (p < 1e-300) break;
+        sum += p;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "HurdleNegativeBinomial: pmf sums to 1 for pi=0.5, r=5, p=0.6" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    var sum: f64 = 0.0;
+    const MAX_K = 100000;
+    for (0..MAX_K) |k| {
+        const p = dist.pmf(k);
+        if (p < 1e-300) break;
+        sum += p;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "HurdleNegativeBinomial: logpmf(0) = log(pi)" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const expected_log = @log(0.3);
+    try expectApproxEqAbs(expected_log, dist.logpmf(0), 1e-12);
+}
+
+test "HurdleNegativeBinomial: logpmf(k) = log(pmf(k)) for k >= 1" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.4, 2, 0.5);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const log_pmf_k = dist.logpmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, log_pmf_k, 1e-10);
+    }
+}
+
+test "HurdleNegativeBinomial: logpmf(0) is negative infinity when pi=0" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.0, 2, 0.4);
+    const log_pmf_0 = dist.logpmf(0);
+    try expect(math.isInf(log_pmf_0) and log_pmf_0 < 0.0);
+}
+
+test "HurdleNegativeBinomial: cdf(0) = pmf(0) = pi" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "HurdleNegativeBinomial: cdf is monotonically non-decreasing" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.4, 2, 0.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "HurdleNegativeBinomial: cdf approaches 1.0 for large k" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const cdf_large = dist.cdf(1000);
+    try expect(cdf_large >= 0.999);
+}
+
+test "HurdleNegativeBinomial: cdf(k) = sum of pmf(0..k)" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.35, 2, 0.45);
+    var expected_cdf: f64 = 0.0;
+    const k = 5;
+    for (0..k + 1) |i| {
+        expected_cdf += dist.pmf(i);
+    }
+    try expectApproxEqAbs(expected_cdf, dist.cdf(k), 1e-10);
+}
+
+test "HurdleNegativeBinomial: quantile(0) = 0" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const q = try dist.quantile(0.0);
+    try expect(q == 0);
+}
+
+test "HurdleNegativeBinomial: quantile fails for p < 0" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "HurdleNegativeBinomial: quantile fails for p > 1" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "HurdleNegativeBinomial: quantile fails for NaN" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "HurdleNegativeBinomial: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    for ([_]f64{ 0.01, 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expect(cdf_q >= p - 1e-10);
+    }
+}
+
+test "HurdleNegativeBinomial: quantile stays non-negative (u64 bounds)" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.4, 3, 0.5);
+    for ([_]f64{ 0.05, 0.25, 0.5, 0.75, 0.95 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(q >= 0);
+    }
+}
+
+test "HurdleNegativeBinomial: mean formula for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const nb = try NegativeBinomial(f64).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0);
+    const mu_ztnb = nb.mean() / (1.0 - nb_pmf_0);
+    const expected_mean = (1.0 - 0.3) * mu_ztnb;
+    try expectApproxEqAbs(expected_mean, dist.mean(), 1e-10);
+}
+
+test "HurdleNegativeBinomial: mean formula for pi=0.5, r=5, p=0.6" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    const nb = try NegativeBinomial(f64).init(5, 0.6);
+    const nb_pmf_0 = nb.pmf(0);
+    const mu_ztnb = nb.mean() / (1.0 - nb_pmf_0);
+    const expected_mean = (1.0 - 0.5) * mu_ztnb;
+    try expectApproxEqAbs(expected_mean, dist.mean(), 1e-10);
+}
+
+test "HurdleNegativeBinomial: mean brute-force validation for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    var brute_force_mean: f64 = 0.0;
+    const MAX_K = 100000;
+    for (0..MAX_K) |k| {
+        const p = dist.pmf(k);
+        if (p < 1e-300) break;
+        brute_force_mean += @as(f64, @floatFromInt(k)) * p;
+    }
+    try expectApproxEqAbs(brute_force_mean, dist.mean(), 1e-8);
+}
+
+test "HurdleNegativeBinomial: mean brute-force validation for pi=0.7, r=3, p=0.5" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.7, 3, 0.5);
+    var brute_force_mean: f64 = 0.0;
+    const MAX_K = 100000;
+    for (0..MAX_K) |k| {
+        const p = dist.pmf(k);
+        if (p < 1e-300) break;
+        brute_force_mean += @as(f64, @floatFromInt(k)) * p;
+    }
+    try expectApproxEqAbs(brute_force_mean, dist.mean(), 1e-8);
+}
+
+test "HurdleNegativeBinomial: mean = 0 when pi=1 (degenerate all-zero)" {
+    const dist = try HurdleNegativeBinomial(f64).init(1.0, 2, 0.4);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-15);
+}
+
+test "HurdleNegativeBinomial: variance formula for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const nb = try NegativeBinomial(f64).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0);
+    const denom = 1.0 - nb_pmf_0;
+    const mu_nb = nb.mean();
+    const mu_ztnb = mu_nb / denom;
+    const var_nb = nb.variance();
+    const var_ztnb = (var_nb + mu_nb * mu_nb) / denom - mu_ztnb * mu_ztnb;
+    const expected_variance = (1.0 - 0.3) * var_ztnb + (1.0 - 0.3) * 0.3 * (mu_ztnb * mu_ztnb);
+    try expectApproxEqAbs(expected_variance, dist.variance(), 1e-10);
+}
+
+test "HurdleNegativeBinomial: variance formula for pi=0.5, r=5, p=0.6" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    const nb = try NegativeBinomial(f64).init(5, 0.6);
+    const nb_pmf_0 = nb.pmf(0);
+    const denom = 1.0 - nb_pmf_0;
+    const mu_nb = nb.mean();
+    const mu_ztnb = mu_nb / denom;
+    const var_nb = nb.variance();
+    const var_ztnb = (var_nb + mu_nb * mu_nb) / denom - mu_ztnb * mu_ztnb;
+    const expected_variance = (1.0 - 0.5) * var_ztnb + (1.0 - 0.5) * 0.5 * (mu_ztnb * mu_ztnb);
+    try expectApproxEqAbs(expected_variance, dist.variance(), 1e-10);
+}
+
+test "HurdleNegativeBinomial: variance brute-force validation for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const mean = dist.mean();
+    var brute_force_variance: f64 = 0.0;
+    const MAX_K = 100000;
+    for (0..MAX_K) |k| {
+        const p = dist.pmf(k);
+        if (p < 1e-300) break;
+        const k_f = @as(f64, @floatFromInt(k));
+        brute_force_variance += (k_f - mean) * (k_f - mean) * p;
+    }
+    try expectApproxEqAbs(brute_force_variance, dist.variance(), 1e-8);
+}
+
+test "HurdleNegativeBinomial: variance brute-force validation for pi=0.5, r=3, p=0.5" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 3, 0.5);
+    const mean = dist.mean();
+    var brute_force_variance: f64 = 0.0;
+    const MAX_K = 100000;
+    for (0..MAX_K) |k| {
+        const p = dist.pmf(k);
+        if (p < 1e-300) break;
+        const k_f = @as(f64, @floatFromInt(k));
+        brute_force_variance += (k_f - mean) * (k_f - mean) * p;
+    }
+    try expectApproxEqAbs(brute_force_variance, dist.variance(), 1e-8);
+}
+
+test "HurdleNegativeBinomial: variance = 0 when pi=1" {
+    const dist = try HurdleNegativeBinomial(f64).init(1.0, 2, 0.4);
+    try expectApproxEqAbs(0.0, dist.variance(), 1e-15);
+}
+
+test "HurdleNegativeBinomial: variance > 0 for typical parameters" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try expect(dist.variance() > 0.0);
+}
+
+test "HurdleNegativeBinomial: variance formula validation for distinct pi values" {
+    const MAX_K = 100000;
+    // Test pi=0.1, r=2, p=0.4
+    const dist1 = try HurdleNegativeBinomial(f64).init(0.1, 2, 0.4);
+    const mean1 = dist1.mean();
+    var var_bf1: f64 = 0.0;
+    for (0..MAX_K) |k| {
+        const p = dist1.pmf(k);
+        if (p < 1e-300) break;
+        const k_f = @as(f64, @floatFromInt(k));
+        var_bf1 += (k_f - mean1) * (k_f - mean1) * p;
+    }
+    try expectApproxEqAbs(var_bf1, dist1.variance(), 1e-8);
+    // Test pi=0.5, r=2, p=0.4
+    const dist2 = try HurdleNegativeBinomial(f64).init(0.5, 2, 0.4);
+    const mean2 = dist2.mean();
+    var var_bf2: f64 = 0.0;
+    for (0..MAX_K) |k| {
+        const p = dist2.pmf(k);
+        if (p < 1e-300) break;
+        const k_f = @as(f64, @floatFromInt(k));
+        var_bf2 += (k_f - mean2) * (k_f - mean2) * p;
+    }
+    try expectApproxEqAbs(var_bf2, dist2.variance(), 1e-8);
+}
+
+test "HurdleNegativeBinomial: mode returns 0 when pi is dominant (pi=0.9, r=2, p=0.4)" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.9, 2, 0.4);
+    try expect(dist.mode() == 0);
+}
+
+test "HurdleNegativeBinomial: mode returns positive value when pi is small (pi=0.1, r=3, p=0.5)" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.1, 3, 0.5);
+    const m = dist.mode();
+    try expect(m >= 1);
+}
+
+test "HurdleNegativeBinomial: mode returns 4 for pi=0, r=2, p=0.2" {
+    // NB(r=2,p=0.2).pmf(k) = (k+1)*0.04*0.8^k peaks at a tie between k=3 and
+    // k=4 (both 0.08192/0.96 ≈ 0.085333); mode() returns the larger on ties.
+    const dist = try HurdleNegativeBinomial(f64).init(0.0, 2, 0.2);
+    const m = dist.mode();
+    try expect(m == 4);
+}
+
+test "HurdleNegativeBinomial: entropy is positive and finite for typical params" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "HurdleNegativeBinomial: entropy is positive for pi=0.5, r=5, p=0.6" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "HurdleNegativeBinomial: entropy is zero when pi=1 (degenerate)" {
+    const dist = try HurdleNegativeBinomial(f64).init(1.0, 2, 0.4);
+    const h = dist.entropy();
+    try expectApproxEqAbs(0.0, h, 1e-10);
+}
+
+test "HurdleNegativeBinomial: sample stays non-negative (u64 bounds)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(s >= 0);
+    }
+}
+
+test "HurdleNegativeBinomial: sample with high pi (0.95) produces majority zeros" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try HurdleNegativeBinomial(f64).init(0.95, 2, 0.4);
+    var zero_count: usize = 0;
+    const n = 500;
+    for (0..n) |_| {
+        if (dist.sample(rng) == 0) zero_count += 1;
+    }
+    const ratio = @as(f64, @floatFromInt(zero_count)) / @as(f64, n);
+    try expect(ratio > 0.85);
+}
+
+test "HurdleNegativeBinomial: sample with pi=0.0 never returns zero (zero-truncated)" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try HurdleNegativeBinomial(f64).init(0.0, 2, 0.4);
+    var zero_count: usize = 0;
+    const n = 200;
+    for (0..n) |_| {
+        if (dist.sample(rng) == 0) zero_count += 1;
+    }
+    try expect(zero_count == 0);
+}
+
+test "HurdleNegativeBinomial: sample empirical mean close to theoretical (pi=0.3, r=2, p=0.4)" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    var sum: f64 = 0.0;
+    const n = 3000;
+    for (0..n) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(theoretical_mean, sample_mean, 0.2);
+}
+
+test "HurdleNegativeBinomial: sample empirical mean close to theoretical (pi=0.5, r=5, p=0.6)" {
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+    const dist = try HurdleNegativeBinomial(f64).init(0.5, 5, 0.6);
+    var sum: f64 = 0.0;
+    const n = 3000;
+    for (0..n) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(theoretical_mean, sample_mean, 0.3);
+}
+
+test "HurdleNegativeBinomial: small r (r=1) works without NaN/Inf" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 1, 0.5);
+    try dist.validate();
+    for ([_]u64{ 0, 1, 2, 3 }) |k| {
+        const p = dist.pmf(k);
+        try expect(!math.isNan(p) and math.isFinite(p));
+    }
+    const m = dist.mean();
+    try expect(!math.isNan(m) and math.isFinite(m));
+    const v = dist.variance();
+    try expect(!math.isNan(v) and math.isFinite(v));
+}
+
+test "HurdleNegativeBinomial: large r (r=20) works without NaN/Inf" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 20, 0.4);
+    try dist.validate();
+    for ([_]u64{ 0, 1, 10, 20, 30 }) |k| {
+        const p = dist.pmf(k);
+        try expect(!math.isNan(p) and math.isFinite(p));
+    }
+    const m = dist.mean();
+    try expect(!math.isNan(m) and math.isFinite(m));
+    const v = dist.variance();
+    try expect(!math.isNan(v) and math.isFinite(v));
+}
+
+test "HurdleNegativeBinomial: small p (p=0.1) works without NaN/Inf" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.1);
+    try dist.validate();
+    for ([_]u64{ 0, 1, 2, 5 }) |k| {
+        const c = dist.cdf(k);
+        try expect(!math.isNan(c) and math.isFinite(c));
+    }
+}
+
+test "HurdleNegativeBinomial: large p (p=0.9) works without NaN/Inf" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.9);
+    try dist.validate();
+    for ([_]u64{ 0, 1, 2, 5 }) |k| {
+        const c = dist.cdf(k);
+        try expect(!math.isNan(c) and math.isFinite(c));
+    }
+}
+
+test "HurdleNegativeBinomial: validate passes for valid pi, r, p" {
+    const dist = try HurdleNegativeBinomial(f64).init(0.3, 2, 0.4);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: validate fails for pi < 0 (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = -0.1, .r = 2, .p = 0.4 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for pi > 1 (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = 1.1, .r = 2, .p = 0.4 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for NaN pi (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = math.nan(f64), .r = 2, .p = 0.4 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for infinite pi (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = math.inf(f64), .r = 2, .p = 0.4 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for r < 1 (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = 0.3, .r = 0, .p = 0.4 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for p <= 0 (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = 0.3, .r = 2, .p = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for p > 1 (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = 0.3, .r = 2, .p = 1.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for NaN p (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = 0.3, .r = 2, .p = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HurdleNegativeBinomial: validate fails for infinite p (unsafe struct)" {
+    const dist = HurdleNegativeBinomial(f64){ .pi = 0.3, .r = 2, .p = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- f32 Type Tests ---
+
+test "HurdleNegativeBinomial: f32 init with valid parameters" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    try dist.validate();
+}
+
+test "HurdleNegativeBinomial: f32 pmf(0) for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), dist.pmf(0), 1e-6);
+}
+
+test "HurdleNegativeBinomial: f32 pmf(1) for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const nb = try NegativeBinomial(f32).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0);
+    const denom = 1.0 - nb_pmf_0;
+    const expected: f32 = 0.7 * nb.pmf(1) / denom;
+    try testing.expectApproxEqAbs(expected, dist.pmf(1), 1e-5);
+}
+
+test "HurdleNegativeBinomial: f32 mean for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const nb = try NegativeBinomial(f32).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0);
+    const mu_ztnb = nb.mean() / (1.0 - nb_pmf_0);
+    const expected: f32 = 0.7 * mu_ztnb;
+    try testing.expectApproxEqAbs(expected, dist.mean(), 1e-5);
+}
+
+test "HurdleNegativeBinomial: f32 variance for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const nb = try NegativeBinomial(f32).init(2, 0.4);
+    const nb_pmf_0 = nb.pmf(0);
+    const denom = 1.0 - nb_pmf_0;
+    const mu_nb = nb.mean();
+    const mu_ztnb = mu_nb / denom;
+    const var_nb = nb.variance();
+    const var_ztnb = (var_nb + mu_nb * mu_nb) / denom - mu_ztnb * mu_ztnb;
+    const expected: f32 = 0.7 * var_ztnb + 0.7 * 0.3 * (mu_ztnb * mu_ztnb);
+    try testing.expectApproxEqAbs(expected, dist.variance(), 1e-5);
+}
+
+test "HurdleNegativeBinomial: f32 cdf for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const cdf_0 = dist.cdf(0);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), cdf_0, 1e-6);
+}
+
+test "HurdleNegativeBinomial: f32 quantile for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 0);
+}
+
+test "HurdleNegativeBinomial: f32 entropy for pi=0.3, r=2, p=0.4" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "HurdleNegativeBinomial: f32 sample for pi=0.3, r=2, p=0.4" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try HurdleNegativeBinomial(f32).init(0.3, 2, 0.4);
+    const s = dist.sample(rng);
+    try expect(s >= 0);
+}
+
+test "HurdleNegativeBinomial: f32 validate() passes for valid parameters" {
+    const dist = try HurdleNegativeBinomial(f32).init(0.5, 3, 0.5);
+    try dist.validate();
+}
