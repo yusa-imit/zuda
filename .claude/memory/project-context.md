@@ -1,3 +1,23 @@
+**Session 788 Update (2026-07-16) — FEATURE MODE [COMPLETED]:**
+
+✅ **Recovered HurdlePoisson (154th)** — commit ce59c6a
+- **Mode**: FEATURE MODE (counter: 788)
+- **CI Status**: GREEN before and after; 0 open issues; `zig build test` exit code 0
+- **HurdlePoisson(pi, lambda)**: found complete, passing, uncommitted in working tree (same
+  recovery pattern as 758/762/767/769/774/778/782/784 — prior interrupted session's test-writer +
+  zig-developer + test-writer-fix output, root.zig already updated, agent-activity.jsonl already
+  logged). Two-stage model: P(X=0)=pi is a pure structural zero (not a latent-distribution zero
+  like the ZeroInflated* family), positive counts ~ zero-truncated Poisson(lambda). 83 tests.
+  Verified via full `zig build test` before committing rather than re-implementing.
+- **Note**: session 786 (ZeroInflatedBinomial, 153rd, commit b4c4795) had no prior memory
+  entry — backfilled a pointer-only line in the auto-memory MEMORY.md index; no dedicated
+  project-context.md entry exists for it since no session ran between 784 and 788 to write one.
+- **Total**: 154 distributions — confirmed via `grep -c '^pub fn.*comptime T: type) type'`
+- **Next Priority**: HurdleNegativeBinomial or HurdleBinomial (grep-confirmed absent from
+  root.zig as of this session) — same two-stage structural-zero + zero-truncated-base pattern,
+  swap the base distribution. For stabilization: resolve the release backlog, or continue the
+  `src/algorithms/` test-quality audit flagged in session 775.
+
 **Session 784 Update (2026-07-16) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Recovered ZeroInflatedNegativeBinomial (152nd)** — commit 57d3f1e
