@@ -1126,3 +1126,30 @@ For distributions with non-closed-form PDFs (Schorr approximation, Spence-Dirich
 - Don't hardcode reference values in expected calculations — use actual computed values
 - Don't forget mode can be found via bisection, not closed form
 - Don't assume CDF follows Normal-like S-curve — Landau is skewed left (peak negative)
+
+## Zig 0.15.2 `std.fmt` gotchas + Binomial `logFactorial` precision cliff (Session 791)
+
+**`format()` legacy signature is a landmine**: every distribution in `distributions.zig` defines
+`pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void`
+— this compiles fine standalone (Zig only semantically analyzes a method when it's actually
+called), but Zig 0.15.2's `std.fmt`/`std.Io.Writer` expects the NEW 2-arg contract
+`format(self: Self, w: *std.Io.Writer) !void` and errors with "ambiguous format string; specify
+{f}" then a "member function expected 3 argument(s), found 1" compile error the moment any test
+actually calls `std.fmt.bufPrint`/`print` with `"{f}"` on one of these types. Confirmed via grep
+that NONE of the ~156 distributions' `format()` methods are ever exercised by `std.fmt` anywhere
+in the test suite — this is a silent, file-wide incompatibility. Don't add a format-smoke-test
+for a new distribution assuming it'll "just work" like the other tests; either skip fmt-testing
+`format()` (matches current convention) or migrate the signature (large, cross-cutting, do as a
+dedicated stabilization pass, not inside a single-distribution feature cycle).
+
+**`Binomial`'s shared `logFactorial` helper has a real precision cliff at n=20**: it uses exact
+summation for `n<20` and switches to Stirling's approximation for `n>=20`
+(`n*log(n)-n+0.5*log(2πn)`), which is only accurate to ~4e-3 in log-space right at the boundary
+(confirmed: exact `log(20!)=42.335616...` vs Stirling `log(20!)=42.331450...`). Any
+Binomial-derived distribution (ZeroInflatedBinomial, HurdleBinomial, BetaBinomial, etc.) with
+`n>=20` in a test will fail a tight (`1e-12`) normalization/sum-to-1 assertion for reasons
+unrelated to that distribution's own formula. `ZeroInflatedBinomial`'s existing tests already
+dodge this by using `n=10`; keep new tests under n=20, or loosen tolerance if a larger n is
+required by the test's purpose. Raising the exact-computation cutoff in `logFactorial` itself
+would fix this properly but touches a widely-shared helper — flagged as a stabilization backlog
+item, not a fix to make inside a feature cycle for one distribution.
