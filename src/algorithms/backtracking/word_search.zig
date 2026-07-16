@@ -160,9 +160,9 @@ pub fn findAll(comptime T: type, allocator: Allocator, board: []const []const T,
 /// Time: O(m × n × 4^L)
 /// Space: O(L) recursion + O(m × n) visited
 pub fn countOccurrences(comptime T: type, allocator: Allocator, board: []const []const T, word: []const T) !usize {
-    const all = try findAll(T, allocator, board, word);
+    var all = try findAll(T, allocator, board, word);
     defer {
-        for (all.items) |path| {
+        for (all.items) |*path| {
             path.deinit(allocator);
         }
         all.deinit(allocator);
@@ -335,7 +335,7 @@ test "word search - with path reconstruction" {
     const allocator = testing.allocator;
 
     // Find "ABC"
-    const result = try existWithPath(u8, allocator, &board, "ABC");
+    var result = try existWithPath(u8, allocator, &board, "ABC");
     try testing.expect(result != null);
     defer result.?.deinit(allocator);
 
@@ -366,7 +366,7 @@ test "word search - zigzag path" {
     const allocator = testing.allocator;
 
     // Find "ABEHI" (A -> B -> E -> H -> I)
-    const result = try existWithPath(u8, allocator, &board, "ABEHI");
+    var result = try existWithPath(u8, allocator, &board, "ABEHI");
     try testing.expect(result != null);
     defer result.?.deinit(allocator);
 
@@ -382,7 +382,7 @@ test "word search - find all occurrences" {
     const allocator = testing.allocator;
 
     // Find all "AB" occurrences
-    const results = try findAll(u8, allocator, &board, "AB");
+    var results = try findAll(u8, allocator, &board, "AB");
     defer {
         for (results.items) |*path| {
             path.deinit(allocator);
