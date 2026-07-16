@@ -663,3 +663,5 @@
 {"timestamp":"2026-07-16T07:41:32Z","action":"subagent","agent_type":"zig-developer","task":"Implement HurdlePoisson distribution to pass failing tests","project":"zuda"}
 {"timestamp":"2026-07-16T07:56:30Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 incorrect HurdlePoisson tests (tolerance + false monotonicity claim)","project":"zuda"}
 {"timestamp":"2026-07-16T15:45:04Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for HurdleNegativeBinomial distribution (88 tests)","project":"zuda"}
+{"timestamp": "2026-07-17T00:00:00Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for HurdleBinomial distribution (156th)", "project": "zuda"}
+{"timestamp": "2026-07-17T00:15:00Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement HurdleBinomial (156th distribution) and fix test-writer's Zig 0.15 {f} format spec + n=20 Stirling-precision test issues", "project": "zuda"}
