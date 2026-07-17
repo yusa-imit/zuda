@@ -667,3 +667,6 @@
 {"timestamp": "2026-07-17T00:15:00Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement HurdleBinomial (156th distribution) and fix test-writer's Zig 0.15 {f} format spec + n=20 Stirling-precision test issues", "project": "zuda"}
 {"timestamp": "2026-07-17T03:31:44Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for GB1 (Generalized Beta Type I) distribution (157th)", "project": "zuda"}
 {"timestamp": "2026-07-17T03:35:41Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement GB1 (Generalized Beta Type I) distribution to pass tests (157th)", "project": "zuda"}
+{"timestamp": "2026-07-17T03:51:12Z", "action": "subagent", "agent_type": "test-writer", "task": "Fix one GB1 boundary-mode test (a=2,p=1,q=1 case) after mode() formula correction", "project": "zuda"}
+{"timestamp":"2026-07-17T07:36:14Z","action":"subagent","agent_type":"test-writer","task":"Write failing TDD tests for BetaGeometric distribution (158th)","project":"zuda"}
+{"timestamp":"2026-07-17T07:38:22Z","action":"subagent","agent_type":"zig-developer","task":"Implement BetaGeometric distribution (158th) to pass failing tests","project":"zuda"}
