@@ -92645,12 +92645,20 @@ pub fn GB1(comptime T: type) type {
             return ex2 - ex * ex;
         }
 
-        /// Mode: b · ((a*p−1)/(a*(p+q)−2))^(1/a) when a*p > 1 and a*(p+q) > 2; 0 otherwise.
+        /// Mode: b · ((a*p−1)/(a*(p+q)−a−1))^(1/a) when a*p > 1, the denominator is positive,
+        /// and the ratio is < 1 (interior critical point); b when a*p > 1 but the pdf is
+        /// monotonically increasing up to the boundary (denominator ≤ 0 or ratio ≥ 1); 0 when
+        /// a*p ≤ 1 (pdf is monotonically decreasing / unbounded near 0).
+        /// Derived from d/dx log f(x) = 0; reduces to the standard Beta(p,q) mode formula
+        /// (p−1)/(p+q−2) at a=1.
         ///
         /// Time: O(1) | Space: O(1)
         pub fn mode(self: Self) T {
-            if (self.a * self.p <= 1.0 or self.a * (self.p + self.q) <= 2.0) return 0.0;
-            const ratio = (self.a * self.p - 1.0) / (self.a * (self.p + self.q) - 2.0);
+            if (self.a * self.p <= 1.0) return 0.0;
+            const denom = self.a * (self.p + self.q) - self.a - 1.0;
+            if (denom <= 0.0) return self.b;
+            const ratio = (self.a * self.p - 1.0) / denom;
+            if (ratio >= 1.0) return self.b;
             return self.b * math.pow(T, ratio, 1.0 / self.a);
         }
 
@@ -93138,15 +93146,19 @@ test "GB1: variance cross-checked numerically for (a=0.5, b=2, p=1.5, q=2)" {
 
 // --- Mode Cross-Check ---
 
-test "GB1: mode for (a=2, b=1, p=1, q=1) satisfies pdf(mode) >= pdf(mode ± delta)" {
+test "GB1: mode for (a=2, b=1, p=1, q=1) boundary case with monotone-increasing PDF" {
     const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
     const mode = dist.mode();
-    const pdf_at_mode = dist.pdf(mode);
-    const delta = 0.01;
-    const pdf_left = dist.pdf(mode - delta);
-    const pdf_right = dist.pdf(mode + delta);
-    try testing.expect(pdf_at_mode >= pdf_left);
-    try testing.expect(pdf_at_mode >= pdf_right);
+    // For this parameter set, PDF is f(x)=2x (monotone increasing), so mode is at boundary b
+    try testing.expectApproxEqAbs(mode, 1.0, 1e-10);
+
+    // Verify PDF is monotonically increasing as x approaches the boundary from the left
+    const pdf_left_1 = dist.pdf(mode - 0.1);    // pdf(0.9)  ≈ 1.8
+    const pdf_left_2 = dist.pdf(mode - 0.01);   // pdf(0.99) ≈ 1.98
+    const pdf_left_3 = dist.pdf(mode - 0.001);  // pdf(0.999)≈ 1.998
+
+    try testing.expect(pdf_left_1 < pdf_left_2);
+    try testing.expect(pdf_left_2 < pdf_left_3);
 }
 
 test "GB1: mode for (a=1, b=1, p=2, q=3) satisfies pdf(mode) >= pdf(mode ± delta)" {
