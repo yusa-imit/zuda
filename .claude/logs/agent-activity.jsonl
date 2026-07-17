@@ -670,3 +670,6 @@
 {"timestamp": "2026-07-17T03:51:12Z", "action": "subagent", "agent_type": "test-writer", "task": "Fix one GB1 boundary-mode test (a=2,p=1,q=1 case) after mode() formula correction", "project": "zuda"}
 {"timestamp":"2026-07-17T07:36:14Z","action":"subagent","agent_type":"test-writer","task":"Write failing TDD tests for BetaGeometric distribution (158th)","project":"zuda"}
 {"timestamp":"2026-07-17T07:38:22Z","action":"subagent","agent_type":"zig-developer","task":"Implement BetaGeometric distribution (158th) to pass failing tests","project":"zuda"}
+{"timestamp":"2026-07-17T11:38:30Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for FoldedT (159th distribution)","project":"zuda"}
+{"timestamp":"2026-07-17T11:41:51Z","action":"subagent","agent_type":"zig-developer","task":"Implement FoldedT distribution (159th) to pass failing tests","project":"zuda"}
+{"timestamp":"2026-07-17T19:43:21Z","action":"subagent","agent_type":"test-writer","task":"Loosen 4 overly-tight FoldedT test tolerances (cdf(0.5), mean x2, variance) that exceed the precision of their 10-sig-fig ground truth literals","project":"zuda"}
