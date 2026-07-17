@@ -92521,3 +92521,835 @@ test "HurdleBinomial: p close to 1 (p=0.99) for pi=0.3, n=10" {
     try expectApproxEqAbs(0.3, dist.pmf(0), 1e-14);
     try dist.validate();
 }
+
+pub fn GB1(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+        p: T,
+        q: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize GB1(a, b, p, q) distribution.
+        /// Returns error.InvalidParameter if any param ≤ 0 or not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T, p: T, q: T) DistributionError!Self {
+            if (a <= 0.0 or math.isNan(a) or math.isInf(a)) return error.InvalidParameter;
+            if (b <= 0.0 or math.isNan(b) or math.isInf(b)) return error.InvalidParameter;
+            if (p <= 0.0 or math.isNan(p) or math.isInf(p)) return error.InvalidParameter;
+            if (q <= 0.0 or math.isNan(q) or math.isInf(q)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b, .p = p, .q = q };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = (a * x^(a*p−1)) / (b^(a*p) * B(p,q)) * (1−(x/b)^a)^(q−1) for 0 < x < b; 0 elsewhere.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0 or x >= self.b) return 0.0;
+            return @exp(self.logpdf(x));
+        }
+
+        /// Log-probability density function.
+        /// logpdf(x) = log(a) − log(b) − logBeta(p,q) + (a*p−1)·log(z) + (q−1)·log(1−z^a),
+        /// where z = x/b. Returns −∞ for x ≤ 0 or x ≥ b.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0 or x >= self.b) return -math.inf(T);
+            const z = x / self.b;
+            const za = math.pow(T, z, self.a);
+            return @log(self.a) - @log(self.b) - logBeta(self.p, self.q) +
+                (self.a * self.p - 1.0) * @log(z) +
+                (self.q - 1.0) * @log(1.0 - za);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = I_u(p,q) where u = (x/b)^a.
+        /// Returns 0 for x ≤ 0; 1.0 for x ≥ b (bounded support).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= self.b) return 1.0;
+            const z = x / self.b;
+            const za = math.pow(T, z, self.a);
+            return regularizedBetaI(self.p, self.q, za);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function.
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0 or math.isNan(prob)) return error.InvalidProbability;
+            return self.quantileRaw(prob);
+        }
+
+        fn quantileRaw(self: Self, prob: T) T {
+            if (prob <= 0.0) return 0.0;
+            if (prob >= 1.0) return self.b;
+
+            // Bisection: find u in [0,1] such that regularizedBetaI(p, q, u) = prob
+            var lo: T = 0.0;
+            var hi: T = 1.0;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                const cdf_mid = regularizedBetaI(self.p, self.q, mid);
+                if (hi - lo < 1e-10) break;
+                if (cdf_mid < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            const u = (lo + hi) / 2.0;
+            // x = b * u^(1/a)
+            return self.b * math.pow(T, u, 1.0 / self.a);
+        }
+
+        // --- Moments ---
+
+        /// Mean: b · B(p + 1/a, q) / B(p, q).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.b * @exp(logBeta(self.p + 1.0 / self.a, self.q) - logBeta(self.p, self.q));
+        }
+
+        /// Variance: E[X²] − E[X]² where E[X²] = b² · B(p + 2/a, q) / B(p, q).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ex = self.mean();
+            const ex2 = self.b * self.b * @exp(logBeta(self.p + 2.0 / self.a, self.q) - logBeta(self.p, self.q));
+            return ex2 - ex * ex;
+        }
+
+        /// Mode: b · ((a*p−1)/(a*(p+q)−2))^(1/a) when a*p > 1 and a*(p+q) > 2; 0 otherwise.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.a * self.p <= 1.0 or self.a * (self.p + self.q) <= 2.0) return 0.0;
+            const ratio = (self.a * self.p - 1.0) / (self.a * (self.p + self.q) - 2.0);
+            return self.b * math.pow(T, ratio, 1.0 / self.a);
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy estimated via 500-point midpoint quadrature.
+        ///
+        /// H ≈ −(1/500)·Σ_i logpdf(Q((i+0.5)/500))
+        ///
+        /// Time: O(500) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 500;
+            const Nf: T = @floatFromInt(N);
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const p: T = (@as(T, @floatFromInt(i)) + 0.5) / Nf;
+                const x = self.quantileRaw(p);
+                sum -= self.logpdf(x);
+            }
+            return sum / Nf;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample using inverse-CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantileRaw(rng.float(T));
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: a > 0, b > 0, p > 0, q > 0, all finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= 0.0 or math.isNan(self.a) or math.isInf(self.a)) return error.InvalidParameter;
+            if (self.b <= 0.0 or math.isNan(self.b) or math.isInf(self.b)) return error.InvalidParameter;
+            if (self.p <= 0.0 or math.isNan(self.p) or math.isInf(self.p)) return error.InvalidParameter;
+            if (self.q <= 0.0 or math.isNan(self.q) or math.isInf(self.q)) return error.InvalidParameter;
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "GB1(a=..., b=..., p=..., q=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("GB1(a={d:.4}, b={d:.4}, p={d:.4}, q={d:.4})", .{ self.a, self.b, self.p, self.q });
+        }
+    };
+}
+
+// ============================================================================
+// GB1 (Generalized Beta Distribution of the First Kind)
+// ============================================================================
+
+// GB1(a, b, p, q) — Generalized Beta Distribution of the First Kind.
+// Bounded support [0, b] with shape parameters p, q and scale a.
+// PDF: f(x) = (a * x^(a*p-1)) / (b^(a*p) * B(p,q)) * (1 - (x/b)^a)^(q-1)
+// for 0 < x < b; 0 elsewhere.
+// Reduces to scaled Beta(p,q) when a=1: X = b*Y where Y~Beta(p,q).
+// Parameters:
+//   - a: shape/scale parameter, a > 0
+//   - b: upper bound, b > 0
+//   - p: beta shape parameter, p > 0
+//   - q: beta shape parameter, q > 0
+// Note: GB1 struct will be defined in src/stats/distributions.zig;
+// these tests assume it exists with methods: init, pdf, logpdf, cdf, sf,
+// quantile, mean, variance, mode, entropy, sample, validate, format.
+
+// --- Init Tests ---
+
+test "GB1: init with valid params (a=2, b=1, p=1, q=1) succeeds" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.a == 2.0);
+    try testing.expect(dist.b == 1.0);
+    try testing.expect(dist.p == 1.0);
+    try testing.expect(dist.q == 1.0);
+}
+
+test "GB1: init with valid params (a=1, b=2, p=2, q=3) succeeds" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    try testing.expect(dist.a == 1.0);
+    try testing.expect(dist.b == 2.0);
+    try testing.expect(dist.p == 2.0);
+    try testing.expect(dist.q == 3.0);
+}
+
+test "GB1: init with valid params (a=0.5, b=3, p=1.5, q=2.5) succeeds" {
+    const dist = try GB1(f64).init(0.5, 3.0, 1.5, 2.5);
+    try testing.expect(dist.a == 0.5);
+    try testing.expect(dist.b == 3.0);
+    try testing.expect(dist.p == 1.5);
+    try testing.expect(dist.q == 2.5);
+}
+
+test "GB1: init with a <= 0 returns error" {
+    const result = GB1(f64).init(-1.0, 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with a = 0 returns error" {
+    const result = GB1(f64).init(0.0, 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with b <= 0 returns error" {
+    const result = GB1(f64).init(2.0, -1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with b = 0 returns error" {
+    const result = GB1(f64).init(2.0, 0.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with p <= 0 returns error" {
+    const result = GB1(f64).init(2.0, 1.0, -1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with p = 0 returns error" {
+    const result = GB1(f64).init(2.0, 1.0, 0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with q <= 0 returns error" {
+    const result = GB1(f64).init(2.0, 1.0, 1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with q = 0 returns error" {
+    const result = GB1(f64).init(2.0, 1.0, 1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with a=inf returns error" {
+    const result = GB1(f64).init(math.inf(f64), 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with a=nan returns error" {
+    const result = GB1(f64).init(math.nan(f64), 1.0, 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with b=inf returns error" {
+    const result = GB1(f64).init(2.0, math.inf(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with b=nan returns error" {
+    const result = GB1(f64).init(2.0, math.nan(f64), 1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with p=inf returns error" {
+    const result = GB1(f64).init(2.0, 1.0, math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with p=nan returns error" {
+    const result = GB1(f64).init(2.0, 1.0, math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with q=inf returns error" {
+    const result = GB1(f64).init(2.0, 1.0, 1.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "GB1: init with q=nan returns error" {
+    const result = GB1(f64).init(2.0, 1.0, 1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- PDF Boundary Tests ---
+
+test "GB1: pdf at x <= 0 returns 0" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+}
+
+test "GB1: pdf at x >= b returns 0 (bounded support)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.pdf(1.0) == 0.0);
+    try testing.expect(dist.pdf(1.5) == 0.0);
+}
+
+test "GB1: pdf positive for x in (0, b)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = dist.pdf(0.5);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+test "GB1: pdf positive for x in (0, b) with a=1, b=2, p=2, q=3" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    const p = dist.pdf(1.0);
+    try testing.expect(p > 0.0);
+    try testing.expect(math.isFinite(p));
+}
+
+// --- LogPDF Tests ---
+
+test "GB1: logpdf equals log(pdf) at x=0.3 for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(0.3);
+    try testing.expectApproxEqAbs(dist.logpdf(0.3), @log(pdf_val), 1e-10);
+}
+
+test "GB1: logpdf equals log(pdf) at x=0.5 for (a=1, b=1, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 2.0, 3.0);
+    const pdf_val = dist.pdf(0.5);
+    try testing.expectApproxEqAbs(dist.logpdf(0.5), @log(pdf_val), 1e-10);
+}
+
+test "GB1: logpdf equals log(pdf) near boundary x=0.1 for (a=1, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 1.0, 1.0);
+    const x = 0.1;
+    const pdf_val = dist.pdf(x);
+    try testing.expectApproxEqAbs(dist.logpdf(x), @log(pdf_val), 1e-10);
+}
+
+test "GB1: logpdf equals log(pdf) near boundary x=0.9 for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x = 0.9;
+    const pdf_val = dist.pdf(x);
+    try testing.expectApproxEqAbs(dist.logpdf(x), @log(pdf_val), 1e-10);
+}
+
+// --- CDF Boundary Tests ---
+
+test "GB1: cdf at x <= 0 returns 0" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+    try testing.expect(dist.cdf(-1.0) == 0.0);
+}
+
+test "GB1: cdf at x >= b returns 1.0 (bounded support)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    try testing.expectApproxEqAbs(dist.cdf(1.0), 1.0, 1e-15);
+    try testing.expectApproxEqAbs(dist.cdf(1.5), 1.0, 1e-15);
+}
+
+test "GB1: cdf monotone increasing for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0 };
+    var prev: f64 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "GB1: cdf monotone increasing for (a=1, b=2, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    const x_vals = [_]f64{ 0.0, 0.2, 0.6, 1.0, 1.4, 1.8, 2.0 };
+    var prev: f64 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "GB1: sf monotone decreasing" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 0.9, 1.0 };
+    var prev: f64 = 2.0;
+    for (x_vals) |x| {
+        const s = dist.sf(x);
+        try testing.expect(s <= prev);
+        prev = s;
+    }
+}
+
+test "GB1: cdf + sf = 1 at several points" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try testing.expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+// --- Quantile Boundary Tests ---
+
+test "GB1: quantile at p=0 returns 0" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(q, 0.0, 1e-10);
+}
+
+test "GB1: quantile at p=1 returns b (bounded support, not inf)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(q, 1.0, 1e-10);
+}
+
+test "GB1: quantile at p=1 returns b for (a=1, b=2, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(q, 2.0, 1e-10);
+}
+
+test "GB1: quantile at p<0 returns error" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GB1: quantile at p>1 returns error" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "GB1: quantile at p=NaN returns error" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const result = dist.quantile(math.nan(f64));
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+// --- Quantile/CDF Roundtrip Tests ---
+
+test "GB1: quantile/cdf roundtrip at p=0.25" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = 0.25;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try testing.expectApproxEqAbs(p_recovered, p, 1e-4);
+}
+
+test "GB1: quantile/cdf roundtrip at p=0.5" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = 0.5;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try testing.expectApproxEqAbs(p_recovered, p, 1e-4);
+}
+
+test "GB1: quantile/cdf roundtrip at p=0.75" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const p = 0.75;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try testing.expectApproxEqAbs(p_recovered, p, 1e-4);
+}
+
+test "GB1: quantile/cdf roundtrip for (a=1, b=2, p=2, q=3) at p=0.5" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    const p = 0.5;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try testing.expectApproxEqAbs(p_recovered, p, 1e-4);
+}
+
+// --- Normalization Test (PDF integrates to 1.0) ---
+
+test "GB1: pdf integrates to 1.0 via 2000-point midpoint rule for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var integral: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        integral += dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(integral, 1.0, 1e-3);
+}
+
+test "GB1: pdf integrates to 1.0 via 2000-point midpoint rule for (a=1, b=1, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 2.0, 3.0);
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var integral: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        integral += dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(integral, 1.0, 1e-3);
+}
+
+test "GB1: pdf integrates to 1.0 via 2000-point midpoint rule for (a=0.5, b=2, p=1.5, q=2)" {
+    const dist = try GB1(f64).init(0.5, 2.0, 1.5, 2.0);
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var integral: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        integral += dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(integral, 1.0, 1e-3);
+}
+
+// --- Mean Cross-Check (via Numeric Quadrature) ---
+
+test "GB1: mean cross-checked numerically for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var numeric_mean: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        numeric_mean += x * dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(numeric_mean, dist.mean(), 1e-3);
+}
+
+test "GB1: mean cross-checked numerically for (a=1, b=2, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var numeric_mean: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        numeric_mean += x * dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(numeric_mean, dist.mean(), 1e-3);
+}
+
+test "GB1: mean cross-checked numerically for (a=0.5, b=3, p=1.5, q=2.5)" {
+    const dist = try GB1(f64).init(0.5, 3.0, 1.5, 2.5);
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var numeric_mean: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        numeric_mean += x * dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(numeric_mean, dist.mean(), 1e-3);
+}
+
+// --- Variance Cross-Check (via Numeric Quadrature) ---
+
+test "GB1: variance cross-checked numerically for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const mean = dist.mean();
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var numeric_variance: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        const diff = x - mean;
+        numeric_variance += (diff * diff) * dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(numeric_variance, dist.variance(), 1e-3);
+}
+
+test "GB1: variance cross-checked numerically for (a=1, b=1, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 2.0, 3.0);
+    const mean = dist.mean();
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var numeric_variance: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        const diff = x - mean;
+        numeric_variance += (diff * diff) * dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(numeric_variance, dist.variance(), 1e-3);
+}
+
+test "GB1: variance cross-checked numerically for (a=0.5, b=2, p=1.5, q=2)" {
+    const dist = try GB1(f64).init(0.5, 2.0, 1.5, 2.0);
+    const mean = dist.mean();
+    const n_points: i64 = 2000;
+    const dx = dist.b / @as(f64, @floatFromInt(n_points));
+    var numeric_variance: f64 = 0.0;
+    for (0..@as(usize, @intCast(n_points))) |i| {
+        const x = (0.5 + @as(f64, @floatFromInt(i))) * dx;
+        const diff = x - mean;
+        numeric_variance += (diff * diff) * dist.pdf(x) * dx;
+    }
+    try testing.expectApproxEqAbs(numeric_variance, dist.variance(), 1e-3);
+}
+
+// --- Mode Cross-Check ---
+
+test "GB1: mode for (a=2, b=1, p=1, q=1) satisfies pdf(mode) >= pdf(mode ± delta)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const mode = dist.mode();
+    const pdf_at_mode = dist.pdf(mode);
+    const delta = 0.01;
+    const pdf_left = dist.pdf(mode - delta);
+    const pdf_right = dist.pdf(mode + delta);
+    try testing.expect(pdf_at_mode >= pdf_left);
+    try testing.expect(pdf_at_mode >= pdf_right);
+}
+
+test "GB1: mode for (a=1, b=1, p=2, q=3) satisfies pdf(mode) >= pdf(mode ± delta)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 2.0, 3.0);
+    const mode = dist.mode();
+    const pdf_at_mode = dist.pdf(mode);
+    const delta = 0.01;
+    const pdf_left = dist.pdf(mode - delta);
+    const pdf_right = dist.pdf(mode + delta);
+    try testing.expect(pdf_at_mode >= pdf_left);
+    try testing.expect(pdf_at_mode >= pdf_right);
+}
+
+test "GB1: mode is 0 when a*p <= 1 (boundary case)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 1.0, 2.0);
+    // a*p = 1*1 = 1, which is NOT > 1, so mode should be 0
+    const mode = dist.mode();
+    try testing.expectApproxEqAbs(mode, 0.0, 1e-10);
+}
+
+// --- Sample Tests ---
+
+test "GB1: 500 samples for (a=2, b=1, p=1, q=1) all within [0, b]" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    for (0..500) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0 and sample <= dist.b);
+    }
+}
+
+test "GB1: empirical mean from 500 samples for (a=2, b=1, p=1, q=1) near true mean" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..500) |_| {
+        const sample = dist.sample(rng.random());
+        sum += sample;
+    }
+    const empirical_mean = sum / 500.0;
+    const true_mean = dist.mean();
+    try testing.expectApproxEqAbs(empirical_mean, true_mean, 0.1);
+}
+
+test "GB1: samples for (a=1, b=2, p=2, q=3) all within [0, b]" {
+    var rng = std.Random.DefaultPrng.init(123);
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    for (0..500) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0 and sample <= dist.b);
+    }
+}
+
+// --- Entropy Test ---
+
+test "GB1: entropy finite for (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+test "GB1: entropy finite for (a=1, b=2, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+test "GB1: entropy finite for (a=0.5, b=3, p=1.5, q=2.5)" {
+    const dist = try GB1(f64).init(0.5, 3.0, 1.5, 2.5);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+// --- Special Case: a=1 reduces to scaled Beta(p,q) ---
+
+test "GB1 (a=1) reduces to scaled Beta: pdf matches at several x for (a=1, b=1, p=2, q=3)" {
+    const dist_gb1 = try GB1(f64).init(1.0, 1.0, 2.0, 3.0);
+    const dist_beta = try Beta(f64).init(2.0, 3.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        const gb1_pdf = dist_gb1.pdf(x);
+        const beta_pdf = dist_beta.pdf(x);
+        try testing.expectApproxEqAbs(gb1_pdf, beta_pdf, 1e-10);
+    }
+}
+
+test "GB1 (a=1) reduces to scaled Beta: pdf matches for (a=1, b=2, p=1, q=2)" {
+    const dist_gb1 = try GB1(f64).init(1.0, 2.0, 1.0, 2.0);
+    const dist_beta = try Beta(f64).init(1.0, 2.0);
+    const x_vals = [_]f64{ 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8 };
+    for (x_vals) |x| {
+        const gb1_pdf = dist_gb1.pdf(x);
+        const scaled_beta_pdf = dist_beta.pdf(x / dist_gb1.b) / dist_gb1.b;
+        try testing.expectApproxEqAbs(gb1_pdf, scaled_beta_pdf, 1e-10);
+    }
+}
+
+// --- Special Case: a=1, p=1, q=1 is Uniform(0, b) ---
+
+test "GB1 (a=1, p=1, q=1) equals Uniform(0, b): pdf == 1/b for (a=1, p=1, q=1, b=1)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (x_vals) |x| {
+        try testing.expectApproxEqAbs(dist.pdf(x), 1.0, 1e-10);
+    }
+}
+
+test "GB1 (a=1, p=1, q=1) equals Uniform(0, b): pdf == 1/b for (a=1, p=1, q=1, b=2)" {
+    const dist = try GB1(f64).init(1.0, 2.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.2, 0.6, 1.0, 1.4, 1.8 };
+    const expected_pdf = 1.0 / 2.0;
+    for (x_vals) |x| {
+        try testing.expectApproxEqAbs(dist.pdf(x), expected_pdf, 1e-10);
+    }
+}
+
+test "GB1 (a=1, p=1, q=1) equals Uniform(0, b): cdf == x/b for (a=1, p=1, q=1, b=1)" {
+    const dist = try GB1(f64).init(1.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f64{ 0.0, 0.1, 0.5, 0.9, 1.0 };
+    for (x_vals) |x| {
+        const expected_cdf = x / dist.b;
+        try testing.expectApproxEqAbs(dist.cdf(x), expected_cdf, 1e-10);
+    }
+}
+
+// --- Validate Tests ---
+
+test "GB1: validate succeeds for valid params (a=2, b=1, p=1, q=1)" {
+    const dist = try GB1(f64).init(2.0, 1.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "GB1: validate succeeds for valid params (a=1, b=2, p=2, q=3)" {
+    const dist = try GB1(f64).init(1.0, 2.0, 2.0, 3.0);
+    try dist.validate();
+}
+
+// --- f32 Type Support Tests ---
+
+test "GB1: f32 init with valid parameters" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "GB1: f32 pdf positive for x in (0, b)" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const pdf_val = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+    try testing.expect(math.isFinite(pdf_val));
+}
+
+test "GB1: f32 cdf monotone increasing" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const x_vals = [_]f32{ 0.0, 0.2, 0.5, 0.8, 1.0 };
+    var prev: f32 = -0.1;
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "GB1: f32 quantile at p=0 returns 0" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(q, 0.0, 1e-6);
+}
+
+test "GB1: f32 quantile at p=1 returns b" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expectApproxEqAbs(q, 1.0, 1e-6);
+}
+
+test "GB1: f32 mean finite" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+}
+
+test "GB1: f32 variance finite" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+}
+
+test "GB1: f32 mode finite" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const m = dist.mode();
+    try testing.expect(math.isFinite(m));
+}
+
+test "GB1: f32 entropy finite" {
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+}
+
+test "GB1: f32 sample within bounds" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try GB1(f32).init(2.0, 1.0, 1.0, 1.0);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample >= 0.0 and sample <= dist.b);
+    }
+}
