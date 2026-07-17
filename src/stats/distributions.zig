@@ -93828,3 +93828,715 @@ test "BetaGeometric: pmf sums to approximately 1 a=3 b=1" {
     }
     try testing.expectApproxEqAbs(1.0, sum, 1e-4);
 }
+
+// ============================================================================
+// FoldedT (Folded Student's t) Distribution
+// ============================================================================
+
+/// Folded Student's t distribution FoldedT(μ, σ, ν)
+///
+/// FoldedT is obtained by folding a location-scale shifted Student's t distribution at 0.
+/// It represents the absolute value of a random variable Y = μ + σ·T where T ~ StudentT(ν).
+///
+/// Parameters:
+///   - mu: location parameter (any finite real)
+///   - sigma: scale parameter (σ > 0)
+///   - nu: degrees of freedom (ν > 0)
+///
+/// Support: [0, ∞)
+///
+/// PDF: f(x; μ, σ, ν) = [t((x-μ)/σ; ν) + t((x+μ)/σ; ν)] / σ for x ≥ 0, else 0
+///
+/// Special cases:
+///   - FoldedT(0, σ, ν) coincides with HalfStudentT(ν, σ)
+///   - FoldedT(μ, σ, 1) coincides with FoldedCauchy(μ, σ)
+///
+/// Mean: infinite when ν ≤ 1; closed form otherwise (see mean() doc comment)
+/// Variance: infinite when ν ≤ 2; closed form otherwise (see variance() doc comment)
+/// Mode: Found via golden section search on [0, |μ| + 20·σ]
+pub fn FoldedT(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        nu: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize FoldedT(μ, σ, ν) distribution.
+        /// Returns error.InvalidParameter if σ ≤ 0, ν ≤ 0, or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, nu: T) DistributionError!Self {
+            if (sigma <= 0.0 or !math.isFinite(sigma)) {
+                return error.InvalidParameter;
+            }
+            if (nu <= 0.0 or !math.isFinite(nu)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .sigma = sigma, .nu = nu };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = [t((x-μ)/σ; ν) + t((x+μ)/σ; ν)] / σ for x ≥ 0, else 0
+        /// where t(·; ν) is the standard StudentT(ν) pdf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            const inv_sigma = 1.0 / self.sigma;
+            const z1 = (x - self.mu) * inv_sigma;
+            const z2 = (x + self.mu) * inv_sigma;
+            return inv_sigma * (t_dist.pdf(z1) + t_dist.pdf(z2));
+        }
+
+        /// Log-probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(x) = T_cdf((x-μ)/σ; ν) - T_cdf((-x-μ)/σ; ν) for x ≥ 0, else 0
+        /// where T_cdf is the standard StudentT(ν) cdf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            const inv_sigma = 1.0 / self.sigma;
+            const z1 = (x - self.mu) * inv_sigma;
+            const z2 = (-x - self.mu) * inv_sigma;
+            return t_dist.cdf(z1) - t_dist.cdf(z2);
+        }
+
+        /// Survival function: 1 − CDF(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function via bisection on [0, hi].
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(log(hi)) ≈ O(1) for standard ranges | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            if (prob == 0.0) return 0.0;
+            if (prob == 1.0) return math.inf(T);
+
+            var hi: T = @max(@abs(self.mu) + self.sigma, self.sigma);
+            while (self.cdf(hi) < prob) hi *= 2.0;
+            var lo: T = 0.0;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const mid = 0.5 * (lo + hi);
+                if (self.cdf(mid) < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        // --- Moments ---
+
+        /// Mean: E[X] for the folded distribution, X = |μ + σT|, T ~ StudentT(ν).
+        /// Returns +inf when ν ≤ 1 (mean diverges).
+        ///
+        /// Closed form (ν > 1): with z = μ/σ,
+        ///   E[X] = μ·(2·F(z) − 1) + 2σ·(ν+z²)/(ν−1)·f(z)
+        /// where f, F are the standard StudentT(ν) pdf/cdf. Derived from
+        /// E[X] = 2·∫₀^∞ y·f_Y(y) dy − μ and the closed form
+        /// ∫ₐ^∞ z·t(z;ν) dz = (ν+a²)/(ν−1)·t(a;ν).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.nu <= 1.0) {
+                return math.inf(T);
+            }
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            const z = self.mu / self.sigma;
+            const cdf_z = t_dist.cdf(z);
+            const pdf_z = t_dist.pdf(z);
+            return self.mu * (2.0 * cdf_z - 1.0) + 2.0 * self.sigma * (self.nu + z * z) / (self.nu - 1.0) * pdf_z;
+        }
+
+        /// Variance: Var(X) for the folded distribution.
+        /// Returns +inf when ν ≤ 2 (covers both mean-undefined ν ≤ 1 and
+        /// second-moment-divergent 1 < ν ≤ 2).
+        ///
+        /// Closed form (ν > 2): E[X²] = E[Y²] = μ² + σ²·ν/(ν−2) since X² = Y²,
+        /// then Var(X) = E[X²] − E[X]² using the closed-form mean() above.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.nu <= 2.0) {
+                return math.inf(T);
+            }
+            const mean_val = self.mean();
+            const e_x2 = self.mu * self.mu + self.sigma * self.sigma * self.nu / (self.nu - 2.0);
+            return e_x2 - mean_val * mean_val;
+        }
+
+        /// Mode of the distribution.
+        /// Found via golden section search on [0, |μ| + 20·σ].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const upper = @abs(self.mu) + 20.0 * self.sigma;
+            const phi_inv: T = 2.0 / (1.0 + @sqrt(5.0));
+            var lo: T = 0.0;
+            var hi: T = upper;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const range = hi - lo;
+                const x1 = hi - phi_inv * range;
+                const x2 = lo + phi_inv * range;
+                if (self.pdf(x1) < self.pdf(x2)) {
+                    lo = x1;
+                } else {
+                    hi = x2;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy via midpoint integration over the substitution
+        /// x = tan(θ), which maps the semi-infinite support [0, ∞) onto the
+        /// finite interval [0, π/2) and tames the polynomial tail of the
+        /// quantile function (a naive quantile-space midpoint rule converges
+        /// far too slowly for this heavy-tailed distribution to hit useful
+        /// precision at any practical point count).
+        ///
+        /// H = −∫₀^∞ f(x) log f(x) dx = −∫₀^{π/2} f(tanθ) log f(tanθ) · sec²θ dθ
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N = 20000;
+            const half_pi: T = math.pi / 2.0;
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const theta = (@as(T, @floatFromInt(i)) + 0.5) / @as(T, @floatFromInt(N)) * half_pi;
+                const x = @tan(theta);
+                const sec2 = 1.0 + x * x;
+                const f = self.pdf(x);
+                if (f <= 0.0) continue;
+                const term = -f * @log(f) * sec2;
+                if (math.isFinite(term)) {
+                    sum += term;
+                }
+            }
+            return sum * (half_pi / @as(T, @floatFromInt(N)));
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample.
+        /// Sample T ~ StudentT(ν), return |μ + σ·T|.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            const t = t_dist.sample(rng);
+            return @abs(self.mu + self.sigma * t);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: σ > 0, finite; ν > 0, finite; μ finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) {
+                return error.InvalidParameter;
+            }
+            if (self.nu <= 0.0 or !math.isFinite(self.nu)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "FoldedT(mu=..., sigma=..., nu=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            _ = fmt;
+            _ = options;
+            try writer.print("FoldedT(mu={d:.4}, sigma={d:.4}, nu={d:.4})", .{ self.mu, self.sigma, self.nu });
+        }
+    };
+}
+
+// ============================================================================
+// FoldedT (Folded Student's t) Distribution Tests
+// ============================================================================
+//
+// Tests for FoldedT(μ, σ, ν): X = |Y| where Y = μ + σ·T, T ~ StudentT(ν)
+// Support: x ≥ 0
+// Parameters: μ ∈ ℝ (location), σ > 0 (scale), ν > 0 (degrees of freedom)
+//
+// Key properties:
+// - Reduces to HalfStudentT(ν, σ) when μ = 0
+// - Reduces to FoldedCauchy(μ, σ) when ν = 1
+// - Mean: infinite when ν ≤ 1; undefined (returns +inf) per StudentT convention
+// - Variance: infinite when 1 < ν ≤ 2; infinite when ν ≤ 1
+// - Mode: numeric golden-section search, loose tolerance ~1e-2
+// - Entropy: quantile-based 500-point estimate
+//
+// Ground truth: scipy.stats.t with |·| folding, verified 3-way
+
+test "FoldedT: init succeeds with valid params mu=1.0, sigma=1.0, nu=5.0" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expect(dist.mu == 1.0);
+    try expect(dist.sigma == 1.0);
+    try expect(dist.nu == 5.0);
+}
+
+test "FoldedT: init succeeds with mu=0, sigma=2.5, nu=3.0" {
+    const dist = try FoldedT(f64).init(0.0, 2.5, 3.0);
+    try expect(dist.mu == 0.0);
+    try expect(dist.sigma == 2.5);
+    try expect(dist.nu == 3.0);
+}
+
+test "FoldedT: init succeeds with negative mu=-0.5, sigma=1.5, nu=2.5" {
+    const dist = try FoldedT(f64).init(-0.5, 1.5, 2.5);
+    try expect(dist.mu == -0.5);
+    try expect(dist.sigma == 1.5);
+    try expect(dist.nu == 2.5);
+}
+
+test "FoldedT: init fails when sigma is zero" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, 0.0, 5.0));
+}
+
+test "FoldedT: init fails when sigma is negative" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, -1.0, 5.0));
+}
+
+test "FoldedT: init fails when nu is zero" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, 1.0, 0.0));
+}
+
+test "FoldedT: init fails when nu is negative" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, 1.0, -1.0));
+}
+
+test "FoldedT: init fails when sigma is NaN" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, math.nan(f64), 5.0));
+}
+
+test "FoldedT: init fails when sigma is infinite" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, math.inf(f64), 5.0));
+}
+
+test "FoldedT: init fails when nu is NaN" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, 1.0, math.nan(f64)));
+}
+
+test "FoldedT: init fails when nu is infinite" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(1.0, 1.0, math.inf(f64)));
+}
+
+test "FoldedT: init fails when mu is NaN" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(math.nan(f64), 1.0, 5.0));
+}
+
+test "FoldedT: init fails when mu is infinite" {
+    try expectError(error.InvalidParameter, FoldedT(f64).init(math.inf(f64), 1.0, 5.0));
+}
+
+test "FoldedT: pdf at negative x is zero" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expectApproxEqAbs(dist.pdf(-1.0), 0.0, 1e-15);
+}
+
+test "FoldedT: pdf at negative x=-100 is zero" {
+    const dist = try FoldedT(f64).init(0.5, 2.0, 3.0);
+    try expectApproxEqAbs(dist.pdf(-100.0), 0.0, 1e-15);
+}
+
+test "FoldedT: cdf at negative x is zero" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expectApproxEqAbs(dist.cdf(-1.0), 0.0, 1e-15);
+}
+
+test "FoldedT: cdf at negative x=-10 is zero" {
+    const dist = try FoldedT(f64).init(0.5, 2.0, 3.0);
+    try expectApproxEqAbs(dist.cdf(-10.0), 0.0, 1e-15);
+}
+
+test "FoldedT: sf at negative x is one" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expectApproxEqAbs(dist.sf(-1.0), 1.0, 1e-15);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: pdf(0.0)=0.4393595947" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.4393595947;
+    try expectApproxEqAbs(dist.pdf(0.0), expected, 1e-9);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: cdf(0.0)=0.0" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expectApproxEqAbs(dist.cdf(0.0), 0.0, 1e-12);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: pdf(0.5)=0.4524358760" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.4524358760;
+    try expectApproxEqAbs(dist.pdf(0.5), expected, 1e-9);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: cdf(0.5)=0.2221975957" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.2221975957;
+    try expectApproxEqAbs(dist.cdf(0.5), expected, 1e-7);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: pdf(2.0)=0.2369723762" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.2369723762;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-9);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: cdf(2.0)=0.8033416422" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.8033416422;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-9);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: pdf(5.0)=0.0058122086" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.0058122086;
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-9);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: cdf(5.0)=0.9939152231" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.9939152231;
+    try expectApproxEqAbs(dist.cdf(5.0), expected, 1e-9);
+}
+
+test "FoldedT: cdf + sf = 1 for mu=1, sigma=1, nu=5 at x=0.5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const x = 0.5;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try expectApproxEqAbs(sum, 1.0, 1e-12);
+}
+
+test "FoldedT: cdf + sf = 1 for mu=1, sigma=1, nu=5 at x=2.0" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try expectApproxEqAbs(sum, 1.0, 1e-12);
+}
+
+test "FoldedT: cdf + sf = 1 across multiple x values mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    var x: f64 = 0.0;
+    while (x <= 5.0) : (x += 0.5) {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqAbs(sum, 1.0, 1e-11);
+    }
+}
+
+test "FoldedT: mu=0 reduces to HalfStudentT(nu, sigma) for pdf at x=1.5, nu=3" {
+    const folded = try FoldedT(f64).init(0.0, 1.0, 3.0);
+    const half = try HalfStudentT(f64).init(3.0, 1.0);
+    const x = 1.5;
+    try expectApproxEqAbs(folded.pdf(x), half.pdf(x), 1e-10);
+}
+
+test "FoldedT: mu=0 reduces to HalfStudentT(nu, sigma) for cdf at x=1.5, nu=5" {
+    const folded = try FoldedT(f64).init(0.0, 1.0, 5.0);
+    const half = try HalfStudentT(f64).init(5.0, 1.0);
+    const x = 1.5;
+    try expectApproxEqAbs(folded.cdf(x), half.cdf(x), 1e-10);
+}
+
+test "FoldedT: mu=0 reduces to HalfStudentT(nu, sigma) for pdf at x=0.5, nu=5" {
+    const folded = try FoldedT(f64).init(0.0, 1.0, 5.0);
+    const half = try HalfStudentT(f64).init(5.0, 1.0);
+    const x = 0.5;
+    try expectApproxEqAbs(folded.pdf(x), half.pdf(x), 1e-10);
+}
+
+test "FoldedT: nu=1 reduces to FoldedCauchy(mu, sigma) for pdf at x=0.3, mu=0.5, sigma=1.5" {
+    const folded = try FoldedT(f64).init(0.5, 1.5, 1.0);
+    const cauchy = try FoldedCauchy(f64).init(0.5, 1.5);
+    const x = 0.3;
+    try expectApproxEqAbs(folded.pdf(x), cauchy.pdf(x), 1e-10);
+}
+
+test "FoldedT: nu=1 reduces to FoldedCauchy(mu, sigma) for cdf at x=0.3, mu=0.5, sigma=1.5" {
+    const folded = try FoldedT(f64).init(0.5, 1.5, 1.0);
+    const cauchy = try FoldedCauchy(f64).init(0.5, 1.5);
+    const x = 0.3;
+    try expectApproxEqAbs(folded.cdf(x), cauchy.cdf(x), 1e-10);
+}
+
+test "FoldedT: nu=1 reduces to FoldedCauchy(mu, sigma) for pdf at x=2.1, mu=0.5, sigma=1.5" {
+    const folded = try FoldedT(f64).init(0.5, 1.5, 1.0);
+    const cauchy = try FoldedCauchy(f64).init(0.5, 1.5);
+    const x = 2.1;
+    try expectApproxEqAbs(folded.pdf(x), cauchy.pdf(x), 1e-10);
+}
+
+test "FoldedT: mean returns +inf for nu=1" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isPositiveInf(m));
+}
+
+test "FoldedT: mean returns +inf for nu=0.5" {
+    const dist = try FoldedT(f64).init(0.5, 2.0, 0.5);
+    const m = dist.mean();
+    try expect(math.isPositiveInf(m));
+}
+
+test "FoldedT: variance returns +inf for 1 < nu <= 2, nu=1.5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 1.5);
+    const v = dist.variance();
+    try expect(math.isPositiveInf(v));
+}
+
+test "FoldedT: variance returns +inf for 1 < nu <= 2, nu=2.0" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 2.0);
+    const v = dist.variance();
+    try expect(math.isPositiveInf(v));
+}
+
+test "FoldedT: mean is finite for nu > 1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: mean≈1.2958219096" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 1.2958219096;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-7);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: variance≈0.9875082907" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.9875082907;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "FoldedT: secondary ground truth mu=0.5, sigma=2.0, nu=2.5: mean≈2.4569205722" {
+    const dist = try FoldedT(f64).init(0.5, 2.0, 2.5);
+    const expected = 2.4569205722;
+    try expectApproxEqAbs(dist.mean(), expected, 5e-5);
+}
+
+test "FoldedT: secondary ground truth mu=0.5, sigma=2.0, nu=2.5: variance is finite" {
+    const dist = try FoldedT(f64).init(0.5, 2.0, 2.5);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v > 0.0);
+}
+
+test "FoldedT: variance is finite for nu > 2, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v > 0.0);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: mode≈0.7104 (loose tol 1e-2)" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 0.7104;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-2);
+}
+
+test "FoldedT: mode is non-negative for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const m = dist.mode();
+    try expect(m >= 0.0);
+}
+
+test "FoldedT: primary ground truth mu=1, sigma=1, nu=5: entropy≈1.2002602052" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const expected = 1.2002602052;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-6);
+}
+
+test "FoldedT: entropy is finite and non-negative for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h >= 0.0);
+}
+
+test "FoldedT: quantile p=0 returns 0" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(q, 0.0, 1e-12);
+}
+
+test "FoldedT: quantile p=1 returns infinity" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+}
+
+test "FoldedT: quantile p=0.5 for mu=1, sigma=1, nu=5 ≈ 1.1161362617" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const q = try dist.quantile(0.5);
+    const expected = 1.1161362617;
+    try expectApproxEqAbs(q, expected, 1e-8);
+}
+
+test "FoldedT: quantile p=0.9 for mu=1, sigma=1, nu=5 ≈ 2.5429478835" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const q = try dist.quantile(0.9);
+    const expected = 2.5429478835;
+    try expectApproxEqAbs(q, expected, 1e-8);
+}
+
+test "FoldedT: quantile inverts cdf at p=0.5 for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const p = 0.5;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "FoldedT: quantile inverts cdf at p=0.7 for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    const p = 0.7;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "FoldedT: quantile rejects p < 0" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "FoldedT: quantile rejects p > 1" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "FoldedT: validate succeeds for valid distribution" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    try dist.validate();
+}
+
+test "FoldedT: validate succeeds for mu=0, sigma=2.5, nu=3.0" {
+    const dist = try FoldedT(f64).init(0.0, 2.5, 3.0);
+    try dist.validate();
+}
+
+test "FoldedT: validate fails when sigma <= 0 for initialized distribution" {
+    const dist_or_err = FoldedT(f64).init(1.0, 0.0, 5.0);
+    try expect(dist_or_err == error.InvalidParameter);
+}
+
+test "FoldedT: validate fails when nu <= 0 for initialized distribution" {
+    const dist_or_err = FoldedT(f64).init(1.0, 1.0, 0.0);
+    try expect(dist_or_err == error.InvalidParameter);
+}
+
+test "FoldedT: pdf is always non-negative for x >= 0, mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "FoldedT: cdf is monotonically non-decreasing for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 5.0) : (x += 0.2) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "FoldedT: sample produces non-negative finite values for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 0.0);
+    }
+}
+
+test "FoldedT: sample produces values consistent with mean mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f64).init(1.0, 1.0, 5.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const num_samples: usize = 5000;
+    for (0..num_samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(num_samples));
+    const theoretical_mean = dist.mean();
+    try expectApproxEqRel(empirical_mean, theoretical_mean, 0.15);
+}
+
+test "FoldedT: f32 pdf at x=0 does not produce NaN/Inf for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f32).init(1.0, 1.0, 5.0);
+    const p = dist.pdf(0.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "FoldedT: f32 cdf does not produce NaN/Inf for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f32).init(1.0, 1.0, 5.0);
+    const c = dist.cdf(1.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "FoldedT: f32 quantile(0.5) does not produce NaN/Inf for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f32).init(1.0, 1.0, 5.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "FoldedT: f32 mean does not produce NaN/Inf for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f32).init(1.0, 1.0, 5.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+}
+
+test "FoldedT: f32 variance does not produce NaN/Inf for mu=1, sigma=1, nu=5" {
+    const dist = try FoldedT(f32).init(1.0, 1.0, 5.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+}
