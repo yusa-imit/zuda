@@ -93365,3 +93365,466 @@ test "GB1: f32 sample within bounds" {
         try testing.expect(sample >= 0.0 and sample <= dist.b);
     }
 }
+
+pub fn BetaGeometric(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Initialize BetaGeometric(a, b) distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (!(a > 0.0) or !math.isFinite(a)) return error.InvalidParameter;
+            if (!(b > 0.0) or !math.isFinite(b)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b };
+        }
+
+        /// Probability mass function P(K=k).
+        ///
+        /// P(K=k) = B(a+1, b+k-1) / B(a,b)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function log P(K=k).
+        ///
+        /// log P(K=k) = logBeta(a+1, b+k-1) - logBeta(a,b)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            return logBeta(self.a + 1.0, self.b + kf - 1.0) - logBeta(self.a, self.b);
+        }
+
+        /// Survival function P(K > k) = B(a, b+k) / B(a,b).
+        ///
+        /// sf(0) = 1; sf(k) = B(a, b+k) / B(a,b) for k ≥ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            if (k == 0) return 1.0;
+            const kf: T = @floatFromInt(k);
+            const log_s = logBeta(self.a, self.b + kf) - logBeta(self.a, self.b);
+            return @exp(log_s);
+        }
+
+        /// Cumulative distribution function P(K ≤ k).
+        ///
+        /// F(k) = 1 − S(k) = 1 − B(a, b+k) / B(a,b)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return 1.0 - self.sf(k);
+        }
+
+        /// Quantile function: smallest k ≥ 1 such that CDF(k) ≥ prob.
+        ///
+        /// Uses the survival recurrence S(k) = S(k−1)·(b+k-1)/(a+b+k) for O(k*) time
+        /// where k* is the returned quantile.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) u64 {
+            if (prob <= 0.0) return 1;
+            const p = if (prob >= 1.0) 1.0 - math.floatEps(T) else prob;
+            // Walk via survival recurrence: S(k) = P(K > k)
+            // Return first k with CDF(k) = 1−S(k) ≥ p, i.e. S(k) ≤ 1−p
+            var s: T = 1.0; // S(0) = 1
+            var k: u64 = 0;
+            while (k < 10_000_000) {
+                k += 1;
+                const kf: T = @floatFromInt(k);
+                s *= (self.b + kf - 1.0) / (self.a + self.b + kf);
+                if (s <= 1.0 - p) return k;
+            }
+            return k;
+        }
+
+        /// Mean: (a+b-1)/(a-1) for a > 1, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.a <= 1.0) return math.inf(T);
+            return (self.a + self.b - 1.0) / (self.a - 1.0);
+        }
+
+        /// Variance: a*b*(a+b-1) / ((a-1)²(a-2)) for a > 2, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.a <= 2.0) return math.inf(T);
+            const a_m1 = self.a - 1.0;
+            const a_m2 = self.a - 2.0;
+            return (self.a * self.b * (self.a + self.b - 1.0)) / (a_m1 * a_m1 * a_m2);
+        }
+
+        /// Mode of the distribution (always 1; PMF is strictly decreasing).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            _ = self;
+            return 1;
+        }
+
+        /// Shannon entropy H(K) in nats, computed via truncated series.
+        ///
+        /// H = −Σ_{k=1}^{N} P(k)·log(P(k)) until tail contribution < ε.
+        ///
+        /// Time: O(N) where N is the truncation point | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Use PMF recurrence: P(k+1) = P(k)·(b+k-1)/(a+b+k)
+            var p_k: T = self.pmf(1); // P(1)
+            var h: T = 0.0;
+            const max_iter: u64 = 100_000;
+            var k: u64 = 1;
+            while (k <= max_iter) : (k += 1) {
+                if (p_k < math.floatEps(T)) break;
+                const kf: T = @floatFromInt(k);
+                h -= p_k * (self.logpmf(k));
+                // advance recurrence: P(k+1) = P(k)·(b+k-1)/(a+b+k)
+                p_k *= (self.b + kf - 1.0) / (self.a + self.b + kf);
+            }
+            return h;
+        }
+
+        /// Generate a random sample using the survival recurrence.
+        ///
+        /// Generates U ~ Uniform(0,1) then finds k via S(k) ≤ 1−U.
+        ///
+        /// Time: O(E[K]) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var s: T = 1.0; // S(0) = 1
+            var k: u64 = 0;
+            while (k < 10_000_000) {
+                k += 1;
+                const kf: T = @floatFromInt(k);
+                s *= (self.b + kf - 1.0) / (self.a + self.b + kf);
+                if (s <= 1.0 - u) return k;
+            }
+            return k;
+        }
+
+        /// Validate internal invariants: a > 0, b > 0, and both finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.a > 0.0) or !math.isFinite(self.a)) return error.InvalidParameter;
+            if (!(self.b > 0.0) or !math.isFinite(self.b)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Beta-Geometric Distribution Tests (158th distribution)
+// ============================================================================
+
+test "BetaGeometric: init with valid a=2.0, b=1.0 succeeds" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    try testing.expect(dist.a == 2.0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "BetaGeometric: init with valid a=3.0, b=1.0 succeeds" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    try testing.expect(dist.a == 3.0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "BetaGeometric: init with valid a=1.0, b=1.0 succeeds" {
+    const dist = try BetaGeometric(f64).init(1.0, 1.0);
+    try testing.expect(dist.a == 1.0);
+    try testing.expect(dist.b == 1.0);
+}
+
+test "BetaGeometric: init with a=0.0 returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with negative a returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(-1.5, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with b=0.0 returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(2.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with negative b returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(2.0, -1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with NaN a returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(math.nan(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with NaN b returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(2.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with inf a returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: init with inf b returns InvalidParameter error" {
+    const result = BetaGeometric(f64).init(2.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "BetaGeometric: pmf k=1 a=2 b=1 equals 2/3" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: pmf k=2 a=2 b=1 equals 1/6" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 1.0 / 6.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: pmf k=3 a=2 b=1 equals 1/15" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 1.0 / 15.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: pmf k=4 a=2 b=1 equals 1/30" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(4);
+    const expected: f64 = 1.0 / 30.0;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: pmf k=1 a=3 b=1 equals 0.75" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.75;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: pmf k=2 a=3 b=1 equals 0.15" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.15;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: pmf k=3 a=3 b=1 equals 0.05" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.05;
+    try testing.expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "BetaGeometric: logpmf consistent with pmf a=2 b=1" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    for (1..6) |k| {
+        const pmf_val = dist.pmf(k);
+        const logpmf_val = dist.logpmf(k);
+        const expected = @log(pmf_val);
+        try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+    }
+}
+
+test "BetaGeometric: logpmf consistent with pmf a=3 b=1" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    for (1..6) |k| {
+        const pmf_val = dist.pmf(k);
+        const logpmf_val = dist.logpmf(k);
+        const expected = @log(pmf_val);
+        try testing.expectApproxEqAbs(expected, logpmf_val, 1e-9);
+    }
+}
+
+test "BetaGeometric: cdf k=1 a=2 b=1 equals 2/3" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(1);
+    const expected: f64 = 2.0 / 3.0;
+    try testing.expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "BetaGeometric: cdf is non-decreasing a=2 b=1" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    var prev_cdf: f64 = 0.0;
+    for (1..21) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "BetaGeometric: cdf is non-decreasing a=3 b=1" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    var prev_cdf: f64 = 0.0;
+    for (1..21) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "BetaGeometric: sf k=0 a=2 b=1 returns 1.0" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const sf_val = dist.sf(0);
+    try testing.expectEqual(1.0, sf_val);
+}
+
+test "BetaGeometric: sf plus cdf equals 1 a=2 b=1" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    for (1..6) |k| {
+        const cdf_val = dist.cdf(k);
+        const sf_val = dist.sf(k);
+        try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+    }
+}
+
+test "BetaGeometric: sf plus cdf equals 1 a=3 b=1" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    for (1..6) |k| {
+        const cdf_val = dist.cdf(k);
+        const sf_val = dist.sf(k);
+        try testing.expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+    }
+}
+
+test "BetaGeometric: mean a=2 b=1 equals 2.0" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 2.0;
+    try testing.expectApproxEqAbs(expected, mean_val, 1e-10);
+}
+
+test "BetaGeometric: mean a=3 b=1 equals 1.5" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 1.5;
+    try testing.expectApproxEqAbs(expected, mean_val, 1e-10);
+}
+
+test "BetaGeometric: mean a=1 b=1 returns positive infinity" {
+    const dist = try BetaGeometric(f64).init(1.0, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isPositiveInf(mean_val));
+}
+
+test "BetaGeometric: mean a=0.5 returns positive infinity" {
+    const dist = try BetaGeometric(f64).init(0.5, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isPositiveInf(mean_val));
+}
+
+test "BetaGeometric: variance a=3 b=1 equals 2.25" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    const var_val = dist.variance();
+    const expected: f64 = 2.25;
+    try testing.expectApproxEqAbs(expected, var_val, 1e-8);
+}
+
+test "BetaGeometric: variance a=2 b=1 returns positive infinity" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isPositiveInf(var_val));
+}
+
+test "BetaGeometric: variance a=1 b=1 returns positive infinity" {
+    const dist = try BetaGeometric(f64).init(1.0, 1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isPositiveInf(var_val));
+}
+
+test "BetaGeometric: mode always returns 1 for a=2 b=1" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectEqual(1, mode_val);
+}
+
+test "BetaGeometric: mode always returns 1 for a=3 b=1" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectEqual(1, mode_val);
+}
+
+test "BetaGeometric: mode always returns 1 for a=1 b=1" {
+    const dist = try BetaGeometric(f64).init(1.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectEqual(1, mode_val);
+}
+
+test "BetaGeometric: mode always returns 1 across multiple parameter pairs" {
+    const params = [_][2]f64{
+        [_]f64{ 0.5, 1.0 },
+        [_]f64{ 1.0, 2.0 },
+        [_]f64{ 2.0, 3.0 },
+        [_]f64{ 5.0, 0.5 },
+    };
+    for (params) |param| {
+        const dist = try BetaGeometric(f64).init(param[0], param[1]);
+        const mode_val = dist.mode();
+        try testing.expectEqual(1, mode_val);
+    }
+}
+
+test "BetaGeometric: pmf is strictly decreasing a=2 b=1" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    var prev_pmf: f64 = dist.pmf(1);
+    for (2..11) |k| {
+        const curr_pmf = dist.pmf(k);
+        try testing.expect(curr_pmf < prev_pmf);
+        prev_pmf = curr_pmf;
+    }
+}
+
+test "BetaGeometric: pmf is strictly decreasing a=3 b=1" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    var prev_pmf: f64 = dist.pmf(1);
+    for (2..11) |k| {
+        const curr_pmf = dist.pmf(k);
+        try testing.expect(curr_pmf < prev_pmf);
+        prev_pmf = curr_pmf;
+    }
+}
+
+test "BetaGeometric: validate() with valid params succeeds" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "BetaGeometric: validate() with valid a=3 b=1 succeeds" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    try dist.validate();
+}
+
+test "BetaGeometric: pmf sums to approximately 1 a=2 b=1" {
+    const dist = try BetaGeometric(f64).init(2.0, 1.0);
+    var sum: f64 = 0.0;
+    for (1..10001) |k| {
+        sum += dist.pmf(k);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "BetaGeometric: pmf sums to approximately 1 a=3 b=1" {
+    const dist = try BetaGeometric(f64).init(3.0, 1.0);
+    var sum: f64 = 0.0;
+    for (1..10001) |k| {
+        sum += dist.pmf(k);
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 1e-4);
+}
