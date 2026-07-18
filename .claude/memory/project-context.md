@@ -1,3 +1,26 @@
+**Session 797 Update (2026-07-18) — FEATURE MODE [COMPLETED]:**
+
+✅ **BorelTanner (160th)** — commit 79a655d
+- **Mode**: FEATURE MODE (counter: 797)
+- **CI/Issues**: CI green (last 3 runs success/success/cancelled), 0 open issues. One prior local
+  commit (5f7fd46) was ahead of origin — pushed at session start before starting new work.
+- **BorelTanner(mu, n)**: generalizes the existing `Borel(mu)` distribution with a runtime `n: u64`
+  parameter that shifts support to start at `k=n` instead of `k=1` (n=1 reduces exactly to Borel).
+  Models total progeny of a branching process starting with n initial individuals.
+  Pre-derived and numerically verified (python3) all formulas before dispatching test-writer:
+  logpmf special-cases k==n to `-mu*n` exactly; mean=`n/(1-mu)`; variance=`n*mu/(1-mu)^3`; mode has
+  **no closed form** (unlike Borel's fixed mode=1) — confirmed n=5,mu=0.6 gives mode=8, not 5,
+  which was flagged explicitly in the scratchpad to prevent test-writer writing a wrong
+  mode()==n-unconditional assertion. zig-developer reused Delaporte's `consecutive_below` numeric
+  mode-search pattern since no closed form exists.
+- **Result**: 57/57 tests passed first try, 0 regressions (11515/11522 total, +57 exactly over
+  pre-session baseline). Clean one-shot TDD cycle, no test-vs-implementation discrepancies.
+- **Distribution count**: 160 (confirmed via
+  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
+- **Next priority**: no standing feature candidate vetted — grep root.zig's doc-comment list first
+  per standing convention. Stabilization backlog unchanged (release backlog, src/algorithms/
+  test-quality audit, file-wide format() signature gap, logFactorial n=20 Stirling cutoff).
+
 **Session 791 Update (2026-07-17) — FEATURE MODE [COMPLETED]:**
 
 ✅ **HurdleBinomial (156th)** — commit 5da1ff3 (plus separate fix commit 816aa75)
