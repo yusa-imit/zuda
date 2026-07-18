@@ -94709,6 +94709,192 @@ pub fn BorelTanner(comptime T: type) type {
     };
 }
 
+/// Good's distribution (I.J. Good, 1953).
+/// Discrete, support k = 1, 2, 3, ...
+/// Parameters: rho (any finite real), theta ∈ (0,1) exclusive.
+/// PMF: P(k) = k^(-rho) * theta^k / C(rho, theta), where C is the polylogarithm normalizer.
+/// Mean: always finite. Variance: always finite. Mode: 1 if rho >= 0, else numeric scan.
+pub fn Good(comptime T: type) type {
+    return struct {
+        rho: T,
+        theta: T,
+        c0: T = 0.0,  // Li_rho(theta) — default for testing; set by init()
+        c1: T = 0.0,  // Li_{rho-1}(theta) — default for testing; set by init()
+        c2: T = 0.0,  // Li_{rho-2}(theta) — default for testing; set by init()
+
+        const Self = @This();
+        const MAX_K: usize = 200_000;
+        const MAX_MODE_SCAN: usize = 10_000_000;
+
+        /// Compute Li_s(theta) = Σ_{k=1}^∞ k^(-s) * theta^k via direct term summation.
+        /// For theta ∈ (0,1), convergence is guaranteed regardless of s.
+        /// Loop up to ~200k terms; early break when term becomes negligible (< 1e-18 after significant mass).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        fn computeLi(s_arg: T, theta: T) T {
+            var sum: T = 0.0;
+            for (1..MAX_K + 1) |k| {
+                const k_f: T = @floatFromInt(k);
+                const term = math.pow(T, k_f, -s_arg) * math.pow(T, theta, k_f);
+                sum += term;
+                if (sum > 1e-6 and term < 1e-18) break;
+            }
+            return sum;
+        }
+
+        /// Create a Good distribution.
+        ///
+        /// Parameters: rho ∈ ℝ (any finite value), theta ∈ (0,1) exclusive.
+        /// Errors: theta ≤ 0, theta ≥ 1, non-finite theta, or non-finite rho.
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn init(rho: T, theta: T) DistributionError!Self {
+            if (!math.isFinite(rho)) return error.InvalidParameter;
+            if (!math.isFinite(theta)) return error.InvalidParameter;
+            if (!(theta > 0.0 and theta < 1.0)) return error.InvalidParameter;
+
+            return Self{
+                .rho = rho,
+                .theta = theta,
+                .c0 = computeLi(rho, theta),
+                .c1 = computeLi(rho - 1.0, theta),
+                .c2 = computeLi(rho - 2.0, theta),
+            };
+        }
+
+        /// Log-PMF at k. Returns −∞ for k = 0.
+        ///
+        /// log P(k) = -rho*ln(k) + k*ln(theta) - ln(c0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const k_f: T = @floatFromInt(k);
+            return -self.rho * @log(k_f) + k_f * @log(self.theta) - @log(self.c0);
+        }
+
+        /// PMF at k. Returns 0 for k = 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            const k_f: T = @floatFromInt(k);
+            return math.pow(T, k_f, -self.rho) * math.pow(T, self.theta, k_f) / self.c0;
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            var sum: T = 0.0;
+            var j: u64 = 1;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function: P(X > k) = 1 − CDF(k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 1;
+            var cumsum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= p) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 1;
+        }
+
+        /// Mean: c1/c0 (always finite for valid params).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.c1 / self.c0;
+        }
+
+        /// Variance: c2/c0 - mean^2 (always finite for valid params).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            return self.c2 / self.c0 - m * m;
+        }
+
+        /// Mode via numeric scan.
+        ///
+        /// If rho >= 0: PMF is strictly decreasing, mode = 1.
+        /// If rho < 0: PMF can rise then fall. Scan k=1,2,... computing ratio
+        /// r(k) = P(k+1)/P(k) = (k/(k+1))^rho * theta = (1+1/k)^(-rho) * theta.
+        /// Return k as soon as r(k) < 1 (that k is the mode).
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            if (self.rho >= 0.0) return 1;
+
+            // Numeric scan for rho < 0
+            for (1..MAX_MODE_SCAN + 1) |k| {
+                const k_f: T = @floatFromInt(k);
+                const ratio = math.pow(T, 1.0 + 1.0 / k_f, -self.rho) * self.theta;
+                if (ratio < 1.0) return @intCast(k);
+            }
+            return @intCast(MAX_MODE_SCAN);
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p == 0.0) break;
+                if (p > 0.0) sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.rho)) return error.InvalidParameter;
+            if (!math.isFinite(self.theta)) return error.InvalidParameter;
+            if (!(self.theta > 0.0 and self.theta < 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("Good(ρ={d:.4}, θ={d:.4})", .{ self.rho, self.theta });
+        }
+    };
+}
+
 // ============================================================================
 // BorelTanner Distribution Tests (160th distribution)
 // ============================================================================
@@ -95056,4 +95242,428 @@ test "BorelTanner: mean scales linearly with n for fixed mu" {
     // n/(1-mu): 1/0.5=2, 2/0.5=4, 3/0.5=6
     try expectApproxEqAbs(m1 * 2.0, m2, 1e-10);
     try expectApproxEqAbs(m1 * 3.0, m3, 1e-10);
+}
+
+// ============================================================================
+// Good Distribution Tests (161st distribution)
+// ============================================================================
+
+test "Good: init valid rho=0, theta=0.5" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try dist.validate();
+}
+
+test "Good: init valid rho=-2, theta=0.5" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try dist.validate();
+}
+
+test "Good: init valid rho=2, theta=0.3" {
+    const dist = try Good(f64).init(2.0, 0.3);
+    try dist.validate();
+}
+
+test "Good: init valid rho=0.5, theta=0.9" {
+    const dist = try Good(f64).init(0.5, 0.9);
+    try dist.validate();
+}
+
+test "Good: init valid f32 type" {
+    const dist = try Good(f32).init(0.0, 0.5);
+    try dist.validate();
+}
+
+test "Good: init valid negative rho" {
+    const dist = try Good(f64).init(-5.0, 0.5);
+    try dist.validate();
+}
+
+test "Good: init fails for theta=0" {
+    const result = Good(f64).init(0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for theta=1" {
+    const result = Good(f64).init(0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for theta < 0" {
+    const result = Good(f64).init(0.0, -0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for theta > 1" {
+    const result = Good(f64).init(0.0, 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for NaN theta" {
+    const result = Good(f64).init(0.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for infinite theta" {
+    const result = Good(f64).init(0.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for NaN rho" {
+    const result = Good(f64).init(math.nan(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for infinite rho" {
+    const result = Good(f64).init(math.inf(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for negative infinite rho" {
+    const result = Good(f64).init(-math.inf(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Good: init fails for theta boundary close to 0" {
+    const result = Good(f32).init(0.0, @as(f32, 1e-10));
+    _ = try result;
+}
+
+test "Good: pmf(0) = 0 exactly (support starts at k=1)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+}
+
+test "Good: logpmf(0) = -inf (support starts at k=1)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expect(dist.logpmf(0) == -math.inf(f64));
+}
+
+test "Good: rho=-2, theta=0.5 pmf(1) = 1/12 = 0.08333..." {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.08333333333333333, dist.pmf(1), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 pmf(2) = 1/6 = 0.16666..." {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.16666666666666666, dist.pmf(2), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 pmf(3) = 1.125/6 = 0.1875 (mode)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.1875, dist.pmf(3), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 pmf(4) = 1/6 = 0.16666..." {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.16666666666666666, dist.pmf(4), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 pmf(5) = 0.78125/6 = 0.13020833..." {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.13020833333333331, dist.pmf(5), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 mean = 26/6 = 4.333..." {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(4.333333333333333, dist.mean(), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 variance = 56/9 = 6.222..." {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(6.222222222222222, dist.variance(), 1e-12);
+}
+
+test "Good: rho=-2, theta=0.5 mode = 3" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expect(dist.mode() == 3);
+}
+
+test "Good: rho=0, theta=0.5 reduces to Geometric(p=0.5): mean=2" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(2.0, dist.mean(), 1e-12);
+}
+
+test "Good: rho=0, theta=0.5 reduces to Geometric(p=0.5): variance=2" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(2.0, dist.variance(), 1e-12);
+}
+
+test "Good: rho=0, theta=0.5 reduces to Geometric(p=0.5): mode=1" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expect(dist.mode() == 1);
+}
+
+test "Good: rho=0, theta=0.5 pmf(1) = 0.5 (Geometric)" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(0.5, dist.pmf(1), 1e-12);
+}
+
+test "Good: rho=0, theta=0.5 pmf(2) = 0.25 (Geometric)" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(0.25, dist.pmf(2), 1e-12);
+}
+
+test "Good: rho=0, theta=0.5 pmf(3) = 0.125 (Geometric)" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(0.125, dist.pmf(3), 1e-12);
+}
+
+test "Good: pmf positive for all k >= 1" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "Good: logpmf = log(pmf) for valid k" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "Good: pmf sums to ~1 for rho=-2, theta=0.5 (truncated)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 2000) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "Good: pmf sums to ~1 for rho=0, theta=0.5 (Geometric)" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 1000) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "Good: pmf sums to ~1 for rho=2, theta=0.3" {
+    const dist = try Good(f64).init(2.0, 0.3);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 2000) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "Good: cdf(0) = 0" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+}
+
+test "Good: cdf(1) = pmf(1)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectApproxEqAbs(dist.pmf(1), dist.cdf(1), 1e-12);
+}
+
+test "Good: cdf is monotonically non-decreasing" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    var prev = dist.cdf(1);
+    for ([_]u64{ 2, 3, 4, 5, 10, 20, 50 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-15);
+        prev = cur;
+    }
+}
+
+test "Good: cdf approaches 1 for large k" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    const cdf_large = dist.cdf(1000);
+    try expect(cdf_large > 0.999);
+}
+
+test "Good: cdf rho=0, theta=0.5 at k=1 = 0.5" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(0.5, dist.cdf(1), 1e-12);
+}
+
+test "Good: cdf rho=0, theta=0.5 at k=2 = 0.75" {
+    const dist = try Good(f64).init(0.0, 0.5);
+    try expectApproxEqAbs(0.75, dist.cdf(2), 1e-12);
+}
+
+test "Good: quantile(0) = 1 (min support)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expect(try dist.quantile(0.0) == 1);
+}
+
+test "Good: quantile fails for p < 0" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "Good: quantile fails for p > 1" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "Good: quantile fails for NaN" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Good: cdf(quantile(p)) >= p for various p" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    for ([_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "Good: quantile output always >= 1 (min support)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    for ([_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(q >= 1);
+    }
+}
+
+test "Good: sample is in support (>= 1)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Good(f64).init(-2.0, 0.5);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 1);
+    }
+}
+
+test "Good: sample never returns < 1" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try Good(f64).init(0.0, 0.5);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 1);
+    }
+}
+
+test "Good: mode is in support (>= 1)" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expect(dist.mode() >= 1);
+}
+
+test "Good: mode has highest pmf value" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    const mode_val = dist.mode();
+    const mode_pmf = dist.pmf(mode_val);
+    for ([_]u64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }) |k| {
+        try expect(dist.pmf(k) <= mode_pmf * 1.01); // Allow small floating-point tolerance
+    }
+}
+
+test "Good: mode for rho>=0 is always 1 (monotonically decreasing)" {
+    for ([_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 }) |rho| {
+        const dist = try Good(f64).init(rho, 0.5);
+        try expect(dist.mode() == 1);
+    }
+}
+
+test "Good: mode for rho<0 can be > 1" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expect(dist.mode() > 1);
+}
+
+test "Good: validate passes for valid params" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try dist.validate();
+}
+
+test "Good: validate fails for theta=0 (unsafe struct)" {
+    const dist = Good(f64){ .rho = 0.0, .theta = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for theta=1 (unsafe struct)" {
+    const dist = Good(f64){ .rho = 0.0, .theta = 1.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for theta > 1 (unsafe struct)" {
+    const dist = Good(f64){ .rho = 0.0, .theta = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for theta < 0 (unsafe struct)" {
+    const dist = Good(f64){ .rho = 0.0, .theta = -0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for NaN theta (unsafe struct)" {
+    const dist = Good(f64){ .rho = 0.0, .theta = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for infinite theta (unsafe struct)" {
+    const dist = Good(f64){ .rho = 0.0, .theta = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for NaN rho (unsafe struct)" {
+    const dist = Good(f64){ .rho = math.nan(f64), .theta = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: validate fails for infinite rho (unsafe struct)" {
+    const dist = Good(f64){ .rho = math.inf(f64), .theta = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Good: f32 type support basic" {
+    const dist = try Good(f32).init(0.0, 0.5);
+    try expect(dist.pmf(1) > 0.0);
+    try expect(dist.cdf(1) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 1);
+    try expect(math.isFinite(dist.mean()));
+    try expect(math.isFinite(dist.variance()));
+    try dist.validate();
+}
+
+test "Good: f32 rho=-2, theta=0.5 mean close to 4.333" {
+    const dist = try Good(f32).init(-2.0, 0.5);
+    try expectApproxEqAbs(4.333333333333333, dist.mean(), 1e-5);
+}
+
+test "Good: mean is always finite for valid params" {
+    for ([_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 }) |rho| {
+        const dist = try Good(f64).init(rho, 0.5);
+        try expect(math.isFinite(dist.mean()));
+    }
+}
+
+test "Good: variance is always finite for valid params" {
+    for ([_]f64{ -5.0, -1.0, 0.0, 1.0, 5.0 }) |rho| {
+        const dist = try Good(f64).init(rho, 0.5);
+        try expect(math.isFinite(dist.variance()));
+    }
+}
+
+test "Good: entropy is non-negative" {
+    const dist = try Good(f64).init(-2.0, 0.5);
+    try expect(dist.entropy() >= 0.0);
+}
+
+test "Good: various rho and theta combinations" {
+    for ([_]f64{ -3.0, -1.0, 0.5, 2.0 }) |rho| {
+        for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |theta| {
+            const dist = try Good(f64).init(rho, theta);
+            try expect(dist.pmf(1) > 0.0);
+            try expect(dist.pmf(5) > 0.0);
+            try expect(dist.mean() > 0.0);
+            try expect(dist.variance() > 0.0);
+            try dist.validate();
+        }
+    }
 }
