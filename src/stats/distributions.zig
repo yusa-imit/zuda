@@ -94540,3 +94540,520 @@ test "FoldedT: f32 variance does not produce NaN/Inf for mu=1, sigma=1, nu=5" {
     const v = dist.variance();
     try expect(math.isFinite(v));
 }
+
+// ============================================================================
+// BorelTanner Distribution
+// ============================================================================
+// Generalization of Borel distribution with integer parameter n.
+// Support starts at k=n instead of k=1.
+// BorelTanner(mu, n=1) reduces to Borel(mu).
+
+pub fn BorelTanner(comptime T: type) type {
+    return struct {
+        mu: T,
+        n: u64,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a BorelTanner distribution.
+        ///
+        /// Parameters: mu ∈ (0, 1], n ≥ 1
+        /// Errors: mu ≤ 0, mu > 1, non-finite mu, or n = 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, n: u64) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!(mu > 0.0 and mu <= 1.0)) return error.InvalidParameter;
+            if (n == 0) return error.InvalidParameter;
+            return Self{ .mu = mu, .n = n };
+        }
+
+        /// Log-PMF at k. Returns −∞ for k < n.
+        ///
+        /// log P(k) = log(n) - log(k) - mu*k + (k-n)*log(mu*k) - logΓ(k-n+1)
+        /// Special case: k == n ⇒ log P(n) = -mu*n
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const nf: T = @floatFromInt(self.n);
+            if (k < self.n) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            if (k == self.n) return -self.mu * nf;
+            const kmu = kf * self.mu;
+            const km_n: T = @floatFromInt(k - self.n);
+            return @log(nf) - @log(kf) - self.mu * kf + km_n * @log(kmu) - logGamma(km_n + 1.0);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k < self.n) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k-n) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k < self.n) return 0.0;
+            var sum: T = 0.0;
+            var j: u64 = self.n;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p = self.pmf(j);
+                sum += p;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.n;
+            var cumsum: T = 0.0;
+            var k: u64 = self.n;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= p) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.n;
+        }
+
+        /// Mean: n/(1−μ) for μ < 1; +∞ for μ=1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.mu >= 1.0) return math.inf(T);
+            const nf: T = @floatFromInt(self.n);
+            return nf / (1.0 - self.mu);
+        }
+
+        /// Variance: n·μ/(1−μ)³ for μ < 1; +∞ for μ=1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.mu >= 1.0) return math.inf(T);
+            const nf: T = @floatFromInt(self.n);
+            const om = 1.0 - self.mu;
+            return nf * self.mu / (om * om * om);
+        }
+
+        /// Mode: numeric scan from k=n using relative tolerance.
+        /// Unlike Borel(μ), the mode of BorelTanner(μ,n) is not fixed at n
+        /// but depends on both μ and n.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = self.n;
+            var best_pmf = self.pmf(self.n);
+            var k: u64 = self.n + 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = self.n;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p == 0.0) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+            if (!(self.mu > 0.0 and self.mu <= 1.0)) return error.InvalidParameter;
+            if (self.n == 0) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("BorelTanner(μ={d:.4}, n={})", .{ self.mu, self.n });
+        }
+    };
+}
+
+// ============================================================================
+// BorelTanner Distribution Tests (160th distribution)
+// ============================================================================
+
+test "BorelTanner: init valid mu=0.5, n=1" {
+    const dist = try BorelTanner(f64).init(0.5, 1);
+    try dist.validate();
+}
+
+test "BorelTanner: init valid mu=0.3, n=3" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try dist.validate();
+}
+
+test "BorelTanner: init valid mu=0.6, n=5" {
+    const dist = try BorelTanner(f64).init(0.6, 5);
+    try dist.validate();
+}
+
+test "BorelTanner: init valid mu=1.0, n=1 (critical)" {
+    const dist = try BorelTanner(f64).init(1.0, 1);
+    try dist.validate();
+}
+
+test "BorelTanner: init valid f32 type" {
+    const dist = try BorelTanner(f32).init(0.5, 2);
+    try dist.validate();
+}
+
+test "BorelTanner: init fails for mu=0" {
+    const result = BorelTanner(f64).init(0.0, 1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BorelTanner: init fails for mu < 0" {
+    const result = BorelTanner(f64).init(-0.5, 1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BorelTanner: init fails for mu > 1" {
+    const result = BorelTanner(f64).init(1.5, 1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BorelTanner: init fails for NaN mu" {
+    const result = BorelTanner(f64).init(math.nan(f64), 1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BorelTanner: init fails for infinite mu" {
+    const result = BorelTanner(f64).init(math.inf(f64), 1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BorelTanner: init fails for n=0" {
+    const result = BorelTanner(f64).init(0.5, 0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "BorelTanner: pmf(k < n) = 0 exactly" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+    try expectApproxEqAbs(0.0, dist.pmf(1), 1e-15);
+    try expectApproxEqAbs(0.0, dist.pmf(2), 1e-15);
+}
+
+test "BorelTanner: logpmf(k < n) = -inf" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expect(dist.logpmf(0) == -math.inf(f64));
+    try expect(dist.logpmf(1) == -math.inf(f64));
+    try expect(dist.logpmf(2) == -math.inf(f64));
+}
+
+test "BorelTanner: pmf(n) = exp(-mu*n) special case" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    const expected = @exp(-0.9);
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-12);
+}
+
+test "BorelTanner: pmf(n) exact for n=5, mu=0.6" {
+    const dist = try BorelTanner(f64).init(0.6, 5);
+    const expected = @exp(-3.0);
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-12);
+}
+
+test "BorelTanner: n=1 reduction matches existing Borel(mu=0.5) pmf(1)" {
+    const dist = try BorelTanner(f64).init(0.5, 1);
+    try expectApproxEqAbs(0.6065306597126334, dist.pmf(1), 1e-12);
+}
+
+test "BorelTanner: n=1 reduction matches existing Borel(mu=0.5) pmf(2)" {
+    const dist = try BorelTanner(f64).init(0.5, 1);
+    try expectApproxEqAbs(0.18393972058572114, dist.pmf(2), 1e-12);
+}
+
+test "BorelTanner: n=1 reduction matches existing Borel(mu=0.5) pmf(3)" {
+    const dist = try BorelTanner(f64).init(0.5, 1);
+    try expectApproxEqAbs(0.08367381005566119, dist.pmf(3), 1e-12);
+}
+
+test "BorelTanner: n=1 reduction matches existing Borel(mu=0.5) pmf(4)" {
+    const dist = try BorelTanner(f64).init(0.5, 1);
+    try expectApproxEqAbs(0.04511176107887088, dist.pmf(4), 1e-12);
+}
+
+test "BorelTanner: n=1 reduction matches existing Borel(mu=0.5) pmf(5)" {
+    const dist = try BorelTanner(f64).init(0.5, 1);
+    try expectApproxEqAbs(0.026720377156217088, dist.pmf(5), 1e-12);
+}
+
+test "BorelTanner: n=3, mu=0.3 pmf(3) matches ground truth" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(0.40656965974059917, dist.pmf(3), 1e-12);
+}
+
+test "BorelTanner: n=3, mu=0.3 pmf(4) matches ground truth" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(0.27107479072098195, dist.pmf(4), 1e-12);
+}
+
+test "BorelTanner: n=3, mu=0.3 pmf(5) matches ground truth" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(0.1506128581001902, dist.pmf(5), 1e-12);
+}
+
+test "BorelTanner: logpmf = log(pmf) for valid k" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    for ([_]u64{ 3, 4, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "BorelTanner: pmf positive for k >= n" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    for ([_]u64{ 3, 4, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "BorelTanner: pmf sums to ~1 for n=3, mu=0.3 (truncated)" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    var sum: f64 = 0.0;
+    var k: u64 = 3;
+    while (k <= 2002) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+test "BorelTanner: cdf(k < n) = 0" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+    try expectApproxEqAbs(0.0, dist.cdf(1), 1e-15);
+    try expectApproxEqAbs(0.0, dist.cdf(2), 1e-15);
+}
+
+test "BorelTanner: cdf(n) = pmf(n)" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(dist.pmf(3), dist.cdf(3), 1e-12);
+}
+
+test "BorelTanner: n=3, mu=0.3 cdf(5) matches ground truth" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(0.8282573085617713, dist.cdf(5), 1e-12);
+}
+
+test "BorelTanner: cdf is monotonically non-decreasing" {
+    const dist = try BorelTanner(f64).init(0.5, 2);
+    var prev = dist.cdf(1);
+    for ([_]u64{ 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "BorelTanner: quantile(0) returns n" {
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    try expect(try dist.quantile(0.0) == 3);
+}
+
+test "BorelTanner: quantile fails for p < 0" {
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "BorelTanner: quantile fails for p > 1" {
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "BorelTanner: quantile fails for NaN" {
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "BorelTanner: cdf(quantile(p)) >= p" {
+    const dist = try BorelTanner(f64).init(0.5, 2);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "BorelTanner: n=3, mu=0.3 mode == 3" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expect(dist.mode() == 3);
+}
+
+test "BorelTanner: n=5, mu=0.6 mode == 8 (proves mode != n unconditionally)" {
+    const dist = try BorelTanner(f64).init(0.6, 5);
+    try expect(dist.mode() == 8);
+}
+
+test "BorelTanner: mode is in support (>= n)" {
+    const dist = try BorelTanner(f64).init(0.5, 2);
+    try expect(dist.mode() >= 2);
+}
+
+test "BorelTanner: mode has highest pmf value" {
+    const dist = try BorelTanner(f64).init(0.5, 2);
+    const mode_val = dist.mode();
+    const mode_pmf = dist.pmf(mode_val);
+    for ([_]u64{ 2, 3, 4, 5, 6, 7, 8, 9, 10 }) |k| {
+        try expect(dist.pmf(k) <= mode_pmf * 1.01); // Allow small floating-point tolerance
+    }
+}
+
+test "BorelTanner: n=3, mu=0.3 mean = 3/0.7" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(4.285714285714286, dist.mean(), 1e-12);
+}
+
+test "BorelTanner: n=5, mu=0.6 mean = 5/0.4 = 12.5" {
+    const dist = try BorelTanner(f64).init(0.6, 5);
+    try expectApproxEqAbs(12.5, dist.mean(), 1e-12);
+}
+
+test "BorelTanner: mean = n/(1-mu) formula check, n=2, mu=0.5" {
+    const dist = try BorelTanner(f64).init(0.5, 2);
+    try expectApproxEqAbs(4.0, dist.mean(), 1e-12);
+}
+
+test "BorelTanner: mean infinite for mu=1" {
+    const dist = try BorelTanner(f64).init(1.0, 1);
+    try expect(math.isPositiveInf(dist.mean()));
+}
+
+test "BorelTanner: n=3, mu=0.3 variance = 3*0.3/0.7^3" {
+    const dist = try BorelTanner(f64).init(0.3, 3);
+    try expectApproxEqAbs(2.623906705539359, dist.variance(), 1e-12);
+}
+
+test "BorelTanner: variance = n*mu/(1-mu)^3 formula check, n=2, mu=0.5" {
+    const dist = try BorelTanner(f64).init(0.5, 2);
+    // var = 2*0.5/(0.5^3) = 1/0.125 = 8
+    try expectApproxEqAbs(8.0, dist.variance(), 1e-12);
+}
+
+test "BorelTanner: variance infinite for mu=1" {
+    const dist = try BorelTanner(f64).init(1.0, 1);
+    try expect(math.isPositiveInf(dist.variance()));
+}
+
+test "BorelTanner: sample is in support (>= n)" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 3);
+    }
+}
+
+test "BorelTanner: sample never returns < n" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try BorelTanner(f64).init(0.3, 5);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s >= 5);
+    }
+}
+
+test "BorelTanner: quantile output always >= n" {
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    for ([_]f64{ 0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(q >= 3);
+    }
+}
+
+test "BorelTanner: validate passes for valid params" {
+    const dist = try BorelTanner(f64).init(0.5, 3);
+    try dist.validate();
+}
+
+test "BorelTanner: validate fails for mu=0 (unsafe struct)" {
+    const dist = BorelTanner(f64){ .mu = 0.0, .n = 3 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BorelTanner: validate fails for mu > 1 (unsafe struct)" {
+    const dist = BorelTanner(f64){ .mu = 1.5, .n = 3 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BorelTanner: validate fails for n=0 (unsafe struct)" {
+    const dist = BorelTanner(f64){ .mu = 0.5, .n = 0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BorelTanner: validate fails for NaN mu (unsafe struct)" {
+    const dist = BorelTanner(f64){ .mu = math.nan(f64), .n = 3 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BorelTanner: f32 type support basic" {
+    const dist = try BorelTanner(f32).init(0.5, 2);
+    try expect(dist.pmf(2) > 0.0);
+    try expect(dist.cdf(2) > 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 2);
+    try expect(math.isFinite(dist.mean()));
+    try expect(math.isFinite(dist.variance()));
+    try dist.validate();
+}
+
+test "BorelTanner: large n parameter (n=100)" {
+    const dist = try BorelTanner(f64).init(0.5, 100);
+    try expect(dist.pmf(100) > 0.0);
+    try dist.validate();
+}
+
+test "BorelTanner: mean scales linearly with n for fixed mu" {
+    const dist1 = try BorelTanner(f64).init(0.5, 1);
+    const dist2 = try BorelTanner(f64).init(0.5, 2);
+    const dist3 = try BorelTanner(f64).init(0.5, 3);
+    const m1 = dist1.mean();
+    const m2 = dist2.mean();
+    const m3 = dist3.mean();
+    // n/(1-mu): 1/0.5=2, 2/0.5=4, 3/0.5=6
+    try expectApproxEqAbs(m1 * 2.0, m2, 1e-10);
+    try expectApproxEqAbs(m1 * 3.0, m3, 1e-10);
+}
