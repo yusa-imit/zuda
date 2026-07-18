@@ -95578,3 +95578,550 @@ test "Good: various rho and theta combinations" {
         }
     }
 }
+
+// ============================================================================
+// PoissonLindley Distribution
+// ============================================================================
+
+/// PoissonLindley distribution PoissonLindley(θ)
+///
+/// A one-parameter discrete distribution on {0, 1, 2, ...} arising as a
+/// Poisson-Lindley mixture: X | Λ ~ Poisson(Λ), Λ ~ Lindley(θ).
+///
+/// Probability mass function (PMF):
+///   P(X=k; θ) = θ² · (k + θ + 2) / (θ+1)^(k+3)
+///
+/// Parameters:
+///   - theta (θ): Shape parameter (θ > 0)
+///
+/// Time: O(1) for pmf/logpmf/mean/variance; O(k) for cdf/quantile; O(MAX_K) for mode/entropy
+pub fn PoissonLindley(comptime T: type) type {
+    return struct {
+        theta: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a PoissonLindley distribution with given shape parameter θ.
+        ///
+        /// Errors: θ ≤ 0, NaN, or infinite values.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta: T) DistributionError!Self {
+            if (!(theta > 0.0) or !math.isFinite(theta)) return error.InvalidParameter;
+            return Self{ .theta = theta };
+        }
+
+        /// Log probability mass function (log PMF) at k
+        ///
+        /// log P(k; θ) = 2·log(θ) + log(k + θ + 2) - (k+3)·log(θ+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const theta = self.theta;
+            const kf: T = @floatFromInt(k);
+            return 2.0 * @log(theta) + @log(kf + theta + 2.0) - @as(T, @floatFromInt(k + 3)) * @log(theta + 1.0);
+        }
+
+        /// Probability mass function (PMF) at k
+        ///
+        /// P(k; θ) = θ² · (k + θ + 2) / (θ+1)^(k+3)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Cumulative distribution function (CDF) at k: P(X ≤ k)
+        ///
+        /// Uses partial sum up to min(k, MAX_K) with early exit at 1e-15.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile function (inverse CDF): smallest k such that P(X ≤ k) ≥ p
+        ///
+        /// Errors: p < 0 or p > 1 or NaN
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const pk = self.pmf(k);
+                cumsum += pk;
+                if (cumsum >= p) return k;
+                if (k > 0 and pk == 0.0) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample via mixture: λ ~ Lindley(θ).sample(rng), then X ~ Poisson(λ)
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const lindley_dist = Lindley(T).init(self.theta) catch unreachable;
+            const lambda = lindley_dist.sample(rng);
+            return poissonKnuth(T, rng, lambda);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = (θ + 2) / (θ(θ+1))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const theta = self.theta;
+            return (theta + 2.0) / (theta * (theta + 1.0));
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = (θ³ + 4θ² + 6θ + 2) / (θ²(θ+1)²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const theta = self.theta;
+            const numerator = theta * theta * theta + 4.0 * theta * theta + 6.0 * theta + 2.0;
+            const denominator = theta * theta * (theta + 1.0) * (theta + 1.0);
+            return numerator / denominator;
+        }
+
+        /// Mode: numeric scan via PMF using consecutive_below pattern
+        ///
+        /// The mode is NOT always 0 — it depends on θ. For small θ (< ~0.45),
+        /// the mode can be > 0.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k)
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                if (p == 0.0) break;
+                sum -= p * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.theta > 0.0) or !math.isFinite(self.theta))
+                return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("PoissonLindley(θ={d:.4})", .{self.theta});
+        }
+    };
+}
+
+// ============================================================================
+// PoissonLindley Distribution Tests (162nd distribution, 30th discrete)
+// ============================================================================
+// PoissonLindley(θ) is a one-parameter discrete distribution arising as a
+// Poisson-Lindley mixture: X | Λ ~ Poisson(Λ), Λ ~ Lindley(θ).
+// Support: k = 0, 1, 2, ...
+// PMF: P(k) = θ² · (k + θ + 2) / (θ+1)^(k+3)
+// Mean: (θ + 2) / [θ(θ+1)]
+// Variance: (θ³ + 4θ² + 6θ + 2) / [θ²(θ+1)²]
+// Mode: numeric scan; NOT always 0 — depends critically on θ
+// Source: Sankaran (1970) "The Discrete Poisson-Lindley Distribution"
+
+test "PoissonLindley: init valid theta=1.0" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    try dist.validate();
+}
+
+test "PoissonLindley: init valid theta=0.5" {
+    const dist = try PoissonLindley(f64).init(0.5);
+    try dist.validate();
+}
+
+test "PoissonLindley: init valid theta=5.0" {
+    const dist = try PoissonLindley(f64).init(5.0);
+    try dist.validate();
+}
+
+test "PoissonLindley: init fails for theta=0" {
+    try expectError(error.InvalidParameter, PoissonLindley(f64).init(0.0));
+}
+
+test "PoissonLindley: init fails for theta < 0" {
+    try expectError(error.InvalidParameter, PoissonLindley(f64).init(-1.5));
+}
+
+test "PoissonLindley: init fails for NaN theta" {
+    try expectError(error.InvalidParameter, PoissonLindley(f64).init(math.nan(f64)));
+}
+
+test "PoissonLindley: init fails for infinite theta" {
+    try expectError(error.InvalidParameter, PoissonLindley(f64).init(math.inf(f64)));
+}
+
+test "PoissonLindley: init fails for infinite negative theta" {
+    try expectError(error.InvalidParameter, PoissonLindley(f64).init(-math.inf(f64)));
+}
+
+test "PoissonLindley: f32 type support valid init" {
+    const dist = try PoissonLindley(f32).init(1.5);
+    try dist.validate();
+}
+
+test "PoissonLindley: pmf positive for all k" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10, 20 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "PoissonLindley: pmf(0) exact value theta=1.0" {
+    // P(0) = θ² * (0 + θ + 2) / (θ+1)³ = 1 * 3 / 8 = 3/8 = 0.375
+    const dist = try PoissonLindley(f64).init(1.0);
+    const expected: f64 = 0.375;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "PoissonLindley: pmf(1) exact value theta=1.0" {
+    // P(1) = θ² * (1 + θ + 2) / (θ+1)⁴ = 1 * 4 / 16 = 0.25
+    const dist = try PoissonLindley(f64).init(1.0);
+    const expected: f64 = 0.25;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-12);
+}
+
+test "PoissonLindley: pmf(0) exact value theta=2.0" {
+    // P(0) = θ² * (0 + θ + 2) / (θ+1)³ = 4 * 4 / 27 = 16/27
+    const dist = try PoissonLindley(f64).init(2.0);
+    const expected: f64 = 16.0 / 27.0;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "PoissonLindley: pmf(0) exact value theta=0.5" {
+    // P(0) = θ² * (0 + θ + 2) / (θ+1)³ = 0.25 * 2.5 / 3.375 = 0.625/3.375
+    const dist = try PoissonLindley(f64).init(0.5);
+    const expected: f64 = 0.18518518518518520;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-12);
+}
+
+test "PoissonLindley: pmf(1) exact value theta=0.5" {
+    // P(1) = θ² * (1 + θ + 2) / (θ+1)⁴ = 0.25 * 3.5 / 5.0625
+    const dist = try PoissonLindley(f64).init(0.5);
+    const expected: f64 = 0.17283950617283952;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-12);
+}
+
+test "PoissonLindley: logpmf = ln(pmf)" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-9);
+    }
+}
+
+test "PoissonLindley: pmf sums to 1 (truncated at 2999)" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 2999) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "PoissonLindley: pmf sums to 1 theta=0.5" {
+    const dist = try PoissonLindley(f64).init(0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 2999) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "PoissonLindley: pmf sums to 1 theta=2.0" {
+    const dist = try PoissonLindley(f64).init(2.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 2999) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "PoissonLindley: pmf sums to 1 theta=5.0" {
+    const dist = try PoissonLindley(f64).init(5.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 2999) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "PoissonLindley: cdf is monotonically non-decreasing" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "PoissonLindley: cdf(0) = pmf(0)" {
+    const dist = try PoissonLindley(f64).init(2.0);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "PoissonLindley: cdf approaches 1 for large k" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    try expect(dist.cdf(500) > 0.99);
+}
+
+test "PoissonLindley: cdf approaches 1 large theta" {
+    const dist = try PoissonLindley(f64).init(5.0);
+    try expect(dist.cdf(100) > 0.99);
+}
+
+test "PoissonLindley: quantile(0) = 0" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    try expect((try dist.quantile(0.0)) == 0);
+}
+
+test "PoissonLindley: quantile fails for p < 0" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "PoissonLindley: quantile fails for p > 1" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "PoissonLindley: quantile fails for NaN" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "PoissonLindley: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try PoissonLindley(f64).init(2.0);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-9);
+    }
+}
+
+test "PoissonLindley: mean exact value theta=1.0" {
+    // mean = (θ + 2) / [θ(θ+1)] = 3 / (1 * 2) = 1.5
+    const dist = try PoissonLindley(f64).init(1.0);
+    try expectApproxEqAbs(1.5, dist.mean(), 1e-10);
+}
+
+test "PoissonLindley: mean exact value theta=0.5" {
+    // mean = (0.5 + 2) / [0.5 * 1.5] = 2.5 / 0.75 = 10/3 ≈ 3.333...
+    const dist = try PoissonLindley(f64).init(0.5);
+    try expectApproxEqAbs(3.3333333333333335, dist.mean(), 1e-10);
+}
+
+test "PoissonLindley: mean exact value theta=2.0" {
+    // mean = (2 + 2) / [2 * 3] = 4 / 6 = 2/3 ≈ 0.667
+    const dist = try PoissonLindley(f64).init(2.0);
+    try expectApproxEqAbs(0.6666666666666666, dist.mean(), 1e-10);
+}
+
+test "PoissonLindley: mean exact value theta=5.0" {
+    // mean = (5 + 2) / [5 * 6] = 7 / 30 ≈ 0.233
+    const dist = try PoissonLindley(f64).init(5.0);
+    try expectApproxEqAbs(0.23333333333333334, dist.mean(), 1e-10);
+}
+
+test "PoissonLindley: mean is always positive" {
+    for ([_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 }) |theta| {
+        const dist = try PoissonLindley(f64).init(theta);
+        try expect(dist.mean() > 0.0);
+    }
+}
+
+test "PoissonLindley: variance exact value theta=1.0" {
+    // variance = (θ³ + 4θ² + 6θ + 2) / [θ²(θ+1)²]
+    // = (1 + 4 + 6 + 2) / (1 * 4) = 13 / 4 = 3.25
+    const dist = try PoissonLindley(f64).init(1.0);
+    try expectApproxEqAbs(3.25, dist.variance(), 1e-10);
+}
+
+test "PoissonLindley: variance exact value theta=0.5" {
+    // variance = (0.125 + 1 + 3 + 2) / (0.25 * 2.25) = 6.125 / 0.5625 ≈ 10.889
+    const dist = try PoissonLindley(f64).init(0.5);
+    try expectApproxEqAbs(10.88888888888889, dist.variance(), 1e-10);
+}
+
+test "PoissonLindley: variance exact value theta=2.0" {
+    // variance = (8 + 16 + 12 + 2) / (4 * 9) = 38 / 36 ≈ 1.056
+    const dist = try PoissonLindley(f64).init(2.0);
+    try expectApproxEqAbs(1.0555555555555556, dist.variance(), 1e-10);
+}
+
+test "PoissonLindley: variance exact value theta=5.0" {
+    // variance = (125 + 100 + 30 + 2) / (25 * 36) = 257 / 900 ≈ 0.286
+    const dist = try PoissonLindley(f64).init(5.0);
+    try expectApproxEqAbs(0.28555555555555556, dist.variance(), 1e-10);
+}
+
+test "PoissonLindley: variance is always positive" {
+    for ([_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 }) |theta| {
+        const dist = try PoissonLindley(f64).init(theta);
+        try expect(dist.variance() > 0.0);
+    }
+}
+
+test "PoissonLindley: variance > mean (overdispersion)" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    try expect(dist.variance() > dist.mean());
+}
+
+test "PoissonLindley: mode is non-negative integer" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    const m = dist.mode();
+    try expect(m >= 0);
+}
+
+test "PoissonLindley: mode = 0 for theta=0.5" {
+    const dist = try PoissonLindley(f64).init(0.5);
+    try expect(dist.mode() == 0);
+}
+
+test "PoissonLindley: mode = 0 for theta=1.0" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    try expect(dist.mode() == 0);
+}
+
+test "PoissonLindley: mode = 0 for theta=2.0" {
+    const dist = try PoissonLindley(f64).init(2.0);
+    try expect(dist.mode() == 0);
+}
+
+test "PoissonLindley: mode = 0 for theta=5.0" {
+    const dist = try PoissonLindley(f64).init(5.0);
+    try expect(dist.mode() == 0);
+}
+
+test "PoissonLindley: mode = 1 for theta=0.4" {
+    const dist = try PoissonLindley(f64).init(0.4);
+    try expect(dist.mode() == 1);
+}
+
+test "PoissonLindley: mode = 2 for theta=0.3" {
+    const dist = try PoissonLindley(f64).init(0.3);
+    try expect(dist.mode() == 2);
+}
+
+test "PoissonLindley: mode = 3 for theta=0.2" {
+    const dist = try PoissonLindley(f64).init(0.2);
+    try expect(dist.mode() == 3);
+}
+
+test "PoissonLindley: mode = 8 for theta=0.1" {
+    const dist = try PoissonLindley(f64).init(0.1);
+    try expect(dist.mode() == 8);
+}
+
+test "PoissonLindley: mode at pmf maximum" {
+    const dist = try PoissonLindley(f64).init(0.3);
+    const m = dist.mode();
+    const pmf_at_mode = dist.pmf(m);
+    for ([_]u64{ 0, 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        try expect(dist.pmf(k) <= pmf_at_mode + 1e-12);
+    }
+}
+
+test "PoissonLindley: entropy is positive and finite" {
+    const dist = try PoissonLindley(f64).init(1.5);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "PoissonLindley: entropy increases as theta decreases (more spread)" {
+    const dist1 = try PoissonLindley(f64).init(0.5);
+    const dist2 = try PoissonLindley(f64).init(2.0);
+    try expect(dist1.entropy() > dist2.entropy());
+}
+
+test "PoissonLindley: validate rejects invalid theta" {
+    var dist = try PoissonLindley(f64).init(0.5);
+    try dist.validate();
+    // Now attempt a manual mutation to trigger validation failure
+    dist.theta = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PoissonLindley: validate rejects NaN theta" {
+    var dist = try PoissonLindley(f64).init(1.0);
+    dist.theta = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PoissonLindley: validate rejects infinite theta" {
+    var dist = try PoissonLindley(f64).init(1.0);
+    dist.theta = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PoissonLindley: f32 type mean accuracy theta=1.0" {
+    const dist = try PoissonLindley(f32).init(1.0);
+    try expectApproxEqAbs(@as(f32, 1.5), dist.mean(), 1e-5);
+}
+
+test "PoissonLindley: f32 type variance accuracy theta=1.0" {
+    const dist = try PoissonLindley(f32).init(1.0);
+    try expectApproxEqAbs(@as(f32, 3.25), dist.variance(), 1e-4);
+}
+
+test "PoissonLindley: f32 type pmf accuracy theta=1.0" {
+    const dist = try PoissonLindley(f32).init(1.0);
+    try expectApproxEqAbs(@as(f32, 0.375), dist.pmf(0), 1e-5);
+    try expectApproxEqAbs(@as(f32, 0.25), dist.pmf(1), 1e-5);
+}
+
+test "PoissonLindley: sample returns valid k" {
+    const dist = try PoissonLindley(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for ([_]u8{ 0 } ** 100) |_| {
+        const sample_val = dist.sample(rng.random());
+        try expect(sample_val >= 0);
+    }
+}
