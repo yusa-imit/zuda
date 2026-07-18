@@ -330,14 +330,7 @@ pub fn DancingLinks(comptime max_solutions: ?usize) type {
         }
 
         /// Format for debugging
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("DancingLinks{{ columns: {d}, rows: {d} }}", .{
                 self.columns.items.len,
                 self.current_row,

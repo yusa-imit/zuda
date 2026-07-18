@@ -556,14 +556,7 @@ pub fn AVLTree(
 
         /// Formats tree for debugging output.
         /// Time: O(1) | Space: O(1)
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("AVLTree(size={d}, height={d})", .{ self.size, self.height() });
         }
     };

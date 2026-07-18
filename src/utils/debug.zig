@@ -17,7 +17,7 @@
 //!    - Works with any slice type
 //!
 //! 3. **Format wrappers**: Easy integration with std.debug.print:
-//!    - `std.debug.print("Tree: {}\n", .{debug.fmt(tree)});`
+//!    - `std.debug.print("Tree: {f}\n", .{debug.fmt(tree)});`
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -27,7 +27,7 @@ const Allocator = std.mem.Allocator;
 ///
 /// Time: O(n) | Space: O(1) (uses writer)
 pub fn prettyPrint(
-    writer: std.io.AnyWriter,
+    writer: *std.Io.Writer,
     container: anytype,
 ) !void {
     const Container = @TypeOf(container);
@@ -49,9 +49,9 @@ pub fn prettyPrint(
                     const ItemType = @TypeOf(item);
 
                     if (ItemType == []const u8 or ItemType == []u8) {
-                        try std.fmt.format(writer, "{s}", .{item});
+                        try writer.print("{s}", .{item});
                     } else {
-                        try std.fmt.format(writer, "{any}", .{item});
+                        try writer.print("{any}", .{item});
                     }
                 }
             }
@@ -61,7 +61,7 @@ pub fn prettyPrint(
     }
 
     // Fallback: just format as-is with generic format
-    try std.fmt.format(writer, "{any}", .{container});
+    try writer.print("{any}", .{container});
 }
 
 /// Compare two slices and report differences.
@@ -101,7 +101,7 @@ pub fn expectSliceEqual(
 }
 
 /// Wrapper type for formatting containers with std.debug.print.
-/// Usage: `std.debug.print("{}\n", .{fmt(container)});`
+/// Usage: `std.debug.print("{f}\n", .{fmt(container)});`
 ///
 /// Time: O(n) | Space: O(1) (uses writer)
 pub fn fmt(container: anytype) ContainerFormatter(@TypeOf(container)) {
@@ -115,15 +115,7 @@ pub fn ContainerFormatter(comptime T: type) type {
 
         container: T,
 
-        pub fn format(
-            self: Self,
-            comptime fmt_spec: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: std.io.AnyWriter,
-        ) !void {
-            _ = fmt_spec;
-            _ = options;
-
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try prettyPrint(writer, self.container);
         }
     };
@@ -142,12 +134,12 @@ test "prettyPrint ArrayList basic" {
 
     try list.appendSlice(allocator, &[_]i32{ 1, 2, 3, 4, 5 });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[1, 2, 3, 4, 5]", buf.items);
+    try testing.expectEqualStrings("[1, 2, 3, 4, 5]", aw.written());
 }
 
 test "prettyPrint ArrayList empty" {
@@ -155,12 +147,12 @@ test "prettyPrint ArrayList empty" {
     var list = try std.ArrayList(i32).initCapacity(allocator, 10);
     defer list.deinit(allocator);
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[]", buf.items);
+    try testing.expectEqualStrings("[]", aw.written());
 }
 
 test "prettyPrint ArrayList single element" {
@@ -170,12 +162,12 @@ test "prettyPrint ArrayList single element" {
 
     try list.append(allocator, 42);
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[42]", buf.items);
+    try testing.expectEqualStrings("[42]", aw.written());
 }
 
 test "prettyPrint ArrayList with strings" {
@@ -185,12 +177,12 @@ test "prettyPrint ArrayList with strings" {
 
     try list.appendSlice(allocator, &[_][]const u8{ "hello", "world", "test" });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[hello, world, test]", buf.items);
+    try testing.expectEqualStrings("[hello, world, test]", aw.written());
 }
 
 test "prettyPrint ArrayList negative numbers" {
@@ -200,12 +192,12 @@ test "prettyPrint ArrayList negative numbers" {
 
     try list.appendSlice(allocator, &[_]i32{ -5, -1, 0, 5 });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[-5, -1, 0, 5]", buf.items);
+    try testing.expectEqualStrings("[-5, -1, 0, 5]", aw.written());
 }
 
 test "prettyPrint ArrayList floating point" {
@@ -215,14 +207,14 @@ test "prettyPrint ArrayList floating point" {
 
     try list.appendSlice(allocator, &[_]f64{ 1.5, 2.5, 3.5 });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
     // f64 formatting includes more precision, just check it starts correctly
-    try testing.expect(std.mem.startsWith(u8, buf.items, "["));
-    try testing.expect(std.mem.endsWith(u8, buf.items, "]"));
+    try testing.expect(std.mem.startsWith(u8, aw.written(), "["));
+    try testing.expect(std.mem.endsWith(u8, aw.written(), "]"));
 }
 
 test "prettyPrint ArrayList large size" {
@@ -234,14 +226,14 @@ test "prettyPrint ArrayList large size" {
         try list.append(allocator, @intCast(i));
     }
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expect(std.mem.startsWith(u8, buf.items, "["));
-    try testing.expect(std.mem.endsWith(u8, buf.items, "]"));
-    try testing.expect(std.mem.containsAtLeast(u8, buf.items, 1, ","));
+    try testing.expect(std.mem.startsWith(u8, aw.written(), "["));
+    try testing.expect(std.mem.endsWith(u8, aw.written(), "]"));
+    try testing.expect(std.mem.containsAtLeast(u8, aw.written(), 1, ","));
 }
 
 test "expectSliceEqual with matching slices" {
@@ -307,14 +299,14 @@ test "fmt wrapper formats ArrayList" {
 
     try list.appendSlice(allocator, &[_]i32{ 1, 2, 3 });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
     // Use the formatter's format method directly
     const formatter = fmt(&list);
-    try formatter.format("", .{}, buf.writer(allocator).any());
+    try formatter.format(&aw.writer);
 
-    try testing.expectEqualStrings("[1, 2, 3]", buf.items);
+    try testing.expectEqualStrings("[1, 2, 3]", aw.written());
 }
 
 test "fmt wrapper with empty ArrayList" {
@@ -322,13 +314,13 @@ test "fmt wrapper with empty ArrayList" {
     var list = try std.ArrayList(i32).initCapacity(allocator, 10);
     defer list.deinit(allocator);
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
     const formatter = fmt(&list);
-    try formatter.format("", .{}, buf.writer(allocator).any());
+    try formatter.format(&aw.writer);
 
-    try testing.expectEqualStrings("[]", buf.items);
+    try testing.expectEqualStrings("[]", aw.written());
 }
 
 test "fmt wrapper no memory leaks" {
@@ -340,11 +332,11 @@ test "fmt wrapper no memory leaks" {
         try list.append(allocator, @intCast(i));
     }
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
     const formatter = fmt(&list);
-    try formatter.format("", .{}, buf.writer(allocator).any());
+    try formatter.format(&aw.writer);
     // allocator detects leaks automatically
 }
 
@@ -358,12 +350,12 @@ test "prettyPrint ArrayList integration with testing.allocator" {
         try list.append(allocator, @intCast(i));
     }
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expect(buf.items.len > 0);
+    try testing.expect(aw.written().len > 0);
 }
 
 test "expectSliceEqual with boolean values" {
@@ -389,12 +381,12 @@ test "prettyPrint ArrayList with u8 values" {
 
     try list.appendSlice(allocator, &[_]u8{ 10, 20, 30 });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[10, 20, 30]", buf.items);
+    try testing.expectEqualStrings("[10, 20, 30]", aw.written());
 }
 
 test "prettyPrint ArrayList with u64 values" {
@@ -404,12 +396,12 @@ test "prettyPrint ArrayList with u64 values" {
 
     try list.appendSlice(allocator, &[_]u64{ 1000, 2000, 3000 });
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf.deinit(allocator);
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
-    try prettyPrint(buf.writer(allocator).any(), &list);
+    try prettyPrint(&aw.writer, &list);
 
-    try testing.expectEqualStrings("[1000, 2000, 3000]", buf.items);
+    try testing.expectEqualStrings("[1000, 2000, 3000]", aw.written());
 }
 
 test "expectSliceEqual with small vs large slices" {
@@ -427,17 +419,17 @@ test "fmt wrapper formats consistently across multiple calls" {
 
     try list.appendSlice(allocator, &[_]i32{ 10, 20, 30 });
 
-    var buf1 = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf1.deinit(allocator);
+    var aw1 = std.Io.Writer.Allocating.init(allocator);
+    defer aw1.deinit();
     const formatter1 = fmt(&list);
-    try formatter1.format("", .{}, buf1.writer(allocator).any());
+    try formatter1.format(&aw1.writer);
 
-    var buf2 = try std.ArrayList(u8).initCapacity(allocator, 100);
-    defer buf2.deinit(allocator);
+    var aw2 = std.Io.Writer.Allocating.init(allocator);
+    defer aw2.deinit();
     const formatter2 = fmt(&list);
-    try formatter2.format("", .{}, buf2.writer(allocator).any());
+    try formatter2.format(&aw2.writer);
 
-    try testing.expectEqualStrings(buf1.items, buf2.items);
+    try testing.expectEqualStrings(aw1.written(), aw2.written());
 }
 
 test "expectSliceEqual with negative and positive mix" {

@@ -7396,7 +7396,7 @@ pub fn NegativeBinomial(comptime T: type) type {
         /// Returns k such that CDF(k) ≥ prob
         ///
         /// Time: O(k) linear search | Space: O(1)
-        pub fn quantile(self: Self, prob: T) error{ OutOfDomain }!u64 {
+        pub fn quantile(self: Self, prob: T) error{OutOfDomain}!u64 {
             if (prob < 0.0 or prob > 1.0) return error.OutOfDomain;
             if (prob == 0.0) return 0;
 
@@ -7749,7 +7749,7 @@ pub fn Hypergeometric(comptime T: type) type {
             const K_f = @as(T, @floatFromInt(self.K));
             const k_f = @as(T, @floatFromInt(k));
             const NK_f = @as(T, @floatFromInt(self.N - self.K));
-            const nk: u64 = self.n - k;  // safe because k <= min(n,K) <= n
+            const nk: u64 = self.n - k; // safe because k <= min(n,K) <= n
             const nk_f = @as(T, @floatFromInt(nk));
             const N_f = @as(T, @floatFromInt(self.N));
             const n_f = @as(T, @floatFromInt(self.n));
@@ -8143,9 +8143,9 @@ pub fn Categorical(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        probs: []T,        // normalized probability vector (sum = 1.0)
-        cum_probs: []T,    // cumulative probabilities for O(log k) sampling
-        k: usize,          // number of categories
+        probs: []T, // normalized probability vector (sum = 1.0)
+        cum_probs: []T, // cumulative probabilities for O(log k) sampling
+        k: usize, // number of categories
         allocator: std.mem.Allocator,
 
         /// Initialize Categorical distribution from weights.
@@ -8702,7 +8702,7 @@ pub fn Multinomial(comptime T: type) type {
         const Self = @This();
 
         n: u64,
-        probs: []T,        // normalized probability vector (sum = 1.0)
+        probs: []T, // normalized probability vector (sum = 1.0)
         allocator: std.mem.Allocator,
 
         /// Initialize Multinomial distribution from n trials and weights.
@@ -8830,7 +8830,7 @@ pub fn Multinomial(comptime T: type) type {
 
             // For each category 0..k-2, sample from Binomial(remaining, p_i / mass_left).
             // Clamp p_conditional to [0,1] to guard against floating-point drift in mass_left.
-            for (0 .. self.probs.len - 1) |i| {
+            for (0..self.probs.len - 1) |i| {
                 const p_raw = self.probs[i] / mass_left;
                 const p_conditional = @min(@max(p_raw, 0.0), 1.0);
                 const xi = @min(binomialSample(rng, remaining, p_conditional), remaining);
@@ -9962,10 +9962,10 @@ pub fn Zipf(comptime T: type) type {
     return struct {
         n: u64,
         s: T,
-        h_norm: T,      // H(n, s) = normalization constant
-        h_s1: T,        // H(n, s-1) for mean
-        h_s2: T,        // H(n, s-2) for variance
-        h_log_s: T,     // Σ log(k) * k^{-s} for entropy
+        h_norm: T, // H(n, s) = normalization constant
+        h_s1: T, // H(n, s-1) for mean
+        h_s2: T, // H(n, s-2) for variance
+        h_log_s: T, // Σ log(k) * k^{-s} for entropy
         cum_probs: []T, // cumulative probabilities for sampling
 
         const Self = @This();
@@ -9975,7 +9975,7 @@ pub fn Zipf(comptime T: type) type {
         /// Precomputes harmonic sums and CDF table.
         ///
         /// Time: O(n) | Space: O(n)
-        pub fn init(allocator: std.mem.Allocator, n: u64, s: T) error{InvalidParameter, OutOfMemory}!Self {
+        pub fn init(allocator: std.mem.Allocator, n: u64, s: T) error{ InvalidParameter, OutOfMemory }!Self {
             if (n < 1) return error.InvalidParameter;
             if (s <= 0.0 or !std.math.isFinite(s)) return error.InvalidParameter;
 
@@ -11127,7 +11127,7 @@ pub fn DirichletMultinomial(comptime T: type) type {
             var remaining: u64 = self.n;
             var mass_left: T = 1.0;
 
-            for (0 .. k - 1) |i| {
+            for (0..k - 1) |i| {
                 const p_raw = probs[i] / mass_left;
                 const p_clamped = @min(@max(p_raw, 0.0), 1.0);
                 const xi = @min(binomialSample(rng, remaining, p_clamped), remaining);
@@ -12055,9 +12055,9 @@ test "DiscreteUniform: cdf intermediate values correct" {
 pub fn Logarithmic(comptime T: type) type {
     return struct {
         p: T,
-        c: T,      // -1 / ln(1-p), normalizing constant
-        log_c: T,  // ln(c) = -ln(|ln(1-p)|)
-        log_p: T,  // ln(p)
+        c: T, // -1 / ln(1-p), normalizing constant
+        log_c: T, // ln(c) = -ln(|ln(1-p)|)
+        log_p: T, // ln(p)
 
         const Self = @This();
 
@@ -12066,8 +12066,8 @@ pub fn Logarithmic(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn init(p: T) DistributionError!Self {
             if (p <= 0.0 or p >= 1.0 or !std.math.isFinite(p)) return error.InvalidParameter;
-            const log1mp = @log(1.0 - p);  // ln(1-p), negative value
-            const c = -1.0 / log1mp;       // c > 0
+            const log1mp = @log(1.0 - p); // ln(1-p), negative value
+            const c = -1.0 / log1mp; // c > 0
             // log_c = ln(c) = ln(-1/ln(1-p)) = -ln(|ln(1-p)|) = -ln(-ln(1-p)) since ln(1-p) < 0
             const log_c = -@log(-log1mp);
             return Self{
@@ -12128,7 +12128,7 @@ pub fn Logarithmic(comptime T: type) type {
         /// Time: O(k) where k is the returned value | Space: O(1)
         pub fn quantile(self: Self, prob_in: T) u64 {
             if (prob_in <= 0.0) return 1;
-            const prob = if (prob_in >= 1.0) 0.9999999999 else prob_in;  // Clamp to near-1 for numerical stability
+            const prob = if (prob_in >= 1.0) 0.9999999999 else prob_in; // Clamp to near-1 for numerical stability
             var cumulative: T = 0.0;
             var k: u64 = 1;
             while (true) {
@@ -12153,7 +12153,7 @@ pub fn Logarithmic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn variance(self: Self) T {
-            const log1mp = @log(1.0 - self.p);  // ln(1-p)
+            const log1mp = @log(1.0 - self.p); // ln(1-p)
             const numer = -self.p * (self.p + log1mp);
             const denom = (1.0 - self.p) * (1.0 - self.p) * log1mp * log1mp;
             return numer / denom;
@@ -13068,7 +13068,7 @@ test "Skellam: empirical mean converges to analytical mean (mu1=3, mu2=2)" {
     const rng = prng.random();
 
     const dist = try Skellam(f64).init(3.0, 2.0);
-    const analytical_mean = dist.mean();  // 1.0
+    const analytical_mean = dist.mean(); // 1.0
 
     var sum: f64 = 0.0;
     const n = 5000;
@@ -13088,7 +13088,7 @@ test "Skellam: empirical variance converges to analytical variance (mu1=2, mu2=3
     const rng = prng.random();
 
     const dist = try Skellam(f64).init(2.0, 3.0);
-    const analytical_var = dist.variance();  // 5.0
+    const analytical_var = dist.variance(); // 5.0
 
     var sum: f64 = 0.0;
     const n = 5000;
@@ -18803,7 +18803,7 @@ pub fn Gompertz(comptime T: type) type {
 /// Time: O(1) for most operations, O(n) for CDF/quantile (numerical integration)
 pub fn Rice(comptime T: type) type {
     return struct {
-        nu: T,    // non-centrality parameter ν ≥ 0
+        nu: T, // non-centrality parameter ν ≥ 0
         sigma: T, // scale parameter σ > 0
 
         const Self = @This();
@@ -19905,7 +19905,7 @@ test "Rice: f32 mode is sigma when nu=0" {
 
 pub fn Nakagami(comptime T: type) type {
     return struct {
-        m: T,     // shape / fading parameter (m ≥ 0.5)
+        m: T, // shape / fading parameter (m ≥ 0.5)
         omega: T, // spread = E[X²] (Ω > 0)
 
         const Self = @This();
@@ -20593,7 +20593,7 @@ test "Nakagami: scaling law — c*f(cx; m, c²Ω) = f(x; m, Ω)" {
 /// Support: (0, ∞)
 pub fn InverseGaussian(comptime T: type) type {
     return struct {
-        mu: T,     // mean (μ > 0)
+        mu: T, // mean (μ > 0)
         lambda: T, // shape / precision (λ > 0)
 
         const Self = @This();
@@ -21317,7 +21317,7 @@ test "InverseGaussian: pdf has interior maximum near mu" {
 pub fn BirnbaumSaunders(comptime T: type) type {
     return struct {
         alpha: T, // shape parameter (α > 0)
-        beta: T,  // scale parameter (β > 0), also the median
+        beta: T, // scale parameter (β > 0), also the median
 
         const Self = @This();
 
@@ -29054,10 +29054,8 @@ pub fn SkewNormal(comptime T: type) type {
         pub fn entropy(self: Self) T {
             // Gauss-Hermite quadrature for E[ln(2*Phi(alpha*Z))]
             // Nodes and weights for 10-point GHQ
-            const nodes = [_]T{ -3.436159783, -2.532731674, -1.756683649, -1.036610830, -0.342901327,
-                                 0.342901327,  1.036610830,  1.756683649,  2.532731674,  3.436159783 };
-            const weights = [_]T{ 7.64043285e-6, 1.34364574e-3, 3.38743944e-2, 2.40138611e-1, 6.10862633e-1,
-                                   6.10862633e-1, 2.40138611e-1, 3.38743944e-2, 1.34364574e-3, 7.64043285e-6 };
+            const nodes = [_]T{ -3.436159783, -2.532731674, -1.756683649, -1.036610830, -0.342901327, 0.342901327, 1.036610830, 1.756683649, 2.532731674, 3.436159783 };
+            const weights = [_]T{ 7.64043285e-6, 1.34364574e-3, 3.38743944e-2, 2.40138611e-1, 6.10862633e-1, 6.10862633e-1, 2.40138611e-1, 3.38743944e-2, 1.34364574e-3, 7.64043285e-6 };
 
             var integral: T = 0.0;
             for (0..10) |i| {
@@ -30008,7 +30006,7 @@ test "HalfCauchy: cdf(large_x) approaches 1" {
 test "HalfCauchy: cdf(0.5; gamma=1) ≈ 0.333..." {
     const dist = try HalfCauchy(f64).init(1.0);
     const c = dist.cdf(0.5);
-    const expected: f64 = 2.0 / math.pi * 0.4636476090008061;  // atan(0.5) ≈ 0.4636476090008061
+    const expected: f64 = 2.0 / math.pi * 0.4636476090008061; // atan(0.5) ≈ 0.4636476090008061
     try testing.expectApproxEqAbs(expected, c, 1e-10);
 }
 
@@ -30035,7 +30033,7 @@ test "HalfCauchy: quantile(0.5; gamma=2) = 2" {
 test "HalfCauchy: quantile(0.75; gamma=1) ≈ sqrt(2) + 1" {
     const dist = try HalfCauchy(f64).init(1.0);
     const q = try dist.quantile(0.75);
-    const expected: f64 = 2.4142135623730945;  // tan(3π/8) = sqrt(2) + 1 ≈ 2.4142135623730945
+    const expected: f64 = 2.4142135623730945; // tan(3π/8) = sqrt(2) + 1 ≈ 2.4142135623730945
     try testing.expectApproxEqAbs(expected, q, 1e-10);
 }
 
@@ -31145,7 +31143,7 @@ pub fn Arcsine(comptime T: type) type {
     return struct {
         a: T,
         b: T,
-        range: T,           // b - a cached for efficiency
+        range: T, // b - a cached for efficiency
         log_pi_range_d4: T, // ln(π·(b-a)/4) cached for entropy
 
         const Self = @This();
@@ -34045,7 +34043,7 @@ test "Chi: mode < mean (right-skewed for k >= 2)" {
 
 pub fn NoncentralChiSquared(comptime T: type) type {
     return struct {
-        k: T,      // degrees of freedom, k > 0
+        k: T, // degrees of freedom, k > 0
         lambda: T, // noncentrality parameter, lambda >= 0
 
         const Self = @This();
@@ -43727,7 +43725,7 @@ test "Muth: mean is exactly 1.0 for various kappas (canonical property)" {
 /// Time: O(n) for pdf/cdf (n=300 quadrature points) | Space: O(1)
 pub fn NoncentralT(comptime T: type) type {
     return struct {
-        nu: T,    // degrees of freedom ν > 0
+        nu: T, // degrees of freedom ν > 0
         delta: T, // noncentrality parameter δ ∈ ℝ
 
         const Self = @This();
@@ -45464,7 +45462,7 @@ pub fn NoncentralF(comptime T: type) type {
             const d2_over_d1 = self.d2 / self.d1;
             const numerator = 2.0 * d2_over_d1 * d2_over_d1 *
                 ((self.d1 + self.lambda) * (self.d1 + self.lambda) +
-                (self.d1 + 2.0 * self.lambda) * (self.d2 - 2.0));
+                    (self.d1 + 2.0 * self.lambda) * (self.d2 - 2.0));
             const denominator = (self.d2 - 2.0) * (self.d2 - 2.0) * (self.d2 - 4.0);
             return numerator / denominator;
         }
@@ -45990,7 +45988,7 @@ test "NoncentralF(f32): cdf in [0, 1]" {
 
 pub fn ReciprocalInverseGaussian(comptime T: type) type {
     return struct {
-        mu: T,     // μ > 0
+        mu: T, // μ > 0
         lambda: T, // λ > 0
 
         const Self = @This();
@@ -46595,9 +46593,9 @@ test "ReciprocalInverseGaussian: variance decreases as lambda increases" {
 
 pub fn GeneralizedExtremeValue(comptime T: type) type {
     return struct {
-        mu: T,     // location
-        sigma: T,  // scale (σ > 0)
-        xi: T,     // shape (ξ)
+        mu: T, // location
+        sigma: T, // scale (σ > 0)
+        xi: T, // shape (ξ)
 
         const Self = @This();
         const euler_mascheroni: T = 0.5772156649015328;
@@ -47115,7 +47113,6 @@ test "GeneralizedExtremeValue(f32): cdf in [0, 1]" {
     const c = dist.cdf(0.0);
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
-
 
 // ============================================================================
 // LogitNormal Distribution
@@ -49384,9 +49381,7 @@ pub fn ExponentialModifiedGaussian(comptime T: type) type {
         /// Format for debug printing.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ExponentialModifiedGaussian(mu={d}, sigma={d}, lambda={d})", .{ self.mu, self.sigma, self.lambda });
         }
 
@@ -49542,9 +49537,7 @@ pub fn HyperbolicSecant(comptime T: type) type {
         /// Format for debug printing.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("HyperbolicSecant(mu={d}, sigma={d})", .{ self.mu, self.sigma });
         }
 
@@ -49665,7 +49658,7 @@ test "ExponentialModifiedGaussian: pdf integrates to ~1.0" {
     const n = 200;
     const h = (hi - lo) / @as(f64, @floatFromInt(n));
 
-    for (0..n+1) |i| {
+    for (0..n + 1) |i| {
         const x = lo + @as(f64, @floatFromInt(i)) * h;
         const weight: f64 = if (i == 0 or i == n) 0.5 else 1.0;
         total += weight * dist.pdf(x);
@@ -49906,6 +49899,14 @@ test "HyperbolicSecant: init with sigma=0 returns error" {
     try testing.expectError(error.InvalidParameter, result);
 }
 
+test "HyperbolicSecant: format() integrates with std.fmt via {f}" {
+    const allocator = testing.allocator;
+    const dist = try HyperbolicSecant(f64).init(0.0, 1.0);
+    const s = try std.fmt.allocPrint(allocator, "{f}", .{dist});
+    defer allocator.free(s);
+    try testing.expect(std.mem.containsAtLeast(u8, s, 1, "HyperbolicSecant"));
+}
+
 test "HyperbolicSecant: init with negative sigma returns error" {
     const result = HyperbolicSecant(f64).init(0.0, -1.0);
     try testing.expectError(error.InvalidParameter, result);
@@ -49959,7 +49960,7 @@ test "HyperbolicSecant: pdf integrates to approximately 1.0" {
     const n = 200;
     const h = (hi - lo) / @as(f64, @floatFromInt(n));
 
-    for (0..n+1) |i| {
+    for (0..n + 1) |i| {
         const x = lo + @as(f64, @floatFromInt(i)) * h;
         const weight: f64 = if (i == 0 or i == n) 0.5 else 1.0;
         total += weight * dist.pdf(x);
@@ -50438,9 +50439,7 @@ pub fn NoncentralBeta(comptime T: type) type {
         /// Format for debug printing
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("NoncentralBeta(alpha={d}, beta={d}, lambda={d})", .{ self.alpha, self.beta, self.lambda });
         }
 
@@ -53124,7 +53123,7 @@ test "SinhArcsinh: skewness — epsilon>0 gives right-skewed distribution" {
     const c_right = dist.cdf(m + offset);
     const c_left = dist.cdf(m - offset);
     // CDF at mode < 0.5 (median > mode for right-skewed); left tail much smaller than right
-    const left_gap = 0.5 - c_left;   // probability in left tail
+    const left_gap = 0.5 - c_left; // probability in left tail
     const right_gain = c_right - 0.5; // probability in right band above 0.5
     try testing.expect(left_gap > right_gain);
 }
@@ -57035,10 +57034,10 @@ test "TukeyLambda: sample variance converges to theoretical variance (N=5000, la
 pub fn Zeta(comptime T: type) type {
     return struct {
         s: T,
-        zeta_s: T,   // ζ(s)       — normalization constant
-        zeta_s1: T,  // ζ(s-1)     — for mean; +∞ when s ≤ 2
-        zeta_s2: T,  // ζ(s-2)     — for variance; +∞ when s ≤ 3
-        zeta_ds: T,  // −ζ′(s)     — Σ_{k=1}^∞ ln(k)·k^{−s}, for entropy
+        zeta_s: T, // ζ(s)       — normalization constant
+        zeta_s1: T, // ζ(s-1)     — for mean; +∞ when s ≤ 2
+        zeta_s2: T, // ζ(s-2)     — for variance; +∞ when s ≤ 3
+        zeta_ds: T, // −ζ′(s)     — Σ_{k=1}^∞ ln(k)·k^{−s}, for entropy
 
         const Self = @This();
 
@@ -58941,10 +58940,10 @@ pub fn ZipfMandelbrot(comptime T: type) type {
         n: u64,
         s: T,
         q: T,
-        h_norm: T,   // H(n, s, q) — normalization constant
+        h_norm: T, // H(n, s, q) — normalization constant
         mean_val: T, // precomputed mean = Σ k·w_k / h_norm
-        var_num: T,  // Σ k²·w_k (unscaled; divide by h_norm for E[X²])
-        h_log: T,    // Σ ln(k+q)·w_k for entropy
+        var_num: T, // Σ k²·w_k (unscaled; divide by h_norm for E[X²])
+        h_log: T, // Σ ln(k+q)·w_k for entropy
         cum_probs: []T,
 
         const Self = @This();
@@ -59991,7 +59990,7 @@ pub fn GeneralizedExponential(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn cdf(self: Self, x: T) T {
             if (x <= 0.0) return 0.0;
-            const u = -math.expm1(-self.lambda * x);  // 1 - exp(-λx) = -expm1(-λx)
+            const u = -math.expm1(-self.lambda * x); // 1 - exp(-λx) = -expm1(-λx)
             return math.pow(T, u, self.alpha);
         }
 
@@ -60855,8 +60854,8 @@ test "LogGamma: cdf + sf equals 1" {
 /// Time: O(1) for all operations except CDF calculation which involves arctan
 pub fn WrappedCauchy(comptime T: type) type {
     return struct {
-        mu: T,   // mean direction
-        rho: T,  // concentration ∈ (0, 1)
+        mu: T, // mean direction
+        rho: T, // concentration ∈ (0, 1)
 
         const Self = @This();
 
@@ -61497,8 +61496,8 @@ test "WrappedCauchy: empirical circular variance converges to 1 - rho (N=5000)" 
 
 pub fn Epanechnikov(comptime T: type) type {
     return struct {
-        mu: T,  // location parameter
-        h: T,   // half-bandwidth (h > 0)
+        mu: T, // location parameter
+        h: T, // half-bandwidth (h > 0)
 
         const Self = @This();
 
@@ -63227,7 +63226,7 @@ test "Benini: mode is sigma for large alpha (alpha=2, beta=1, sigma=2)" {
 }
 
 test "Benini: mode is >= sigma always" {
-    const params = [_][3]f64{ .{1.0, 1.0, 1.0}, .{0.5, 2.0, 1.5}, .{0.0, 0.5, 3.0} };
+    const params = [_][3]f64{ .{ 1.0, 1.0, 1.0 }, .{ 0.5, 2.0, 1.5 }, .{ 0.0, 0.5, 3.0 } };
     for (params) |p| {
         const dist = try Benini(f64).init(p[0], p[1], p[2]);
         try std.testing.expect(dist.mode() >= dist.sigma);
@@ -65524,9 +65523,7 @@ pub fn InverseChiSquared(comptime T: type) type {
         /// Format the distribution for display.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("InvChiSq(ν={d:.4})", .{self.nu});
         }
     };
@@ -65944,9 +65941,7 @@ pub fn ScaledInverseChiSquared(comptime T: type) type {
         /// Format the distribution for display.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ScaledInvChiSq(ν={d:.4}, σ²={d:.4})", .{ self.nu, self.scale2 });
         }
     };
@@ -66255,9 +66250,9 @@ test "ScaledInverseChiSquared: validate passes for scale2 != 1" {
 test "ScaledInverseChiSquared: format output contains nu and scale2" {
     const dist = try ScaledInverseChiSquared(f64).init(4.0, 2.0);
     var buf: [64]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buf);
-    try dist.format("", std.fmt.FormatOptions{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(std.mem.containsAtLeast(u8, output, 1, "4"));
     try testing.expect(std.mem.containsAtLeast(u8, output, 1, "2"));
 }
@@ -66501,9 +66496,7 @@ pub fn ExponentiatedWeibull(comptime T: type) type {
         /// Format the distribution for display.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("EW(α={d:.4}, λ={d:.4}, k={d:.4})", .{ self.alpha, self.scale, self.shape });
         }
     };
@@ -66957,9 +66950,7 @@ pub fn UQuadratic(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("UQuadratic(a={d}, b={d})", .{ self.a, self.b });
         }
     };
@@ -67325,7 +67316,11 @@ pub fn GeneralizedRayleigh(comptime T: type) type {
                 const et = @exp(-t);
                 const h = 2.0 * t * (1.0 - self.beta * et) / (1.0 - et) - 1.0;
                 if (@abs(h) < 1e-12 or (hi - lo) < 1e-12) break;
-                if (h < 0.0) { lo = t; } else { hi = t; }
+                if (h < 0.0) {
+                    lo = t;
+                } else {
+                    hi = t;
+                }
             }
             return @sqrt((lo + hi) / 2.0 / self.alpha);
         }
@@ -67395,9 +67390,7 @@ pub fn GeneralizedRayleigh(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("GeneralizedRayleigh(α={d}, β={d})", .{ self.alpha, self.beta });
         }
     };
@@ -67908,9 +67901,7 @@ pub fn ARGUS(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ARGUS(χ={d}, c={d})", .{ self.chi, self.cutoff });
         }
     };
@@ -68254,8 +68245,8 @@ test "ARGUS: f32 type support" {
 pub fn FlorySchulz(comptime T: type) type {
     return struct {
         a: T,
-        log_1ma: T,  // log(1-a), cached
-        log_a: T,    // log(a), cached
+        log_1ma: T, // log(1-a), cached
+        log_a: T, // log(a), cached
 
         const Self = @This();
 
@@ -68390,9 +68381,7 @@ pub fn FlorySchulz(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("FlorySchulz(a={d})", .{self.a});
         }
     };
@@ -68836,12 +68825,12 @@ pub fn CrystalBall(comptime T: type) type {
         mu: T,
         sigma: T,
         // Pre-computed constants
-        big_a: T,   // (n/alpha)^n × exp(-alpha²/2)
-        big_b: T,   // n/alpha - alpha
-        big_c: T,   // (n/alpha) × exp(-alpha²/2) / (n-1)
-        big_d: T,   // sqrt(2π) × Φ(alpha)
-        norm: T,    // 1/(C+D)
-        threshold: T,  // norm × C = CDF at transition point
+        big_a: T, // (n/alpha)^n × exp(-alpha²/2)
+        big_b: T, // n/alpha - alpha
+        big_c: T, // (n/alpha) × exp(-alpha²/2) / (n-1)
+        big_d: T, // sqrt(2π) × Φ(alpha)
+        norm: T, // 1/(C+D)
+        threshold: T, // norm × C = CDF at transition point
 
         const Self = @This();
 
@@ -69046,9 +69035,7 @@ pub fn CrystalBall(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("CrystalBall(α={d}, n={d}, μ={d}, σ={d})", .{ self.alpha, self.n, self.mu, self.sigma });
         }
     };
@@ -69411,7 +69398,7 @@ pub fn Trapezoidal(comptime T: type) type {
         b: T,
         c: T,
         d: T,
-        h: T,  // normalizing height: 2 / (c + d - a - b)
+        h: T, // normalizing height: 2 / (c + d - a - b)
         p1: T, // CDF at x = b (area of left triangle)
         p2: T, // CDF at x = c (= 1 - area of right triangle)
 
@@ -69604,9 +69591,7 @@ pub fn Trapezoidal(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Trapezoidal(a={d}, b={d}, c={d}, d={d})", .{ self.a, self.b, self.c, self.d });
         }
     };
@@ -69950,8 +69935,7 @@ pub fn JohnsonSB(comptime T: type) type {
             if (!(y > 0.0 and y < 1.0)) return -math.inf(T);
             const z = self.zTransform(y);
             const log_sqrt2pi: T = 0.5 * @log(2.0 * math.pi);
-            return @log(self.delta) - @log(self.lambda) - log_sqrt2pi
-                   - @log(y) - @log(1.0 - y) - 0.5 * z * z;
+            return @log(self.delta) - @log(self.lambda) - log_sqrt2pi - @log(y) - @log(1.0 - y) - 0.5 * z * z;
         }
 
         /// PDF at x.
@@ -70104,9 +70088,7 @@ pub fn JohnsonSB(comptime T: type) type {
         /// Format for display.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("JohnsonSB(γ={d:.4}, δ={d:.4}, ξ={d:.4}, λ={d:.4})", .{
                 self.gamma, self.delta, self.xi, self.lambda,
             });
@@ -70498,12 +70480,7 @@ pub fn HalfStudentT(comptime T: type) type {
         pub fn pdf(self: Self, x: T) T {
             if (x < 0.0) return 0.0;
             const z = x / self.sigma;
-            const log_val = logGamma((self.nu + 1.0) / 2.0)
-                - logGamma(self.nu / 2.0)
-                - 0.5 * @log(self.nu * math.pi)
-                + @log(2.0)
-                - @log(self.sigma)
-                - (self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
+            const log_val = logGamma((self.nu + 1.0) / 2.0) - logGamma(self.nu / 2.0) - 0.5 * @log(self.nu * math.pi) + @log(2.0) - @log(self.sigma) - (self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
             return @exp(log_val);
         }
 
@@ -70515,12 +70492,7 @@ pub fn HalfStudentT(comptime T: type) type {
         pub fn logpdf(self: Self, x: T) T {
             if (x < 0.0) return -math.inf(T);
             const z = x / self.sigma;
-            return logGamma((self.nu + 1.0) / 2.0)
-                - logGamma(self.nu / 2.0)
-                - 0.5 * @log(self.nu * math.pi)
-                + @log(2.0)
-                - @log(self.sigma)
-                - (self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
+            return logGamma((self.nu + 1.0) / 2.0) - logGamma(self.nu / 2.0) - 0.5 * @log(self.nu * math.pi) + @log(2.0) - @log(self.sigma) - (self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
         }
 
         /// Cumulative distribution function (CDF) at x.
@@ -70588,9 +70560,7 @@ pub fn HalfStudentT(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn mean(self: Self) T {
             if (self.nu <= 1.0) return math.nan(T);
-            const log_mu = 0.5 * @log(self.nu / math.pi)
-                + logGamma((self.nu - 1.0) / 2.0)
-                - logGamma(self.nu / 2.0);
+            const log_mu = 0.5 * @log(self.nu / math.pi) + logGamma((self.nu - 1.0) / 2.0) - logGamma(self.nu / 2.0);
             return self.sigma * @exp(log_mu);
         }
 
@@ -70603,9 +70573,7 @@ pub fn HalfStudentT(comptime T: type) type {
         pub fn variance(self: Self) T {
             if (self.nu <= 1.0) return math.nan(T);
             if (self.nu <= 2.0) return math.inf(T);
-            const log_mu = 0.5 * @log(self.nu / math.pi)
-                + logGamma((self.nu - 1.0) / 2.0)
-                - logGamma(self.nu / 2.0);
+            const log_mu = 0.5 * @log(self.nu / math.pi) + logGamma((self.nu - 1.0) / 2.0) - logGamma(self.nu / 2.0);
             const mu_unit = @exp(log_mu);
             return self.sigma * self.sigma * (self.nu / (self.nu - 2.0) - mu_unit * mu_unit);
         }
@@ -71202,7 +71170,6 @@ test "HalfStudentT: f32 entropy works" {
     try expect(math.isFinite(e));
 }
 
-
 // ============================================================================
 // Borel Distribution (124th distribution, 23rd discrete)
 // ============================================================================
@@ -71352,9 +71319,7 @@ pub fn Borel(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Borel(μ={d:.4})", .{self.mu});
         }
     };
@@ -71781,9 +71746,7 @@ pub fn DiscreteLaplace(comptime T: type) type {
         }
 
         /// Format the distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("DiscreteLaplace(p={d})", .{self.p});
         }
     };
@@ -72228,9 +72191,7 @@ pub fn Landau(comptime T: type) type {
         }
 
         /// Format distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Landau(μ={d}, c={d})", .{ self.mu, self.c });
         }
     };
@@ -72593,9 +72554,9 @@ test "Landau: f32 type support" {
 test "Landau: format output contains mu and c" {
     const dist = try Landau(f64).init(2.0, 1.5);
     var buf: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buf);
-    try dist.format("", std.fmt.FormatOptions{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try expect(std.mem.containsAtLeast(u8, output, 1, "Landau"));
 }
 
@@ -72621,15 +72582,14 @@ test "Landau: format output contains mu and c" {
 /// Mode:   μ + b/u* where u* solves u·exp(u)/(exp(u)-1) = n+1  [bisection]
 /// Mean:   μ + b·ζ(n-1)/((n-1)·ζ(n))  for n > 2;  else +∞
 /// Var:    b²[ζ(n-2)/((n-1)(n-2)·ζ(n)) - (ζ(n-1)/((n-1)·ζ(n)))²]  for n > 3; else +∞
-
 pub fn Davis(comptime T: type) type {
     return struct {
         b: T,
         n: T,
         mu: T,
-        log_norm: T,  // n·log(b) - lgamma(n) - log(ζ(n))
-        zeta_n: T,    // ζ(n) precomputed
-        i_total: T,   // Γ(n)·ζ(n) = normalization for CDF
+        log_norm: T, // n·log(b) - lgamma(n) - log(ζ(n))
+        zeta_n: T, // ζ(n) precomputed
+        i_total: T, // Γ(n)·ζ(n) = normalization for CDF
 
         const Self = @This();
         const CDF_N: usize = 500;
@@ -72879,9 +72839,7 @@ pub fn Davis(comptime T: type) type {
         }
 
         /// Format distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Davis(b={d}, n={d}, μ={d})", .{ self.b, self.n, self.mu });
         }
     };
@@ -73435,8 +73393,8 @@ pub fn PearsonIII(comptime T: type) type {
         sigma: T,
         gamma: T,
         alpha: T, // 4/gamma²; 0 if |gamma| < GAMMA_TOL
-        beta: T,  // sigma*|gamma|/2; 0 if |gamma| < GAMMA_TOL
-        xi: T,    // mu - 2*sigma/gamma; mu if |gamma| < GAMMA_TOL
+        beta: T, // sigma*|gamma|/2; 0 if |gamma| < GAMMA_TOL
+        xi: T, // mu - 2*sigma/gamma; mu if |gamma| < GAMMA_TOL
 
         const Self = @This();
         const GAMMA_TOL: T = 1e-8;
@@ -74658,8 +74616,8 @@ pub fn GeneralizedInverseGaussian(comptime T: type) type {
         lambda: T,
         psi: T,
         chi: T,
-        omega: T,      // sqrt(psi * chi), pre-computed
-        log_norm: T,   // (lambda/2)*log(psi/chi) - log(2) - logK_lambda(omega)
+        omega: T, // sqrt(psi * chi), pre-computed
+        log_norm: T, // (lambda/2)*log(psi/chi) - log(2) - logK_lambda(omega)
 
         /// Initialize GeneralizedInverseGaussian with shape λ, scale ψ, and scale χ
         /// Time: O(400) (Bessel K integral)
@@ -74797,9 +74755,7 @@ pub fn GeneralizedInverseGaussian(comptime T: type) type {
         }
 
         /// Format for printing
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("GIG(λ={d}, ψ={d}, χ={d})", .{ self.lambda, self.psi, self.chi });
         }
     };
@@ -75333,7 +75289,7 @@ pub fn NormalInverseGaussian(comptime T: type) type {
         beta: T,
         mu: T,
         delta: T,
-        gamma: T,     // sqrt(alpha^2 - beta^2)
+        gamma: T, // sqrt(alpha^2 - beta^2)
         log_const: T, // log(alpha) + log(delta) - log(pi) + delta*gamma
 
         /// Initialize NIG(α, β, μ, δ)
@@ -75492,9 +75448,7 @@ pub fn NormalInverseGaussian(comptime T: type) type {
         }
 
         /// Format for printing
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("NIG(α={d}, β={d}, μ={d}, δ={d})", .{ self.alpha, self.beta, self.mu, self.delta });
         }
     };
@@ -75867,9 +75821,9 @@ pub fn VarianceGamma(comptime T: type) type {
         alpha: T,
         beta: T,
         mu: T,
-        omega_sq: T,    // α² - β²
-        log_const: T,   // λ·log(ω²) - 0.5·log(π) - lgamma(λ) - (λ-0.5)·log(2α)
-        nu: T,          // λ - 0.5 (Bessel order)
+        omega_sq: T, // α² - β²
+        log_const: T, // λ·log(ω²) - 0.5·log(π) - lgamma(λ) - (λ-0.5)·log(2α)
+        nu: T, // λ - 0.5 (Bessel order)
 
         /// Initialize VG(λ, α, β, μ)
         /// Time: O(1)
@@ -76050,9 +76004,7 @@ pub fn VarianceGamma(comptime T: type) type {
         }
 
         /// Format distribution for display
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("VarianceGamma(lambda={d:.4}, alpha={d:.4}, beta={d:.4}, mu={d:.4})", .{
                 self.lambda, self.alpha, self.beta, self.mu,
             });
@@ -76560,12 +76512,12 @@ pub fn GeneralizedHyperbolic(comptime T: type) type {
         beta: T,
         delta: T,
         mu: T,
-        gamma: T,      // sqrt(alpha^2 - beta^2)
-        xi: T,         // delta * gamma
-        nu: T,         // lambda - 0.5, Bessel order
-        log_const: T,  // lambda*log(gamma) - 0.5*log(2π) - nu*log(alpha) - lambda*log(delta) - logK(lambda, xi)
-        kr1: T,        // K_{lambda+1}(xi) / K_lambda(xi)
-        kr2: T,        // K_{lambda+2}(xi) / K_lambda(xi)
+        gamma: T, // sqrt(alpha^2 - beta^2)
+        xi: T, // delta * gamma
+        nu: T, // lambda - 0.5, Bessel order
+        log_const: T, // lambda*log(gamma) - 0.5*log(2π) - nu*log(alpha) - lambda*log(delta) - logK(lambda, xi)
+        kr1: T, // K_{lambda+1}(xi) / K_lambda(xi)
+        kr2: T, // K_{lambda+2}(xi) / K_lambda(xi)
 
         /// Initialize GH(λ, α, β, δ, μ)
         /// Time: O(400) (Bessel K integrals)
@@ -76754,9 +76706,7 @@ pub fn GeneralizedHyperbolic(comptime T: type) type {
         }
 
         /// Format for printing
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("GH(λ={d}, α={d}, β={d}, δ={d}, μ={d})", .{ self.lambda, self.alpha, self.beta, self.delta, self.mu });
         }
     };
@@ -77518,8 +77468,8 @@ test "SkewNormal: extreme alpha values" {
 /// - For σ → ∞: approaches uniform on (-π, π]
 pub fn WrappedNormal(comptime T: type) type {
     return struct {
-        mu: T,     // mean direction in (-π, π]
-        sigma: T,  // standard deviation (σ > 0)
+        mu: T, // mean direction in (-π, π]
+        sigma: T, // standard deviation (σ > 0)
 
         const Self = @This();
 
@@ -77640,7 +77590,11 @@ pub fn WrappedNormal(comptime T: type) type {
             var hi: T = math.pi;
             for (0..64) |_| {
                 const mid = (lo + hi) / 2.0;
-                if (self.cdf(mid) < p) { lo = mid; } else { hi = mid; }
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
             }
             return (lo + hi) / 2.0;
         }
@@ -77648,12 +77602,16 @@ pub fn WrappedNormal(comptime T: type) type {
         /// Circular mean direction.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn mean(self: Self) T { return self.mu; }
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
 
         /// Mode equals the mean direction (density peaks at μ).
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn mode(self: Self) T { return self.mu; }
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
 
         /// Circular variance: 1 - exp(-σ²/2)
         ///
@@ -77697,9 +77655,7 @@ pub fn WrappedNormal(comptime T: type) type {
         /// Format the distribution for debugging.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("WrappedNormal(μ={d}, σ={d})", .{ self.mu, self.sigma });
         }
 
@@ -78116,9 +78072,9 @@ test "WrappedNormal: concentrated distribution (sigma=0.1) has samples near mu" 
 /// - Simpler closed forms than WrappedNormal (no infinite series needed)
 pub fn WrappedLaplace(comptime T: type) type {
     return struct {
-        mu: T,  // mean direction in (-π, π]
-        b: T,   // scale parameter (b > 0)
-        r: T,   // pre-computed r = exp(-2π/b)
+        mu: T, // mean direction in (-π, π]
+        b: T, // scale parameter (b > 0)
+        r: T, // pre-computed r = exp(-2π/b)
 
         const Self = @This();
 
@@ -78226,7 +78182,11 @@ pub fn WrappedLaplace(comptime T: type) type {
             var hi: T = math.pi;
             for (0..64) |_| {
                 const mid = (lo + hi) / 2.0;
-                if (self.cdf(mid) < p) { lo = mid; } else { hi = mid; }
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
             }
             return (lo + hi) / 2.0;
         }
@@ -78234,12 +78194,16 @@ pub fn WrappedLaplace(comptime T: type) type {
         /// Circular mean direction.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn mean(self: Self) T { return self.mu; }
+        pub fn mean(self: Self) T {
+            return self.mu;
+        }
 
         /// Mode equals the mean direction (density peaks at μ).
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn mode(self: Self) T { return self.mu; }
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
 
         /// Mean resultant length: ρ = 1 / (1 + b²)
         ///
@@ -78292,9 +78256,7 @@ pub fn WrappedLaplace(comptime T: type) type {
         /// Format the distribution for debugging.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("WrappedLaplace(μ={d}, b={d})", .{ self.mu, self.b });
         }
 
@@ -78648,7 +78610,7 @@ test "WrappedLaplace: concentrated distribution (b=0.1) has samples near mu" {
 /// - q > 1: Related to Lomax with shape (2-q)/(q-1) and scale λ/(q-1)
 pub fn QExponential(comptime T: type) type {
     return struct {
-        q: T,      // deformation parameter (q < 2)
+        q: T, // deformation parameter (q < 2)
         lambda: T, // scale parameter (lambda > 0)
 
         const Self = @This();
@@ -78801,9 +78763,7 @@ pub fn QExponential(comptime T: type) type {
             if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return error.InvalidParameter;
         }
 
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("QExponential(q={d}, λ={d})", .{ self.q, self.lambda });
         }
     };
@@ -79085,7 +79045,6 @@ test "QExponential: q=1 matches Exponential(rate=1) pdf at x=0.5" {
     try std.testing.expectApproxEqAbs(dist.pdf(0.5), exp_dist.pdf(0.5), 1e-10);
 }
 
-
 // ExGaussian Distribution (136th total, 112th continuous)
 // ============================================================================
 // Exponentially Modified Gaussian (EMG) distribution.
@@ -79306,9 +79265,7 @@ pub fn ExGaussian(comptime T: type) type {
             if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return error.InvalidParameter;
         }
 
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ExGaussian(μ={d}, σ={d}, λ={d})", .{ self.mu, self.sigma, self.lambda });
         }
     };
@@ -79601,9 +79558,9 @@ test "ExGaussian: f32 type support" {
 test "ExGaussian: format works" {
     const dist = try ExGaussian(f64).init(0.0, 1.0, 1.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try std.testing.expect(output.len > 0);
 }
 
@@ -79794,9 +79751,7 @@ pub fn GB2(comptime T: type) type {
         /// Format the distribution as "GB2(a=..., b=..., p=..., q=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("GB2(a={d:.4}, b={d:.4}, p={d:.4}, q={d:.4})", .{ self.a, self.b, self.p, self.q });
         }
     };
@@ -80197,9 +80152,9 @@ test "GB2: validate fails for a=inf" {
 test "GB2: format works" {
     const dist = try GB2(f64).init(2.0, 1.0, 1.0, 2.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
@@ -80418,9 +80373,7 @@ pub fn Chen(comptime T: type) type {
         /// Format the distribution as "Chen(λ=..., β=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Chen(λ={d:.4}, β={d:.4})", .{ self.lambda, self.beta });
         }
     };
@@ -80782,18 +80735,18 @@ test "Chen: validate fails for beta = inf" {
 test "Chen: format works" {
     const dist = try Chen(f64).init(1.0, 2.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "Chen: format contains 'Chen'" {
     const dist = try Chen(f64).init(1.0, 2.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_chen = std.mem.containsAtLeast(u8, output, 1, "Chen");
     try testing.expect(contains_chen);
 }
@@ -80984,9 +80937,7 @@ pub fn SkewCauchy(comptime T: type) type {
         /// Format the distribution as "SkewCauchy(a=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("SkewCauchy(a={d:.4})", .{self.a});
         }
     };
@@ -81381,18 +81332,18 @@ test "SkewCauchy: validate fails for a = -inf" {
 test "SkewCauchy: format works" {
     const dist = try SkewCauchy(f64).init(0.5);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "SkewCauchy: format contains 'SkewCauchy'" {
     const dist = try SkewCauchy(f64).init(0.5);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "SkewCauchy");
     try testing.expect(contains_name);
 }
@@ -81570,10 +81521,8 @@ pub fn GeneralizedPoisson(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
-            try writer.print("GeneralizedPoisson(θ={d:.4}, λ={d:.4})", .{self.theta, self.lambda});
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("GeneralizedPoisson(θ={d:.4}, λ={d:.4})", .{ self.theta, self.lambda });
         }
     };
 }
@@ -81931,18 +81880,18 @@ test "GeneralizedPoisson: validate fails for NaN lambda (unsafe struct)" {
 test "GeneralizedPoisson: format works" {
     const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "GeneralizedPoisson: format contains 'GeneralizedPoisson'" {
     const dist = try GeneralizedPoisson(f64).init(2.0, 0.3);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "GeneralizedPoisson");
     try testing.expect(contains_name);
 }
@@ -82047,7 +81996,7 @@ pub fn Xgamma(comptime T: type) type {
         pub fn logpdf(self: Self, x: T) T {
             if (x < 0.0) return -math.inf(T);
             return 2.0 * @log(self.theta) - @log(1.0 + self.theta) +
-                   @log(1.0 + self.theta * x * x / 2.0) - self.theta * x;
+                @log(1.0 + self.theta * x * x / 2.0) - self.theta * x;
         }
 
         // --- CDF / SF ---
@@ -82198,9 +82147,7 @@ pub fn Xgamma(comptime T: type) type {
         /// Format the distribution as "Xgamma(θ=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Xgamma(theta={d:.4})", .{self.theta});
         }
     };
@@ -82561,18 +82508,18 @@ test "Xgamma: validate fails for infinite theta (unsafe struct)" {
 test "Xgamma: format works" {
     const dist = try Xgamma(f64).init(1.5);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "Xgamma: format contains 'Xgamma'" {
     const dist = try Xgamma(f64).init(1.5);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "Xgamma");
     try testing.expect(contains_name);
 }
@@ -82817,9 +82764,7 @@ pub fn PolyaAeppli(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("PolyaAeppli(λ={d:.4}, θ={d:.4})", .{ self.lambda, self.theta });
         }
     };
@@ -83170,18 +83115,18 @@ test "PolyaAeppli: validate fails for infinite theta (unsafe struct)" {
 test "PolyaAeppli: format works" {
     const dist = try PolyaAeppli(f64).init(2.0, 0.3);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "PolyaAeppli: format contains 'PolyaAeppli'" {
     const dist = try PolyaAeppli(f64).init(2.0, 0.3);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "PolyaAeppli");
     try testing.expect(contains_name);
 }
@@ -83448,9 +83393,7 @@ pub fn Delaporte(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Delaporte(α={d:.4}, β={d:.4}, λ={d:.4})", .{ self.alpha, self.beta, self.lambda });
         }
     };
@@ -83710,18 +83653,18 @@ test "Delaporte: validate fails for NaN alpha (unsafe struct)" {
 test "Delaporte: format works" {
     const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "Delaporte: format contains 'Delaporte'" {
     const dist = try Delaporte(f64).init(2.0, 1.0, 1.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "Delaporte");
     try testing.expect(contains_name);
 }
@@ -83910,9 +83853,7 @@ pub fn Waring(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Waring(a={d:.4}, k={d:.4}, ρ={d:.4})", .{ self.a, self.k, self.rho });
         }
     };
@@ -84232,18 +84173,18 @@ test "Waring: validate fails for infinite k (unsafe struct)" {
 test "Waring: format works" {
     const dist = try Waring(f64).init(2.0, 1.0, 3.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "Waring: format contains 'Waring'" {
     const dist = try Waring(f64).init(2.0, 1.0, 3.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "Waring");
     try testing.expect(contains_name);
 }
@@ -84522,9 +84463,7 @@ pub fn Kappa(comptime T: type) type {
         /// Format for debug printing.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Kappa(xi={d}, alpha={d}, kappa={d}, h={d})", .{ self.xi, self.alpha, self.kappa, self.h });
         }
     };
@@ -85041,18 +84980,18 @@ test "Kappa: sample empirical variance close to theoretical Uniform(0,1) case" {
 test "Kappa: format works" {
     const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try testing.expect(output.len > 0);
 }
 
 test "Kappa: format contains 'Kappa'" {
     const dist = try Kappa(f64).init(0.0, 1.0, 0.5, 0.5);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     const contains_name = std.mem.containsAtLeast(u8, output, 1, "Kappa");
     try testing.expect(contains_name);
 }
@@ -85122,8 +85061,8 @@ pub fn NegativeHypergeometric(comptime T: type) type {
             const log_binom_kr = logGamma(k_f + r_f) - logGamma(k_f + 1.0) - logGamma(r_f);
 
             // logBinom(N-r-k, K-k) = lgamma(N-r-k+1) - lgamma(K-k+1) - lgamma(N-r-2k+1)
-            const Nrk: u64 = self.N - self.r - k;  // safe by construction
-            const Km: u64 = self.K - k;            // safe by construction
+            const Nrk: u64 = self.N - self.r - k; // safe by construction
+            const Km: u64 = self.K - k; // safe by construction
             const Nrk_f = @as(T, @floatFromInt(Nrk));
             const Km_f = @as(T, @floatFromInt(Km));
             const log_binom_Nrk_Km = logGamma(Nrk_f + 1.0) - logGamma(Km_f + 1.0) - logGamma(Nrk_f - Km_f + 1.0);
@@ -85236,7 +85175,7 @@ pub fn NegativeHypergeometric(comptime T: type) type {
         /// Format the distribution for display
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("NegativeHypergeometric(N={d}, K={d}, r={d})", .{ self.N, self.K, self.r });
         }
 
@@ -85463,9 +85402,9 @@ test "NegativeHypergeometric: sample produces values within [0, K]" {
 test "NegativeHypergeometric: format contains NegativeHypergeometric string" {
     const dist = try NegativeHypergeometric(f64).init(10, 4, 3);
     var buf: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try dist.format("", .{}, fbs.writer());
-    const output = fbs.getWritten();
+    var fbs = std.Io.Writer.fixed(&buf);
+    try dist.format(&fbs);
+    const output = fbs.buffered();
     try expect(std.mem.containsAtLeast(u8, output, 1, "NegativeHypergeometric"));
 }
 
@@ -85523,8 +85462,8 @@ pub fn Champernowne(comptime T: type) type {
         alpha: T,
         lambda: T,
         y0: T,
-        n: T,         // normalization constant = alpha / I(lambda)
-        i_lambda: T,  // precomputed I(lambda)
+        n: T, // normalization constant = alpha / I(lambda)
+        i_lambda: T, // precomputed I(lambda)
 
         const Self = @This();
 
@@ -85805,9 +85744,7 @@ pub fn Champernowne(comptime T: type) type {
         }
 
         /// Format distribution for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Champernowne(α={d}, λ={d}, y0={d})", .{ self.alpha, self.lambda, self.y0 });
         }
     };
@@ -86303,9 +86240,9 @@ test "Champernowne: validate passes for valid params (lambda>1)" {
 test "Champernowne: format contains Champernowne string" {
     const dist = try Champernowne(f64).init(1.0, 1.0, 0.0);
     var buf: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try dist.format("", .{}, fbs.writer());
-    const output = fbs.getWritten();
+    var fbs = std.Io.Writer.fixed(&buf);
+    try dist.format(&fbs);
+    const output = fbs.buffered();
     try expect(std.mem.containsAtLeast(u8, output, 1, "Champernowne"));
 }
 
@@ -86556,9 +86493,7 @@ pub fn Meixner(comptime T: type) type {
         }
 
         /// Format for printing
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Meixner(a={d}, b={d}, m={d}, d={d})", .{ self.a, self.b, self.m, self.d });
         }
     };
@@ -86909,18 +86844,18 @@ test "Meixner: extreme x values do not produce NaN in pdf/cdf" {
 test "Meixner: format works" {
     const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 2.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try expect(output.len > 0);
 }
 
 test "Meixner: format contains 'Meixner'" {
     const dist = try Meixner(f64).init(1.0, 0.3, 0.0, 2.0);
     var buffer: [128]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try expect(std.mem.indexOf(u8, output, "Meixner") != null);
 }
 
@@ -87068,9 +87003,7 @@ pub fn MarshallOlkinExponential(comptime T: type) type {
         }
 
         /// Format for printing.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("MarshallOlkinExponential(alpha={d}, lambda={d})", .{ self.alpha, self.lambda });
         }
 
@@ -87308,9 +87241,7 @@ pub fn FoldedCauchy(comptime T: type) type {
         /// Format the distribution as "FoldedCauchy(mu=..., gamma=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("FoldedCauchy(mu={d:.4}, gamma={d:.4})", .{ self.mu, self.gamma });
         }
     };
@@ -87637,18 +87568,18 @@ test "MarshallOlkinExponential: f32 sample does not produce NaN/Inf" {
 test "MarshallOlkinExponential: format works" {
     const dist = try MarshallOlkinExponential(f64).init(1.5, 2.0);
     var buffer: [256]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try expect(output.len > 0);
 }
 
 test "MarshallOlkinExponential: format contains 'MarshallOlkinExponential'" {
     const dist = try MarshallOlkinExponential(f64).init(2.0, 1.0);
     var buffer: [256]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try dist.format("", .{}, stream.writer());
-    const output = stream.getWritten();
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
     try expect(std.mem.indexOf(u8, output, "MarshallOlkinExponential") != null);
 }
 
@@ -87788,7 +87719,7 @@ test "FoldedCauchy: cdf is monotonically non-decreasing" {
 test "FoldedCauchy: cdf with mu=0, gamma=1 matches HalfCauchy at x=1" {
     const dist = try FoldedCauchy(f64).init(0.0, 1.0);
     const c = dist.cdf(1.0);
-    const expected = 0.5;  // HalfCauchy(1): (2/pi)*atan(1) = (2/pi)*(pi/4) = 0.5
+    const expected = 0.5; // HalfCauchy(1): (2/pi)*atan(1) = (2/pi)*(pi/4) = 0.5
     try testing.expectApproxEqAbs(c, expected, 1e-10);
 }
 
@@ -87867,7 +87798,7 @@ test "FoldedCauchy: quantile-cdf roundtrip consistency" {
 
 test "FoldedCauchy: mode() returns 0 for small |mu|/gamma ratio" {
     // When |mu|/gamma < 1/sqrt(3) ≈ 0.577, mode should be at 0
-    const dist = try FoldedCauchy(f64).init(0.1, 1.0);  // 0.1 < 0.577
+    const dist = try FoldedCauchy(f64).init(0.1, 1.0); // 0.1 < 0.577
     const m = dist.mode();
     try testing.expectApproxEqAbs(0.0, m, 1e-10);
 }
@@ -87880,7 +87811,7 @@ test "FoldedCauchy: mode() with mu=0, gamma=1 returns 0" {
 
 test "FoldedCauchy: mode() returns positive value for large |mu|/gamma" {
     // When |mu|/gamma > 1/sqrt(3), mode should be > 0
-    const dist = try FoldedCauchy(f64).init(5.0, 1.0);  // 5 > 0.577
+    const dist = try FoldedCauchy(f64).init(5.0, 1.0); // 5 > 0.577
     const m = dist.mode();
     try testing.expect(m > 0.0);
 }
@@ -87947,7 +87878,7 @@ test "FoldedCauchy: entropy increases with gamma" {
     const dist2 = try FoldedCauchy(f64).init(0.0, 2.0);
     const h1 = dist1.entropy();
     const h2 = dist2.entropy();
-    try testing.expect(h2 > h1);  // larger gamma -> larger entropy
+    try testing.expect(h2 > h1); // larger gamma -> larger entropy
 }
 
 // --- Sampling Tests ---
@@ -87969,7 +87900,7 @@ test "FoldedCauchy: sample() with different seeds produces different values" {
     var prng2 = std.Random.DefaultPrng.init(43);
     const s1 = dist.sample(prng1.random());
     const s2 = dist.sample(prng2.random());
-    try testing.expect(s1 != s2);  // extremely unlikely to be equal with different seeds
+    try testing.expect(s1 != s2); // extremely unlikely to be equal with different seeds
 }
 
 test "FoldedCauchy: sample() rough empirical CDF check" {
@@ -87985,7 +87916,7 @@ test "FoldedCauchy: sample() rough empirical CDF check" {
     }
     const empirical_cdf = @as(f64, @floatFromInt(count_below_one)) / @as(f64, @floatFromInt(num_samples));
     const theoretical_cdf = dist.cdf(1.0);
-    try testing.expectApproxEqAbs(empirical_cdf, theoretical_cdf, 0.05);  // loose tolerance for sampling
+    try testing.expectApproxEqAbs(empirical_cdf, theoretical_cdf, 0.05); // loose tolerance for sampling
 }
 
 // --- Validate Tests ---
@@ -88242,9 +88173,7 @@ pub fn ZeroInflatedPoisson(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ZeroInflatedPoisson(π={d:.4}, λ={d:.4})", .{ self.pi, self.lambda });
         }
     };
@@ -88849,9 +88778,7 @@ pub fn ZeroInflatedNegativeBinomial(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ZeroInflatedNegativeBinomial(π={d:.4}, r={d}, p={d:.4})", .{ self.pi, self.r, self.p });
         }
     };
@@ -89501,9 +89428,7 @@ pub fn ZeroInflatedBinomial(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("ZeroInflatedBinomial(π={d:.4}, n={d}, p={d:.4})", .{ self.pi, self.n, self.p });
         }
     };
@@ -89706,9 +89631,7 @@ pub fn HurdlePoisson(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("HurdlePoisson(π={d:.4}, λ={d:.4})", .{ self.pi, self.lambda });
         }
     };
@@ -91050,9 +90973,7 @@ pub fn HurdleNegativeBinomial(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("HurdleNegativeBinomial(π={d:.4}, r={d}, p={d:.4})", .{ self.pi, self.r, self.p });
         }
     };
@@ -91935,9 +91856,7 @@ pub fn HurdleBinomial(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("HurdleBinomial(π={d:.4}, n={d}, p={d:.4})", .{ self.pi, self.n, self.p });
         }
     };
@@ -92231,7 +92150,7 @@ test "HurdleBinomial: mean for pi=0, n=10, p=0.5 (zero-truncated Binomial)" {
     const binom_pmf_0 = binom.pmf(0);
     const denom = 1.0 - binom_pmf_0;
     const mu_ztbinom = binom.mean() / denom;
-    const expected = 1.0 * mu_ztbinom;  // (1-pi=1)
+    const expected = 1.0 * mu_ztbinom; // (1-pi=1)
     try expectApproxEqAbs(expected, dist.mean(), 1e-12);
 }
 
@@ -92348,7 +92267,7 @@ test "HurdleBinomial: sample for pi=0.95 produces mostly zeros" {
     for (0..500) |_| {
         if (dist.sample(rng) == 0) count_zero += 1;
     }
-    try expect(count_zero > 400);  // Expect > 80% to be 0, not exact
+    try expect(count_zero > 400); // Expect > 80% to be 0, not exact
 }
 
 test "HurdleBinomial: sample for pi=0.0 never produces zero" {
@@ -92708,9 +92627,7 @@ pub fn GB1(comptime T: type) type {
         /// Format the distribution as "GB1(a=..., b=..., p=..., q=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("GB1(a={d:.4}, b={d:.4}, p={d:.4}, q={d:.4})", .{ self.a, self.b, self.p, self.q });
         }
     };
@@ -93153,9 +93070,9 @@ test "GB1: mode for (a=2, b=1, p=1, q=1) boundary case with monotone-increasing 
     try testing.expectApproxEqAbs(mode, 1.0, 1e-10);
 
     // Verify PDF is monotonically increasing as x approaches the boundary from the left
-    const pdf_left_1 = dist.pdf(mode - 0.1);    // pdf(0.9)  ≈ 1.8
-    const pdf_left_2 = dist.pdf(mode - 0.01);   // pdf(0.99) ≈ 1.98
-    const pdf_left_3 = dist.pdf(mode - 0.001);  // pdf(0.999)≈ 1.998
+    const pdf_left_1 = dist.pdf(mode - 0.1); // pdf(0.9)  ≈ 1.8
+    const pdf_left_2 = dist.pdf(mode - 0.01); // pdf(0.99) ≈ 1.98
+    const pdf_left_3 = dist.pdf(mode - 0.001); // pdf(0.999)≈ 1.998
 
     try testing.expect(pdf_left_1 < pdf_left_2);
     try testing.expect(pdf_left_2 < pdf_left_3);
@@ -94083,9 +94000,7 @@ pub fn FoldedT(comptime T: type) type {
         /// Format the distribution as "FoldedT(mu=..., sigma=..., nu=...)".
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("FoldedT(mu={d:.4}, sigma={d:.4}, nu={d:.4})", .{ self.mu, self.sigma, self.nu });
         }
     };
@@ -94701,9 +94616,7 @@ pub fn BorelTanner(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("BorelTanner(μ={d:.4}, n={})", .{ self.mu, self.n });
         }
     };
@@ -94718,9 +94631,9 @@ pub fn Good(comptime T: type) type {
     return struct {
         rho: T,
         theta: T,
-        c0: T = 0.0,  // Li_rho(theta) — default for testing; set by init()
-        c1: T = 0.0,  // Li_{rho-1}(theta) — default for testing; set by init()
-        c2: T = 0.0,  // Li_{rho-2}(theta) — default for testing; set by init()
+        c0: T = 0.0, // Li_rho(theta) — default for testing; set by init()
+        c1: T = 0.0, // Li_{rho-1}(theta) — default for testing; set by init()
+        c2: T = 0.0, // Li_{rho-2}(theta) — default for testing; set by init()
 
         const Self = @This();
         const MAX_K: usize = 200_000;
@@ -94887,9 +94800,7 @@ pub fn Good(comptime T: type) type {
         }
 
         /// Format for display.
-        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
             try writer.print("Good(ρ={d:.4}, θ={d:.4})", .{ self.rho, self.theta });
         }
     };

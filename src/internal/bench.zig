@@ -32,12 +32,7 @@ pub const MemoryStats = struct {
     /// Current bytes allocated (not freed yet)
     current_bytes: usize,
 
-    pub fn format(
-        self: MemoryStats,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
+    pub fn format(self: MemoryStats, writer: *std.Io.Writer) !void {
         try writer.print(
             "peak: {d}B | current: {d}B | allocs: {d} | frees: {d}",
             .{ self.peak_bytes, self.current_bytes, self.allocation_count, self.free_count },
@@ -65,18 +60,13 @@ pub const Result = struct {
     memory: ?MemoryStats,
 
     /// Format the result as a human-readable string
-    pub fn format(
-        self: Result,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
+    pub fn format(self: Result, writer: *std.Io.Writer) !void {
         try writer.print(
             "{d} iterations | mean: {d}ns | median: {d}ns | min: {d}ns | max: {d}ns | σ: {d}ns",
             .{ self.iterations, self.mean_ns, self.median_ns, self.min_ns, self.max_ns, self.std_dev_ns },
         );
         if (self.memory) |mem| {
-            try writer.print(" | mem: {}", .{mem});
+            try writer.print(" | mem: {f}", .{mem});
         }
     }
 
@@ -408,7 +398,7 @@ pub fn benchmark(
 
     const result = try bench.run(func, args);
 
-    try stdout.print("{s}: {}\n", .{ name, result });
+    try stdout.print("{s}: {f}\n", .{ name, result });
 }
 
 /// Compare two benchmark results and print comparison

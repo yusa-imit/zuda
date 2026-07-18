@@ -583,14 +583,7 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
 
         /// Formats container for debugging output.
         /// Time: O(n) | Space: O(n)
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("RadixTree{{ size: {d} }}", .{self.size});
         }
 
@@ -821,10 +814,10 @@ test "RadixTree: stress test" {
     defer tree.deinit();
 
     const keys = [_][]const u8{
-        "apple",    "application", "apply",   "banana",  "band",
-        "bandana",  "can",         "candy",   "cane",    "cat",
-        "dog",      "dodge",       "door",    "elephant", "email",
-        "emotion",  "flower",      "flow",    "flight",  "fly",
+        "apple",   "application", "apply", "banana",   "band",
+        "bandana", "can",         "candy", "cane",     "cat",
+        "dog",     "dodge",       "door",  "elephant", "email",
+        "emotion", "flower",      "flow",  "flight",   "fly",
     };
 
     // Insert

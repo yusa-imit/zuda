@@ -514,14 +514,7 @@ pub fn OctTree(comptime T: type, comptime capacity: usize) type {
         }
 
         /// Format the tree for debug printing.
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("OctTree{{ count={}, height={} }}", .{ self.count(), self.getHeight() });
         }
     };

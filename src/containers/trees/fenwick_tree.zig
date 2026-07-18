@@ -176,14 +176,7 @@ pub fn FenwickTree(comptime T: type) type {
         }
 
         /// Format the Fenwick tree for debugging.
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("FenwickTree(n={})", .{self.n});
         }
 

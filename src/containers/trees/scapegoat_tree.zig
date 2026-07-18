@@ -449,14 +449,7 @@ pub fn ScapegoatTree(
 
         /// Formats tree for debugging output.
         /// Time: O(1) | Space: O(1)
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("ScapegoatTree{{ count: {}, max: {} }}", .{ self.node_count, self.max_count });
         }
 

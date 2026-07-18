@@ -381,14 +381,7 @@ pub fn AdjacencyMatrix(
         }
 
         /// Format graph for debugging.
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("AdjacencyMatrix{{ vertices: {}, edges: {}, directed: {} }}", .{
                 self.vertex_count,
                 self.edge_count,

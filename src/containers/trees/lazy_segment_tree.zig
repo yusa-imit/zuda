@@ -195,14 +195,7 @@ pub fn LazySegmentTree(
         }
 
         /// Format the lazy segment tree for debugging.
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("LazySegmentTree(n={}, tree_size={})", .{ self.n, self.tree.len });
         }
 
@@ -731,9 +724,9 @@ test "LazySegmentTree: cascading updates to same range (composeFn stress)" {
     defer tree.deinit();
 
     // Apply 3 cascading updates to the same range [1, 3]
-    try tree.updateRange(1, 3, 2);  // Add 2 to [1,3]
-    try tree.updateRange(1, 3, 3);  // Add 3 to [1,3]
-    try tree.updateRange(1, 3, 5);  // Add 5 to [1,3]
+    try tree.updateRange(1, 3, 2); // Add 2 to [1,3]
+    try tree.updateRange(1, 3, 3); // Add 3 to [1,3]
+    try tree.updateRange(1, 3, 5); // Add 5 to [1,3]
 
     // After 3 updates, each element in [1,3] receives +2+3+5=+10
     // Elements: [5, 15, 15, 15, 5]

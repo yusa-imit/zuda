@@ -181,14 +181,7 @@ pub fn SegmentTree(comptime T: type, comptime Context: type, comptime combineFn:
         }
 
         /// Format the segment tree for debugging.
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("SegmentTree(n={}, tree_size={})", .{ self.n, self.tree.len });
         }
     };

@@ -433,14 +433,7 @@ pub fn Trie(comptime K: type, comptime V: type) type {
 
         /// Formats container for debugging output.
         /// Time: O(n) | Space: O(n)
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("Trie{{ size: {} }}", .{self.size});
         }
 

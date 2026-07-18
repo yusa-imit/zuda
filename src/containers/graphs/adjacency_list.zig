@@ -337,9 +337,7 @@ pub fn AdjacencyList(
 
         /// Format the graph for debugging.
         /// Time: O(V + E) | Space: O(1)
-        pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("AdjacencyList({s}, vertices={}, edges={})", .{
                 if (self.directed) "directed" else "undirected",
                 self.vertex_count,
@@ -368,7 +366,6 @@ pub fn IntGraph(comptime W: type) type {
     };
     return AdjacencyList(u32, W, Context, Context.hash, Context.eql);
 }
-
 
 // -- Tests --
 
@@ -775,7 +772,6 @@ test "initDirected: string vertices weighted" {
     try testing.expectEqual(@as(?i32, 20), graph.getEdgeWeight("mid", "end"));
     try testing.expectEqual(@as(?i32, 15), graph.getEdgeWeight("start", "end"));
     try testing.expectEqual(@as(?i32, null), graph.getEdgeWeight("mid", "start"));
-
 }
 
 test "initDirected: string vertices directed semantics" {
@@ -790,7 +786,6 @@ test "initDirected: string vertices directed semantics" {
     try testing.expect(!graph.containsEdge("bob", "alice"));
     try testing.expect(graph.containsEdge("bob", "charlie"));
     try testing.expect(!graph.containsEdge("charlie", "bob"));
-
 }
 
 test "initUndirected: string vertices unweighted" {
@@ -805,7 +800,6 @@ test "initUndirected: string vertices unweighted" {
     try testing.expect(graph.containsVertex("node1"));
     try testing.expect(graph.containsVertex("node2"));
     try testing.expect(graph.containsVertex("node3"));
-
 }
 
 test "initUndirected: string vertices weighted" {
@@ -823,7 +817,6 @@ test "initUndirected: string vertices weighted" {
     try testing.expectEqual(@as(?f64, 5.5), graph.getEdgeWeight("city_b", "city_a"));
     try testing.expectEqual(@as(?f64, 3.2), graph.getEdgeWeight("city_b", "city_c"));
     try testing.expectEqual(@as(?f64, 3.2), graph.getEdgeWeight("city_c", "city_b"));
-
 }
 
 test "initUndirected: string vertices bidirectional edges" {
@@ -838,7 +831,6 @@ test "initUndirected: string vertices bidirectional edges" {
     try testing.expect(graph.containsEdge("y", "x"));
     try testing.expect(graph.containsEdge("y", "z"));
     try testing.expect(graph.containsEdge("z", "y"));
-
 }
 
 test "initDirected: i32 remove vertex" {
@@ -877,7 +869,6 @@ test "initDirected: string remove vertex" {
     try testing.expect(graph.containsVertex("a"));
     try testing.expect(graph.containsVertex("c"));
     try testing.expect(graph.containsEdge("a", "c"));
-
 }
 
 test "initUndirected: i32 remove vertex" {
@@ -916,7 +907,6 @@ test "initUndirected: string remove vertex" {
     try testing.expect(graph.containsVertex("baz"));
     try testing.expect(graph.containsEdge("foo", "baz"));
     try testing.expect(graph.containsEdge("baz", "foo"));
-
 }
 
 test "initDirected: i32 remove edge" {
@@ -953,7 +943,6 @@ test "initDirected: string remove edge" {
     try testing.expect(!graph.containsEdge("u", "v"));
     try testing.expect(graph.containsEdge("v", "w"));
     try testing.expect(graph.containsEdge("u", "w"));
-
 }
 
 test "initUndirected: i32 remove edge" {
@@ -990,7 +979,6 @@ test "initUndirected: string remove edge" {
     try testing.expect(!graph.containsEdge("p", "q"));
     try testing.expect(!graph.containsEdge("q", "p"));
     try testing.expect(graph.containsEdge("q", "r"));
-
 }
 
 test "initDirected: i32 neighbors and degree" {
@@ -1031,7 +1019,6 @@ test "initDirected: string neighbors and degree" {
     try testing.expectEqual(@as(usize, 1), graph.inDegree("left"));
     try testing.expectEqual(@as(usize, 1), graph.inDegree("right"));
     try testing.expectEqual(@as(usize, 1), graph.inDegree("leaf"));
-
 }
 
 test "initUndirected: i32 neighbors and degree" {
@@ -1068,7 +1055,6 @@ test "initUndirected: string neighbors and degree" {
     try testing.expectEqual(@as(usize, 2), graph.inDegree("b"));
     try testing.expectEqual(@as(usize, 2), graph.outDegree("c"));
     try testing.expectEqual(@as(usize, 2), graph.inDegree("c"));
-
 }
 
 test "initDirected: i32 vertex iterator" {
@@ -1157,7 +1143,6 @@ test "initDirected: string empty graph" {
     try testing.expect(graph.isEmpty());
     try testing.expectEqual(@as(usize, 0), graph.vertexCount());
     try testing.expectEqual(@as(usize, 0), graph.edgeCount());
-
 }
 
 test "initUndirected: i32 empty graph" {
@@ -1178,7 +1163,6 @@ test "initUndirected: string empty graph" {
     try testing.expect(graph.isEmpty());
     try testing.expectEqual(@as(usize, 0), graph.vertexCount());
     try testing.expectEqual(@as(usize, 0), graph.edgeCount());
-
 }
 
 test "initDirected: i32 duplicate vertex error" {
@@ -1197,7 +1181,6 @@ test "initDirected: string duplicate vertex error" {
 
     try graph.addVertex("dup");
     try testing.expectError(error.VertexExists, graph.addVertex("dup"));
-
 }
 
 test "initUndirected: i32 duplicate vertex error" {
@@ -1216,7 +1199,6 @@ test "initUndirected: string duplicate vertex error" {
 
     try graph.addVertex("same");
     try testing.expectError(error.VertexExists, graph.addVertex("same"));
-
 }
 
 test "initDirected: i32 remove nonexistent vertex error" {
@@ -1233,7 +1215,6 @@ test "initDirected: string remove nonexistent vertex error" {
     defer graph.deinit();
 
     try testing.expectError(error.VertexNotFound, graph.removeVertex("missing"));
-
 }
 
 test "initUndirected: i32 remove nonexistent vertex error" {
@@ -1250,7 +1231,6 @@ test "initUndirected: string remove nonexistent vertex error" {
     defer graph.deinit();
 
     try testing.expectError(error.VertexNotFound, graph.removeVertex("absent"));
-
 }
 
 test "initDirected: i32 remove nonexistent edge error" {
@@ -1271,7 +1251,6 @@ test "initDirected: string remove nonexistent edge error" {
     try graph.addVertex("x");
     try graph.addVertex("y");
     try testing.expectError(error.EdgeNotFound, graph.removeEdge("x", "y"));
-
 }
 
 test "initUndirected: i32 remove nonexistent edge error" {
@@ -1292,7 +1271,6 @@ test "initUndirected: string remove nonexistent edge error" {
     try graph.addVertex("src");
     try graph.addVertex("dst");
     try testing.expectError(error.EdgeNotFound, graph.removeEdge("src", "dst"));
-
 }
 
 test "initDirected: i32 large graph memory leak check" {

@@ -125,7 +125,8 @@ pub fn SuffixTree(comptime T: type) type {
                     // Find longest common prefix with edge label
                     var j: usize = 0;
                     while (j < edge.label.len and i + j < suffix.len and
-                           edge.label[j] == suffix[i + j]) : (j += 1) {}
+                        edge.label[j] == suffix[i + j]) : (j += 1)
+                    {}
 
                     if (j == edge.label.len) {
                         // Consumed entire edge, continue at target node
@@ -291,7 +292,7 @@ pub fn SuffixTree(comptime T: type) type {
             // Internal nodes with multiple children represent repeated substrings
             // OR nodes with suffix_index AND at least one child (suffix ends here + continues in child)
             const is_repeated = (node.children.count() >= 2) or
-                               (node.suffix_index != null and node.children.count() >= 1);
+                (node.suffix_index != null and node.children.count() >= 1);
 
             if (is_repeated and depth > 0 and depth > max_len.*) {
                 max_len.* = depth;
@@ -373,9 +374,7 @@ pub fn SuffixTree(comptime T: type) type {
 
         /// Format the suffix tree for debugging.
         /// Time: O(n) | Space: O(h)
-        pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.writeAll("SuffixTree(");
             if (self.text.len <= 50) {
                 try writer.print("text=\"{s}\"", .{self.text});

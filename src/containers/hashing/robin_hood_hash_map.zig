@@ -362,14 +362,7 @@ pub fn RobinHoodHashMap(
         }
 
         /// Format for debugging
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("RobinHoodHashMap{{ len={}, capacity={} }}", .{ self.len, self.slots.len });
         }
     };

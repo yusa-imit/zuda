@@ -687,14 +687,7 @@ pub fn RedBlackTree(
 
         /// Formats tree for debugging output.
         /// Time: O(n) | Space: O(n)
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("RedBlackTree(size={d})", .{self.size});
         }
     };
@@ -812,6 +805,28 @@ test "RedBlackTree: min and max" {
 
     const max_entry = tree.max().?;
     try std.testing.expectEqual(@as(i32, 20), max_entry.key);
+}
+
+test "RedBlackTree: format() integrates with std.fmt via {f}" {
+    const TestContext = struct {
+        fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+
+    var tree = RedBlackTree(i32, i32, TestContext, TestContext.compare).init(
+        std.testing.allocator,
+        .{},
+    );
+    defer tree.deinit();
+
+    _ = try tree.insert(1, 10);
+    _ = try tree.insert(2, 20);
+
+    const s = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{tree});
+    defer std.testing.allocator.free(s);
+    try std.testing.expect(std.mem.containsAtLeast(u8, s, 1, "RedBlackTree"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, s, 1, "size=2"));
 }
 
 test "RedBlackTree: iterator" {

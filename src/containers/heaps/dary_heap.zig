@@ -279,9 +279,7 @@ pub fn DaryHeap(
         }
 
         /// Format the heap for debugging.
-        pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("DaryHeap(d={}, size={})", .{ d, self.items.items.len });
         }
     };

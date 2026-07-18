@@ -578,15 +578,7 @@ pub fn SkipList(
         }
 
         /// Format the skip list for debugging
-        pub fn format(
-            self: *const Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
-
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("SkipList(len={d}, level={d})", .{ self.len, self.level });
         }
     };
@@ -1312,7 +1304,7 @@ test "skip list: initDefault with strings - contains and getPtr" {
 
     const ptr = list.getPtr("test");
     try testing.expect(ptr != null);
-    try testing.expectEqual(42, ptr.?.* );
+    try testing.expectEqual(42, ptr.?.*);
 }
 
 test "skip list: initDefault range iterator with i32" {

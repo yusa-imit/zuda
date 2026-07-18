@@ -293,9 +293,7 @@ pub fn PairingHeap(comptime T: type, comptime Context: type, comptime lessThan: 
         }
 
         /// Format the heap for debugging.
-        pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
             try writer.print("PairingHeap(size={})", .{self.size});
         }
     };
