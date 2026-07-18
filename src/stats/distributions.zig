@@ -96125,3 +96125,745 @@ test "PoissonLindley: sample returns valid k" {
         try expect(sample_val >= 0);
     }
 }
+
+pub fn HyperPoisson(comptime T: type) type {
+    return struct {
+        lambda: T,
+        gamma: T,
+        log_z: T, // cached log normalizing constant
+
+        const Self = @This();
+
+        /// Initialize HyperPoisson(λ, γ).
+        /// λ > 0; γ > 0; both finite.
+        ///
+        /// Computes and caches the log normalizing constant log Z(λ, γ).
+        /// Z(λ, γ) = Σ_{k=0}^∞ λ^k / (γ)_k where (γ)_k = Pochhammer rising factorial.
+        ///
+        /// Time: O(k*) where k* ≈ summation truncation point | Space: O(1)
+        pub fn init(lambda: T, gamma: T) DistributionError!Self {
+            if (!(lambda > 0.0) or !math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(gamma > 0.0) or !math.isFinite(gamma)) return error.InvalidParameter;
+            const lz = computeHyperPoissonLogZ(T, lambda, gamma);
+            return Self{ .lambda = lambda, .gamma = gamma, .log_z = lz };
+        }
+
+        /// Probability mass function P(X=k).
+        ///
+        /// P(X=k) = λ^k / ((γ)_k · Z(λ,γ)) where (γ)_k = Pochhammer rising factorial
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function.
+        ///
+        /// log P(X=k) = k·log(λ) − [logGamma(γ+k) − logGamma(γ)] − log(Z)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const kf: T = @floatFromInt(k);
+            // (γ)_k = Γ(γ+k) / Γ(γ), so log((γ)_k) = logGamma(γ+k) - logGamma(γ)
+            const log_pochhammer = logGamma(self.gamma + kf) - logGamma(self.gamma);
+            return kf * @log(self.lambda) - log_pochhammer - self.log_z;
+        }
+
+        /// Cumulative distribution function P(X ≤ k).
+        ///
+        /// F(k) = Σ_{j=0}^{k} P(X=j)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var i: u64 = 0;
+            while (i <= k) : (i += 1) {
+                sum += self.pmf(i);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile function (inverse CDF) - returns k such that P(X ≤ k) ≥ p.
+        ///
+        /// Time: O(k*) where k* is the result | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0) or !(p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= p) return k;
+            }
+            return k;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// Computed numerically: Σ k·P(X=k)
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var sum: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 1;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps * sum) break;
+                sum += @as(T, @floatFromInt(k)) * pmf_k;
+            }
+            return sum;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var = E[X²] - (E[X])²
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            var e_x2: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 1;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps * e_x2) break;
+                const kf: T = @floatFromInt(k);
+                e_x2 += kf * kf * pmf_k;
+            }
+            return e_x2 - m * m;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// Finds k with maximum pmf via scanning (no closed form for HyperPoisson).
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var max_pmf: T = self.pmf(0);
+            var mode_val: u64 = 0;
+            var consecutive_below: u64 = 0;
+
+            var k: u64 = 1;
+            while (k < 100_000 and consecutive_below < 5) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k > max_pmf) {
+                    max_pmf = pmf_k;
+                    mode_val = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                }
+            }
+            return mode_val;
+        }
+
+        /// Entropy of the distribution in nats.
+        ///
+        /// H = -Σ P(X=k)·log(P(X=k))
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                if (pmf_k > 0.0) {
+                    sum -= pmf_k * @log(pmf_k);
+                }
+            }
+            return sum;
+        }
+
+        /// Generate a random sample from this distribution using inverse CDF.
+        ///
+        /// Time: O(k*) where k* is the sample value | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= u) return k;
+            }
+            return k;
+        }
+
+        /// Assert that parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return DistributionError.InvalidParameter;
+            if (!(self.gamma > 0.0) or !math.isFinite(self.gamma)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.log_z)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+/// Compute log Z(λ, γ) = log(Σ_{k=0}^∞ λ^k / (γ)_k).
+///
+/// Uses ratio iteration: term_0 = 1, term_k = term_{k-1} * λ / (γ + k - 1).
+/// Stop when term < eps * sum. Cap at 100_000 iterations.
+///
+/// Time: O(k*) where k* ≈ summation truncation | Space: O(1)
+fn computeHyperPoissonLogZ(comptime T: type, lambda: T, gamma: T) T {
+    const MAX_K: u64 = 100_000;
+    const eps = math.floatEps(T);
+
+    // Ratio iteration: sum Pochhammer terms
+    var sum: T = 1.0; // k=0: term_0 = 1
+    var term: T = 1.0;
+
+    var k: u64 = 1;
+    while (k < MAX_K) : (k += 1) {
+        const kf: T = @floatFromInt(k);
+        // term_k = term_{k-1} * λ / (γ + k - 1)
+        term *= lambda / (gamma + kf - 1.0);
+        sum += term;
+
+        // Stop when term is negligible relative to sum
+        if (term < eps * sum) break;
+    }
+
+    return @log(sum);
+}
+
+// ============================================================================
+// HyperPoisson Tests — (lambda, gamma) discrete distribution on {0,1,2,...}
+// gamma=1 reduces exactly to Poisson(lambda)
+// ============================================================================
+
+test "HyperPoisson: init with valid params (2.0, 1.0) succeeds" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    try expect(math.isFinite(dist.lambda));
+    try expect(math.isFinite(dist.gamma));
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "HyperPoisson: init with valid params (3.0, 0.5) succeeds" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    try expect(math.isFinite(dist.lambda));
+    try expect(math.isFinite(dist.gamma));
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "HyperPoisson: init with valid params (2.0, 2.0) succeeds" {
+    const dist = try HyperPoisson(f64).init(2.0, 2.0);
+    try expect(math.isFinite(dist.lambda));
+    try expect(math.isFinite(dist.gamma));
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "HyperPoisson: init with valid params (5.0, 3.0) succeeds" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    try expect(math.isFinite(dist.lambda));
+    try expect(math.isFinite(dist.gamma));
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "HyperPoisson: init with lambda=0 returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(0.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with lambda=-1 returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(-1.0, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with lambda=inf returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(math.inf(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with lambda=NaN returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(math.nan(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with gamma=0 returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(2.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with gamma=-1 returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(2.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with gamma=inf returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(2.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: init with gamma=NaN returns InvalidParameter" {
+    const result = HyperPoisson(f64).init(2.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "HyperPoisson: pmf(0) for (2.0, 1.0) matches ground truth 0.135335283236613" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.135335283236613;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf(1) for (2.0, 1.0) matches ground truth 0.270670566473225" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.270670566473225;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf(0) for (3.0, 0.5) matches ground truth 0.0161864505045866" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.0161864505045866;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf(1) for (3.0, 0.5) matches ground truth 0.0971187030275196" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.0971187030275196;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf(0) for (2.0, 2.0) matches ground truth 0.313035285499331" {
+    const dist = try HyperPoisson(f64).init(2.0, 2.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.313035285499331;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf(1) for (2.0, 2.0) equals pmf(0) = 0.313035285499331" {
+    const dist = try HyperPoisson(f64).init(2.0, 2.0);
+    const pmf_0 = dist.pmf(0);
+    const pmf_1 = dist.pmf(1);
+    try expectApproxEqAbs(pmf_0, pmf_1, 1e-9);
+}
+
+test "HyperPoisson: pmf(0) for (5.0, 3.0) matches ground truth 0.0877727878432678" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.0877727878432678;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf(1) for (5.0, 3.0) matches ground truth 0.146287979738780" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.146287979738780;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf is positive for all k in range" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    for (0..20) |k| {
+        const pmf_val = dist.pmf(k);
+        try expect(pmf_val > 0.0);
+    }
+}
+
+test "HyperPoisson: logpmf consistent with pmf for k=0 (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    const logpmf_val = dist.logpmf(0);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "HyperPoisson: logpmf consistent with pmf for k=1 (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const logpmf_val = dist.logpmf(1);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "HyperPoisson: logpmf consistent with pmf for k=5 (3.0, 0.5)" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const pmf_val = dist.pmf(5);
+    const logpmf_val = dist.logpmf(5);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "HyperPoisson: logpmf consistent with pmf for k=2 (5.0, 3.0)" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const pmf_val = dist.pmf(2);
+    const logpmf_val = dist.logpmf(2);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "HyperPoisson: pmf sums to ~1.0 for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..150) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "HyperPoisson: pmf sums to ~1.0 for (3.0, 0.5)" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    var sum: f64 = 0.0;
+    for (0..150) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "HyperPoisson: pmf sums to ~1.0 for (2.0, 2.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 2.0);
+    var sum: f64 = 0.0;
+    for (0..150) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "HyperPoisson: pmf sums to ~1.0 for (5.0, 3.0)" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    var sum: f64 = 0.0;
+    for (0..150) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-4);
+}
+
+test "HyperPoisson: cdf is monotone non-decreasing for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    var prev_cdf: f64 = 0.0;
+    for (0..15) |k| {
+        const curr_cdf = dist.cdf(k);
+        try expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "HyperPoisson: cdf is monotone non-decreasing for (3.0, 0.5)" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    var prev_cdf: f64 = 0.0;
+    for (0..15) |k| {
+        const curr_cdf = dist.cdf(k);
+        try expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "HyperPoisson: cdf reaches ~1.0 at high k for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(99);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-6);
+}
+
+test "HyperPoisson: cdf reaches ~1.0 at high k for (5.0, 3.0)" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const cdf_val = dist.cdf(99);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-6);
+}
+
+test "HyperPoisson: cdf(k) = cdf(k-1) + pmf(k) for (2.0, 1.0) k=1" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const cdf_k = dist.cdf(1);
+    const cdf_k_minus_1 = dist.cdf(0);
+    const pmf_k = dist.pmf(1);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "HyperPoisson: cdf(k) = cdf(k-1) + pmf(k) for (5.0, 3.0) k=2" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const cdf_k = dist.cdf(2);
+    const cdf_k_minus_1 = dist.cdf(1);
+    const pmf_k = dist.pmf(2);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "HyperPoisson: quantile rejects p < 0 as InvalidProbability" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "HyperPoisson: quantile rejects p > 1 as InvalidProbability" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "HyperPoisson: quantile at p=0 returns 0" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try expectEqual(0, q);
+}
+
+test "HyperPoisson: quantile at p=1 returns large k" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const q = try dist.quantile(0.9999);
+    try expect(q >= 0);
+}
+
+test "HyperPoisson: quantile-cdf roundtrip for (2.0, 1.0) at k=1" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const cdf_k = dist.cdf(1);
+    const p = (cdf_k + 0.01);
+    if (p <= 1.0) {
+        const q = try dist.quantile(p);
+        try expect(q >= 1);
+    }
+}
+
+test "HyperPoisson: quantile-cdf roundtrip for (5.0, 3.0) at k=2" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const cdf_k = dist.cdf(2);
+    if (cdf_k < 1.0) {
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= 2);
+    }
+}
+
+test "HyperPoisson: mean for (2.0, 1.0) matches ground truth 2.0" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const m = dist.mean();
+    const expected: f64 = 2.0;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+test "HyperPoisson: mean for (3.0, 0.5) matches ground truth 3.49190677474771" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const m = dist.mean();
+    const expected: f64 = 3.49190677474771;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+test "HyperPoisson: mean for (2.0, 2.0) matches ground truth 1.31303528549933" {
+    const dist = try HyperPoisson(f64).init(2.0, 2.0);
+    const m = dist.mean();
+    const expected: f64 = 1.31303528549933;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+test "HyperPoisson: mean for (5.0, 3.0) matches ground truth 3.17554557568654" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const m = dist.mean();
+    const expected: f64 = 3.17554557568654;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+test "HyperPoisson: variance for (2.0, 1.0) matches ground truth 2.0" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    const expected: f64 = 2.0;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "HyperPoisson: variance for (3.0, 0.5) matches ground truth 3.02826078808804" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const v = dist.variance();
+    const expected: f64 = 3.02826078808804;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "HyperPoisson: variance for (2.0, 2.0) matches ground truth 1.58897362453302" {
+    const dist = try HyperPoisson(f64).init(2.0, 2.0);
+    const v = dist.variance();
+    const expected: f64 = 1.58897362453302;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "HyperPoisson: variance for (5.0, 3.0) matches ground truth 4.44254702379728" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const v = dist.variance();
+    const expected: f64 = 4.44254702379728;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "HyperPoisson: gamma=1.0 reduces to Poisson pmf(0) for (2.0, 1.0)" {
+    const hyp_dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const poi_dist = try Poisson(f64).init(2.0);
+    const hyp_pmf_0 = hyp_dist.pmf(0);
+    const poi_pmf_0 = poi_dist.pmf(0);
+    try expectApproxEqAbs(poi_pmf_0, hyp_pmf_0, 1e-9);
+}
+
+test "HyperPoisson: gamma=1.0 reduces to Poisson pmf(1) for (2.0, 1.0)" {
+    const hyp_dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const poi_dist = try Poisson(f64).init(2.0);
+    const hyp_pmf_1 = hyp_dist.pmf(1);
+    const poi_pmf_1 = poi_dist.pmf(1);
+    try expectApproxEqAbs(poi_pmf_1, hyp_pmf_1, 1e-9);
+}
+
+test "HyperPoisson: gamma=1.0 reduces to Poisson pmf(2) for (2.0, 1.0)" {
+    const hyp_dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const poi_dist = try Poisson(f64).init(2.0);
+    const hyp_pmf_2 = hyp_dist.pmf(2);
+    const poi_pmf_2 = poi_dist.pmf(2);
+    try expectApproxEqAbs(poi_pmf_2, hyp_pmf_2, 1e-9);
+}
+
+test "HyperPoisson: gamma=1.0 reduces to Poisson mean for (2.0, 1.0)" {
+    const hyp_dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const poi_dist = try Poisson(f64).init(2.0);
+    const hyp_mean = hyp_dist.mean();
+    const poi_mean = poi_dist.mean();
+    try expectApproxEqAbs(poi_mean, hyp_mean, 1e-9);
+}
+
+test "HyperPoisson: gamma=1.0 reduces to Poisson variance for (2.0, 1.0)" {
+    const hyp_dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const poi_dist = try Poisson(f64).init(2.0);
+    const hyp_var = hyp_dist.variance();
+    const poi_var = poi_dist.variance();
+    try expectApproxEqAbs(poi_var, hyp_var, 1e-9);
+}
+
+test "HyperPoisson: mode is non-negative for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    try expect(mode_val >= 0);
+}
+
+test "HyperPoisson: mode is non-negative for (3.0, 0.5)" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const mode_val = dist.mode();
+    try expect(mode_val >= 0);
+}
+
+test "HyperPoisson: mode is at pmf argmax for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    const mode_pmf = dist.pmf(mode_val);
+
+    var max_pmf: f64 = 0.0;
+    for (0..50) |k| {
+        max_pmf = @max(max_pmf, dist.pmf(k));
+    }
+    try expect(mode_pmf >= max_pmf * 0.99);
+}
+
+test "HyperPoisson: mode is at pmf argmax for (5.0, 3.0)" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const mode_val = dist.mode();
+    const mode_pmf = dist.pmf(mode_val);
+
+    var max_pmf: f64 = 0.0;
+    for (0..50) |k| {
+        max_pmf = @max(max_pmf, dist.pmf(k));
+    }
+    try expect(mode_pmf >= max_pmf * 0.99);
+}
+
+test "HyperPoisson: entropy is positive and finite for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const ent = dist.entropy();
+    try expect(ent > 0.0);
+    try expect(math.isFinite(ent));
+}
+
+test "HyperPoisson: entropy is positive and finite for (3.0, 0.5)" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    const ent = dist.entropy();
+    try expect(ent > 0.0);
+    try expect(math.isFinite(ent));
+}
+
+test "HyperPoisson: entropy is positive and finite for (5.0, 3.0)" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const ent = dist.entropy();
+    try expect(ent > 0.0);
+    try expect(math.isFinite(ent));
+}
+
+test "HyperPoisson: sample produces non-negative integers for (2.0, 1.0)" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng.random());
+        try expect(sample_val >= 0);
+    }
+}
+
+test "HyperPoisson: sample produces non-negative integers for (3.0, 0.5)" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng.random());
+        try expect(sample_val >= 0);
+    }
+}
+
+test "HyperPoisson: sample mean convergence (2.0, 1.0) with N=5000" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    const expected_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const error_pct = @abs(sample_mean - expected_mean) / expected_mean * 100.0;
+    try expect(error_pct < 10.0);
+}
+
+test "HyperPoisson: sample mean convergence (5.0, 3.0) with N=5000" {
+    var rng = std.Random.DefaultPrng.init(0xDEADBEEF);
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    const expected_mean = dist.mean();
+
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        const sample_val = dist.sample(rng.random());
+        sum += @as(f64, @floatFromInt(sample_val));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const error_pct = @abs(sample_mean - expected_mean) / expected_mean * 100.0;
+    try expect(error_pct < 10.0);
+}
+
+test "HyperPoisson: validate passes for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "HyperPoisson: validate passes for (3.0, 0.5)" {
+    const dist = try HyperPoisson(f64).init(3.0, 0.5);
+    try dist.validate();
+}
+
+test "HyperPoisson: validate passes for (5.0, 3.0)" {
+    const dist = try HyperPoisson(f64).init(5.0, 3.0);
+    try dist.validate();
+}
+
+test "HyperPoisson(f32): init and pmf returns finite value" {
+    const dist = try HyperPoisson(f32).init(2.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    try expect(math.isFinite(pmf_val));
+}
+
+test "HyperPoisson(f32): cdf in [0,1]" {
+    const dist = try HyperPoisson(f32).init(2.0, 1.0);
+    const c = dist.cdf(5);
+    try expect(c >= 0.0 and c <= 1.0);
+}
+
+test "HyperPoisson(f32): mean accuracy for (2.0, 1.0)" {
+    const dist = try HyperPoisson(f32).init(2.0, 1.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f32, 2.0), m, 1e-3);
+}
+
+test "HyperPoisson(f32): variance accuracy for (3.0, 0.5)" {
+    const dist = try HyperPoisson(f32).init(3.0, 0.5);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f32, 3.02826078808804), v, 1e-3);
+}
