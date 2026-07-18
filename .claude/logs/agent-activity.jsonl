@@ -675,3 +675,5 @@
 {"timestamp":"2026-07-17T19:43:21Z","action":"subagent","agent_type":"test-writer","task":"Loosen 4 overly-tight FoldedT test tolerances (cdf(0.5), mean x2, variance) that exceed the precision of their 10-sig-fig ground truth literals","project":"zuda"}
 {"timestamp":"2026-07-18T03:35:53Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for BorelTanner distribution (160th)","project":"zuda"}
 {"timestamp":"2026-07-18T03:38:16Z","action":"subagent","agent_type":"zig-developer","task":"Implement BorelTanner distribution (160th) to pass tests","project":"zuda"}
+{"timestamp":"2026-07-18T07:39:23Z","action":"subagent","agent_type":"test-writer","task":"Write TDD tests for Good's distribution (161st) in distributions.zig","project":"zuda"}
+{"timestamp":"2026-07-18T07:42:04Z","action":"subagent","agent_type":"zig-developer","task":"Implement Good's distribution (161st) to pass 70 pre-written tests","project":"zuda"}
