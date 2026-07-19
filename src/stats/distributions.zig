@@ -96330,6 +96330,172 @@ fn computeHyperPoissonLogZ(comptime T: type, lambda: T, gamma: T) T {
     return @log(sum);
 }
 
+pub fn ConwayMaxwellBinomial(comptime T: type) type {
+    return struct {
+        n: u64,
+        p: T,
+        nu: T,
+        log_z: T, // cached log normalizing constant
+
+        const Self = @This();
+
+        /// Initialize ConwayMaxwellBinomial(n, p, ν).
+        /// n ≥ 1; 0 < p < 1 (strictly); ν ≥ 0; all finite.
+        ///
+        /// Computes and caches the log normalizing constant log Z(n,p,ν).
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn init(n: u64, p: T, nu: T) DistributionError!Self {
+            if (n == 0) return error.InvalidParameter;
+            if (p <= 0.0 or p >= 1.0) return error.InvalidProbability;
+            if (!math.isFinite(p)) return error.InvalidProbability;
+            if (nu < 0.0 or !math.isFinite(nu)) return error.InvalidParameter;
+            const lz = computeCMBLogZ(T, n, p, nu);
+            return Self{ .n = n, .p = p, .nu = nu, .log_z = lz };
+        }
+
+        /// Probability mass function P(X=k).
+        ///
+        /// P(X=k) = C(n,k)^ν · θ^k / Z(n,p,ν), for k=0..n (else 0)
+        /// where θ = p/(1-p)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k > self.n) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function.
+        ///
+        /// log P(X=k) = ν·logC(n,k) + k·log(θ) − log(Z)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k > self.n) return -math.inf(T);
+            const kf: T = @floatFromInt(k);
+            const theta = self.p / (1.0 - self.p);
+            return self.nu * logBinomialCoeff(T, self.n, k) + kf * @log(theta) - self.log_z;
+        }
+
+        /// Cumulative distribution function P(X ≤ k).
+        ///
+        /// F(k) = Σ_{j=0}^{min(k,n)} P(X=j)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            const k_clamped = @min(k, self.n);
+            var sum: T = 0.0;
+            for (0..k_clamped + 1) |i| {
+                sum += self.pmf(i);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile function (inverse CDF) - returns k such that P(X ≤ k) ≥ p.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            if (prob == 0.0) return 0;
+            if (prob == 1.0) return self.n;
+
+            // Search for smallest k such that CDF(k) >= prob
+            var cumulative: T = 0.0;
+            for (0..self.n + 1) |k| {
+                cumulative += self.pmf(k);
+                if (cumulative >= prob) return k;
+            }
+            return self.n;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// Computed exactly: Σ k·P(X=k) for k=0..n
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var sum: T = 0.0;
+            for (0..self.n + 1) |k| {
+                const kf: T = @floatFromInt(k);
+                sum += kf * self.pmf(k);
+            }
+            return sum;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var = E[X²] - (E[X])²
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            var e_x2: T = 0.0;
+            for (0..self.n + 1) |k| {
+                const kf: T = @floatFromInt(k);
+                e_x2 += kf * kf * self.pmf(k);
+            }
+            return e_x2 - m * m;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// Finds k with maximum pmf via scanning (no closed form).
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var max_pmf: T = self.pmf(0);
+            var mode_val: u64 = 0;
+
+            for (1..self.n + 1) |k| {
+                const pmf_k = self.pmf(k);
+                if (pmf_k > max_pmf) {
+                    max_pmf = pmf_k;
+                    mode_val = k;
+                }
+            }
+            return mode_val;
+        }
+
+        /// Assert that parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.n == 0) return DistributionError.InvalidParameter;
+            if (self.p <= 0.0 or self.p >= 1.0 or !math.isFinite(self.p)) return DistributionError.InvalidParameter;
+            if (self.nu < 0.0 or !math.isFinite(self.nu)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.log_z)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+/// Compute log Z(n, p, ν) = log(Σ_{j=0}^{n} C(n,j)^ν · θ^j).
+///
+/// Uses exact log-sum-exp over finite support [0, n].
+/// θ = p/(1-p).
+///
+/// Time: O(n) | Space: O(1)
+fn computeCMBLogZ(comptime T: type, n: u64, p: T, nu: T) T {
+    const theta = p / (1.0 - p);
+    const log_theta = @log(theta);
+
+    // Pass 1: find max log-term to enable stable log-sum-exp
+    var log_max: T = 0.0; // j=0: log_term = 0
+    for (1..n + 1) |j| {
+        const jf: T = @floatFromInt(j);
+        const lt = nu * logBinomialCoeff(T, n, j) + jf * log_theta;
+        if (lt > log_max) log_max = lt;
+    }
+
+    // Pass 2: sum exp(log_term - log_max)
+    var sum: T = @exp(0.0 - log_max); // j=0 term
+    for (1..n + 1) |j| {
+        const jf: T = @floatFromInt(j);
+        const lt = nu * logBinomialCoeff(T, n, j) + jf * log_theta;
+        sum += @exp(lt - log_max);
+    }
+
+    return log_max + @log(sum);
+}
+
 // ============================================================================
 // HyperPoisson Tests — (lambda, gamma) discrete distribution on {0,1,2,...}
 // gamma=1 reduces exactly to Poisson(lambda)
@@ -96866,4 +97032,531 @@ test "HyperPoisson(f32): variance accuracy for (3.0, 0.5)" {
     const dist = try HyperPoisson(f32).init(3.0, 0.5);
     const v = dist.variance();
     try expectApproxEqAbs(@as(f32, 3.02826078808804), v, 1e-3);
+}
+
+// ============================================================================
+// ConwayMaxwellBinomial Tests — (n, p, nu) discrete distribution on {0,1,...,n}
+// nu=1 reduces exactly to Binomial(n,p)
+// ============================================================================
+
+test "ConwayMaxwellBinomial: init with valid params (5, 0.3, 1.0) succeeds" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    try expect(dist.n == 5);
+    try expectApproxEqAbs(dist.p, 0.3, 1e-15);
+    try expectApproxEqAbs(dist.nu, 1.0, 1e-15);
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellBinomial: init with valid params (4, 0.5, 2.0) succeeds" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    try expect(dist.n == 4);
+    try expectApproxEqAbs(dist.p, 0.5, 1e-15);
+    try expectApproxEqAbs(dist.nu, 2.0, 1e-15);
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellBinomial: init with valid params (3, 0.4, 0.0) succeeds" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    try expect(dist.n == 3);
+    try expectApproxEqAbs(dist.p, 0.4, 1e-15);
+    try expectApproxEqAbs(dist.nu, 0.0, 1e-15);
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellBinomial: init with valid params (6, 0.5, 3.0) succeeds" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    try expect(dist.n == 6);
+    try expectApproxEqAbs(dist.p, 0.5, 1e-15);
+    try expectApproxEqAbs(dist.nu, 3.0, 1e-15);
+    try expect(math.isFinite(dist.log_z));
+}
+
+test "ConwayMaxwellBinomial: init with p=0 returns InvalidProbability" {
+    const result = ConwayMaxwellBinomial(f64).init(5, 0.0, 1.0);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: init with p=-0.1 returns InvalidProbability" {
+    const result = ConwayMaxwellBinomial(f64).init(5, -0.1, 1.0);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: init with p=1.0 returns InvalidProbability" {
+    const result = ConwayMaxwellBinomial(f64).init(5, 1.0, 1.0);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: init with p=1.1 returns InvalidProbability" {
+    const result = ConwayMaxwellBinomial(f64).init(5, 1.1, 1.0);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: init with p=NaN returns InvalidProbability" {
+    const result = ConwayMaxwellBinomial(f64).init(5, math.nan(f64), 1.0);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: init with p=inf returns InvalidProbability" {
+    const result = ConwayMaxwellBinomial(f64).init(5, math.inf(f64), 1.0);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: init with n=0 returns InvalidParameter" {
+    const result = ConwayMaxwellBinomial(f64).init(0, 0.5, 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellBinomial: init with nu<0 returns InvalidParameter" {
+    const result = ConwayMaxwellBinomial(f64).init(5, 0.5, -0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellBinomial: init with nu=NaN returns InvalidParameter" {
+    const result = ConwayMaxwellBinomial(f64).init(5, 0.5, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ConwayMaxwellBinomial: init with nu=inf returns InvalidParameter" {
+    const result = ConwayMaxwellBinomial(f64).init(5, 0.5, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+// Case 1: nu=1.0 should exactly reduce to Binomial(5, 0.3)
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 pmf(0) matches Binomial(5,0.3) ground truth 0.16807" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.16807;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 pmf(1) matches Binomial(5,0.3) ground truth 0.36015" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.36015;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 pmf(2) matches Binomial(5,0.3) ground truth 0.3087" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.3087;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 pmf(3) matches Binomial(5,0.3) ground truth 0.1323" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.1323;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 pmf(4) matches Binomial(5,0.3) ground truth 0.02835" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(4);
+    const expected: f64 = 0.02835;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 pmf(5) matches Binomial(5,0.3) ground truth 0.00243" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(5);
+    const expected: f64 = 0.00243;
+    try expectApproxEqRel(expected, pmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 mean matches Binomial(5,0.3) ground truth 1.5" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 1.5;
+    try expectApproxEqAbs(expected, mean_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 1 nu=1.0 variance matches Binomial(5,0.3) ground truth 1.05" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const var_val = dist.variance();
+    const expected: f64 = 1.05;
+    try expectApproxEqAbs(expected, var_val, 1e-9);
+}
+
+// Case 2: nu=2.0, n=4, p=0.5 (under-dispersed, symmetric)
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 pmf(0) matches ground truth 0.0142857143" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.0142857143;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 pmf(1) matches ground truth 0.2285714286" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.2285714286;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 pmf(2) matches ground truth 0.5142857143" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.5142857143;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 pmf(3) matches ground truth 0.2285714286" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.2285714286;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 pmf(4) matches ground truth 0.0142857143" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_val = dist.pmf(4);
+    const expected: f64 = 0.0142857143;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 mean matches ground truth 2.0" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 2.0;
+    try expectApproxEqAbs(expected, mean_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 variance matches ground truth 0.5714285714" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const var_val = dist.variance();
+    const expected: f64 = 0.5714285714285714;
+    try expectApproxEqAbs(expected, var_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 2 nu=2.0 mode is 2" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const mode_val = dist.mode();
+    try expectEqual(2, mode_val);
+}
+
+// Case 3: nu=0.0, n=3, p=0.4 (theta^k distribution)
+test "ConwayMaxwellBinomial: Case 3 nu=0.0 pmf(0) matches ground truth 0.4153846154" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.4153846154;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 3 nu=0.0 pmf(1) matches ground truth 0.2769230769" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.2769230769;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 3 nu=0.0 pmf(2) matches ground truth 0.1846153846" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.1846153846;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 3 nu=0.0 pmf(3) matches ground truth 0.1230769231" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.1230769231;
+    try expectApproxEqRel(expected, pmf_val, 1e-8);
+}
+
+test "ConwayMaxwellBinomial: Case 3 nu=0.0 mean matches ground truth 1.0153846154" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    const mean_val = dist.mean();
+    const expected: f64 = 1.0153846153846153;
+    try expectApproxEqAbs(expected, mean_val, 1e-8);
+}
+
+// Case 4: nu=3.0, n=6, p=0.5 (highly peaked, symmetric)
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(0) matches ground truth 0.0000658588" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.0000658588;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(1) matches ground truth 0.0142255005" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.0142255005;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(2) matches ground truth 0.2222734457" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.2222734457;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(3) matches ground truth 0.5268703899" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.5268703899;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(4) matches ground truth 0.2222734457" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(4);
+    const expected: f64 = 0.2222734457;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(5) matches ground truth 0.0142255005" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(5);
+    const expected: f64 = 0.0142255005;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 pmf(6) matches ground truth 0.0000658588" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(6);
+    const expected: f64 = 0.0000658588;
+    try expectApproxEqRel(expected, pmf_val, 1e-6);
+}
+
+test "ConwayMaxwellBinomial: Case 4 nu=3.0 mode is 3" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const mode_val = dist.mode();
+    try expectEqual(3, mode_val);
+}
+
+// Normalization tests
+test "ConwayMaxwellBinomial: pmf sums to 1.0 for Case 1 (n=5, p=0.3, nu=1.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    var sum: f64 = 0.0;
+    for (0..6) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: pmf sums to 1.0 for Case 2 (n=4, p=0.5, nu=2.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    var sum: f64 = 0.0;
+    for (0..5) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: pmf sums to 1.0 for Case 3 (n=3, p=0.4, nu=0.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    var sum: f64 = 0.0;
+    for (0..4) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: pmf sums to 1.0 for Case 4 (n=6, p=0.5, nu=3.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    var sum: f64 = 0.0;
+    for (0..7) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+// Bounds tests: pmf(k) = 0 for k > n, logpmf(k) = -inf for k > n
+test "ConwayMaxwellBinomial: pmf(k>n) returns 0 for Case 1" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    try expectEqual(0.0, dist.pmf(6));
+    try expectEqual(0.0, dist.pmf(10));
+    try expectEqual(0.0, dist.pmf(100));
+}
+
+test "ConwayMaxwellBinomial: logpmf(k>n) returns -inf for Case 1" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const logpmf_val = dist.logpmf(6);
+    try expect(math.isNegativeInf(logpmf_val));
+}
+
+test "ConwayMaxwellBinomial: pmf(k>n) returns 0 for Case 4" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    try expectEqual(0.0, dist.pmf(7));
+    try expectEqual(0.0, dist.pmf(20));
+}
+
+test "ConwayMaxwellBinomial: logpmf(k>n) returns -inf for Case 4" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const logpmf_val = dist.logpmf(7);
+    try expect(math.isNegativeInf(logpmf_val));
+}
+
+// Symmetry tests for p=0.5 (Cases 2 and 4)
+test "ConwayMaxwellBinomial: Case 2 symmetry pmf[0] == pmf[4]" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_0 = dist.pmf(0);
+    const pmf_4 = dist.pmf(4);
+    try expectApproxEqAbs(pmf_0, pmf_4, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 2 symmetry pmf[1] == pmf[3]" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_1 = dist.pmf(1);
+    const pmf_3 = dist.pmf(3);
+    try expectApproxEqAbs(pmf_1, pmf_3, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 4 symmetry pmf[0] == pmf[6]" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_0 = dist.pmf(0);
+    const pmf_6 = dist.pmf(6);
+    try expectApproxEqAbs(pmf_0, pmf_6, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 4 symmetry pmf[1] == pmf[5]" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_1 = dist.pmf(1);
+    const pmf_5 = dist.pmf(5);
+    try expectApproxEqAbs(pmf_1, pmf_5, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: Case 4 symmetry pmf[2] == pmf[4]" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_2 = dist.pmf(2);
+    const pmf_4 = dist.pmf(4);
+    try expectApproxEqAbs(pmf_2, pmf_4, 1e-9);
+}
+
+// CDF tests
+test "ConwayMaxwellBinomial: cdf is monotone non-decreasing for Case 1" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    var prev_cdf: f64 = 0.0;
+    for (0..6) |k| {
+        const curr_cdf = dist.cdf(k);
+        try expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "ConwayMaxwellBinomial: cdf(n) == 1.0 for Case 1" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const cdf_val = dist.cdf(5);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: cdf(n) == 1.0 for Case 2" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const cdf_val = dist.cdf(4);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: cdf(n) == 1.0 for Case 4" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const cdf_val = dist.cdf(6);
+    try expectApproxEqAbs(1.0, cdf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: cdf(k) = cdf(k-1) + pmf(k) for Case 1 at k=3" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const cdf_k = dist.cdf(3);
+    const cdf_k_minus_1 = dist.cdf(2);
+    const pmf_k = dist.pmf(3);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: cdf(k) = cdf(k-1) + pmf(k) for Case 2 at k=2" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const cdf_k = dist.cdf(2);
+    const cdf_k_minus_1 = dist.cdf(1);
+    const pmf_k = dist.pmf(2);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+// Quantile tests
+test "ConwayMaxwellBinomial: quantile rejects p < 0 as InvalidProbability" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: quantile rejects p > 1 as InvalidProbability" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "ConwayMaxwellBinomial: quantile at p=0 returns 0 for Case 1" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const q = try dist.quantile(0.0);
+    try expectEqual(0, q);
+}
+
+test "ConwayMaxwellBinomial: quantile at p=1.0 returns n for Case 1" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const q = try dist.quantile(1.0);
+    try expectEqual(5, q);
+}
+
+test "ConwayMaxwellBinomial: quantile at p=1.0 returns n for Case 4" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const q = try dist.quantile(1.0);
+    try expectEqual(6, q);
+}
+
+test "ConwayMaxwellBinomial: quantile-cdf roundtrip consistency for Case 1 at p=0.5" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const q = try dist.quantile(0.5);
+    const cdf_q = dist.cdf(q);
+    try expect(cdf_q >= 0.5);
+}
+
+test "ConwayMaxwellBinomial: quantile-cdf roundtrip consistency for Case 2 at p=0.7" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const q = try dist.quantile(0.7);
+    const cdf_q = dist.cdf(q);
+    try expect(cdf_q >= 0.7);
+}
+
+// Logpmf consistency tests
+test "ConwayMaxwellBinomial: logpmf consistent with pmf for Case 1 k=0" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    const pmf_val = dist.pmf(0);
+    const logpmf_val = dist.logpmf(0);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: logpmf consistent with pmf for Case 2 k=2" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    const pmf_val = dist.pmf(2);
+    const logpmf_val = dist.logpmf(2);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "ConwayMaxwellBinomial: logpmf consistent with pmf for Case 4 k=3" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    const pmf_val = dist.pmf(3);
+    const logpmf_val = dist.logpmf(3);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+// Validate tests
+test "ConwayMaxwellBinomial: validate passes for Case 1 (n=5, p=0.3, nu=1.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(5, 0.3, 1.0);
+    try dist.validate();
+}
+
+test "ConwayMaxwellBinomial: validate passes for Case 2 (n=4, p=0.5, nu=2.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(4, 0.5, 2.0);
+    try dist.validate();
+}
+
+test "ConwayMaxwellBinomial: validate passes for Case 3 (n=3, p=0.4, nu=0.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(3, 0.4, 0.0);
+    try dist.validate();
+}
+
+test "ConwayMaxwellBinomial: validate passes for Case 4 (n=6, p=0.5, nu=3.0)" {
+    const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
+    try dist.validate();
 }
