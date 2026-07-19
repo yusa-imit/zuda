@@ -74537,9 +74537,14 @@ fn gigBesselKInt(comptime T: type, n: u32, x: T) T {
     return k_curr;
 }
 
-/// Modified Bessel function of the second kind, K_nu(x) for general nu
-/// Uses numerical integration: K_nu(x) = integral_0^infty e^{-x*cosh(t)} cosh(nu*t) dt
-fn gigBesselKGeneral(comptime T: type, abs_nu: T, x: T) T {
+/// Log of modified Bessel function K_nu(x) for general nu, via numerical
+/// integration in log-space: K_nu(x) = integral_0^infty e^{-x*cosh(t)} cosh(nu*t) dt
+///
+/// Stays in log-space throughout (rather than exponentiating the peak and
+/// re-logging) since for large nu (order growing unboundedly, e.g. nu=lambda+k
+/// swept over a discrete mixture's support) the linear-domain peak magnitude
+/// can exceed f64 range even though its log is well within range.
+fn gigLogBesselKGeneral(comptime T: type, abs_nu: T, x: T) T {
     const N: usize = 400;
     const T_max: T = 50.0;
     const dt: T = T_max / @as(T, @floatFromInt(N));
@@ -74559,7 +74564,13 @@ fn gigBesselKGeneral(comptime T: type, abs_nu: T, x: T) T {
         const log_val = -x * math.cosh(t) + log_ch;
         sum += @exp(log_val - peak_log);
     }
-    return @exp(peak_log) * sum * dt;
+    return peak_log + @log(sum * dt);
+}
+
+/// Modified Bessel function of the second kind, K_nu(x) for general nu
+/// Uses numerical integration: K_nu(x) = integral_0^infty e^{-x*cosh(t)} cosh(nu*t) dt
+fn gigBesselKGeneral(comptime T: type, abs_nu: T, x: T) T {
+    return @exp(gigLogBesselKGeneral(T, abs_nu, x));
 }
 
 /// Modified Bessel function of the second kind, K_nu(x)
@@ -74587,7 +74598,12 @@ fn gigLogBesselK(comptime T: type, nu: T, x: T) T {
         // non-positive argument and produce -inf/NaN if series <= 0.
         return 0.5 * @log(math.pi / (2.0 * x)) - x + @log(@max(series, std.math.floatMin(T)));
     }
-    return @log(gigBesselK(T, nu, x));
+    const abs_nu = @abs(nu);
+    const n = @round(abs_nu);
+    if (@abs(abs_nu - n) < 1e-9 and n <= 30.0) {
+        return @log(gigBesselKInt(T, @intFromFloat(n), x));
+    }
+    return gigLogBesselKGeneral(T, abs_nu, x);
 }
 
 /// Generalized Inverse Gaussian distribution GIG(λ, ψ, χ)
@@ -97941,6 +97957,361 @@ test "NeymanTypeA: mode is a local pmf maximum for Case 1" {
     const pmf_at_mode = dist.pmf(m);
     try expect(pmf_at_mode >= dist.pmf(if (m > 0) m - 1 else m));
     try expect(pmf_at_mode >= dist.pmf(m + 1));
+}
+
+/// Sichel distribution — a Poisson mixed over a Generalized Inverse Gaussian
+/// (GIG) latent rate: X | Λ=λ ~ Poisson(λ), Λ ~ GIG(λ_gig, ψ, χ).
+///
+/// Unlike ConwayMaxwellPoisson/HyperPoisson (weighted, no closed-form pmf),
+/// the GIG-Poisson mixture integrates in closed form via the GIG normalizing
+/// integral, giving:
+///
+/// P(X=k) = [ψ^(λ_gig/2) · χ^(k/2) · (ψ+2)^(-(λ_gig+k)/2) / k!]
+///          · [K_(λ_gig+k)(√(χ(ψ+2))) / K_(λ_gig)(√(ψχ))]
+///
+/// Mean/variance follow directly from the law of total expectation/variance
+/// applied to the GIG mixing distribution: E[X] = E[Λ], Var[X] = E[Λ] + Var[Λ].
+pub fn Sichel(comptime T: type) type {
+    return struct {
+        lambda_gig: T,
+        psi: T,
+        chi: T,
+        omega: T, // sqrt(psi*chi) — argument for K_(lambda_gig)
+        omega2: T, // sqrt(chi*(psi+2)) — argument for K_(lambda_gig+k)
+        base: T, // (lambda_gig/2)*log(psi/(psi+2)) - logK_(lambda_gig)(omega)
+        coef_k: T, // 0.5*log(chi/(psi+2))
+
+        const Self = @This();
+
+        /// Create a Sichel(λ_gig, ψ, χ) distribution.
+        ///
+        /// Parameters: lambda_gig finite (any real value, GIG shape); psi > 0, chi > 0 (GIG scale params).
+        ///
+        /// Errors: any parameter non-finite, or psi/chi not strictly positive.
+        ///
+        /// Time: O(1) or O(400) if lambda_gig is non-integer (Bessel K integral) | Space: O(1)
+        pub fn init(lambda_gig: T, psi: T, chi: T) DistributionError!Self {
+            if (!math.isFinite(lambda_gig)) return error.InvalidParameter;
+            if (!math.isFinite(psi) or !(psi > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(chi) or !(chi > 0.0)) return error.InvalidParameter;
+
+            const omega = @sqrt(psi * chi);
+            const omega2 = @sqrt(chi * (psi + 2.0));
+            const base = (lambda_gig / 2.0) * @log(psi / (psi + 2.0)) - gigLogBesselK(T, lambda_gig, omega);
+            const coef_k = 0.5 * @log(chi / (psi + 2.0));
+
+            return Self{
+                .lambda_gig = lambda_gig,
+                .psi = psi,
+                .chi = chi,
+                .omega = omega,
+                .omega2 = omega2,
+                .base = base,
+                .coef_k = coef_k,
+            };
+        }
+
+        /// Log-PMF at k (closed form).
+        ///
+        /// Time: O(1) or O(400) if lambda_gig+k is non-integer | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const kf: T = @floatFromInt(k);
+            return self.base + kf * self.coef_k - logFactorial(T, k) + gigLogBesselK(T, self.lambda_gig + kf, self.omega2);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) or O(400) if lambda_gig+k is non-integer | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            const MAX_K: u64 = 100000;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const pk = self.pmf(k);
+                cumsum += pk;
+                if (cumsum >= p) return k;
+                if (k > 0 and pk == 0.0) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Mean E[X] = E[Λ] (law of total expectation over the GIG mixing latent).
+        ///
+        /// Time: O(1) or O(400) if lambda_gig is non-integer | Space: O(1)
+        pub fn mean(self: Self) T {
+            const k1 = gigBesselK(T, self.lambda_gig + 1.0, self.omega);
+            const k0 = gigBesselK(T, self.lambda_gig, self.omega);
+            return @sqrt(self.chi / self.psi) * k1 / k0;
+        }
+
+        /// Variance Var[X] = E[Λ] + Var[Λ] (law of total variance).
+        ///
+        /// Time: O(1) or O(400) if lambda_gig is non-integer | Space: O(1)
+        pub fn variance(self: Self) T {
+            const k0 = gigBesselK(T, self.lambda_gig, self.omega);
+            const k1 = gigBesselK(T, self.lambda_gig + 1.0, self.omega);
+            const k2 = gigBesselK(T, self.lambda_gig + 2.0, self.omega);
+            const k1_k0 = k1 / k0;
+            const mean_lambda = @sqrt(self.chi / self.psi) * k1_k0;
+            const var_lambda = (self.chi / self.psi) * (k2 / k0 - k1_k0 * k1_k0);
+            return mean_lambda + var_lambda;
+        }
+
+        /// Mode: numeric scan via PMF (no closed form for the discrete mixture).
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf: T = self.pmf(0);
+            const m = self.mean();
+            const v = self.variance();
+            const search_limit: u64 = @intFromFloat(@ceil(m + 20.0 * @sqrt(@max(v, 1.0)) + 50.0));
+            var k: u64 = 1;
+            while (k <= search_limit) : (k += 1) {
+                const p = self.pmf(k);
+                if (p > best_pmf) {
+                    best_pmf = p;
+                    best_k = k;
+                }
+            }
+            return best_k;
+        }
+
+        /// Sample via composition: draw Λ ~ GIG, then X ~ Poisson(Λ).
+        ///
+        /// Time: O(40000) amortized (GIG quantile inversion dominates) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const gig = GeneralizedInverseGaussian(T).init(self.lambda_gig, self.psi, self.chi) catch return 0;
+            const lam = gig.sample(rng);
+            return poissonKnuth(T, rng, lam);
+        }
+
+        /// Assert that parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.lambda_gig)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.psi) or !(self.psi > 0.0)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.chi) or !(self.chi > 0.0)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Sichel Tests — (lambda_gig, psi, chi) Poisson-GIG mixture
+// pmf via closed-form Bessel-K ratio; mean=E[Λ], var=E[Λ]+Var[Λ]
+// ============================================================================
+
+test "Sichel: init with valid params (1.5, 2.0, 3.0) succeeds" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqAbs(dist.lambda_gig, 1.5, 1e-15);
+    try expectApproxEqAbs(dist.psi, 2.0, 1e-15);
+    try expectApproxEqAbs(dist.chi, 3.0, 1e-15);
+}
+
+test "Sichel: init with psi=0 returns InvalidParameter" {
+    const result = Sichel(f64).init(1.5, 0.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Sichel: init with psi=-1 returns InvalidParameter" {
+    const result = Sichel(f64).init(1.5, -1.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Sichel: init with chi=0 returns InvalidParameter" {
+    const result = Sichel(f64).init(1.5, 2.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Sichel: init with chi=-1 returns InvalidParameter" {
+    const result = Sichel(f64).init(1.5, 2.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Sichel: init with lambda_gig=NaN returns InvalidParameter" {
+    const result = Sichel(f64).init(math.nan(f64), 2.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Sichel: init with psi=inf returns InvalidParameter" {
+    const result = Sichel(f64).init(1.5, math.inf(f64), 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+// Case 1: lambda_gig=1.5, psi=2.0, chi=3.0 — ground truth via mpmath (40 dps),
+// verified against direct numeric integration of the Poisson-GIG mixture.
+test "Sichel: Case 1 pmf(0) matches ground truth 0.1658799450961783" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.1658799450961783), dist.pmf(0), 1e-9);
+}
+
+test "Sichel: Case 1 pmf(1) matches ground truth 0.2358858789940761" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.2358858789940761), dist.pmf(1), 1e-9);
+}
+
+test "Sichel: Case 1 pmf(2) matches ground truth 0.2096336537823644" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.2096336537823644), dist.pmf(2), 1e-9);
+}
+
+test "Sichel: Case 1 pmf(3) matches ground truth 0.1517720329139721" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.1517720329139721), dist.pmf(3), 1e-9);
+}
+
+test "Sichel: Case 1 pmf(4) matches ground truth 0.09847387187550707" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.09847387187550707), dist.pmf(4), 1e-9);
+}
+
+test "Sichel: Case 1 mean matches ground truth 2.3696938456699069" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 2.3696938456699069), dist.mean(), 1e-9);
+}
+
+test "Sichel: Case 1 variance matches ground truth 4.178479537638842" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 4.178479537638842), dist.variance(), 1e-9);
+}
+
+// Case 2: lambda_gig=0.5, psi=1.0, chi=1.0 — half-integer GIG order boundary
+test "Sichel: Case 2 pmf(0) matches ground truth 0.2776602730711221" {
+    const dist = try Sichel(f64).init(0.5, 1.0, 1.0);
+    try expectApproxEqRel(@as(f64, 0.2776602730711221), dist.pmf(0), 1e-8);
+}
+
+test "Sichel: Case 2 mean matches ground truth 2.0" {
+    const dist = try Sichel(f64).init(0.5, 1.0, 1.0);
+    try expectApproxEqAbs(@as(f64, 2.0), dist.mean(), 1e-6);
+}
+
+test "Sichel: Case 2 variance matches ground truth 5.0" {
+    const dist = try Sichel(f64).init(0.5, 1.0, 1.0);
+    try expectApproxEqAbs(@as(f64, 5.0), dist.variance(), 1e-6);
+}
+
+// Case 3: lambda_gig=-0.3, psi=4.0, chi=2.0 — negative GIG shape
+test "Sichel: Case 3 pmf(0) matches ground truth 0.5105932131979280" {
+    const dist = try Sichel(f64).init(-0.3, 4.0, 2.0);
+    try expectApproxEqRel(@as(f64, 0.5105932131979280), dist.pmf(0), 1e-8);
+}
+
+test "Sichel: Case 3 pmf(2) matches ground truth 0.1212946561654948" {
+    const dist = try Sichel(f64).init(-0.3, 4.0, 2.0);
+    try expectApproxEqRel(@as(f64, 0.1212946561654948), dist.pmf(2), 1e-8);
+}
+
+test "Sichel: Case 3 mean matches ground truth 0.7517151756595190" {
+    const dist = try Sichel(f64).init(-0.3, 4.0, 2.0);
+    try expectApproxEqRel(@as(f64, 0.7517151756595190), dist.mean(), 1e-8);
+}
+
+test "Sichel: Case 3 variance matches ground truth 0.9497397818235291" {
+    const dist = try Sichel(f64).init(-0.3, 4.0, 2.0);
+    try expectApproxEqRel(@as(f64, 0.9497397818235291), dist.variance(), 1e-8);
+}
+
+test "Sichel: pmf sums to ~1 over a wide range of k (Case 1)" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k < 500) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(@as(f64, 1.0), sum, 1e-6);
+}
+
+test "Sichel: cdf is monotonically non-decreasing" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    var prev: f64 = 0.0;
+    var k: u64 = 0;
+    while (k < 30) : (k += 1) {
+        const c = dist.cdf(k);
+        try expect(c >= prev - 1e-12);
+        prev = c;
+    }
+    try expect(prev > 0.99);
+}
+
+test "Sichel: quantile is consistent with cdf" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    const p: f64 = 0.5;
+    const q = try dist.quantile(p);
+    try expect(dist.cdf(q) >= p);
+    if (q > 0) {
+        try expect(dist.cdf(q - 1) < p);
+    }
+}
+
+test "Sichel: quantile with p=0 returns 0" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    const q = try dist.quantile(0.0);
+    try expect(q == 0);
+}
+
+test "Sichel: quantile with invalid probability returns error" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.5));
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Sichel: mode is a local pmf maximum for Case 1" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    const m = dist.mode();
+    const pmf_at_mode = dist.pmf(m);
+    try expect(pmf_at_mode >= dist.pmf(if (m > 0) m - 1 else m));
+    try expect(pmf_at_mode >= dist.pmf(m + 1));
+}
+
+test "Sichel: sample produces values consistent with distribution mean over many draws" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+
+    var sum: f64 = 0.0;
+    const n_samples = 20000;
+    for (0..n_samples) |_| {
+        const s = dist.sample(rng);
+        sum += @as(f64, @floatFromInt(s));
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n_samples));
+    try expectApproxEqAbs(dist.mean(), sample_mean, 0.15);
+}
+
+test "Sichel: validate passes for valid params" {
+    const dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    try dist.validate();
+}
+
+test "Sichel: validate fails when psi is corrupted to zero" {
+    var dist = try Sichel(f64).init(1.5, 2.0, 3.0);
+    dist.psi = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
 }
 
 // ============================================================================
