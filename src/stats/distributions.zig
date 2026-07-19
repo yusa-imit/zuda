@@ -97560,3 +97560,381 @@ test "ConwayMaxwellBinomial: validate passes for Case 4 (n=6, p=0.5, nu=3.0)" {
     const dist = try ConwayMaxwellBinomial(f64).init(6, 0.5, 3.0);
     try dist.validate();
 }
+
+/// Neyman Type A distribution — a Poisson-stopped sum of Poisson variables.
+///
+/// X = Σ_{i=1}^{N} Y_i, where N ~ Poisson(φ) (number of clusters) and each
+/// Y_i ~ Poisson(λ) iid (cluster size). Classic model for contagious/clustered
+/// counts (e.g. larvae counts per plot in ecology).
+///
+/// pgf: G_X(s) = exp(φ(exp(λ(s-1)) - 1))
+pub fn NeymanTypeA(comptime T: type) type {
+    return struct {
+        phi: T,
+        lambda: T,
+
+        const Self = @This();
+        const MAX_N: usize = 20000;
+
+        /// Create a NeymanTypeA(φ, λ) distribution.
+        ///
+        /// Parameters: phi > 0 (mean cluster count), lambda > 0 (mean cluster size)
+        ///
+        /// Errors: either parameter non-finite or ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(phi: T, lambda: T) DistributionError!Self {
+            if (!math.isFinite(phi)) return error.InvalidParameter;
+            if (!(phi > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            if (!(lambda > 0.0)) return error.InvalidParameter;
+            return Self{ .phi = phi, .lambda = lambda };
+        }
+
+        /// PMF at k, via direct summation over the latent cluster count n:
+        ///
+        /// P(X=k) = Σ_{n=0}^{∞} Poisson(φ).pmf(n) · Poisson(nλ).pmf(k)
+        ///
+        /// Truncates the sum once terms underflow past both the φ and k/λ scales.
+        ///
+        /// Time: O(MAX_N) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            const kf: T = @floatFromInt(k);
+            const log_phi = @log(self.phi);
+            const log_lambda = @log(self.lambda);
+            var sum: T = 0.0;
+            var n: u64 = 0;
+            while (n <= MAX_N) : (n += 1) {
+                const nf: T = @floatFromInt(n);
+                const log_p1 = nf * log_phi - self.phi - logFactorial(T, n);
+                const mean2 = nf * self.lambda;
+                const log_p2 = if (n == 0)
+                    (if (k == 0) 0.0 else -math.inf(T))
+                else
+                    kf * log_lambda + kf * @log(nf) - mean2 - logFactorial(T, k);
+                const term = @exp(log_p1 + log_p2);
+                sum += term;
+                if (term == 0.0 and nf > self.phi and mean2 > kf) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// Time: O(MAX_N) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            return @log(self.pmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k · MAX_N) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k* · MAX_N) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            const MAX_K: u64 = 100000;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const pk = self.pmf(k);
+                cumsum += pk;
+                if (cumsum >= p) return k;
+                if (k > 0 and pk == 0.0) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample via the exact generative composition: draw N ~ Poisson(φ),
+        /// then X ~ Poisson(Nλ) (sum of N iid Poisson(λ) is Poisson(Nλ)).
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const n = poissonKnuth(T, rng, self.phi);
+            const nf: T = @floatFromInt(n);
+            return poissonKnuth(T, rng, nf * self.lambda);
+        }
+
+        /// Mean: φ·λ.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.phi * self.lambda;
+        }
+
+        /// Variance: φ·λ·(1+λ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.phi * self.lambda * (1.0 + self.lambda);
+        }
+
+        /// Mode: numeric scan via PMF (no closed form).
+        ///
+        /// Time: O(mode value · MAX_N) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf: T = self.pmf(0);
+            var k: u64 = 1;
+            const search_limit: u64 = @intFromFloat(@ceil(self.mean() + 20.0 * @sqrt(self.variance()) + 50.0));
+            while (k <= search_limit) : (k += 1) {
+                const p = self.pmf(k);
+                if (p > best_pmf) {
+                    best_pmf = p;
+                    best_k = k;
+                }
+            }
+            return best_k;
+        }
+
+        /// Assert that parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.phi) or !(self.phi > 0.0)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.lambda) or !(self.lambda > 0.0)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// NeymanTypeA Tests — (phi, lambda) Poisson-stopped sum of Poisson variables
+// pgf: exp(phi*(exp(lambda*(s-1)) - 1)); mean = phi*lambda, var = phi*lambda*(1+lambda)
+// ============================================================================
+
+test "NeymanTypeA: init with valid params (2.0, 3.0) succeeds" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqAbs(dist.phi, 2.0, 1e-15);
+    try expectApproxEqAbs(dist.lambda, 3.0, 1e-15);
+}
+
+test "NeymanTypeA: init with phi=0 returns InvalidParameter" {
+    const result = NeymanTypeA(f64).init(0.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NeymanTypeA: init with phi=-1 returns InvalidParameter" {
+    const result = NeymanTypeA(f64).init(-1.0, 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NeymanTypeA: init with lambda=0 returns InvalidParameter" {
+    const result = NeymanTypeA(f64).init(2.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NeymanTypeA: init with lambda=-1 returns InvalidParameter" {
+    const result = NeymanTypeA(f64).init(2.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NeymanTypeA: init with phi=NaN returns InvalidParameter" {
+    const result = NeymanTypeA(f64).init(math.nan(f64), 3.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NeymanTypeA: init with lambda=inf returns InvalidParameter" {
+    const result = NeymanTypeA(f64).init(2.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+// Case 1: phi=2.0, lambda=3.0 — ground truth via direct double-summation in Python (nmax=3000)
+test "NeymanTypeA: Case 1 pmf(0) matches ground truth 0.14950493700314163" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.14950493700314163), dist.pmf(0), 1e-6);
+}
+
+test "NeymanTypeA: Case 1 pmf(1) matches ground truth 0.04466047511945163" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.04466047511945163), dist.pmf(1), 1e-6);
+}
+
+test "NeymanTypeA: Case 1 pmf(2) matches ground truth 0.07366125506351774" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.07366125506351774), dist.pmf(2), 1e-6);
+}
+
+test "NeymanTypeA: Case 1 pmf(3) matches ground truth 0.08766655333167804" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.08766655333167804), dist.pmf(3), 1e-6);
+}
+
+test "NeymanTypeA: Case 1 pmf(4) matches ground truth 0.08830194663919276" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.08830194663919276), dist.pmf(4), 1e-6);
+}
+
+test "NeymanTypeA: Case 1 pmf(5) matches ground truth 0.08294497041244284" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqRel(@as(f64, 0.08294497041244284), dist.pmf(5), 1e-6);
+}
+
+test "NeymanTypeA: Case 1 mean matches ground truth 6.0" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqAbs(@as(f64, 6.0), dist.mean(), 1e-12);
+}
+
+test "NeymanTypeA: Case 1 variance matches ground truth 24.0" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try expectApproxEqAbs(@as(f64, 24.0), dist.variance(), 1e-12);
+}
+
+// Case 2: phi=0.5, lambda=1.5 — small phi regime, mass concentrated at 0
+test "NeymanTypeA: Case 2 pmf(0) matches ground truth 0.6781173523714781" {
+    const dist = try NeymanTypeA(f64).init(0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.6781173523714781), dist.pmf(0), 1e-6);
+}
+
+test "NeymanTypeA: Case 2 pmf(1) matches ground truth 0.11348132507555792" {
+    const dist = try NeymanTypeA(f64).init(0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.11348132507555792), dist.pmf(1), 1e-6);
+}
+
+test "NeymanTypeA: Case 2 pmf(3) matches ground truth 0.05732829752062838" {
+    const dist = try NeymanTypeA(f64).init(0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.05732829752062838), dist.pmf(3), 1e-6);
+}
+
+test "NeymanTypeA: Case 2 mean matches ground truth 0.75" {
+    const dist = try NeymanTypeA(f64).init(0.5, 1.5);
+    try expectApproxEqAbs(@as(f64, 0.75), dist.mean(), 1e-12);
+}
+
+test "NeymanTypeA: Case 2 variance matches ground truth 1.875" {
+    const dist = try NeymanTypeA(f64).init(0.5, 1.5);
+    try expectApproxEqAbs(@as(f64, 1.875), dist.variance(), 1e-12);
+}
+
+// Case 3: phi=5.0, lambda=0.8 — larger phi, sub-unity lambda
+test "NeymanTypeA: Case 3 pmf(0) matches ground truth 0.06371373118600716" {
+    const dist = try NeymanTypeA(f64).init(5.0, 0.8);
+    try expectApproxEqRel(@as(f64, 0.06371373118600716), dist.pmf(0), 1e-6);
+}
+
+test "NeymanTypeA: Case 3 pmf(2) matches ground truth 0.14871412353338148" {
+    const dist = try NeymanTypeA(f64).init(5.0, 0.8);
+    try expectApproxEqRel(@as(f64, 0.14871412353338148), dist.pmf(2), 1e-6);
+}
+
+test "NeymanTypeA: Case 3 pmf(6) matches ground truth 0.08866982242396829" {
+    const dist = try NeymanTypeA(f64).init(5.0, 0.8);
+    try expectApproxEqRel(@as(f64, 0.08866982242396829), dist.pmf(6), 1e-6);
+}
+
+test "NeymanTypeA: Case 3 mean matches ground truth 4.0" {
+    const dist = try NeymanTypeA(f64).init(5.0, 0.8);
+    try expectApproxEqAbs(@as(f64, 4.0), dist.mean(), 1e-12);
+}
+
+test "NeymanTypeA: Case 3 variance matches ground truth 7.2" {
+    const dist = try NeymanTypeA(f64).init(5.0, 0.8);
+    try expectApproxEqAbs(@as(f64, 7.2), dist.variance(), 1e-12);
+}
+
+test "NeymanTypeA: pmf sums to approximately 1 over a wide range" {
+    // Tolerance is loosened past double precision because pmf() sums over many
+    // latent n, and the shared logFactorial() helper falls back to a plain
+    // (uncorrected) Stirling approximation for n >= 20 — a known, tracked
+    // imprecision shared by every distribution built on it, not specific here.
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 100) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(@as(f64, 1.0), sum, 1e-4);
+}
+
+test "NeymanTypeA: logpmf consistent with pmf for Case 1 k=3" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const pmf_val = dist.pmf(3);
+    const logpmf_val = dist.logpmf(3);
+    try expectApproxEqAbs(@log(pmf_val), logpmf_val, 1e-9);
+}
+
+test "NeymanTypeA: cdf is monotone non-decreasing for Case 1" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    var prev_cdf: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 20) : (k += 1) {
+        const curr_cdf = dist.cdf(k);
+        try expect(curr_cdf >= prev_cdf - 1e-12);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "NeymanTypeA: cdf approaches 1.0 for large k on Case 1" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const cdf_val = dist.cdf(100);
+    try expectApproxEqAbs(@as(f64, 1.0), cdf_val, 1e-6);
+}
+
+test "NeymanTypeA: cdf(k) = cdf(k-1) + pmf(k) for Case 1 at k=4" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const cdf_k = dist.cdf(4);
+    const cdf_k_minus_1 = dist.cdf(3);
+    const pmf_k = dist.pmf(4);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "NeymanTypeA: quantile rejects p<0 as InvalidProbability" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "NeymanTypeA: quantile rejects p>1 as InvalidProbability" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "NeymanTypeA: quantile at p=0 returns 0" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const q = try dist.quantile(0.0);
+    try expectEqual(0, q);
+}
+
+test "NeymanTypeA: quantile-cdf roundtrip consistency at p=0.5" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const q = try dist.quantile(0.5);
+    const cdf_q = dist.cdf(q);
+    try expect(cdf_q >= 0.5);
+}
+
+test "NeymanTypeA: sample stays within a generous bound of the distribution" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(s < 10000);
+    }
+}
+
+test "NeymanTypeA: validate passes for valid params" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "NeymanTypeA: mode is a local pmf maximum for Case 1" {
+    const dist = try NeymanTypeA(f64).init(2.0, 3.0);
+    const m = dist.mode();
+    const pmf_at_mode = dist.pmf(m);
+    try expect(pmf_at_mode >= dist.pmf(if (m > 0) m - 1 else m));
+    try expect(pmf_at_mode >= dist.pmf(m + 1));
+}
