@@ -1713,10 +1713,14 @@ fn logFactorial(comptime T: type, n: u64) T {
         return result;
     }
 
-    // For large n, use Stirling's approximation:
-    // log(n!) ≈ n log(n) - n + 0.5 log(2πn)
+    // For large n, use Stirling's approximation with correction terms:
+    // log(n!) ≈ n*log(n) - n + 0.5*log(2πn) + 1/(12n) - 1/(360n³) + 1/(1260n⁵)
     const n_f = @as(T, @floatFromInt(n));
-    return n_f * @log(n_f) - n_f + 0.5 * @log(2.0 * math.pi * n_f);
+    const base = n_f * @log(n_f) - n_f + 0.5 * @log(2.0 * math.pi * n_f);
+    const n2 = n_f * n_f;
+    const n3 = n2 * n_f;
+    const n5 = n3 * n2;
+    return base + 1.0 / (12.0 * n_f) - 1.0 / (360.0 * n3) + 1.0 / (1260.0 * n5);
 }
 
 /// Log binomial coefficient: log(C(n, k)) = log(n! / (k! × (n-k)!))
@@ -97937,4 +97941,44 @@ test "NeymanTypeA: mode is a local pmf maximum for Case 1" {
     const pmf_at_mode = dist.pmf(m);
     try expect(pmf_at_mode >= dist.pmf(if (m > 0) m - 1 else m));
     try expect(pmf_at_mode >= dist.pmf(m + 1));
+}
+
+// ============================================================================
+// Helper Function Tests
+// ============================================================================
+
+test "logFactorial Stirling approximation precision" {
+    // Ground truth values computed via Python math.lgamma(n+1)
+    // These test the n>=20 Stirling branch of logFactorial.
+    // Current code has ~1e-3 to ~4e-3 error; corrected code will have ~1e-10 or better.
+    const test_cases = [_]struct { n: u64, expected: f64 }{
+        .{ .n = 20, .expected = 42.335616460753485 },
+        .{ .n = 25, .expected = 58.003605222980511 },
+        .{ .n = 30, .expected = 74.658236348830158 },
+        .{ .n = 50, .expected = 148.477766951773049 },
+        .{ .n = 100, .expected = 363.739375555563470 },
+        .{ .n = 200, .expected = 863.231987192405541 },
+        .{ .n = 500, .expected = 2611.330458460156024 },
+    };
+
+    const tol: f64 = 1e-8;
+    for (test_cases) |case| {
+        const result = logFactorial(f64, case.n);
+        const abs_error = @abs(result - case.expected);
+        try expect(abs_error < tol);
+    }
+}
+
+test "logFactorial continuity across n=19/n=20 exact-to-Stirling boundary" {
+    // Sanity check: logFactorial(19) + log(20) should equal logFactorial(20)
+    // within reasonable tolerance. This ensures no large jump between the
+    // exact path (n<20) and Stirling path (n>=20).
+    const lf19 = logFactorial(f64, 19);
+    const lf20 = logFactorial(f64, 20);
+    const log_20 = @log(@as(f64, 20.0));
+
+    const lf19_plus_log20 = lf19 + log_20;
+    const abs_error = @abs(lf19_plus_log20 - lf20);
+    const tol: f64 = 1e-6;
+    try expect(abs_error < tol);
 }
