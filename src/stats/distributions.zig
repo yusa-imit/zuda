@@ -98315,6 +98315,391 @@ test "Sichel: validate fails when psi is corrupted to zero" {
 }
 
 // ============================================================================
+// Hermite Distribution (167th distribution)
+// P(X=n) = exp(-(a1+a2)) * sum_{j=0}^{floor(n/2)} [a1^(n-2j) * a2^j] / [(n-2j)! * j!]
+// X = Y1 + 2*Y2, where Y1 ~ Poisson(a1), Y2 ~ Poisson(a2) independent
+// Mean = a1 + 2*a2, Variance = a1 + 4*a2
+// ============================================================================
+
+pub fn Hermite(comptime T: type) type {
+    return struct {
+        a1: T,
+        a2: T,
+
+        const Self = @This();
+        const MAX_K: usize = 10000;
+
+        /// Create a Hermite distribution.
+        ///
+        /// Parameters: a1 > 0, a2 > 0
+        ///
+        /// Errors: a1 ≤ 0, a1 non-finite, a2 ≤ 0, or a2 non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a1: T, a2: T) DistributionError!Self {
+            if (!math.isFinite(a1)) return error.InvalidParameter;
+            if (!(a1 > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(a2)) return error.InvalidParameter;
+            if (!(a2 > 0.0)) return error.InvalidParameter;
+            return Self{ .a1 = a1, .a2 = a2 };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// P(k) = exp(-(a1+a2)) * sum_{j=0}^{floor(k/2)} [a1^(k-2j) * a2^j / ((k-2j)! * j!)]
+        ///
+        /// Uses log-sum-exp trick for numerical stability.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const half_k = k / 2;
+
+            // Compute using log-sum-exp for stability
+            var max_log_term: T = -math.inf(T);
+            var j: u64 = 0;
+            while (j <= half_k) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const n_minus_2j: u64 = k - 2 * j;
+                const nmf: T = @floatFromInt(n_minus_2j);
+                const log_term = nmf * @log(self.a1)
+                    + jf * @log(self.a2)
+                    - logFactorial(T, n_minus_2j)
+                    - logFactorial(T, j);
+                if (log_term > max_log_term) {
+                    max_log_term = log_term;
+                }
+            }
+
+            if (max_log_term == -math.inf(T)) {
+                return -math.inf(T);
+            }
+
+            var sum_exp: T = 0.0;
+            j = 0;
+            while (j <= half_k) : (j += 1) {
+                const jf: T = @floatFromInt(j);
+                const n_minus_2j: u64 = k - 2 * j;
+                const nmf: T = @floatFromInt(n_minus_2j);
+                const log_term = nmf * @log(self.a1)
+                    + jf * @log(self.a2)
+                    - logFactorial(T, n_minus_2j)
+                    - logFactorial(T, j);
+                sum_exp += @exp(log_term - max_log_term);
+            }
+
+            return -(self.a1 + self.a2) + max_log_term + @log(sum_exp);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum.
+        ///
+        /// Time: O(k²) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k and j <= MAX_K) : (j += 1) {
+                const p = self.pmf(j);
+                sum += p;
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Mean: a1 + 2*a2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.a1 + 2.0 * self.a2;
+        }
+
+        /// Variance: a1 + 4*a2.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.a1 + 4.0 * self.a2;
+        }
+
+        /// Mode: numeric scan via PMF ratio.
+        ///
+        /// Time: O(mode value) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf = self.pmf(0);
+            var k: u64 = 1;
+            var consecutive_below: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p = self.pmf(k);
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p >= best_pmf - pmf_tolerance) {
+                    best_pmf = p;
+                    best_k = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                    if (consecutive_below > 10 and p < best_pmf * 1e-10) break;
+                }
+            }
+            return best_k;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.a1)) return error.InvalidParameter;
+            if (!(self.a1 > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.a2)) return error.InvalidParameter;
+            if (!(self.a2 > 0.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Hermite(a1={d:.4}, a2={d:.4})", .{ self.a1, self.a2 });
+        }
+    };
+}
+
+// ============================================================================
+// Hermite Distribution Tests (167th distribution)
+// P(X=n) = exp(-(a1+a2)) * sum_{j=0}^{floor(n/2)} [a1^(n-2j) * a2^j] / [(n-2j)! * j!]
+// X = Y1 + 2*Y2, where Y1 ~ Poisson(a1), Y2 ~ Poisson(a2) independent
+// Mean = a1 + 2*a2, Variance = a1 + 4*a2
+// ============================================================================
+
+test "Hermite: init with valid params a1=2.0, a2=1.5 succeeds" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try dist.validate();
+}
+
+test "Hermite: init with valid params a1=0.5, a2=0.5 succeeds" {
+    const dist = try Hermite(f64).init(0.5, 0.5);
+    try dist.validate();
+}
+
+test "Hermite: init with valid params a1=10.0, a2=5.0 succeeds" {
+    const dist = try Hermite(f64).init(10.0, 5.0);
+    try dist.validate();
+}
+
+test "Hermite: init with valid f32 type" {
+    const dist = try Hermite(f32).init(2.0, 1.5);
+    try dist.validate();
+}
+
+test "Hermite: init with a1=0 returns InvalidParameter" {
+    const result = Hermite(f64).init(0.0, 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with a1=-1 returns InvalidParameter" {
+    const result = Hermite(f64).init(-1.0, 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with a2=0 returns InvalidParameter" {
+    const result = Hermite(f64).init(2.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with a2=-1 returns InvalidParameter" {
+    const result = Hermite(f64).init(2.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with NaN a1 returns InvalidParameter" {
+    const result = Hermite(f64).init(math.nan(f64), 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with infinite a1 returns InvalidParameter" {
+    const result = Hermite(f64).init(math.inf(f64), 1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with NaN a2 returns InvalidParameter" {
+    const result = Hermite(f64).init(2.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "Hermite: init with infinite a2 returns InvalidParameter" {
+    const result = Hermite(f64).init(2.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+// Primary test case: a1=2.0, a2=1.5 with ground-truth pmf values verified via Python mpmath
+test "Hermite: pmf(0) = 0.0301973834223185 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqRel(@as(f64, 0.0301973834223185), dist.pmf(0), 1e-9);
+}
+
+test "Hermite: pmf(1) = 0.060394766844637 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqRel(@as(f64, 0.060394766844637), dist.pmf(1), 1e-9);
+}
+
+test "Hermite: pmf(2) = 0.10569084197811475 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqRel(@as(f64, 0.10569084197811475), dist.pmf(2), 1e-9);
+}
+
+test "Hermite: pmf(3) = 0.13085532816338016 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqRel(@as(f64, 0.13085532816338016), dist.pmf(3), 1e-9);
+}
+
+test "Hermite: pmf(4) = 0.14469579556527612 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqRel(@as(f64, 0.14469579556527612), dist.pmf(4), 1e-9);
+}
+
+test "Hermite: pmf(5) = 0.13639151512413855 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqRel(@as(f64, 0.13639151512413855), dist.pmf(5), 1e-9);
+}
+
+test "Hermite: pmf sums to 1.0 over range k=0..79 (normalization)" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    var sum: f64 = 0.0;
+    for (0..80) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(@as(f64, 1.0), sum, 1e-6);
+}
+
+test "Hermite: pmf all non-negative and finite for k=0..10" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    for (0..11) |k| {
+        const p = dist.pmf(@intCast(k));
+        try expect(p >= 0.0);
+        try expect(math.isFinite(p));
+    }
+}
+
+test "Hermite: mean = a1 + 2*a2 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    // mean = 2.0 + 2*1.5 = 5.0
+    try expectApproxEqAbs(@as(f64, 5.0), dist.mean(), 1e-10);
+}
+
+test "Hermite: mean = a1 + 2*a2 for a1=1.0, a2=0.5" {
+    const dist = try Hermite(f64).init(1.0, 0.5);
+    // mean = 1.0 + 2*0.5 = 2.0
+    try expectApproxEqAbs(@as(f64, 2.0), dist.mean(), 1e-10);
+}
+
+test "Hermite: mean = a1 + 2*a2 for a1=3.0, a2=2.0" {
+    const dist = try Hermite(f64).init(3.0, 2.0);
+    // mean = 3.0 + 2*2.0 = 7.0
+    try expectApproxEqAbs(@as(f64, 7.0), dist.mean(), 1e-10);
+}
+
+test "Hermite: variance = a1 + 4*a2 for a1=2.0, a2=1.5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    // variance = 2.0 + 4*1.5 = 8.0
+    try expectApproxEqAbs(@as(f64, 8.0), dist.variance(), 1e-10);
+}
+
+test "Hermite: variance = a1 + 4*a2 for a1=1.0, a2=0.5" {
+    const dist = try Hermite(f64).init(1.0, 0.5);
+    // variance = 1.0 + 4*0.5 = 3.0
+    try expectApproxEqAbs(@as(f64, 3.0), dist.variance(), 1e-10);
+}
+
+test "Hermite: variance = a1 + 4*a2 for a1=4.0, a2=1.0" {
+    const dist = try Hermite(f64).init(4.0, 1.0);
+    // variance = 4.0 + 4*1.0 = 8.0
+    try expectApproxEqAbs(@as(f64, 8.0), dist.variance(), 1e-10);
+}
+
+test "Hermite: special case a2=1e-10 approaches Poisson(a1) at k=0" {
+    const dist = try Hermite(f64).init(2.0, 1e-10);
+    // When a2 is tiny, Hermite should approach Poisson(a1)
+    // Poisson(2.0).pmf(0) = exp(-2.0)
+    const poisson_pmf_0 = @exp(-2.0);
+    try expectApproxEqAbs(poisson_pmf_0, dist.pmf(0), 1e-8);
+}
+
+test "Hermite: special case a2=1e-10 approaches Poisson(a1) at k=1" {
+    const dist = try Hermite(f64).init(2.0, 1e-10);
+    // Poisson(2.0).pmf(1) = exp(-2.0) * 2.0
+    const poisson_pmf_1 = @exp(-2.0) * 2.0;
+    try expectApproxEqAbs(poisson_pmf_1, dist.pmf(1), 1e-8);
+}
+
+test "Hermite: special case a2=1e-10 approaches Poisson(a1) at k=3" {
+    const dist = try Hermite(f64).init(2.0, 1e-10);
+    // Poisson(2.0).pmf(3) = exp(-2.0) * 2.0^3 / 3!
+    const poisson_pmf_3 = @exp(-2.0) * @as(f64, 8.0) / 6.0;
+    try expectApproxEqAbs(poisson_pmf_3, dist.pmf(3), 1e-8);
+}
+
+test "Hermite: logpmf = log(pmf) within tolerance at k=0" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqAbs(@log(dist.pmf(0)), dist.logpmf(0), 1e-10);
+}
+
+test "Hermite: logpmf = log(pmf) within tolerance at k=2" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqAbs(@log(dist.pmf(2)), dist.logpmf(2), 1e-10);
+}
+
+test "Hermite: logpmf = log(pmf) within tolerance at k=5" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqAbs(@log(dist.pmf(5)), dist.logpmf(5), 1e-10);
+}
+
+test "Hermite: cdf is monotonically non-decreasing" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    var prev: f64 = 0.0;
+    for (0..30) |k| {
+        const c = dist.cdf(@intCast(k));
+        try expect(c >= prev - 1e-12);
+        prev = c;
+    }
+}
+
+test "Hermite: cdf(0) equals pmf(0)" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expectApproxEqAbs(dist.pmf(0), dist.cdf(0), 1e-12);
+}
+
+test "Hermite: cdf approaches 1.0 for large k" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "Hermite: cdf(k) = sum of pmf(0..k)" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    var manual_sum: f64 = 0.0;
+    for (0..6) |k| {
+        manual_sum += dist.pmf(@intCast(k));
+        const cdf_k = dist.cdf(@intCast(k));
+        try expectApproxEqAbs(manual_sum, cdf_k, 1e-10);
+    }
+}
+
+test "Hermite: validate passes for valid instance" {
+    const dist = try Hermite(f64).init(2.0, 1.5);
+    try dist.validate();
+}
+
+test "Hermite: validate passes for small positive parameters" {
+    const dist = try Hermite(f64).init(0.1, 0.1);
+    try dist.validate();
+}
+
+test "Hermite: validate passes for large parameters" {
+    const dist = try Hermite(f64).init(100.0, 50.0);
+    try dist.validate();
+}
+
+// ============================================================================
 // Helper Function Tests
 // ============================================================================
 

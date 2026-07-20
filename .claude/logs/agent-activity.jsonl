@@ -685,3 +685,6 @@
 {"timestamp": "2026-07-19T03:41:29.225274Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement ConwayMaxwellBinomial distribution (164th) to pass 76 pre-written tests", "project": "zuda"}
 {"timestamp":"2026-07-19T11:39:31Z","action":"subagent","agent_type":"test-writer","task":"Write precision test for logFactorial Stirling correction (n>=20 branch)","project":"zuda"}
 {"timestamp":"2026-07-19T15:31:51Z","action":"subagent","agent_type":"zig-developer","task":"Fix logFactorial Stirling approximation precision for n>=20 (add higher-order correction terms) to pass pre-existing failing tests","project":"zuda"}
+{"timestamp":"2026-07-19T23:35:12Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Hermite distribution (167th)","project":"zuda"}
+{"timestamp":"2026-07-19T23:36:50Z","action":"subagent","agent_type":"zig-developer","task":"Implement Hermite distribution (167th) to pass test-writer failing tests","project":"zuda"}
+{"timestamp":"2026-07-20T03:35:15Z","action":"subagent","agent_type":"recovery-verification","task":"Verified uncommitted Hermite distribution (167th) ground-truth pmf values via Python before trusting and committing","project":"zuda"}
