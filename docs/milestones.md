@@ -2,9 +2,10 @@
 
 ## Current Status
 
-- **Latest release**: v2.0.4 (2026-05-07) — Phase 12 Integration & Documentation
-- **Current phase**: v2.0 Track — **ALL PHASES COMPLETE** ✅
-- **Tests**: 2967+ tests passing (100%)
+- **Latest release**: v2.2.0 (2026-07-20) — ongoing stats/distributions catalog expansion
+- **Current phase**: v2.0 Track — **ALL PHASES COMPLETE** ✅ (post-release maintenance ongoing)
+- **Tests**: 11902/11909 passing, 7 skipped (0 failures)
+- **Distributions**: 167 in `src/stats/distributions.zig`
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Status**: **RELEASED** — Scientific computing platform fully implemented
@@ -15,7 +16,7 @@
   * Phase 10 (Numerical Methods): ✅ COMPLETE
   * Phase 11 (Optimization): ✅ COMPLETE
   * Phase 12 (Integration & Release): ✅ COMPLETE (SIMD, cross-module tests, benchmarks, migration guides)
-- **Next Focus**: Maintenance, consumer migrations, performance optimization, community feedback
+- **Next Focus**: Continued distribution catalog growth (feature sessions), maintenance/release cadence (stabilization sessions)
 
 ---
 
