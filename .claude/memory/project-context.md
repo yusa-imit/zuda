@@ -1,3 +1,21 @@
+**Session 809 Update (2026-07-20) — FEATURE MODE [COMPLETED]:**
+
+✅ **Hermite (167th)** — commit f26a480
+- **Mode**: FEATURE MODE (counter: 809)
+- **CI/Issues**: CI green, 0 open issues.
+- Found a complete, uncommitted Hermite(a1,a2) implementation left from a prior session
+  (X = Y1 + 2*Y2, Y1~Poisson(a1), Y2~Poisson(a2)); pmf via direct double-sum (no special
+  functions needed), log-sum-exp stabilized, closed-form mean=a1+2a2, variance=a1+4a2.
+  Independently re-derived pmf(0..5) in plain Python before trusting — exact match.
+  `zig build test` clean (0 failures), committed and pushed.
+- **Distribution count**: 167 (confirmed via
+  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
+- **Next priority**: no standing feature candidate — grep root.zig's doc-comment list first.
+  Sessions 778–807 (MarshallOlkinExponential 149th → Sichel 166th) are condensed into
+  `distributions_history.md` in the auto-memory system; this file's detailed per-session
+  entries below (791, 793, 796, 797) predate that — see the auto-memory MEMORY.md index for
+  the fuller newer history if needed.
+
 **Session 797 Update (2026-07-18) — FEATURE MODE [COMPLETED]:**
 
 ✅ **BorelTanner (160th)** — commit 79a655d
