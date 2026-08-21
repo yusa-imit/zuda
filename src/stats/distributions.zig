@@ -96140,7 +96140,7 @@ test "PoissonLindley: f32 type pmf accuracy theta=1.0" {
 test "PoissonLindley: sample returns valid k" {
     const dist = try PoissonLindley(f64).init(1.0);
     var rng = std.Random.DefaultPrng.init(42);
-    for ([_]u8{ 0 } ** 100) |_| {
+    for ([_]u8{0} ** 100) |_| {
         const sample_val = dist.sample(rng.random());
         try expect(sample_val >= 0);
     }
@@ -98361,10 +98361,7 @@ pub fn Hermite(comptime T: type) type {
                 const jf: T = @floatFromInt(j);
                 const n_minus_2j: u64 = k - 2 * j;
                 const nmf: T = @floatFromInt(n_minus_2j);
-                const log_term = nmf * @log(self.a1)
-                    + jf * @log(self.a2)
-                    - logFactorial(T, n_minus_2j)
-                    - logFactorial(T, j);
+                const log_term = nmf * @log(self.a1) + jf * @log(self.a2) - logFactorial(T, n_minus_2j) - logFactorial(T, j);
                 if (log_term > max_log_term) {
                     max_log_term = log_term;
                 }
@@ -98380,10 +98377,7 @@ pub fn Hermite(comptime T: type) type {
                 const jf: T = @floatFromInt(j);
                 const n_minus_2j: u64 = k - 2 * j;
                 const nmf: T = @floatFromInt(n_minus_2j);
-                const log_term = nmf * @log(self.a1)
-                    + jf * @log(self.a2)
-                    - logFactorial(T, n_minus_2j)
-                    - logFactorial(T, j);
+                const log_term = nmf * @log(self.a1) + jf * @log(self.a2) - logFactorial(T, n_minus_2j) - logFactorial(T, j);
                 sum_exp += @exp(log_term - max_log_term);
             }
 
@@ -98508,10 +98502,7 @@ pub fn GeneralizedHermite(comptime T: type) type {
                 const m_j: u64 = @as(u64, self.m) * j;
                 const n_minus_mj: u64 = k - m_j;
                 const nmf: T = @floatFromInt(n_minus_mj);
-                const log_term = nmf * @log(self.a1)
-                    + jf * @log(self.a2)
-                    - logFactorial(T, n_minus_mj)
-                    - logFactorial(T, j);
+                const log_term = nmf * @log(self.a1) + jf * @log(self.a2) - logFactorial(T, n_minus_mj) - logFactorial(T, j);
                 if (log_term > max_log_term) {
                     max_log_term = log_term;
                 }
@@ -98528,10 +98519,7 @@ pub fn GeneralizedHermite(comptime T: type) type {
                 const m_j: u64 = @as(u64, self.m) * j;
                 const n_minus_mj: u64 = k - m_j;
                 const nmf: T = @floatFromInt(n_minus_mj);
-                const log_term = nmf * @log(self.a1)
-                    + jf * @log(self.a2)
-                    - logFactorial(T, n_minus_mj)
-                    - logFactorial(T, j);
+                const log_term = nmf * @log(self.a1) + jf * @log(self.a2) - logFactorial(T, n_minus_mj) - logFactorial(T, j);
                 sum_exp += @exp(log_term - max_log_term);
             }
 
@@ -99162,4 +99150,792 @@ test "GeneralizedHermite: validate passes for small positive parameters" {
 test "GeneralizedHermite: validate passes for large parameters" {
     const dist = try GeneralizedHermite(f64).init(100.0, 50.0, 5);
     try dist.validate();
+}
+
+// SkewT Distribution (169th distribution)
+// ============================================================================
+/// Azzalini's skew-t distribution
+///
+/// Parameters: ξ ∈ ℝ (location), ω > 0 (scale), α ∈ ℝ (skewness), ν > 0 (degrees of freedom)
+/// PDF: f(x) = (2/ω) · t_ν(z) · T_{ν+1}(α·z·√((ν+1)/(ν+z²))), where z = (x-ξ)/ω
+/// Reduces to StudentT(ν) when α=0
+///
+/// Mean: E[X] = ξ + ω·δ·b_ν (for ν > 1), where δ = α/√(1+α²), b_ν = √(ν/π)·Γ((ν-1)/2)/Γ(ν/2)
+/// Variance: Var(X) = ω²·(ν/(ν-2) - (δ·b_ν)²) (for ν > 2)
+pub fn SkewT(comptime T: type) type {
+    return struct {
+        xi: T,
+        omega: T,
+        alpha: T,
+        nu: T,
+
+        const Self = @This();
+
+        /// Initialize SkewT distribution
+        ///
+        /// Returns error.InvalidParameter if omega ≤ 0, nu ≤ 0, or any parameter (except xi/alpha) is NaN/Inf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, omega: T, alpha: T, nu: T) DistributionError!Self {
+            if (omega <= 0.0 or !math.isFinite(omega)) return error.InvalidParameter;
+            if (nu <= 0.0 or !math.isFinite(nu)) return error.InvalidParameter;
+            if (!math.isFinite(xi)) return error.InvalidParameter;
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .xi = xi, .omega = omega, .alpha = alpha, .nu = nu };
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.omega <= 0.0 or !math.isFinite(self.omega)) return error.InvalidParameter;
+            if (self.nu <= 0.0 or !math.isFinite(self.nu)) return error.InvalidParameter;
+            if (!math.isFinite(self.xi)) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
+        }
+
+        /// Probability density function
+        ///
+        /// f(x) = (2/ω) · t_ν((x-ξ)/ω) · T_{ν+1}(α·z·√((ν+1)/(ν+z²)))
+        ///
+        /// where z = (x-ξ)/ω, t_ν is standard Student-t PDF, T_{ν+1} is Student-t CDF with ν+1 df
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+
+            // Standard Student-t PDF with nu degrees of freedom
+            const nu_half = self.nu / 2.0;
+            const t_pdf_numerator = logGamma((self.nu + 1.0) / 2.0);
+            const t_pdf_denominator = 0.5 * @log(self.nu * math.pi) + logGamma(nu_half);
+            const t_pdf_power = -(self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
+            const t_pdf = @exp(t_pdf_numerator - t_pdf_denominator + t_pdf_power);
+
+            // Student-t CDF with nu+1 degrees of freedom
+            const arg = self.alpha * z * @sqrt((self.nu + 1.0) / (self.nu + z * z));
+            const t_cdf = studentTCdfStd(arg, self.nu + 1.0);
+
+            return (2.0 / self.omega) * t_pdf * t_cdf;
+        }
+
+        /// Log probability density function
+        ///
+        /// More numerically stable than log(pdf(x)) for extreme values
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+
+            // Log of standard Student-t PDF
+            const nu_half = self.nu / 2.0;
+            const t_pdf_numerator = logGamma((self.nu + 1.0) / 2.0);
+            const t_pdf_denominator = 0.5 * @log(self.nu * math.pi) + logGamma(nu_half);
+            const t_pdf_power = -(self.nu + 1.0) / 2.0 * @log(1.0 + z * z / self.nu);
+            const log_t_pdf = t_pdf_numerator - t_pdf_denominator + t_pdf_power;
+
+            // Student-t CDF with nu+1 degrees of freedom
+            const arg = self.alpha * z * @sqrt((self.nu + 1.0) / (self.nu + z * z));
+            const t_cdf = studentTCdfStd(arg, self.nu + 1.0);
+
+            if (t_cdf <= 0.0) return -math.inf(T);
+            return @log(2.0) - @log(self.omega) + log_t_pdf + @log(t_cdf);
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// No closed form — computed via numerical quadrature
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            // Numerical integration of pdf from far left to x
+            // Use adaptive quadrature with ~500 panels for good accuracy
+
+            // Left bound: start far enough left that pdf is negligible
+            // For Student-t, tails decay as t^{-nu-1}, so go far enough
+            var left = self.xi - self.omega * 20.0;
+            while (self.pdf(left) > 1e-10) {
+                left -= self.omega * 10.0;
+            }
+
+            // Use midpoint quadrature rule with 500 panels
+            const n_panels: u32 = 500;
+            const dx = (x - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const xi_m = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                integral += self.pdf(xi_m);
+            }
+            integral *= dx;
+
+            // Clamp to [0, 1]
+            if (integral < 0.0) return 0.0;
+            if (integral > 1.0) return 1.0;
+            return integral;
+        }
+
+        /// Survival function: 1 - CDF(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Returns error.InvalidParameter for p outside [0,1]
+        /// Returns -inf for p=0, +inf for p=1
+        ///
+        /// Uses bisection search
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidParameter;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            // Bisection search for quantile
+            var left: T = if (p < 0.5) self.xi - 100.0 * self.omega else self.xi;
+            var right: T = if (p < 0.5) self.xi else self.xi + 100.0 * self.omega;
+
+            // Expand search bounds if needed
+            while (self.cdf(left) > p) left -= 50.0 * self.omega;
+            while (self.cdf(right) < p) right += 50.0 * self.omega;
+
+            const tolerance = 1e-10;
+            var iterations: u32 = 0;
+            while (right - left > tolerance and iterations < 100) : (iterations += 1) {
+                const mid = (left + right) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (cdf_mid < p) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+
+            return (left + right) / 2.0;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = ξ + ω·δ·b_ν for ν > 1, where:
+        ///   δ = α/√(1+α²)
+        ///   b_ν = √(ν/π)·Γ((ν-1)/2)/Γ(ν/2)
+        /// Undefined (NaN) for ν ≤ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.nu <= 1.0) return math.nan(T);
+
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+            const b_nu = @sqrt(self.nu / math.pi) * @exp(logGamma((self.nu - 1.0) / 2.0) - logGamma(self.nu / 2.0));
+
+            return self.xi + self.omega * delta * b_nu;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = ω²·(ν/(ν-2) - (δ·b_ν)²) for ν > 2
+        /// +inf for 1 < ν ≤ 2
+        /// NaN for ν ≤ 1
+        ///
+        /// where δ = α/√(1+α²), b_ν = √(ν/π)·Γ((ν-1)/2)/Γ(ν/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.nu <= 1.0) return math.nan(T);
+            if (self.nu <= 2.0) return math.inf(T);
+
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+            const b_nu = @sqrt(self.nu / math.pi) * @exp(logGamma((self.nu - 1.0) / 2.0) - logGamma(self.nu / 2.0));
+
+            return self.omega * self.omega * (self.nu / (self.nu - 2.0) - (delta * b_nu) * (delta * b_nu));
+        }
+
+        /// Mode of the distribution
+        ///
+        /// No closed form — found via golden section search
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const left = self.xi - 10.0 * self.omega;
+            const right = self.xi + 10.0 * self.omega;
+
+            var a = left;
+            var b = right;
+            const golden_ratio = (1.0 + @sqrt(5.0)) / 2.0;
+            const resphi = 2.0 - golden_ratio;
+
+            for (0..100) |_| {
+                if (@abs(b - a) < 1e-10) break;
+                const x1 = a + resphi * (b - a);
+                const x2 = b - resphi * (b - a);
+                if (self.pdf(x1) > self.pdf(x2)) {
+                    b = x2;
+                } else {
+                    a = x1;
+                }
+            }
+
+            return (a + b) / 2.0;
+        }
+
+        /// Differential entropy (in nats)
+        ///
+        /// No closed form — computed via numerical integration of -f(x)·log(f(x))
+        /// Uses windowed Simpson quadrature (not Gauss-Hermite, due to heavy t-tails)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // Integrate -f(x)*log(f(x)) over a wide window
+            // For Student-t, tails decay as polynomial; use wide window
+            const left = self.xi - 50.0 * self.omega;
+            const right = self.xi + 50.0 * self.omega;
+
+            const n_panels: u32 = 200;
+            const dx = (right - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const x_m = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                const f_x = self.pdf(x_m);
+                if (f_x > 0.0) {
+                    integral += f_x * @log(f_x);
+                }
+            }
+            integral *= dx;
+
+            return -integral;
+        }
+
+        /// Draw a random sample
+        ///
+        /// Uses standard skew-t construction:
+        ///   δ = α/√(1+α²)
+        ///   Z = δ·|U₀| + √(1-δ²)·U₁, where U₀, U₁ ~ N(0,1)
+        ///   V ~ χ²(ν)
+        ///   X = ξ + ω·Z/√(V/ν)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+            const sqrt_1_minus_delta_sq = @sqrt(1.0 - delta * delta);
+
+            // Generate standard normal z1 using Box-Muller
+            const uniform1 = rng.float(T);
+            const uniform2 = rng.float(T);
+            const z1 = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2);
+
+            // Generate standard normal z2
+            const uniform3 = rng.float(T);
+            const uniform4 = rng.float(T);
+            const z2 = @sqrt(-2.0 * @log(uniform3)) * @cos(2.0 * math.pi * uniform4);
+
+            // Skew-normal component
+            const z = delta * @abs(z1) + sqrt_1_minus_delta_sq * z2;
+
+            // Chi-squared component
+            const chi_squared_dist = ChiSquared(T).init(@intFromFloat(self.nu)) catch unreachable;
+            const v = chi_squared_dist.sample(rng);
+
+            // SkewT = xi + omega * Z / sqrt(V/nu)
+            return self.xi + self.omega * z / @sqrt(v / self.nu);
+        }
+
+        /// Helper: Standard Student-t CDF with given degrees of freedom
+        /// F(t; df) using regularized incomplete beta
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn studentTCdfStd(t: T, df: T) T {
+            if (t == 0.0) return 0.5;
+
+            const z = df / (df + t * t);
+            const beta_cdf = regularizedBetaI(df / 2.0, 0.5, z);
+
+            if (t > 0.0) {
+                return 1.0 - 0.5 * beta_cdf;
+            } else {
+                return 0.5 * beta_cdf;
+            }
+        }
+    };
+}
+
+// SkewT Distribution Tests (169th distribution)
+// ============================================================================
+// Azzalini's skew-t distribution
+// Parameters: xi (location), omega (scale > 0), alpha (skewness), nu (df > 0)
+// Reduces to StudentT(nu) when alpha=0
+
+test "SkewT: init with valid xi=1, omega=2, alpha=3, nu=6 succeeds" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 3.0, 6.0);
+    try expect(dist.xi == 1.0);
+    try expect(dist.omega == 2.0);
+    try expect(dist.alpha == 3.0);
+    try expect(dist.nu == 6.0);
+}
+
+test "SkewT: init with valid xi=0, omega=1, alpha=0, nu=5 succeeds" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    try expect(dist.xi == 0.0);
+    try expect(dist.omega == 1.0);
+    try expect(dist.alpha == 0.0);
+    try expect(dist.nu == 5.0);
+}
+
+test "SkewT: init with omega=0 returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, 0.0, 0.0, 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with omega<0 returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, -1.0, 0.0, 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with omega=nan returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, math.nan(f64), 0.0, 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with omega=inf returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, math.inf(f64), 0.0, 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with nu=0 returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, 1.0, 0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with nu<0 returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, 1.0, 0.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with nu=nan returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, 1.0, 0.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with nu=inf returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with xi=nan returns error.InvalidParameter" {
+    const result = SkewT(f64).init(math.nan(f64), 1.0, 0.0, 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: init with alpha=nan returns error.InvalidParameter" {
+    const result = SkewT(f64).init(0.0, 1.0, math.nan(f64), 5.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: validate passes for xi=1, omega=2, alpha=3, nu=6" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 3.0, 6.0);
+    try dist.validate();
+}
+
+test "SkewT: validate passes for xi=0, omega=1, alpha=0, nu=5" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    try dist.validate();
+}
+
+test "SkewT alpha=0: pdf(x; xi=1,omega=2,alpha=0,nu=6) at x=0.5 reduces to StudentT" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 0.0, 6.0);
+    const p = dist.pdf(0.5);
+    // From scratchpad: should match t_pdf_std(z,nu)/omega where z=(0.5-1)/2 = -0.25
+    try expectApproxEqAbs(@as(f64, 0.18454993698913605), p, 1e-6);
+}
+
+test "SkewT alpha=0: pdf(x; xi=1,omega=2,alpha=0,nu=6) at x=1.5 reduces to StudentT" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 0.0, 6.0);
+    const p = dist.pdf(1.5);
+    // From scratchpad: should match t_pdf_std(z,nu)/omega where z=(1.5-1)/2 = 0.25
+    try expectApproxEqAbs(@as(f64, 0.18454993698913605), p, 1e-6);
+}
+
+test "SkewT alpha=0: pdf(x; xi=1,omega=2,alpha=0,nu=6) at x=3.0 reduces to StudentT" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 0.0, 6.0);
+    const p = dist.pdf(3.0);
+    // From scratchpad: should match t_pdf_std(z,nu)/omega where z=(3.0-1)/2 = 1.0
+    try expectApproxEqAbs(@as(f64, 0.11157114545826313), p, 1e-6);
+}
+
+test "SkewT: pdf always positive" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const p1 = dist.pdf(-2.0);
+    const p2 = dist.pdf(0.0);
+    const p3 = dist.pdf(2.0);
+    try expect(p1 > 0.0);
+    try expect(p2 > 0.0);
+    try expect(p3 > 0.0);
+}
+
+test "SkewT alpha=0: pdf symmetry around xi" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const p_pos = dist.pdf(1.0);
+    const p_neg = dist.pdf(-1.0);
+    try expectApproxEqAbs(p_pos, p_neg, 1e-9);
+}
+
+test "SkewT alpha=1: pdf asymmetry (pdf(1) != pdf(-1))" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const p_pos = dist.pdf(1.0);
+    const p_neg = dist.pdf(-1.0);
+    try expect(p_pos != p_neg);
+}
+
+test "SkewT: logpdf = log(pdf) within tolerance at x=0.5" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const x = 0.5;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "SkewT: logpdf = log(pdf) within tolerance at x=1.5" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 2.0, 6.0);
+    const x = 1.5;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "SkewT: logpdf = log(pdf) within tolerance at x=3.0" {
+    const dist = try SkewT(f64).init(0.5, 1.5, 3.0, 10.0);
+    const x = 3.0;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "SkewT: logpdf is finite for normal points" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const lp1 = dist.logpdf(-2.0);
+    const lp2 = dist.logpdf(0.0);
+    const lp3 = dist.logpdf(2.0);
+    try expect(math.isFinite(lp1));
+    try expect(math.isFinite(lp2));
+    try expect(math.isFinite(lp3));
+}
+
+test "SkewT: cdf monotonically increasing" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 3.0, 6.0);
+    const c1 = dist.cdf(-2.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(2.0);
+    try expect(c1 < c2 and c2 < c3);
+}
+
+test "SkewT: cdf(-inf) approaches 0" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const c = dist.cdf(-100.0);
+    try expect(c < 0.01);
+}
+
+test "SkewT: cdf(+inf) approaches 1" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const c = dist.cdf(100.0);
+    try expect(c > 0.99);
+}
+
+test "SkewT: cdf is valid probability (in [0,1])" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 2.0, 5.0);
+    for (0..11) |idx| {
+        const i = @as(i32, @intCast(idx)) - 5;
+        const x = @as(f64, @floatFromInt(i));
+        const c = dist.cdf(x);
+        try expect(c >= -1e-10);
+        try expect(c <= 1.0 + 1e-10);
+    }
+}
+
+test "SkewT xi=1, omega=2, alpha=3, nu=6: cdf(2.0) ≈ 0.3757 (verified anchor)" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 3.0, 6.0);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.3757307082875073), c, 0.01); // Tolerance ~1% for quadrature
+}
+
+test "SkewT alpha=0: cdf(xi) ≈ 0.5 (symmetric t)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(0.5, c, 1e-2);
+}
+
+test "SkewT: sf(x) = 1 - cdf(x)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try expectApproxEqAbs(1.0, c + s, 1e-8);
+}
+
+test "SkewT: quantile(-0.1) returns error.InvalidParameter" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: quantile(1.1) returns error.InvalidParameter" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewT: quantile(0.0) = -inf" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const q = try dist.quantile(0.0);
+    try expect(math.isNegativeInf(q));
+}
+
+test "SkewT: quantile(1.0) = +inf" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isPositiveInf(q));
+}
+
+test "SkewT: round-trip quantile(cdf(x)) ≈ x at x=0.5" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-2);
+}
+
+test "SkewT: round-trip quantile(cdf(x)) ≈ x at x=1.0" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 2.0, 6.0);
+    const x = 1.0;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-2);
+}
+
+test "SkewT: quantile is monotonically increasing" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try expect(q1 < q2 and q2 < q3);
+}
+
+test "SkewT nu<=1: mean returns NaN" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 0.5);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "SkewT nu<=1: mean returns NaN (nu=1 boundary)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "SkewT alpha=0, nu>1: mean = xi (symmetric case)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(0.0, m, 1e-6);
+}
+
+test "SkewT alpha=0, nu>1: mean = xi for arbitrary xi" {
+    const dist = try SkewT(f64).init(5.0, 1.0, 0.0, 10.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(5.0, m, 1e-6);
+}
+
+test "SkewT xi=0, omega=1, alpha=2, nu=5: mean ≈ 0.8488 (verified anchor)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 2.0, 5.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, 0.8488263631567752), m, 0.01);
+}
+
+test "SkewT xi=1, omega=2, alpha=-1.5, nu=8: mean ≈ -0.4708 (verified anchor)" {
+    const dist = try SkewT(f64).init(1.0, 2.0, -1.5, 8.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, -0.4708710135363805), m, 0.01);
+}
+
+test "SkewT xi=0.5, omega=1.5, alpha=3, nu=10: mean ≈ 1.7305 (verified anchor)" {
+    const dist = try SkewT(f64).init(0.5, 1.5, 3.0, 10.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, 1.73046875), m, 0.01);
+}
+
+test "SkewT nu<=1: variance returns NaN" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 0.5);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "SkewT 1<nu<=2: variance returns +inf" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 1.5);
+    const v = dist.variance();
+    try expect(math.isPositiveInf(v));
+}
+
+test "SkewT nu>2: variance is finite and positive" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v > 0.0);
+}
+
+test "SkewT alpha=0, nu>2: variance = omega^2 * nu/(nu-2) (StudentT case)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const v = dist.variance();
+    const expected = 5.0 / 3.0; // nu/(nu-2) = 5/3
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "SkewT xi=0, omega=1, alpha=2, nu=5: variance ≈ 0.9462 (verified anchor)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 2.0, 5.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 0.9461604718767092), v, 0.01);
+}
+
+test "SkewT xi=1, omega=2, alpha=-1.5, nu=8: variance ≈ 3.170 (verified anchor)" {
+    const dist = try SkewT(f64).init(1.0, 2.0, -1.5, 8.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 3.169871794871794), v, 0.05);
+}
+
+test "SkewT xi=0.5, omega=1.5, alpha=3, nu=10: variance ≈ 1.298 (verified anchor)" {
+    const dist = try SkewT(f64).init(0.5, 1.5, 3.0, 10.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 1.2984466552734375), v, 0.05);
+}
+
+test "SkewT: mode is finite" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const mode = dist.mode();
+    try expect(math.isFinite(mode));
+}
+
+test "SkewT alpha=0: mode ≈ xi (symmetric)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const mode = dist.mode();
+    try expectApproxEqAbs(0.0, mode, 0.1);
+}
+
+test "SkewT alpha=1: mode > xi (positive skew)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const mode = dist.mode();
+    try expect(mode > 0.0);
+}
+
+test "SkewT alpha=-1: mode < xi (negative skew)" {
+    const dist = try SkewT(f64).init(0.0, 1.0, -1.0, 5.0);
+    const mode = dist.mode();
+    try expect(mode < 0.0);
+}
+
+test "SkewT: mode pdf > pdf at mode +/- epsilon (property test)" {
+    const dist = try SkewT(f64).init(1.0, 2.0, 2.0, 6.0);
+    const mode = dist.mode();
+    const epsilon = 0.01;
+    const p_mode = dist.pdf(mode);
+    const p_plus = dist.pdf(mode + epsilon);
+    const p_minus = dist.pdf(mode - epsilon);
+    try expect(p_mode >= p_plus - 1e-10);
+    try expect(p_mode >= p_minus - 1e-10);
+}
+
+test "SkewT: entropy is finite and positive" {
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h > 0.0);
+}
+
+test "SkewT: entropy increases with omega" {
+    const dist1 = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    const dist2 = try SkewT(f64).init(0.0, 2.0, 0.0, 5.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try expect(h2 > h1);
+}
+
+test "SkewT: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    const s = dist.sample(rng.random());
+    try expect(math.isFinite(s));
+}
+
+test "SkewT: 100 samples all finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try expect(math.isFinite(s));
+    }
+}
+
+test "SkewT alpha=0: empirical mean ≈ xi (100000 samples)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewT(f64).init(0.0, 1.0, 0.0, 5.0);
+    var sum: f64 = 0.0;
+    const n = 100000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    try expectApproxEqAbs(0.0, empirical_mean, 0.15);
+}
+
+test "SkewT xi=1, omega=2, alpha=3, nu=6: empirical mean matches closed form (200000 samples)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewT(f64).init(1.0, 2.0, 3.0, 6.0);
+    var sum: f64 = 0.0;
+    const n = 200000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    // From scratchpad: Monte Carlo mean = 2.743141917275227, closed form = 2.7428425057933374
+    try expectApproxEqAbs(@as(f64, 2.7428425057933374), empirical_mean, 0.15);
+}
+
+test "SkewT: multiple samples show variety" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewT(f64).init(0.0, 1.0, 1.0, 5.0);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try expect(has_diff);
+}
+
+test "SkewT: f32 init succeeds" {
+    const dist = try SkewT(f32).init(0.0, 1.0, 0.5, 5.0);
+    try expect(dist.omega == 1.0);
+}
+
+test "SkewT: f32 pdf and cdf are finite" {
+    const dist = try SkewT(f32).init(0.0, 1.0, 0.5, 5.0);
+    const p = dist.pdf(0.0);
+    const c = dist.cdf(0.0);
+    try expect(math.isFinite(p));
+    try expect(math.isFinite(c));
+}
+
+test "SkewT: f32 sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewT(f32).init(0.0, 1.0, 1.0, 5.0);
+    const s = dist.sample(rng.random());
+    try expect(math.isFinite(s));
 }
