@@ -5678,6 +5678,13 @@ pub fn LogNormal(comptime T: type) type {
             return @exp(self.mu);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogNormal(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+        }
+
         /// Assert that parameters are valid: sigma > 0, both finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -5999,6 +6006,15 @@ test "LogNormal: memory safety" {
     }
 }
 
+test "LogNormal: format output contains type name" {
+    const dist = try LogNormal(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "LogNormal"));
+}
+
 // ============================================================================
 // Cauchy Distribution
 // ============================================================================
@@ -6144,6 +6160,13 @@ pub fn Cauchy(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn median(self: Self) T {
             return self.x0;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Cauchy(x0={d}, gamma={d})", .{ self.x0, self.gamma });
         }
 
         /// Assert that parameters are valid: gamma > 0, both finite.
@@ -6482,6 +6505,15 @@ test "Cauchy: sf + cdf = 1" {
     }
 }
 
+test "Cauchy: format output contains type name" {
+    const dist = try Cauchy(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Cauchy"));
+}
+
 // ============================================================================
 // Gumbel Distribution
 // ============================================================================
@@ -6624,6 +6656,13 @@ pub fn Gumbel(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn median(self: Self) T {
             return self.mu - self.beta * @log(@log(2.0));
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Gumbel(mu={d}, beta={d})", .{ self.mu, self.beta });
         }
 
         /// Validate internal invariants: β > 0, μ and β are finite
@@ -6907,6 +6946,15 @@ test "Gumbel: exact CDF manual value" {
     const dist = try Gumbel(f64).init(0.0, 1.0);
     const expected = @exp(-@exp(-1.0));
     try expectApproxEqAbs(expected, dist.cdf(1.0), 1e-12);
+}
+
+test "Gumbel: format output contains type name" {
+    const dist = try Gumbel(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Gumbel"));
 }
 
 // ============================================================================
@@ -7564,6 +7612,13 @@ pub fn NegativeBinomial(comptime T: type) type {
             return total;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NegativeBinomial(r={d}, p={d})", .{ self.r, self.p });
+        }
+
         /// Validate internal invariants: r ≥ 1 and 0 < p ≤ 1
         ///
         /// Time: O(1) | Space: O(1)
@@ -7791,6 +7846,15 @@ test "NegativeBinomial: large r parameter" {
     try expectApproxEqRel(2.5, nb.mean(), 1e-10);
 }
 
+test "NegativeBinomial: format output contains type name" {
+    const dist = try NegativeBinomial(f64).init(3, 0.5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "NegativeBinomial"));
+}
+
 // ============================================================================
 // Hypergeometric Distribution
 // ============================================================================
@@ -7969,6 +8033,13 @@ pub fn Hypergeometric(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) u64 {
             const u = rng.float(T);
             return self.quantile(u) catch self.supportMin();
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Hypergeometric(N={d}, K={d}, n={d})", .{ self.N, self.K, self.n });
         }
 
         /// Assert internal invariants
@@ -8223,6 +8294,15 @@ test "Hypergeometric: memory safety cycle loop" {
         _ = hg.mode();
         try hg.validate();
     }
+}
+
+test "Hypergeometric: format output contains type name" {
+    const dist = try Hypergeometric(f64).init(20, 7, 5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Hypergeometric"));
 }
 
 // ============================================================================
@@ -10215,6 +10295,13 @@ pub fn Zipf(comptime T: type) type {
             return @min(left + 1, self.n);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Zipf(n={d}, s={d})", .{ self.n, self.s });
+        }
+
         /// Validate internal invariants
         ///
         /// Time: O(1) | Space: O(1)
@@ -10629,6 +10716,16 @@ test "Zipf: entropy increases as s decreases (more uniform)" {
 
     // Lower s → more uniform → higher entropy
     try testing.expect(entropy_low > entropy_high);
+}
+
+test "Zipf: format output contains type name" {
+    const dist = try Zipf(f64).init(testing.allocator, 10, 1.5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    dist.deinit(testing.allocator);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Zipf"));
 }
 
 // ============================================================================
@@ -11804,6 +11901,13 @@ pub fn DiscreteUniform(comptime T: type) type {
             return rng.intRangeAtMost(i64, self.a, self.b);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("DiscreteUniform(a={d}, b={d})", .{ self.a, self.b });
+        }
+
         /// Validate internal invariants: b ≥ a
         ///
         /// Time: O(1) | Space: O(1)
@@ -12147,6 +12251,15 @@ test "DiscreteUniform: cdf intermediate values correct" {
     try expectApproxEqRel(1.0, dist.cdf(9), 1e-10);
 }
 
+test "DiscreteUniform: format output contains type name" {
+    const dist = try DiscreteUniform(f64).init(1, 6);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "DiscreteUniform"));
+}
+
 // ============================================================================
 // Logarithmic Distribution
 // ============================================================================
@@ -12284,6 +12397,13 @@ pub fn Logarithmic(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) u64 {
             const u = rng.float(T);
             return self.quantile(u);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Logarithmic(p={d})", .{self.p});
         }
 
         /// Assert that parameters are valid: p ∈ (0, 1) and finite.
@@ -12656,6 +12776,15 @@ test "Logarithmic: p near upper boundary (p=0.99)" {
     try testing.expect(pmf_1 > pmf_2);
 }
 
+test "Logarithmic: format output contains type name" {
+    const dist = try Logarithmic(f64).init(0.5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Logarithmic"));
+}
+
 // ============================================================================
 // Skellam Distribution
 // ============================================================================
@@ -12878,6 +13007,13 @@ pub fn Skellam(comptime T: type) type {
                     return 0;
                 }
             }
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Skellam(mu1={d}, mu2={d})", .{ self.mu1, self.mu2 });
         }
 
         /// Assert that parameters are valid: μ₁ > 0, μ₂ > 0, and finite
@@ -13303,6 +13439,15 @@ test "Skellam: equal small parameters (mu1=mu2=0.5)" {
     try testing.expect(pmf_0 < 1.0);
 }
 
+test "Skellam: format output contains type name" {
+    const dist = try Skellam(f64).init(2.0, 3.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Skellam"));
+}
+
 // ============================================================================
 // Rademacher Distribution
 // ============================================================================
@@ -13425,6 +13570,14 @@ pub fn Rademacher(comptime T: type) type {
         pub fn sample(self: Self, rng: anytype) i64 {
             _ = self;
             return if (rng.boolean()) @as(i64, 1) else @as(i64, -1);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            _ = self;
+            try writer.print("Rademacher()", .{});
         }
 
         /// Validate distribution invariants (always passes — no parameters).
@@ -13737,6 +13890,15 @@ test "Rademacher: f32 support works" {
 test "Rademacher: validate always passes" {
     const dist = Rademacher(f64).init();
     try dist.validate();
+}
+
+test "Rademacher: format output contains type name" {
+    const dist = Rademacher(f64).init();
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Rademacher"));
 }
 
 // ============================================================================
@@ -14480,6 +14642,13 @@ pub fn VonMises(comptime T: type) type {
             }
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("VonMises(mu={d}, kappa={d})", .{ self.mu, self.kappa });
+        }
+
         /// Assert that parameters are valid: κ > 0, both finite, μ finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -14766,6 +14935,15 @@ test "VonMises: f32 type support works" {
     try expectEqual(@as(f32, 0.0), mean_val);
 }
 
+test "VonMises: format output contains type name" {
+    const dist = try VonMises(f64).init(0.0, 2.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "VonMises"));
+}
+
 // ============================================================================
 // Rayleigh Distribution
 // ============================================================================
@@ -14926,6 +15104,13 @@ pub fn Rayleigh(comptime T: type) type {
             if (u == 0.0) u = std.math.floatMin(T);
             const ln_u = @log(u);
             return self.sigma * @sqrt(-2.0 * ln_u);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Rayleigh(sigma={d})", .{self.sigma});
         }
 
         /// Assert that parameters are valid: sigma > 0 and finite.
@@ -15304,6 +15489,15 @@ test "Rayleigh: f32 quantile works" {
     const dist = try Rayleigh(f32).init(1.0);
     const q = try dist.quantile(0.5);
     try testing.expect(q > 0.0);
+}
+
+test "Rayleigh: format output contains type name" {
+    const dist = try Rayleigh(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Rayleigh"));
 }
 
 /// Kumaraswamy distribution — bounded continuous distribution on (0, 1).
@@ -16016,6 +16210,13 @@ pub fn HalfNormal(comptime T: type) type {
             return self.sigma * @abs(z);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("HalfNormal(sigma={d})", .{self.sigma});
+        }
+
         /// Assert that parameters are valid: sigma > 0, finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -16481,6 +16682,15 @@ test "HalfNormal: f32 cdf and quantile work" {
     try testing.expect(q > 0.6 and q < 0.7);
 }
 
+test "HalfNormal: format output contains type name" {
+    const dist = try HalfNormal(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "HalfNormal"));
+}
+
 // ============================================================================
 // Maxwell-Boltzmann Distribution
 // ============================================================================
@@ -16641,6 +16851,13 @@ pub fn MaxwellBoltzmann(comptime T: type) type {
             const zb = self.a * @sqrt(-2.0 * @log(ua)) * @sin(2.0 * math.pi * ub);
             const zc = self.a * @sqrt(-2.0 * @log(uc)) * @cos(2.0 * math.pi * ud);
             return @sqrt(za * za + zb * zb + zc * zc);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("MaxwellBoltzmann(a={d})", .{self.a});
         }
 
         /// Assert that parameters are valid: a > 0, finite.
@@ -16996,6 +17213,15 @@ test "MaxwellBoltzmann: f32 mean and variance are finite" {
     try testing.expect(math.isFinite(dist.mean()));
     try testing.expect(math.isFinite(dist.variance()));
     try testing.expect(dist.variance() > 0.0);
+}
+
+test "MaxwellBoltzmann: format output contains type name" {
+    const dist = try MaxwellBoltzmann(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "MaxwellBoltzmann"));
 }
 
 // ============================================================================
@@ -17727,6 +17953,13 @@ pub fn Levy(comptime T: type) type {
             return self.mu + self.c / (z * z);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Levy(mu={d}, c={d})", .{ self.mu, self.c });
+        }
+
         /// Assert that parameters are valid: c > 0 and both μ, c are finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -18155,6 +18388,15 @@ test "Levy: f32 entropy is finite" {
     try testing.expect(math.isFinite(dist.entropy()));
 }
 
+test "Levy: format output contains type name" {
+    const dist = try Levy(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Levy"));
+}
+
 // ============================================================================
 // Lomax (Pareto Type II) Distribution
 // ============================================================================
@@ -18303,6 +18545,13 @@ pub fn Lomax(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             return self.lambda * (math.pow(T, u, -1.0 / self.kappa) - 1.0);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Lomax(lambda={d}, kappa={d})", .{ self.lambda, self.kappa });
         }
 
         /// Validate distribution parameters
@@ -18716,6 +18965,15 @@ test "Lomax: f32 mode is 0" {
     try testing.expectEqual(@as(f32, 0.0), dist.mode());
 }
 
+test "Lomax: format output contains type name" {
+    const dist = try Lomax(f64).init(1.0, 2.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Lomax"));
+}
+
 // ============================================================================
 // Gompertz Distribution
 // ============================================================================
@@ -18880,6 +19138,13 @@ pub fn Gompertz(comptime T: type) type {
             if (u == 1.0) return math.inf(T);
             const minus_ln_1_minus_u = -@log(1.0 - u);
             return (1.0 / self.b) * @log(1.0 + minus_ln_1_minus_u / self.eta);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Gompertz(eta={d}, b={d})", .{ self.eta, self.b });
         }
 
         /// Validate distribution parameters
@@ -19547,6 +19812,15 @@ test "Gompertz: f32 basic operations" {
 test "Gompertz: f32 mode is 0 when eta>=1" {
     const dist = try Gompertz(f32).init(1.0, 1.0);
     try testing.expectEqual(@as(f32, 0.0), dist.mode());
+}
+
+test "Gompertz: format output contains type name" {
+    const dist = try Gompertz(f64).init(1.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Gompertz"));
 }
 
 // ============================================================================
@@ -20737,6 +21011,13 @@ pub fn InverseGaussian(comptime T: type) type {
             return Self{ .mu = mu, .lambda = lambda };
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("InverseGaussian(mu={d}, lambda={d})", .{ self.mu, self.lambda });
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -21406,6 +21687,15 @@ test "InverseGaussian: pdf has interior maximum near mu" {
     const pdf_slightly_after = dist.pdf(mode_x + 0.01);
     try testing.expect(pdf_at_mode >= pdf_slightly_before);
     try testing.expect(pdf_at_mode >= pdf_slightly_after);
+}
+
+test "InverseGaussian: format output contains type name" {
+    const dist = try InverseGaussian(f64).init(1.0, 2.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "InverseGaussian"));
 }
 
 // ============================================================================
@@ -33779,6 +34069,13 @@ pub fn Chi(comptime T: type) type {
             return @sqrt(2.0 * gamma_val);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Chi(k={d})", .{self.k});
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -34144,6 +34441,15 @@ test "Chi: mode < mean (right-skewed for k >= 2)" {
     const m = dist.mode();
     const mn = dist.mean();
     try testing.expect(m < mn);
+}
+
+test "Chi: format output contains type name" {
+    const dist = try Chi(f64).init(3.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Chi"));
 }
 
 // ============================================================================
@@ -53947,6 +54253,13 @@ pub fn Erlang(comptime T: type) type {
             return -log_prod / self.lambda;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Erlang(k={d}, lambda={d})", .{ self.k, self.lambda });
+        }
+
         /// Validate distribution parameters
         ///
         /// Returns error.InvalidParameter if k < 1, λ ≤ 0, or λ is not finite
@@ -54428,6 +54741,15 @@ test "Erlang: pdf integrates to approximately 1 (numerical check)" {
         sum += dist.pdf(x) * dx;
     }
     try testing.expectApproxEqAbs(@as(f64, 1.0), sum, 0.02);
+}
+
+test "Erlang: format output contains type name" {
+    const dist = try Erlang(f64).init(2, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Erlang"));
 }
 
 // ============================================================================
