@@ -696,3 +696,5 @@
 {"timestamp":"2026-08-21T23:42:14Z","action":"subagent","agent_type":"zig-developer","task":"Implement format() for 15 fundamental distributions to pass RED tests","project":"zuda"}
 {"timestamp":"2026-08-22T03:39:29Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for SkewSlash distribution (170th) - skew generalization of Slash via SkewNormal numerator","project":"zuda"}
 {"timestamp":"2026-08-22T03:43:04Z","action":"subagent","agent_type":"zig-developer","task":"Implement SkewSlash distribution (170th) to satisfy the 75 tests written by test-writer","project":"zuda"}
+{"timestamp":"2026-08-22T11:32:19Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ZeroTruncatedPoisson distribution (171st)","project":"zuda"}
+{"timestamp":"2026-08-22T11:35:27Z","action":"subagent","agent_type":"zig-developer","task":"Implement ZeroTruncatedPoisson distribution (171st) to pass failing tests","project":"zuda"}

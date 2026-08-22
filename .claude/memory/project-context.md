@@ -1,3 +1,28 @@
+**Session 818 Update (2026-08-22) — FEATURE MODE [COMPLETED]:**
+
+✅ **ZeroTruncatedPoisson (171st)** — commit 984fd10
+- **Mode**: FEATURE MODE (counter: 818)
+- **CI/Issues**: CI green, 0 open issues.
+- Fresh TDD cycle (not a recovery) — Poisson(λ) conditioned on X>0, distinct from
+  ZeroInflatedPoisson (a mixture adding mass AT zero; ZTP instead removes zero and renormalizes).
+  Was previously only used inline inside HurdlePoisson's mean/variance helpers, never exposed as
+  a standalone public distribution. Pre-derived and independently verified (python3, double
+  precision) pmf/cdf/mean/variance/mode at λ=0.5/2.0/5.0 before dispatching test-writer; formulas
+  cross-checked exactly against HurdlePoisson's existing inline `mu_ztp`/`var_ztp` derivation.
+  p0 = 1-exp(-λ) computed via `-math.expm1(-lambda)` for numerical stability.
+- **Result**: 78/78 new tests passed first try (test-writer wrote them against verified ground
+  truth, zig-developer implemented to match with 0 discrepancies). Full suite: 12194/12201 passed,
+  7 pre-existing skips, 0 failures.
+- **Distribution count**: 171 (confirmed via
+  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
+- **Next priority**: no standing feature candidate — grep root.zig's doc-comment list first.
+  Ruled out this session: Katz family (already covered — its pmf recurrence collapses exactly to
+  Poisson/Binomial/NegativeBinomial depending on parameter sign, not a new distribution despite
+  the name sounding novel). Remaining candidates from prior sessions still worth checking (grep
+  first): Neyman Type B/C, zero-truncated variants of Binomial/NegativeBinomial (same "remove k=0,
+  renormalize" pattern as this session, likely straightforward), Benktander Type I/II (heavy-tailed
+  Pareto alternatives — formulas not yet independently verified, do that before committing to it).
+
 **Session 809 Update (2026-07-20) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Hermite (167th)** — commit f26a480
