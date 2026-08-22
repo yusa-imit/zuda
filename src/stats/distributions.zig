@@ -115,6 +115,13 @@ pub fn Normal(comptime T: type) type {
             return 0.5 * (1.0 - erf(z));
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Normal(mean={d}, std={d})", .{ self.mean, self.std });
+        }
+
         /// Assert that parameters are valid: std > 0, both finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -205,6 +212,13 @@ pub fn Uniform(comptime T: type) type {
             if (x < self.a) return 1.0;
             if (x >= self.b) return 0.0;
             return (self.b - x) / (self.b - self.a);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Uniform(a={d}, b={d})", .{ self.a, self.b });
         }
 
         /// Assert that parameters are valid: a < b, both finite.
@@ -311,6 +325,13 @@ pub fn Exponential(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn variance(self: Self) T {
             return 1.0 / (self.rate * self.rate);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Exponential(rate={d})", .{self.rate});
         }
 
         /// Assert that parameters are valid: rate > 0 and finite.
@@ -514,6 +535,13 @@ pub fn Gamma(comptime T: type) type {
             return self.shape / (self.rate * self.rate);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Gamma(shape={d}, rate={d})", .{ self.shape, self.rate });
+        }
+
         /// Assert that parameters are valid: shape > 0, rate > 0, both finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -666,6 +694,13 @@ pub fn Beta(comptime T: type) type {
             return (self.alpha * self.beta) / (sum * sum * (sum + 1.0));
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Beta(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+        }
+
         /// Assert that parameters are valid: alpha > 0, beta > 0, both finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -793,6 +828,13 @@ pub fn ChiSquared(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn variance(self: Self) T {
             return 2.0 * self.k;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ChiSquared(k={d})", .{self.k});
         }
 
         /// Assert that parameters are valid: k > 0 and finite.
@@ -982,6 +1024,13 @@ pub fn StudentT(comptime T: type) type {
             if (self.nu <= 1.0) return math.nan(T);
             if (self.nu <= 2.0) return math.inf(T);
             return self.nu / (self.nu - 2.0);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("StudentT(nu={d})", .{self.nu});
         }
 
         /// Assert that parameters are valid: nu > 0 and finite.
@@ -1176,6 +1225,13 @@ pub fn FDistribution(comptime T: type) type {
             return numerator / denominator;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("FDistribution(d1={d}, d2={d})", .{ self.d1, self.d2 });
+        }
+
         /// Assert that parameters are valid: d1 > 0, d2 > 0, both finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -1272,6 +1328,13 @@ pub fn Bernoulli(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) u64 {
             return if (rng.float(T) < self.p) @as(u64, 1) else @as(u64, 0);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Bernoulli(p={d})", .{self.p});
         }
 
         /// Validate internal invariants: 0 < p ≤ 1 and p is finite
@@ -1405,6 +1468,13 @@ pub fn Geometric(comptime T: type) type {
             var k: u64 = 1;
             while (rng.float(T) >= self.p) : (k += 1) {}
             return k;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Geometric(p={d})", .{self.p});
         }
 
         /// Validate internal invariants: 0 < p ≤ 1 and p is finite
@@ -1546,6 +1616,13 @@ pub fn Poisson(comptime T: type) type {
             return self.rate;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Poisson(rate={d})", .{self.rate});
+        }
+
         /// Assert that parameters are valid: rate (λ) > 0 and finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -1681,6 +1758,13 @@ pub fn Binomial(comptime T: type) type {
         pub fn variance(self: Self) T {
             const n_f = @as(T, @floatFromInt(self.n));
             return n_f * self.p * (1.0 - self.p);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Binomial(n={d}, p={d})", .{ self.n, self.p });
         }
 
         /// Assert that parameters are valid: n ≥ 1, 0 ≤ p ≤ 1.
@@ -3999,6 +4083,13 @@ pub fn Laplace(comptime T: type) type {
             return self.scale;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Laplace(location={d}, scale={d})", .{ self.location, self.scale });
+        }
+
         /// Assert that parameters are valid: scale > 0 and finite, location finite.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -4196,6 +4287,13 @@ pub fn Weibull(comptime T: type) type {
             const x_scaled = x / self.scale;
             const x_pow_k_minus_1 = math.pow(T, x_scaled, self.shape - 1.0);
             return (self.shape / self.scale) * x_pow_k_minus_1;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Weibull(shape={d}, scale={d})", .{ self.shape, self.scale });
         }
 
         /// Assert that parameters are valid: shape > 0, scale > 0, both finite.
@@ -5063,6 +5161,13 @@ pub fn Pareto(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn median(self: Self) T {
             return self.x_m * math.pow(T, 2.0, 1.0 / self.alpha);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Pareto(x_m={d}, alpha={d})", .{ self.x_m, self.alpha });
         }
 
         /// Assert that parameters are valid: x_m > 0, alpha > 0, both finite.
@@ -99938,4 +100043,128 @@ test "SkewT: f32 sample returns finite value" {
     const dist = try SkewT(f32).init(0.0, 1.0, 1.0, 5.0);
     const s = dist.sample(rng.random());
     try expect(math.isFinite(s));
+}
+
+// ============================================================================
+// Format tests for 15 fundamental distributions (RED step of TDD)
+// ============================================================================
+
+test "format - Normal" {
+    var buf: [256]u8 = undefined;
+    const dist = try Normal(f64).init(0.0, 1.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Normal") != null);
+}
+
+test "format - Uniform" {
+    var buf: [256]u8 = undefined;
+    const dist = try Uniform(f64).init(0.0, 1.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Uniform") != null);
+}
+
+test "format - Exponential" {
+    var buf: [256]u8 = undefined;
+    const dist = try Exponential(f64).init(1.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Exponential") != null);
+}
+
+test "format - Gamma" {
+    var buf: [256]u8 = undefined;
+    const dist = try Gamma(f64).init(2.0, 1.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Gamma") != null);
+}
+
+test "format - Beta" {
+    var buf: [256]u8 = undefined;
+    const dist = try Beta(f64).init(2.0, 5.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Beta") != null);
+}
+
+test "format - ChiSquared" {
+    var buf: [256]u8 = undefined;
+    const dist = try ChiSquared(f64).init(5);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "ChiSquared") != null);
+}
+
+test "format - StudentT" {
+    var buf: [256]u8 = undefined;
+    const dist = try StudentT(f64).init(10.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "StudentT") != null);
+}
+
+test "format - FDistribution" {
+    var buf: [256]u8 = undefined;
+    const dist = try FDistribution(f64).init(5.0, 10.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "FDistribution") != null);
+}
+
+test "format - Bernoulli" {
+    var buf: [256]u8 = undefined;
+    const dist = try Bernoulli(f64).init(0.5);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Bernoulli") != null);
+}
+
+test "format - Geometric" {
+    var buf: [256]u8 = undefined;
+    const dist = try Geometric(f64).init(0.3);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Geometric") != null);
+}
+
+test "format - Poisson" {
+    var buf: [256]u8 = undefined;
+    const dist = try Poisson(f64).init(3.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Poisson") != null);
+}
+
+test "format - Binomial" {
+    var buf: [256]u8 = undefined;
+    const dist = try Binomial(f64).init(10, 0.5);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Binomial") != null);
+}
+
+test "format - Laplace" {
+    var buf: [256]u8 = undefined;
+    const dist = try Laplace(f64).init(0.0, 1.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Laplace") != null);
+}
+
+test "format - Weibull" {
+    var buf: [256]u8 = undefined;
+    const dist = try Weibull(f64).init(2.0, 1.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Weibull") != null);
+}
+
+test "format - Pareto" {
+    var buf: [256]u8 = undefined;
+    const dist = try Pareto(f64).init(1.0, 2.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "Pareto") != null);
 }
