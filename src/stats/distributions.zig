@@ -89763,6 +89763,181 @@ pub fn HurdlePoisson(comptime T: type) type {
 }
 
 // ============================================================================
+// Zero-Truncated Poisson Distribution
+// ============================================================================
+
+/// Zero-Truncated Poisson (a.k.a. Positive Poisson) — Poisson(λ) conditioned on X > 0.
+///
+/// Parameter: lambda (rate) > 0, finite. Support: k = 1, 2, 3, ...
+///
+/// - pmf(k) = (lambda^k * exp(-lambda)) / (k! * p0),  k >= 1; pmf(0) = 0
+/// - mean = lambda / p0 where p0 = 1 - exp(-lambda)
+/// - variance = mean * (1 + lambda - mean)
+///
+/// Time: O(k) for pmf/cdf at value k, O(1) for sample
+pub fn ZeroTruncatedPoisson(comptime T: type) type {
+    return struct {
+        lambda: T,
+
+        const Self = @This();
+        const MAX_K: usize = 100000;
+
+        /// Create a ZeroTruncatedPoisson distribution with given rate
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(lambda: T) DistributionError!Self {
+            if (lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .lambda = lambda };
+        }
+
+        /// Probability mass function (PMF) at k
+        ///
+        /// P(X = k) = (lambda^k * exp(-lambda)) / (k! * p0),  k >= 1; pmf(0) = 0
+        /// where p0 = 1 - exp(-lambda)
+        ///
+        /// Uses log-space computation to avoid overflow for large k
+        ///
+        /// Time: O(k) for factorial computation | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+
+            // p0 = 1 - exp(-lambda) using expm1 for stability
+            const p0 = -math.expm1(-self.lambda);
+
+            // P(X = k) = exp(k * log(lambda) - lambda - log(k!) - log(p0))
+            const k_f = @as(T, @floatFromInt(k));
+            return @exp(k_f * @log(self.lambda) - self.lambda - logFactorial(T, k) - @log(p0));
+        }
+
+        /// Log probability mass function
+        ///
+        /// log P(X = k) = k * log(lambda) - lambda - log(k!) - log(p0), k >= 1
+        /// log P(X = 0) = -inf (pmf(0) = 0)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+
+            // p0 = 1 - exp(-lambda) using expm1 for stability
+            const p0 = -math.expm1(-self.lambda);
+
+            const k_f = @as(T, @floatFromInt(k));
+            return k_f * @log(self.lambda) - self.lambda - logFactorial(T, k) - @log(p0);
+        }
+
+        /// Cumulative distribution function (CDF) at k
+        ///
+        /// P(X ≤ k) = Σ(i=1 to k) pmf(i) for k>=1; cdf(0) = 0
+        ///
+        /// Time: O(k) via summation | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+
+            // Sum PMF values from 1 to k
+            var sum: T = 0.0;
+            for (1..k + 1) |i| {
+                sum += self.pmf(i);
+            }
+            return @min(sum, 1.0); // Clamp to 1.0 due to floating-point errors
+        }
+
+        /// Quantile function (inverse CDF) - returns k such that P(X ≤ k) ≥ p
+        ///
+        /// Uses search over PMF values starting at k=1
+        ///
+        /// Time: O(k) where k is the result | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 1; // ZTP support starts at k=1
+
+            // Search for smallest k such that CDF(k) >= p
+            var cumulative: T = 0.0;
+            var k: u64 = 1;
+            while (k <= MAX_K) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= p) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses rejection sampling: repeatedly sample from Poisson(lambda)
+        /// and reject k==0
+        ///
+        /// Time: O(lambda) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const poisson = Poisson(T){ .rate = self.lambda };
+            while (true) {
+                const sample_val = poisson.sample(rng);
+                if (sample_val != 0) return sample_val;
+            }
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = lambda / (1 - exp(-lambda))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const p0 = -math.expm1(-self.lambda);
+            return self.lambda / p0;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = mean * (1 + lambda - mean)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mu = self.mean();
+            return mu * (1.0 + self.lambda - mu);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// - if lambda < 1 -> mode = 1 (pmf strictly decreasing for k>=1)
+        /// - if lambda is a positive integer -> tie between floor(lambda) and floor(lambda)-1
+        ///   (floor(lambda)-1 only valid if >= 1, else just floor(lambda))
+        /// - otherwise -> mode = floor(lambda)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            if (self.lambda < 1.0) {
+                return 1;
+            }
+
+            const floor_lambda = @as(u64, @intFromFloat(@floor(self.lambda)));
+
+            // Check if lambda is (very close to) an integer
+            const frac = self.lambda - @as(T, @floatFromInt(floor_lambda));
+            if (frac < 1e-12) {
+                // lambda is essentially an integer; tie between floor(lambda) and floor(lambda)-1
+                // Return floor(lambda) as the mode (the larger one in the tie)
+                return floor_lambda;
+            }
+
+            // Otherwise, mode is floor(lambda)
+            return floor_lambda;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ZeroTruncatedPoisson(λ={d})", .{self.lambda});
+        }
+
+        /// Assert that parameters are valid: lambda > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
 // Zero-Inflated Binomial Distribution Tests (TDD RED phase)
 // ============================================================================
 //
@@ -101108,4 +101283,550 @@ test "SkewSlash: f32 sample returns finite value" {
     const dist = try SkewSlash(f32).init(0.0, 1.0, 1.0);
     const s = dist.sample(rng.random());
     try expect(math.isFinite(s));
+}
+
+// ============================================================================
+// Zero-Truncated Poisson Distribution
+// ============================================================================
+
+// --- init tests ---
+
+test "ZeroTruncatedPoisson: init valid lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    try dist.validate();
+}
+
+test "ZeroTruncatedPoisson: init valid lambda=1.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(1.0);
+    try dist.validate();
+}
+
+test "ZeroTruncatedPoisson: init valid lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    try dist.validate();
+}
+
+test "ZeroTruncatedPoisson: init valid lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    try dist.validate();
+}
+
+test "ZeroTruncatedPoisson: init fails for lambda=0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedPoisson(f64).init(0.0));
+}
+
+test "ZeroTruncatedPoisson: init fails for lambda < 0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedPoisson(f64).init(-1.5));
+}
+
+test "ZeroTruncatedPoisson: init fails for NaN lambda" {
+    try expectError(error.InvalidParameter, ZeroTruncatedPoisson(f64).init(math.nan(f64)));
+}
+
+test "ZeroTruncatedPoisson: init fails for infinite lambda" {
+    try expectError(error.InvalidParameter, ZeroTruncatedPoisson(f64).init(math.inf(f64)));
+}
+
+test "ZeroTruncatedPoisson: init fails for negative infinite lambda" {
+    try expectError(error.InvalidParameter, ZeroTruncatedPoisson(f64).init(-math.inf(f64)));
+}
+
+test "ZeroTruncatedPoisson: f32 type support valid init" {
+    const dist = try ZeroTruncatedPoisson(f32).init(1.5);
+    try dist.validate();
+}
+
+// --- pmf tests with ground truth vectors ---
+
+test "ZeroTruncatedPoisson: pmf(0) always equals 0" {
+    for ([_]f64{ 0.5, 1.0, 2.0, 5.0 }) |lambda| {
+        const dist = try ZeroTruncatedPoisson(f64).init(lambda);
+        try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+    }
+}
+
+test "ZeroTruncatedPoisson: pmf(1) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.770747041268399;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(2) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.192686760317100;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(3) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.032114460052850;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(4) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.004014307506606;
+    try expectApproxEqAbs(expected, dist.pmf(4), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(5) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.000401430750661;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(1) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.313035285499331;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(2) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.313035285499331;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(3) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.208690190332888;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(4) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.104345095166444;
+    try expectApproxEqAbs(expected, dist.pmf(4), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(5) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.041738038066578;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(1) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.033918274531521;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(2) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.084795686328803;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(3) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.141326143881338;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(4) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.176657679851673;
+    try expectApproxEqAbs(expected, dist.pmf(4), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: pmf(5) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.176657679851673;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+// --- cdf tests with ground truth vectors ---
+
+test "ZeroTruncatedPoisson: cdf(0) always equals 0" {
+    for ([_]f64{ 0.5, 1.0, 2.0, 5.0 }) |lambda| {
+        const dist = try ZeroTruncatedPoisson(f64).init(lambda);
+        try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+    }
+}
+
+test "ZeroTruncatedPoisson: cdf(1) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.770747041268399;
+    try expectApproxEqAbs(expected, dist.cdf(1), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(2) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.963433801585499;
+    try expectApproxEqAbs(expected, dist.cdf(2), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(3) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.995548261638349;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(4) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.999562569144955;
+    try expectApproxEqAbs(expected, dist.cdf(4), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(5) exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.999963999895616;
+    try expectApproxEqAbs(expected, dist.cdf(5), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(1) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.313035285499331;
+    try expectApproxEqAbs(expected, dist.cdf(1), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(2) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.626070570998663;
+    try expectApproxEqAbs(expected, dist.cdf(2), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(3) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.834760761331550;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(4) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.939105856497994;
+    try expectApproxEqAbs(expected, dist.cdf(4), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(5) exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 0.980843894564571;
+    try expectApproxEqAbs(expected, dist.cdf(5), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(1) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.033918274531521;
+    try expectApproxEqAbs(expected, dist.cdf(1), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(2) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.118713960860324;
+    try expectApproxEqAbs(expected, dist.cdf(2), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(3) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.260040104741662;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(4) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.436697784593335;
+    try expectApproxEqAbs(expected, dist.cdf(4), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: cdf(5) exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 0.613355464445008;
+    try expectApproxEqAbs(expected, dist.cdf(5), 1e-9);
+}
+
+// --- logpmf tests ---
+
+test "ZeroTruncatedPoisson: logpmf = ln(pmf) for lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "ZeroTruncatedPoisson: logpmf = ln(pmf) for lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "ZeroTruncatedPoisson: logpmf = ln(pmf) for lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+// --- mean tests ---
+
+test "ZeroTruncatedPoisson: mean exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 1.270747041268399;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: mean exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 2.313035285499331;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: mean exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 5.033918274531521;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: mean is always greater than lambda / (1 - exp(-lambda))" {
+    for ([_]f64{ 0.5, 1.0, 2.0, 5.0 }) |lambda| {
+        const dist = try ZeroTruncatedPoisson(f64).init(lambda);
+        const m = dist.mean();
+        try expect(m > 0.0);
+    }
+}
+
+// --- variance tests ---
+
+test "ZeroTruncatedPoisson: variance exact value lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const expected: f64 = 0.291322519010208;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: variance exact value lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const expected: f64 = 1.588973624533021;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: variance exact value lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const expected: f64 = 4.863176452526720;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedPoisson: variance is always positive" {
+    for ([_]f64{ 0.5, 1.0, 2.0, 5.0 }) |lambda| {
+        const dist = try ZeroTruncatedPoisson(f64).init(lambda);
+        try expect(dist.variance() > 0.0);
+    }
+}
+
+// --- mode tests (with tie-breaking) ---
+
+test "ZeroTruncatedPoisson: mode equals 1 for lambda=0.5 (lambda < 1)" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    try expect(dist.mode() == 1);
+}
+
+test "ZeroTruncatedPoisson: mode equals 1 or 2 for lambda=2.0 (tie, lambda is integer)" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const mode = dist.mode();
+    try expect(mode == 1 or mode == 2);
+}
+
+test "ZeroTruncatedPoisson: mode equals 4 or 5 for lambda=5.0 (tie, lambda is integer)" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const mode = dist.mode();
+    try expect(mode == 4 or mode == 5);
+}
+
+test "ZeroTruncatedPoisson: mode equals 1 for lambda=1.0 (tie between 1 and 0, but 0 not in support)" {
+    const dist = try ZeroTruncatedPoisson(f64).init(1.0);
+    const mode = dist.mode();
+    try expect(mode == 1);
+}
+
+test "ZeroTruncatedPoisson: mode is always >= 1 (zero not in support)" {
+    for ([_]f64{ 0.5, 1.0, 2.0, 5.0 }) |lambda| {
+        const dist = try ZeroTruncatedPoisson(f64).init(lambda);
+        try expect(dist.mode() >= 1);
+    }
+}
+
+// --- cdf monotonicity and normalization ---
+
+test "ZeroTruncatedPoisson: cdf is monotonically non-decreasing lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedPoisson: cdf is monotonically non-decreasing lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedPoisson: cdf is monotonically non-decreasing lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedPoisson: cdf approaches 1.0 for large k lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    try expect(dist.cdf(50) > 0.9999999);
+}
+
+test "ZeroTruncatedPoisson: cdf approaches 1.0 for large k lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    try expect(dist.cdf(50) > 0.9999999);
+}
+
+test "ZeroTruncatedPoisson: cdf approaches 1.0 for large k lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    try expect(dist.cdf(50) > 0.9999999);
+}
+
+// --- pmf normalization ---
+
+test "ZeroTruncatedPoisson: pmf sums to 1 (truncated at 5000) lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 5000) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "ZeroTruncatedPoisson: pmf sums to 1 (truncated at 5000) lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 5000) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "ZeroTruncatedPoisson: pmf sums to 1 (truncated at 5000) lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 1;
+    while (k <= 5000) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+// --- sample tests (rejection sampling should never return 0) ---
+
+test "ZeroTruncatedPoisson: sample never returns 0 lambda=0.5" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    const n = 500;
+    for (0..n) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(sample >= 1);
+    }
+}
+
+test "ZeroTruncatedPoisson: sample never returns 0 lambda=2.0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const n = 500;
+    for (0..n) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(sample >= 1);
+    }
+}
+
+test "ZeroTruncatedPoisson: sample never returns 0 lambda=5.0" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    const n = 500;
+    for (0..n) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(sample >= 1);
+    }
+}
+
+test "ZeroTruncatedPoisson: samples show variation (not all identical)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    var samples: [10]u64 = undefined;
+    for (&samples) |*s| {
+        s.* = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try expect(has_diff);
+}
+
+// --- quantile round-trip sanity ---
+
+test "ZeroTruncatedPoisson: quantile(cdf(k)) approximately k for lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= k - 1 and q <= k + 1);
+    }
+}
+
+test "ZeroTruncatedPoisson: quantile(cdf(k)) approximately k for lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= k - 1 and q <= k + 1);
+    }
+}
+
+test "ZeroTruncatedPoisson: quantile(cdf(k)) approximately k for lambda=5.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(5.0);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= k - 1 and q <= k + 1);
+    }
+}
+
+test "ZeroTruncatedPoisson: quantile(0.5) returns positive integer lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 1);
+}
+
+// --- validate tests ---
+
+test "ZeroTruncatedPoisson: validate succeeds for lambda=0.5" {
+    const dist = try ZeroTruncatedPoisson(f64).init(0.5);
+    try dist.validate();
+}
+
+test "ZeroTruncatedPoisson: validate succeeds for lambda=2.0" {
+    const dist = try ZeroTruncatedPoisson(f64).init(2.0);
+    try dist.validate();
+}
+
+test "ZeroTruncatedPoisson: validate fails after manual invalid lambda assignment" {
+    var dist = try ZeroTruncatedPoisson(f64).init(1.0);
+    dist.lambda = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
 }
