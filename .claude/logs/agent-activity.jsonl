@@ -692,3 +692,7 @@
 {"timestamp": "2026-07-21T07:38:33Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement GeneralizedHermite(a1,a2,m) to pass tests written by test-writer", "project": "zuda"}
 {"timestamp":"2026-08-21T15:32:17Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for SkewT (Azzalini skew-t) distribution, 169th in distributions.zig","project":"zuda"}
 {"timestamp":"2026-08-21T15:44:26Z","action":"subagent","agent_type":"zig-developer","task":"Implement SkewT distribution struct to satisfy failing tests","project":"zuda"}
+{"timestamp":"2026-08-21T23:39:34Z","action":"subagent","agent_type":"test-writer","task":"Write format() tests for 15 fundamental distributions missing it","project":"zuda"}
+{"timestamp":"2026-08-21T23:42:14Z","action":"subagent","agent_type":"zig-developer","task":"Implement format() for 15 fundamental distributions to pass RED tests","project":"zuda"}
+{"timestamp":"2026-08-22T03:39:29Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for SkewSlash distribution (170th) - skew generalization of Slash via SkewNormal numerator","project":"zuda"}
+{"timestamp":"2026-08-22T03:43:04Z","action":"subagent","agent_type":"zig-developer","task":"Implement SkewSlash distribution (170th) to satisfy the 75 tests written by test-writer","project":"zuda"}
