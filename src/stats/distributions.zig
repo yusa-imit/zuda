@@ -101830,3 +101830,629 @@ test "ZeroTruncatedPoisson: validate fails after manual invalid lambda assignmen
     dist.lambda = 0.0;
     try expectError(error.InvalidParameter, dist.validate());
 }
+
+// ============================================================================
+// Zero-Truncated Binomial Distribution
+// ============================================================================
+
+/// Binomial(n, p) conditioned on X > 0. Support: k = 1..n.
+pub fn ZeroTruncatedBinomial(comptime T: type) type {
+    return struct {
+        n: u64,
+        p: T,
+
+        const Self = @This();
+
+        /// Create a ZeroTruncatedBinomial distribution.
+        ///
+        /// Errors: n = 0 (no support remains after truncation), p outside [0,1] or
+        /// non-finite, or p = 0 (the untruncated distribution is degenerate at 0,
+        /// so the zero-truncated normalizing constant 1 - (1-p)^n is 0).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(n: u64, p: T) DistributionError!Self {
+            if (n == 0) return error.InvalidParameter;
+            if (!math.isFinite(p)) return error.InvalidParameter;
+            if (!(p > 0.0 and p <= 1.0)) return error.InvalidParameter;
+            return Self{ .n = n, .p = p };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// log PMF(k) = Binomial(n,p).logpmf(k) - log(1 - (1-p)^n), for 1 <= k <= n
+        /// log PMF(k) = -inf, for k = 0 or k > n
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0 or k > self.n) return -math.inf(T);
+            const binom = Binomial(T){ .n = self.n, .p = self.p };
+            const denom = -math.expm1(@as(T, @floatFromInt(self.n)) * @log(1.0 - self.p));
+            return binom.logpmf(k) - @log(denom);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0 or k > self.n) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via exact partial sum over [1, min(k, n)].
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            const k_clamped = @min(k, self.n);
+            var sum: T = 0.0;
+            for (1..k_clamped + 1) |j| {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ prob.
+        ///
+        /// Errors: prob outside [0,1] or NaN.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            if (prob == 0.0) return 1;
+            if (prob == 1.0) return self.n;
+
+            var cumsum: T = 0.0;
+            for (1..self.n + 1) |k| {
+                cumsum += self.pmf(k);
+                if (cumsum >= prob) return k;
+            }
+            return self.n;
+        }
+
+        /// Generate a random sample via rejection sampling: repeatedly sample
+        /// from Binomial(n, p) until a non-zero value is obtained.
+        ///
+        /// Time: O(n / (1 - (1-p)^n)) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const binom = Binomial(T){ .n = self.n, .p = self.p };
+            while (true) {
+                const sample_val = binom.sample(rng);
+                if (sample_val != 0) return sample_val;
+            }
+        }
+
+        /// Mean: E[X] = n*p / (1 - (1-p)^n).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const binom = Binomial(T){ .n = self.n, .p = self.p };
+            const denom = 1.0 - binom.pmf(0);
+            return binom.mean() / denom;
+        }
+
+        /// Variance: Var[X] = E[X^2] - mean^2, where E[X(X-1)] = n(n-1)p^2 / denom
+        /// (the k=0 and k=1 terms of the underlying binomial contribute 0 to
+        /// X(X-1), so this identity carries over unchanged under truncation).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const binom = Binomial(T){ .n = self.n, .p = self.p };
+            const denom = 1.0 - binom.pmf(0);
+            const n_f = @as(T, @floatFromInt(self.n));
+            const e_xx1 = n_f * (n_f - 1.0) * self.p * self.p / denom;
+            const mu = self.mean();
+            const e_x2 = e_xx1 + mu;
+            return e_x2 - mu * mu;
+        }
+
+        /// Mode: numeric scan via PMF comparison over bounded support [1, n].
+        /// When multiple modes exist, returns the larger one.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 1;
+            var best_pmf = self.pmf(1);
+            for (2..self.n + 1) |k| {
+                const p_val = self.pmf(k);
+                const pmf_tolerance = best_pmf * 1e-12;
+                if (p_val >= best_pmf - pmf_tolerance) {
+                    best_pmf = p_val;
+                    best_k = k;
+                }
+            }
+            return best_k;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ZeroTruncatedBinomial(n={d}, p={d:.4})", .{ self.n, self.p });
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.n == 0) return error.InvalidParameter;
+            if (!math.isFinite(self.p)) return error.InvalidParameter;
+            if (!(self.p > 0.0 and self.p <= 1.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// --- init tests ---
+
+test "ZeroTruncatedBinomial: init valid n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: init valid n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: init valid n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: init valid n=1 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(1, 0.5);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: init boundary p=1.0 is valid" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 1.0);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: init fails for n=0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(0, 0.5));
+}
+
+test "ZeroTruncatedBinomial: init fails for p < 0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(10, -0.1));
+}
+
+test "ZeroTruncatedBinomial: init fails for p > 1" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(10, 1.1));
+}
+
+test "ZeroTruncatedBinomial: init fails for p = 0 (degenerate, undefined truncation)" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(10, 0.0));
+}
+
+test "ZeroTruncatedBinomial: init fails for NaN p" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(10, math.nan(f64)));
+}
+
+test "ZeroTruncatedBinomial: init fails for infinite p" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(10, math.inf(f64)));
+}
+
+test "ZeroTruncatedBinomial: init fails for negative infinite p" {
+    try expectError(error.InvalidParameter, ZeroTruncatedBinomial(f64).init(10, -math.inf(f64)));
+}
+
+test "ZeroTruncatedBinomial: f32 type support valid init" {
+    const dist = try ZeroTruncatedBinomial(f32).init(10, 0.3);
+    try dist.validate();
+}
+
+// --- pmf tests with ground truth vectors ---
+
+test "ZeroTruncatedBinomial: pmf(0) always equals 0" {
+    const Param = struct { n: u64, p: f64 };
+    for ([_]Param{ .{ .n = 10, .p = 0.3 }, .{ .n = 5, .p = 0.5 }, .{ .n = 20, .p = 0.05 } }) |param| {
+        const dist = try ZeroTruncatedBinomial(f64).init(param.n, param.p);
+        try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+    }
+}
+
+test "ZeroTruncatedBinomial: pmf(1) exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 0.1245798947;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(2) exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 0.2402612254;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(3) exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 0.2745842577;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(5) exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 0.1059110708;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(1) exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 0.1612903226;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(2) exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 0.3225806452;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(3) exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 0.3225806452;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(5) exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 0.0322580645;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(1) exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 0.5882234166;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(2) exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 0.2941117083;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(3) exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 0.0928773816;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(5) exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 0.0034989817;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: pmf(1) exact value n=1 p=0.5 (degenerate)" {
+    const dist = try ZeroTruncatedBinomial(f64).init(1, 0.5);
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-15);
+}
+
+// --- logpmf tests ---
+
+test "ZeroTruncatedBinomial: logpmf = ln(pmf) for n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "ZeroTruncatedBinomial: logpmf = ln(pmf) for n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "ZeroTruncatedBinomial: logpmf = ln(pmf) for n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+// --- cdf tests ---
+
+test "ZeroTruncatedBinomial: cdf(0) always equals 0" {
+    for ([_]u64{ 10, 5, 20 }) |n| {
+        const dist = try ZeroTruncatedBinomial(f64).init(n, 0.3);
+        try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+    }
+}
+
+test "ZeroTruncatedBinomial: cdf(3) exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 0.6394253777805475;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: cdf(3) exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 0.8064516129032258;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: cdf(3) exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 0.9752125065135496;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+// --- mean tests ---
+
+test "ZeroTruncatedBinomial: mean exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 3.087205926273848;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: mean exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 2.5806451612903225;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: mean exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 1.5588122457958595;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: mean is always positive" {
+    for ([_][2]f64{ [_]f64{ 10, 0.3 }, [_]f64{ 5, 0.5 }, [_]f64{ 20, 0.05 } }) |param| {
+        const dist = try ZeroTruncatedBinomial(f64).init(@as(u64, @intFromFloat(param[0])), param[1]);
+        try expect(dist.mean() > 0.0);
+    }
+}
+
+// --- variance tests ---
+
+test "ZeroTruncatedBinomial: variance exact value n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const expected: f64 = 1.89182149599287;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: variance exact value n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const expected: f64 = 1.082206035379813;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: variance exact value n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const expected: f64 = 0.6097882616587955;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedBinomial: variance is always positive" {
+    for ([_][2]f64{ [_]f64{ 10, 0.3 }, [_]f64{ 5, 0.5 }, [_]f64{ 20, 0.05 } }) |param| {
+        const dist = try ZeroTruncatedBinomial(f64).init(@as(u64, @intFromFloat(param[0])), param[1]);
+        try expect(dist.variance() > 0.0);
+    }
+}
+
+// --- mode tests ---
+
+test "ZeroTruncatedBinomial: mode equals 3 for n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    try expect(dist.mode() == 3);
+}
+
+test "ZeroTruncatedBinomial: mode equals 3 for n=5 p=0.5 (tie with 2, larger returned by convention)" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    try expect(dist.mode() == 3);
+}
+
+test "ZeroTruncatedBinomial: mode equals 1 for n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    try expect(dist.mode() == 1);
+}
+
+test "ZeroTruncatedBinomial: mode equals 1 for n=10 p=0.05 (untruncated binomial mode would be 0, but truncated mode is 1)" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.05);
+    try expect(dist.mode() == 1);
+}
+
+test "ZeroTruncatedBinomial: mode equals 1 for n=1 p=0.5 (degenerate case)" {
+    const dist = try ZeroTruncatedBinomial(f64).init(1, 0.5);
+    try expect(dist.mode() == 1);
+}
+
+test "ZeroTruncatedBinomial: mode is always in range [1, n]" {
+    for ([_][2]f64{ [_]f64{ 10, 0.3 }, [_]f64{ 5, 0.5 }, [_]f64{ 20, 0.05 }, [_]f64{ 10, 0.05 } }) |param| {
+        const n = @as(u64, @intFromFloat(param[0]));
+        const dist = try ZeroTruncatedBinomial(f64).init(n, param[1]);
+        const m = dist.mode();
+        try expect(m >= 1 and m <= n);
+    }
+}
+
+// --- cdf monotonicity and normalization ---
+
+test "ZeroTruncatedBinomial: cdf is monotonically non-decreasing n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 8, 10 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedBinomial: cdf is monotonically non-decreasing n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedBinomial: cdf is monotonically non-decreasing n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedBinomial: cdf(n) equals 1.0 for n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    try expectApproxEqAbs(1.0, dist.cdf(10), 1e-12);
+}
+
+test "ZeroTruncatedBinomial: cdf(n) equals 1.0 for n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    try expectApproxEqAbs(1.0, dist.cdf(5), 1e-12);
+}
+
+test "ZeroTruncatedBinomial: cdf(n) equals 1.0 for n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    try expectApproxEqAbs(1.0, dist.cdf(20), 1e-12);
+}
+
+// --- pmf normalization ---
+
+test "ZeroTruncatedBinomial: pmf sums to 1 over support n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    var sum: f64 = 0.0;
+    for (1..11) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-12);
+}
+
+test "ZeroTruncatedBinomial: pmf sums to 1 over support n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    var sum: f64 = 0.0;
+    for (1..6) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-12);
+}
+
+test "ZeroTruncatedBinomial: pmf sums to 1 over support n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    var sum: f64 = 0.0;
+    for (1..21) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-12);
+}
+
+// --- sample tests (rejection sampling should never return 0) ---
+
+test "ZeroTruncatedBinomial: sample never returns 0 n=10 p=0.3" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const n = 500;
+    for (0..n) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(sample >= 1);
+    }
+}
+
+test "ZeroTruncatedBinomial: sample never returns 0 n=5 p=0.5" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    const n = 500;
+    for (0..n) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(sample >= 1);
+    }
+}
+
+test "ZeroTruncatedBinomial: sample never returns 0 n=20 p=0.05" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    const n = 500;
+    for (0..n) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(sample >= 1);
+    }
+}
+
+test "ZeroTruncatedBinomial: samples show variation (not all identical)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    var samples: [10]u64 = undefined;
+    for (&samples) |*s| {
+        s.* = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try expect(has_diff);
+}
+
+// --- quantile round-trip sanity ---
+
+test "ZeroTruncatedBinomial: quantile(cdf(k)) approximately k for n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= k - 1 and q <= k + 1);
+    }
+}
+
+test "ZeroTruncatedBinomial: quantile(cdf(k)) approximately k for n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= k - 1 and q <= k + 1);
+    }
+}
+
+test "ZeroTruncatedBinomial: quantile(cdf(k)) approximately k for n=20 p=0.05" {
+    const dist = try ZeroTruncatedBinomial(f64).init(20, 0.05);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const cdf_k = dist.cdf(k);
+        const q = try dist.quantile(cdf_k);
+        try expect(q >= k - 1 and q <= k + 1);
+    }
+}
+
+test "ZeroTruncatedBinomial: quantile(0.5) returns positive integer n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    const q = try dist.quantile(0.5);
+    try expect(q >= 1);
+}
+
+// --- validate tests ---
+
+test "ZeroTruncatedBinomial: validate succeeds for n=10 p=0.3" {
+    const dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: validate succeeds for n=5 p=0.5" {
+    const dist = try ZeroTruncatedBinomial(f64).init(5, 0.5);
+    try dist.validate();
+}
+
+test "ZeroTruncatedBinomial: validate fails after manual invalid n assignment" {
+    var dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    dist.n = 0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroTruncatedBinomial: validate fails after manual invalid p assignment" {
+    var dist = try ZeroTruncatedBinomial(f64).init(10, 0.3);
+    dist.p = 1.5;
+    try expectError(error.InvalidParameter, dist.validate());
+}
