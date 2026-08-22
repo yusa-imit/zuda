@@ -100168,3 +100168,944 @@ test "format - Pareto" {
     try expect(written.len > 0);
     try expect(std.mem.indexOf(u8, written, "Pareto") != null);
 }
+
+// ============================================================================
+// SkewSlash(ξ, ω, α) Distribution
+// ============================================================================
+// Azzalini's skew-slash: X = ξ + ω·Z/U where Z ~ SkewNormal(0,1,α), U ~ Uniform(0,1)
+// Generalizes Slash by replacing Gaussian numerator with skew-normal
+// Parameters: xi (location, any finite real), omega (scale > 0), alpha (skewness, any finite real)
+// Reduces to Slash(xi, omega) when alpha=0
+// No closed-form PDF, CDF, mean, variance — numeric integration required
+
+pub fn SkewSlash(comptime T: type) type {
+    return struct {
+        xi: T,
+        omega: T,
+        alpha: T,
+
+        const Self = @This();
+
+        // Standard normal PDF: φ(z) = exp(-z²/2) / √(2π)
+        fn phi(z: T) T {
+            return @exp(-z * z / 2.0) / @sqrt(2.0 * math.pi);
+        }
+
+        // Standard normal CDF: Φ(z) = 0.5*(1 + erf(z/√2))
+        fn Phi(z: T) T {
+            return 0.5 * (1.0 + erf(z / @sqrt(@as(T, 2.0))));
+        }
+
+        // phi(0) constant: 1/√(2π)
+        fn phi0val() T {
+            return 1.0 / @sqrt(@as(T, 2.0) * math.pi);
+        }
+
+        // Owen's T function via 16-point Gauss-Legendre quadrature.
+        // T(h,a) = (1/2π) ∫₀ᵃ exp(-h²(1+t²)/2) / (1+t²) dt
+        fn owensT(h: T, a: T) T {
+            if (h == 0.0) {
+                return math.atan(a) / (2.0 * math.pi);
+            }
+
+            const nodes = [_]T{
+                -0.9894009349916499325961541734,
+                -0.9445750230732325760779884155,
+                -0.8656312023878317438804678732,
+                -0.7554044083550030338951011948,
+                -0.6178762444026437647431482869,
+                -0.4545454545454545454545454545,
+                -0.2756581394264004997553461107,
+                -0.0947992761666747500218999389,
+                0.0947992761666747500218999389,
+                0.2756581394264004997553461107,
+                0.4545454545454545454545454545,
+                0.6178762444026437647431482869,
+                0.7554044083550030338951011948,
+                0.8656312023878317438804678732,
+                0.9445750230732325760779884155,
+                0.9894009349916499325961541734,
+            };
+            const weights = [_]T{
+                0.0271524594117540948517805529,
+                0.0622535239386478928628438369,
+                0.0951585116824927848099251076,
+                0.1246289712555338720524762822,
+                0.1495959888597201378529657384,
+                0.1691565193950025381893120790,
+                0.1826034150449235888667636322,
+                0.1894506104550684962853967311,
+                0.1894506104550684962853967311,
+                0.1826034150449235888667636322,
+                0.1691565193950025381893120790,
+                0.1495959888597201378529657384,
+                0.1246289712555338720524762822,
+                0.0951585116824927848099251076,
+                0.0622535239386478928628438369,
+                0.0271524594117540948517805529,
+            };
+
+            var integral: T = 0.0;
+            for (0..16) |i| {
+                const s = nodes[i];
+                const t = a * (s + 1.0) / 2.0; // maps s∈[-1,1] to t∈[0,a]
+                const denom = 1.0 + t * t;
+                const exp_term = @exp(-h * h * denom / 2.0);
+                integral += weights[i] * exp_term / denom;
+            }
+
+            return (a / (4.0 * math.pi)) * integral;
+        }
+
+        // Standard skew-normal CDF: Φ_skew(t;α) = Φ(t) - 2·T(t,α)
+        fn PhiSkew(t: T, alpha: T) T {
+            return Phi(t) - 2.0 * owensT(t, alpha);
+        }
+
+        /// Compute standard skew-slash PDF via Simpson's rule integration.
+        /// f_std(z; alpha) = 2 * ∫₀¹ v · φ(z·v) · Φ(α·z·v) dv
+        /// At alpha≈0 uses the closed-form Slash pdf directly for exactness.
+        /// Time: O(150) | Space: O(1)
+        fn pdfStd(z: T, alpha: T) T {
+            if (@abs(alpha) < 1e-12) {
+                // Slash closed form: f(z) = (φ(0)-φ(z))/z², f(0) = φ(0)/2
+                if (z == 0.0) return phi0val() / 2.0;
+                return (phi0val() - phi(z)) / (z * z);
+            }
+            if (z == 0.0) {
+                // At z=0: f_std(0) = 2 * ∫₀¹ v · φ(0) · Φ(0) dv = 2 * φ(0) * 0.5 * ∫₀¹ v dv
+                // = 2 * φ(0) * 0.5 * 0.5 = φ(0)/2
+                return phi0val() / 2.0;
+            }
+
+            // Composite Simpson's rule over v ∈ [0,1]
+            const n_panels: usize = 150;
+            const h = 1.0 / @as(T, @floatFromInt(n_panels));
+
+            var sum: T = 0.0;
+            var i: usize = 0;
+            while (i <= n_panels) : (i += 1) {
+                const v = @as(T, @floatFromInt(i)) * h;
+                const phi_zv = phi(z * v);
+                const Phi_azv = Phi(alpha * z * v);
+                const contrib = v * phi_zv * Phi_azv;
+
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+
+            return 2.0 * sum * h / 3.0;
+        }
+
+        // --- Lifecycle ---
+
+        /// Initialize SkewSlash distribution with location xi and scale omega > 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, omega: T, alpha: T) DistributionError!Self {
+            if (!math.isFinite(xi)) return error.InvalidParameter;
+            if (omega <= 0.0 or !math.isFinite(omega)) return error.InvalidParameter;
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .xi = xi, .omega = omega, .alpha = alpha };
+        }
+
+        /// Assert all parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.xi)) return error.InvalidParameter;
+            if (self.omega <= 0.0 or !math.isFinite(self.omega)) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Probability density function.
+        /// f(x) = f_std((x-ξ)/ω; α) / ω
+        /// Time: O(150) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+            return pdfStd(z, self.alpha) / self.omega;
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function via the closed-form representation
+        /// F(x) = ∫₀¹ Φ_skew(z·u; α) du, where z = (x-ξ)/ω and Φ_skew is the
+        /// standard skew-normal CDF (Azzalini's Φ(t) - 2·T(t,α) via Owen's T).
+        /// Derived from X = ξ + ω·Z/U: F(x) = P(Z ≤ z·U) = E_U[Φ_skew(z·U)].
+        /// Avoids the truncation/resolution bias of integrating the heavy-tailed
+        /// pdf directly over an unbounded domain. Reduces exactly to Slash's
+        /// closed form at α=0 since Owen's T(t,0) = 0.
+        /// Time: O(200 * 16) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+
+            const n_panels: u32 = 200;
+            const du = 1.0 / @as(T, @floatFromInt(n_panels));
+            var sum: T = 0.0;
+            var i: u32 = 0;
+            while (i <= n_panels) : (i += 1) {
+                const u = @as(T, @floatFromInt(i)) * du;
+                const contrib = PhiSkew(z * u, self.alpha);
+
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            const integral = sum * du / 3.0;
+
+            // Clamp to [0, 1]
+            if (integral < 0.0) return 0.0;
+            if (integral > 1.0) return 1.0;
+            return integral;
+        }
+
+        /// Survival function: 1 - CDF(x).
+        /// Time: O(200 * 16) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) via bisection search.
+        /// Returns NaN for p outside [0,1]; -∞ for p=0; +∞ for p=1.
+        /// Time: O(100 * 200 * 16) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            var lo: T = self.xi - 100.0 * self.omega;
+            var hi: T = self.xi + 100.0 * self.omega;
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-10 * (1.0 + @abs(mid))) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) / 2.0;
+        }
+
+        // --- Moments ---
+
+        /// Mean: undefined (NaN) — the 1/x² tail of SkewSlash means no finite moments exist for any alpha.
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Variance: undefined (NaN) — the 1/x² tail means variance doesn't exist for any alpha.
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Mode: no closed form — found via golden section search.
+        /// Time: O(100 * 150) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const left = self.xi - 10.0 * self.omega;
+            const right = self.xi + 10.0 * self.omega;
+
+            var a = left;
+            var b = right;
+            const golden_ratio = (1.0 + @sqrt(5.0)) / 2.0;
+            const resphi = 2.0 - golden_ratio;
+
+            for (0..100) |_| {
+                if (@abs(b - a) < 1e-10) break;
+                const x1 = a + resphi * (b - a);
+                const x2 = b - resphi * (b - a);
+                if (self.pdf(x1) > self.pdf(x2)) {
+                    b = x2;
+                } else {
+                    a = x1;
+                }
+            }
+
+            return (a + b) / 2.0;
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy via numerical integration of -f(x)·log(f(x)).
+        /// Time: O(300 * 150) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const left = self.xi - 50.0 * self.omega;
+            const right = self.xi + 50.0 * self.omega;
+
+            const n_panels: u32 = 300;
+            const dx = (right - left) / @as(T, @floatFromInt(n_panels));
+
+            var sum: T = 0.0;
+            var i: u32 = 0;
+            while (i <= n_panels) : (i += 1) {
+                const x_eval = left + @as(T, @floatFromInt(i)) * dx;
+                const f_x = self.pdf(x_eval);
+                const contrib: T = if (f_x > 0.0) f_x * @log(f_x) else 0.0;
+
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            const integral = sum * dx / 3.0;
+
+            return -integral;
+        }
+
+        // --- Sampling ---
+
+        /// Sample via skew-normal construction: Z = δ·|Z₁| + √(1-δ²)·Z₂, then X = ξ + ω·Z/U.
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const alpha_sq = self.alpha * self.alpha;
+            const delta = self.alpha / @sqrt(1.0 + alpha_sq);
+            const sqrt_1_minus_delta_sq = @sqrt(1.0 - delta * delta);
+
+            // Generate standard normal z1 using Box-Muller
+            const uniform1 = rng.float(T);
+            const uniform2 = rng.float(T);
+            const z1 = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2);
+
+            // Generate standard normal z2
+            const uniform3 = rng.float(T);
+            const uniform4 = rng.float(T);
+            const z2 = @sqrt(-2.0 * @log(uniform3)) * @cos(2.0 * math.pi * uniform4);
+
+            // Skew-normal component
+            const z = delta * @abs(z1) + sqrt_1_minus_delta_sq * z2;
+
+            // U ~ Uniform(0,1), avoid 0
+            const u = @max(rng.float(T), math.floatEps(T));
+
+            // SkewSlash = xi + omega * Z / U
+            return self.xi + self.omega * z / u;
+        }
+    };
+}
+
+// ============================================================================
+// SkewSlash Distribution Tests (170th distribution)
+// ============================================================================
+// Azzalini skew-slash distribution
+// Parameters: xi (location), omega (scale > 0), alpha (skewness)
+// Reduces to Slash(xi, omega) when alpha=0
+// PDF: f(x) = (2/ω) * ∫₀¹ u · φ(z·u) · Φ(α·z·u) du / ω where z = (x-ξ)/ω
+// No closed-form pdf, cdf, mean, variance — numeric integration required
+
+// --- init tests ---
+
+test "SkewSlash: init with valid xi=0, omega=1, alpha=0 succeeds" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    try expect(dist.xi == 0.0);
+    try expect(dist.omega == 1.0);
+    try expect(dist.alpha == 0.0);
+}
+
+test "SkewSlash: init with valid xi=1, omega=2, alpha=1.5 succeeds" {
+    const dist = try SkewSlash(f64).init(1.0, 2.0, 1.5);
+    try expect(dist.xi == 1.0);
+    try expect(dist.omega == 2.0);
+    try expect(dist.alpha == 1.5);
+}
+
+test "SkewSlash: init with negative alpha succeeds" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -2.5);
+    try expect(dist.alpha == -2.5);
+}
+
+test "SkewSlash: init with omega=0 returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(0.0, 0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with omega<0 returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(0.0, -1.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with omega=nan returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(0.0, math.nan(f64), 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with omega=inf returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(0.0, math.inf(f64), 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with xi=nan returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(math.nan(f64), 1.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with xi=inf returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(math.inf(f64), 1.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with alpha=nan returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(0.0, 1.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewSlash: init with alpha=inf returns error.InvalidParameter" {
+    const result = SkewSlash(f64).init(0.0, 1.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+// --- validate tests ---
+
+test "SkewSlash: validate passes for valid distribution" {
+    const dist = try SkewSlash(f64).init(1.0, 2.0, 1.5);
+    try dist.validate();
+}
+
+test "SkewSlash: validate passes for alpha=0" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+// --- pdf ground truth tests (from scratchpad, xi=0, omega=1) ---
+
+test "SkewSlash: pdf(alpha=1.0, x=-2.0) ≈ 0.02893 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.0289276125196592355696129212203), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=1.0, x=-0.5) ≈ 0.13944 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(-0.5);
+    try expectApproxEqAbs(@as(f64, 0.139444947880790946301118026209), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=1.0, x=0.0) ≈ 0.19947 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.199471140200716338969973029967), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=1.0, x=0.5) ≈ 0.23557 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.5);
+    try expectApproxEqAbs(@as(f64, 0.235570681216274655021006920494), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=1.0, x=1.0) ≈ 0.22950 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.229502189563104451262193079473), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=1.0, x=2.0) ≈ 0.14355 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.143548044424463077425078008542), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=-1.0, x=-2.0) ≈ 0.14355 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const p = dist.pdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.143548044424463077425078008542), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=-1.0, x=1.0) ≈ 0.08444 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.0844409222014742050220386545247), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=2.5, x=-2.0) ≈ 0.00713 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const p = dist.pdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.00713341697411132265310359394339), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=2.5, x=0.5) ≈ 0.29441 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const p = dist.pdf(0.5);
+    try expectApproxEqAbs(@as(f64, 0.294405886733018433268863950672), p, 1e-4);
+}
+
+test "SkewSlash: pdf(alpha=2.5, x=2.0) ≈ 0.16534 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const p = dist.pdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.165342239970010990341587335818), p, 1e-4);
+}
+
+// --- CRITICAL anchor test: alpha=0 reduces EXACTLY to Slash ---
+
+test "SkewSlash alpha=0: pdf at x=-2.0 reduces exactly to Slash" {
+    const dist_skew = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const dist_slash = try Slash(f64).init(0.0, 1.0);
+    const p_skew = dist_skew.pdf(-2.0);
+    const p_slash = dist_slash.pdf(-2.0);
+    try expectApproxEqAbs(p_slash, p_skew, 1e-10);
+}
+
+test "SkewSlash alpha=0: pdf at x=0.0 reduces exactly to Slash" {
+    const dist_skew = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const dist_slash = try Slash(f64).init(0.0, 1.0);
+    const p_skew = dist_skew.pdf(0.0);
+    const p_slash = dist_slash.pdf(0.0);
+    try expectApproxEqAbs(p_slash, p_skew, 1e-10);
+}
+
+test "SkewSlash alpha=0: pdf at x=0.5 reduces exactly to Slash" {
+    const dist_skew = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const dist_slash = try Slash(f64).init(0.0, 1.0);
+    const p_skew = dist_skew.pdf(0.5);
+    const p_slash = dist_slash.pdf(0.5);
+    try expectApproxEqAbs(p_slash, p_skew, 1e-10);
+}
+
+test "SkewSlash alpha=0: pdf at x=1.0 reduces exactly to Slash" {
+    const dist_skew = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const dist_slash = try Slash(f64).init(0.0, 1.0);
+    const p_skew = dist_skew.pdf(1.0);
+    const p_slash = dist_slash.pdf(1.0);
+    try expectApproxEqAbs(p_slash, p_skew, 1e-10);
+}
+
+test "SkewSlash alpha=0: pdf at x=3.0 reduces exactly to Slash" {
+    const dist_skew = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const dist_slash = try Slash(f64).init(0.0, 1.0);
+    const p_skew = dist_skew.pdf(3.0);
+    const p_slash = dist_slash.pdf(3.0);
+    try expectApproxEqAbs(p_slash, p_skew, 1e-10);
+}
+
+test "SkewSlash alpha=0 with shift: pdf reduces exactly to Slash(xi,omega)" {
+    const dist_skew = try SkewSlash(f64).init(1.0, 2.0, 0.0);
+    const dist_slash = try Slash(f64).init(1.0, 2.0);
+    const p_skew = dist_skew.pdf(2.0);
+    const p_slash = dist_slash.pdf(2.0);
+    try expectApproxEqAbs(p_slash, p_skew, 1e-10);
+}
+
+// --- z=0 anchor test: pdf(xi) = φ(0)/2 regardless of alpha ---
+
+test "SkewSlash: pdf(xi) = 0.19947 for alpha=1.0" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    const expected = 0.199471140200716339;
+    try expectApproxEqAbs(expected, p, 1e-4);
+}
+
+test "SkewSlash: pdf(xi) = 0.19947 for alpha=-1.0 (z=0 independent of alpha)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const p = dist.pdf(0.0);
+    const expected = 0.199471140200716339;
+    try expectApproxEqAbs(expected, p, 1e-4);
+}
+
+test "SkewSlash: pdf(xi) = 0.19947 for alpha=2.5" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const p = dist.pdf(0.0);
+    const expected = 0.199471140200716339;
+    try expectApproxEqAbs(expected, p, 1e-4);
+}
+
+// --- Skew symmetry test: f(x; alpha) = f(-x; -alpha) ---
+
+test "SkewSlash: skew symmetry f(x; alpha) = f(-x; -alpha) at x=-1.0, alpha=1.0" {
+    const dist_pos = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const dist_neg = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const p_pos = dist_pos.pdf(-1.0);
+    const p_neg = dist_neg.pdf(1.0);
+    try expectApproxEqAbs(p_pos, p_neg, 1e-4);
+}
+
+test "SkewSlash: skew symmetry f(x; alpha) = f(-x; -alpha) at x=-2.0, alpha=2.5" {
+    const dist_pos = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const dist_neg = try SkewSlash(f64).init(0.0, 1.0, -2.5);
+    const p_pos = dist_pos.pdf(-2.0);
+    const p_neg = dist_neg.pdf(2.0);
+    try expectApproxEqAbs(p_pos, p_neg, 1e-4);
+}
+
+test "SkewSlash: pdf always positive" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const p1 = dist.pdf(-2.0);
+    const p2 = dist.pdf(0.0);
+    const p3 = dist.pdf(2.0);
+    try expect(p1 > 0.0);
+    try expect(p2 > 0.0);
+    try expect(p3 > 0.0);
+}
+
+// --- cdf ground truth tests (from scratchpad, xi=0, omega=1) ---
+
+test "SkewSlash: cdf(alpha=0.0, x=-2.0) ≈ 0.1952 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.195225787225), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=0.0, x=0.0) = 0.5 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=0.0, x=1.0) ≈ 0.6844 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.684373191854), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=0.0, x=3.0) ≈ 0.8671 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.867146625022), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=1.0, x=-2.0) ≈ 0.0584 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.0583727934393), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=1.0, x=0.0) = 0.25 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.25), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=1.0, x=1.0) ≈ 0.4784 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.478358793155), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=1.0, x=3.0) ≈ 0.7732 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.773242323884), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=-1.0, x=-2.0) ≈ 0.3321 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.332078783826), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=-1.0, x=0.0) = 0.75 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.75), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=-1.0, x=1.0) ≈ 0.8904 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.890387588493), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=-1.0, x=3.0) ≈ 0.9611 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.96105092616), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=2.5, x=-2.0) ≈ 0.0143 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.0142668357183), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=2.5, x=0.0) ≈ 0.1211 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.121118942343), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=2.5, x=1.0) ≈ 0.3972 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.397243667059), c, 1e-3);
+}
+
+test "SkewSlash: cdf(alpha=2.5, x=3.0) ≈ 0.7438 (verified ground truth)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 2.5);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.74380447403), c, 1e-3);
+}
+
+// --- sf = 1 - cdf consistency ---
+
+test "SkewSlash: sf(x) = 1 - cdf(x)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try expectApproxEqAbs(1.0, c + s, 1e-8);
+}
+
+test "SkewSlash: sf(x) = 1 - cdf(x) at x=-1.5" {
+    const dist = try SkewSlash(f64).init(1.0, 2.0, 2.5);
+    const x = -1.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try expectApproxEqAbs(1.0, c + s, 1e-8);
+}
+
+// --- cdf monotonicity ---
+
+test "SkewSlash: cdf is monotonically increasing" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c1 = dist.cdf(-2.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(2.0);
+    try expect(c1 < c2 and c2 < c3);
+}
+
+test "SkewSlash: cdf monotonically increasing for alpha=-1.0" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const c1 = dist.cdf(-1.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(1.0);
+    try expect(c1 < c2 and c2 < c3);
+}
+
+test "SkewSlash: cdf approaches 0 at far left" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-100.0);
+    try expect(c < 0.01);
+}
+
+test "SkewSlash: cdf approaches 1 at far right" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(100.0);
+    try expect(c > 0.99);
+}
+
+// --- quantile edge cases ---
+
+test "SkewSlash: quantile(0.0) = -inf" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const q = dist.quantile(0.0);
+    try expect(math.isNegativeInf(q));
+}
+
+test "SkewSlash: quantile(1.0) = +inf" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const q = dist.quantile(1.0);
+    try expect(math.isPositiveInf(q));
+}
+
+test "SkewSlash: quantile(-0.1) returns NaN for invalid p" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const q = dist.quantile(-0.1);
+    try expect(math.isNan(q));
+}
+
+test "SkewSlash: quantile(1.1) returns NaN for invalid p" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const q = dist.quantile(1.1);
+    try expect(math.isNan(q));
+}
+
+// --- quantile round-trip ---
+
+test "SkewSlash: round-trip quantile(cdf(x)) ≈ x at x=0.5" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const q = dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-2);
+}
+
+test "SkewSlash: round-trip quantile(cdf(x)) ≈ x at x=1.0" {
+    const dist = try SkewSlash(f64).init(1.0, 2.0, 2.0);
+    const x = 1.0;
+    const c = dist.cdf(x);
+    const q = dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-2);
+}
+
+test "SkewSlash: quantile is monotonically increasing" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const q1 = dist.quantile(0.25);
+    const q2 = dist.quantile(0.5);
+    const q3 = dist.quantile(0.75);
+    try expect(q1 < q2 and q2 < q3);
+}
+
+// --- mean and variance must be NaN (undefined moments) ---
+
+test "SkewSlash: mean returns NaN (undefined for all alpha)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "SkewSlash: mean returns NaN for alpha=1.0 (undefined)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "SkewSlash: variance returns NaN (undefined for all alpha)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "SkewSlash: variance returns NaN for alpha=-2.5 (undefined)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -2.5);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+// --- mode tests ---
+
+test "SkewSlash: mode is finite" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const mode = dist.mode();
+    try expect(math.isFinite(mode));
+}
+
+test "SkewSlash alpha=0: mode ≈ xi (symmetric case)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const mode = dist.mode();
+    try expectApproxEqAbs(0.0, mode, 0.1);
+}
+
+test "SkewSlash alpha=0: mode = xi for arbitrary xi" {
+    const dist = try SkewSlash(f64).init(5.0, 1.0, 0.0);
+    const mode = dist.mode();
+    try expectApproxEqAbs(5.0, mode, 0.1);
+}
+
+test "SkewSlash alpha=1: mode > xi (positive skew shifts mode)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const mode = dist.mode();
+    try expect(mode > 0.0);
+}
+
+test "SkewSlash alpha=-1: mode < xi (negative skew shifts mode)" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, -1.0);
+    const mode = dist.mode();
+    try expect(mode < 0.0);
+}
+
+test "SkewSlash: mode is local maximum (pdf sanity check)" {
+    const dist = try SkewSlash(f64).init(1.0, 2.0, 2.0);
+    const mode = dist.mode();
+    const epsilon = 0.01;
+    const p_mode = dist.pdf(mode);
+    const p_plus = dist.pdf(mode + epsilon);
+    const p_minus = dist.pdf(mode - epsilon);
+    try expect(p_mode >= p_plus - 1e-10);
+    try expect(p_mode >= p_minus - 1e-10);
+}
+
+// --- entropy tests ---
+
+test "SkewSlash: entropy is finite and positive" {
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h > 0.0);
+}
+
+test "SkewSlash: entropy increases with omega (scale parameter)" {
+    const dist1 = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    const dist2 = try SkewSlash(f64).init(0.0, 2.0, 0.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try expect(h2 > h1);
+}
+
+// --- sample tests ---
+
+test "SkewSlash: sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try expect(math.isFinite(s));
+}
+
+test "SkewSlash: 100 samples all finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try expect(math.isFinite(s));
+    }
+}
+
+test "SkewSlash: multiple samples show variety" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 1.0);
+    var samples = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples[i] = dist.sample(rng.random());
+    }
+    var has_diff = false;
+    for (1..10) |i| {
+        if (samples[i] != samples[0]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try expect(has_diff);
+}
+
+test "SkewSlash: 100000 samples alpha=0 empirical mean near xi (statistical test)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewSlash(f64).init(0.0, 1.0, 0.0);
+    var sum: f64 = 0.0;
+    const n = 100000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+    // Heavy-tailed distribution, empirical mean can be large, accept 0.5 tolerance
+    try expectApproxEqAbs(0.0, empirical_mean, 0.5);
+}
+
+test "SkewSlash: sample distribution shifts with increasing alpha (statistical check)" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(42);
+    const dist_pos = try SkewSlash(f64).init(0.0, 1.0, 3.0);
+    const dist_neg = try SkewSlash(f64).init(0.0, 1.0, -3.0);
+    var sum_pos: f64 = 0.0;
+    var sum_neg: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum_pos += dist_pos.sample(rng1.random());
+        sum_neg += dist_neg.sample(rng2.random());
+    }
+    const mean_pos = sum_pos / @as(f64, @floatFromInt(n));
+    const mean_neg = sum_neg / @as(f64, @floatFromInt(n));
+    // Positive alpha should shift mean rightward, negative leftward
+    try expect(mean_pos > mean_neg);
+}
+
+// --- f32 support tests ---
+
+test "SkewSlash: f32 init succeeds" {
+    const dist = try SkewSlash(f32).init(0.0, 1.0, 0.5);
+    try expect(dist.omega == 1.0);
+}
+
+test "SkewSlash: f32 pdf and cdf are finite" {
+    const dist = try SkewSlash(f32).init(0.0, 1.0, 0.5);
+    const p = dist.pdf(0.0);
+    const c = dist.cdf(0.0);
+    try expect(math.isFinite(p));
+    try expect(math.isFinite(c));
+}
+
+test "SkewSlash: f32 sample returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try SkewSlash(f32).init(0.0, 1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try expect(math.isFinite(s));
+}
