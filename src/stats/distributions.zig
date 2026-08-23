@@ -104785,3 +104785,466 @@ test "BenktanderI: validate fails for b not finite" {
     var dist = BenktanderI(f64){ .a = 2.0, .b = math.inf(f64) };
     try testing.expectError(error.InvalidParameter, dist.validate());
 }
+
+// ============================================================================
+// Beta-Negative-Binomial Distribution (176th)
+// ============================================================================
+
+/// Beta-Negative-Binomial distribution — a NegativeBinomial(r, p) with the
+/// success probability p mixed out over a Beta(alpha, beta) prior.
+///
+/// P(X=k) = [Γ(r+k) / (Γ(r)·k!)] · B(r+α, k+β) / B(α, β), for k = 0, 1, 2, ...
+///
+/// Time: O(1) for pmf/logpmf/mean/variance | O(k) for cdf/quantile/sample/mode
+pub fn BetaNegativeBinomial(comptime T: type) type {
+    return struct {
+        r: T,
+        alpha: T,
+        beta: T,
+        log_beta_ab: T, // precomputed logBeta(alpha, beta)
+
+        const Self = @This();
+
+        /// Initialize BetaNegativeBinomial(r, alpha, beta).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(r: T, alpha: T, beta: T) DistributionError!Self {
+            if (!(r > 0.0) or !math.isFinite(r)) return error.InvalidParameter;
+            if (!(alpha > 0.0) or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (!(beta > 0.0) or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{
+                .r = r,
+                .alpha = alpha,
+                .beta = beta,
+                .log_beta_ab = logBeta(alpha, beta),
+            };
+        }
+
+        /// Log probability mass function log P(X=k).
+        ///
+        /// log P(X=k) = lgamma(r+k) - lgamma(r) - lgamma(k+1) + logB(r+α, k+β) - logB(α, β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const k_f: T = @floatFromInt(k);
+            const log_binom = logGamma(self.r + k_f) - logGamma(self.r) - logGamma(k_f + 1.0);
+            const log_beta_k = logBeta(self.r + self.alpha, k_f + self.beta);
+            return log_binom + log_beta_k - self.log_beta_ab;
+        }
+
+        /// Probability mass function P(X=k).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Cumulative distribution function P(X ≤ k).
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k) : (j += 1) {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - CDF(k).
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Mean: r·β/(α-1) for α > 1, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.alpha <= 1.0) return math.inf(T);
+            return self.r * self.beta / (self.alpha - 1.0);
+        }
+
+        /// Variance: r·β·(r+α-1)·(β+α-1) / [(α-1)²·(α-2)] for α > 2, else +∞.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.alpha <= 2.0) return math.inf(T);
+            const a_m1 = self.alpha - 1.0;
+            return self.r * self.beta * (self.r + self.alpha - 1.0) * (self.beta + self.alpha - 1.0) / (a_m1 * a_m1 * (self.alpha - 2.0));
+        }
+
+        /// Mode of the distribution, found by walking the pmf ratio recurrence
+        /// P(k+1)/P(k) = (r+k)/(k+1) · (k+β)/(r+α+k+β) forward while it stays ≥ 1.
+        ///
+        /// Time: O(mode) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var k: u64 = 0;
+            while (true) {
+                const kf: T = @floatFromInt(k);
+                const ratio = (self.r + kf) / (kf + 1.0) * (kf + self.beta) / (self.r + self.alpha + kf + self.beta);
+                if (ratio < 1.0) return k;
+                k += 1;
+                if (k > 10_000_000) return k;
+            }
+        }
+
+        /// Quantile function: smallest k such that CDF(k) ≥ prob.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) error{InvalidProbability}!u64 {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            if (prob == 0.0) return 0;
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k < 10_000_000) : (k += 1) {
+                sum += self.pmf(k);
+                if (sum >= prob) return k;
+            }
+            return k;
+        }
+
+        /// Generate a random sample via inverse-CDF search.
+        ///
+        /// Time: O(E[X]) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k < 10_000_000) : (k += 1) {
+                sum += self.pmf(k);
+                if (sum >= u) return k;
+            }
+            return k;
+        }
+
+        /// Validate internal invariants: r > 0, α > 0, β > 0, all finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.r > 0.0) or !math.isFinite(self.r)) return error.InvalidParameter;
+            if (!(self.alpha > 0.0) or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (!(self.beta > 0.0) or !math.isFinite(self.beta)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// BetaNegativeBinomial Distribution Tests
+// ============================================================================
+// (Distribution implementation to follow; tests written in TDD Red phase)
+
+test "BetaNegativeBinomial: init with valid r=2 alpha=3 beta=2" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    try expectApproxEqRel(2.0, dist.r, 1e-10);
+    try expectApproxEqRel(3.0, dist.alpha, 1e-10);
+    try expectApproxEqRel(2.0, dist.beta, 1e-10);
+}
+
+test "BetaNegativeBinomial: init rejects r=0" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(0.0, 3.0, 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects negative r" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(-1.0, 3.0, 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects non-finite r (inf)" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(math.inf(f64), 3.0, 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects non-finite r (nan)" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(math.nan(f64), 3.0, 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects alpha=0" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, 0.0, 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects negative alpha" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, -1.0, 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects non-finite alpha (inf)" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, math.inf(f64), 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects non-finite alpha (nan)" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, math.nan(f64), 2.0));
+}
+
+test "BetaNegativeBinomial: init rejects beta=0" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, 3.0, 0.0));
+}
+
+test "BetaNegativeBinomial: init rejects negative beta" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, 3.0, -1.0));
+}
+
+test "BetaNegativeBinomial: init rejects non-finite beta (inf)" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, 3.0, math.inf(f64)));
+}
+
+test "BetaNegativeBinomial: init rejects non-finite beta (nan)" {
+    try expectError(error.InvalidParameter, BetaNegativeBinomial(f64).init(2.0, 3.0, math.nan(f64)));
+}
+
+test "BetaNegativeBinomial: pmf(0) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.3999999999999991;
+    try expectApproxEqRel(expected, dist.pmf(0), 1e-9);
+}
+
+test "BetaNegativeBinomial: pmf(1) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.22857142857142776;
+    try expectApproxEqRel(expected, dist.pmf(1), 1e-9);
+}
+
+test "BetaNegativeBinomial: pmf(2) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.1285714285714283;
+    try expectApproxEqRel(expected, dist.pmf(2), 1e-9);
+}
+
+test "BetaNegativeBinomial: pmf(3) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.076190476190476;
+    try expectApproxEqRel(expected, dist.pmf(3), 1e-9);
+}
+
+test "BetaNegativeBinomial: pmf(4) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.0476190476190477;
+    try expectApproxEqRel(expected, dist.pmf(4), 1e-9);
+}
+
+test "BetaNegativeBinomial: pmf(5) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.031168831168831047;
+    try expectApproxEqRel(expected, dist.pmf(5), 1e-9);
+}
+
+test "BetaNegativeBinomial: cdf(0) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.3999999999999991;
+    try expectApproxEqRel(expected, dist.cdf(0), 1e-9);
+}
+
+test "BetaNegativeBinomial: cdf(1) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.6285714285714268;
+    try expectApproxEqRel(expected, dist.cdf(1), 1e-9);
+}
+
+test "BetaNegativeBinomial: cdf(2) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.7571428571428551;
+    try expectApproxEqRel(expected, dist.cdf(2), 1e-9);
+}
+
+test "BetaNegativeBinomial: cdf(3) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.8333333333333311;
+    try expectApproxEqRel(expected, dist.cdf(3), 1e-9);
+}
+
+test "BetaNegativeBinomial: cdf(4) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.8809523809523788;
+    try expectApproxEqRel(expected, dist.cdf(4), 1e-9);
+}
+
+test "BetaNegativeBinomial: cdf(5) Case A (r=2, alpha=3, beta=2)" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 0.9121212121212099;
+    try expectApproxEqRel(expected, dist.cdf(5), 1e-9);
+}
+
+test "BetaNegativeBinomial: logpmf consistent with pmf Case A" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    for (0..6) |k| {
+        const pmf_k = dist.pmf(@intCast(k));
+        const logpmf_k = dist.logpmf(@intCast(k));
+        if (pmf_k > 0.0) {
+            const expected_logpmf = @log(pmf_k);
+            try expectApproxEqRel(expected_logpmf, logpmf_k, 1e-9);
+        }
+    }
+}
+
+test "BetaNegativeBinomial: cdf is non-decreasing Case A" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    var prev: f64 = 0.0;
+    for (0..50) |k| {
+        const cdf_k = dist.cdf(@intCast(k));
+        try testing.expect(cdf_k >= prev - 1e-10);
+        prev = cdf_k;
+    }
+}
+
+test "BetaNegativeBinomial: sf plus cdf equals 1 Case A" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    for (0..20) |k| {
+        const cdf_val = dist.cdf(@intCast(k));
+        const sf_val = dist.sf(@intCast(k));
+        try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+    }
+}
+
+test "BetaNegativeBinomial: mean Case A (r=2, alpha=3, beta=2) equals 2.0" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 2.0;
+    try expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "BetaNegativeBinomial: mean Case B (r=5, alpha=3, beta=2) equals 5.0" {
+    const dist = try BetaNegativeBinomial(f64).init(5.0, 3.0, 2.0);
+    const expected = 5.0;
+    try expectApproxEqRel(expected, dist.mean(), 1e-10);
+}
+
+test "BetaNegativeBinomial: mean Case C (r=1, alpha=0.5, beta=1) is infinite" {
+    const dist = try BetaNegativeBinomial(f64).init(1.0, 0.5, 1.0);
+    const mean_val = dist.mean();
+    try testing.expect(math.isPositiveInf(mean_val));
+}
+
+test "BetaNegativeBinomial: variance Case A (r=2, alpha=3, beta=2) equals 16.0" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const expected = 16.0;
+    try expectApproxEqRel(expected, dist.variance(), 1e-9);
+}
+
+test "BetaNegativeBinomial: variance Case B (r=5, alpha=3, beta=2) equals 70.0" {
+    const dist = try BetaNegativeBinomial(f64).init(5.0, 3.0, 2.0);
+    const expected = 70.0;
+    try expectApproxEqRel(expected, dist.variance(), 1e-9);
+}
+
+test "BetaNegativeBinomial: variance Case D (r=1, alpha=1.5, beta=1) is infinite, mean finite" {
+    const dist = try BetaNegativeBinomial(f64).init(1.0, 1.5, 1.0);
+    const mean_val = dist.mean();
+    const var_val = dist.variance();
+    try expectApproxEqRel(2.0, mean_val, 1e-10);
+    try testing.expect(math.isPositiveInf(var_val));
+}
+
+test "BetaNegativeBinomial: mode Case A (r=2, alpha=3, beta=2) equals 0" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const mode_val = dist.mode();
+    try expectEqual(0, mode_val);
+}
+
+test "BetaNegativeBinomial: mode Case B (r=5, alpha=3, beta=2) equals 1 (interior mode)" {
+    const dist = try BetaNegativeBinomial(f64).init(5.0, 3.0, 2.0);
+    const mode_val = dist.mode();
+    try expectEqual(1, mode_val);
+}
+
+test "BetaNegativeBinomial: quantile rejects prob<0" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "BetaNegativeBinomial: quantile rejects prob>1" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "BetaNegativeBinomial: quantile(0.5) roundtrip with cdf Case A" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    const median_k = try dist.quantile(0.5);
+    const cdf_at_median = dist.cdf(median_k);
+    try testing.expect(cdf_at_median >= 0.5);
+    if (median_k > 0) {
+        const cdf_at_median_minus_1 = dist.cdf(median_k - 1);
+        try testing.expect(cdf_at_median_minus_1 <= 0.5 or cdf_at_median_minus_1 >= 0.5 - 1e-9);
+    }
+}
+
+test "BetaNegativeBinomial: sample produces reasonable values Case A" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0);
+        try testing.expect(sample_val < 10_000_000);
+    }
+}
+
+test "BetaNegativeBinomial: validate passes for valid params" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    try dist.validate();
+}
+
+test "BetaNegativeBinomial: validate fails for r=0" {
+    var dist = BetaNegativeBinomial(f64){
+        .r = 0.0,
+        .alpha = 3.0,
+        .beta = 2.0,
+        .log_beta_ab = 0.0,
+    };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaNegativeBinomial: validate fails for alpha=0" {
+    var dist = BetaNegativeBinomial(f64){
+        .r = 2.0,
+        .alpha = 0.0,
+        .beta = 2.0,
+        .log_beta_ab = 0.0,
+    };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaNegativeBinomial: validate fails for beta=0" {
+    var dist = BetaNegativeBinomial(f64){
+        .r = 2.0,
+        .alpha = 3.0,
+        .beta = 0.0,
+        .log_beta_ab = 0.0,
+    };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaNegativeBinomial: validate fails for non-finite r" {
+    var dist = BetaNegativeBinomial(f64){
+        .r = math.inf(f64),
+        .alpha = 3.0,
+        .beta = 2.0,
+        .log_beta_ab = 0.0,
+    };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaNegativeBinomial: validate fails for non-finite alpha" {
+    var dist = BetaNegativeBinomial(f64){
+        .r = 2.0,
+        .alpha = math.nan(f64),
+        .beta = 2.0,
+        .log_beta_ab = 0.0,
+    };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaNegativeBinomial: validate fails for non-finite beta" {
+    var dist = BetaNegativeBinomial(f64){
+        .r = 2.0,
+        .alpha = 3.0,
+        .beta = math.inf(f64),
+        .log_beta_ab = 0.0,
+    };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaNegativeBinomial: pmf sums to approximately 1 over wide k range Case A" {
+    const dist = try BetaNegativeBinomial(f64).init(2.0, 3.0, 2.0);
+    var sum: f64 = 0.0;
+    for (0..2001) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-4);
+}
