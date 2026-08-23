@@ -103467,6 +103467,209 @@ pub fn BenktanderII(comptime T: type) type {
 }
 
 // ============================================================================
+// BenktanderI Distribution — Gunnar Benktander's Type I heavy-tailed loss model
+// ============================================================================
+
+/// Benktander Type I distribution — a heavy-tailed continuous distribution used
+/// in actuarial science as an alternative to Pareto/Weibull for modeling losses.
+/// Parameters: a > 0 (shape), 0 < b <= a*(a+1)/2 (shape). Support: x >= 1.
+pub fn BenktanderI(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Create a BenktanderI(a, b) distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (a <= 0.0 or !math.isFinite(a)) return error.InvalidParameter;
+            if (b <= 0.0 or !math.isFinite(b)) return error.InvalidParameter;
+            const bound = a * (a + 1.0) / 2.0;
+            if (b > bound) return error.InvalidParameter;
+            return Self{ .a = a, .b = b };
+        }
+
+        /// Probability density function (PDF) at x.
+        ///
+        /// f(x) = [(1 + 2b·ln(x)/a)(1 + a + 2b·ln(x)) − 2b/a] · x^(−(2+a+b·ln(x)))
+        /// for x ≥ 1, else 0. Computed in numerically stable form using
+        /// lx = ln(x), coef = (1 + 2b*lx/a)*(1+a+2b*lx) - 2b/a,
+        /// f(x) = coef * exp(-(2+a)*lx - b*lx*lx).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 1.0) return 0.0;
+            const lx = @log(x);
+            const coef = (1.0 + 2.0 * self.b * lx / self.a) * (1.0 + self.a + 2.0 * self.b * lx) - 2.0 * self.b / self.a;
+            return coef * @exp(-(2.0 + self.a) * lx - self.b * lx * lx);
+        }
+
+        /// Log probability density function (log PDF) at x.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 1.0) return -math.inf(T);
+            return @log(self.pdf(x));
+        }
+
+        /// Cumulative distribution function (CDF) at x.
+        ///
+        /// F(x) = 1 − (1 + 2b·ln(x)/a) · x^(−(a+1+b·ln(x))) for x ≥ 1, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 1.0) return 0.0;
+            return 1.0 - self.sf(x);
+        }
+
+        /// Survival function (SF) at x: P(X > x) = 1 − CDF(x).
+        ///
+        /// S(x) = (1 + 2b·ln(x)/a) · x^(−(a+1+b·ln(x))) for x ≥ 1, else 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 1.0) return 1.0;
+            const lx = @log(x);
+            return (1.0 + 2.0 * self.b * lx / self.a) * @exp(-(self.a + 1.0) * lx - self.b * lx * lx);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p.
+        ///
+        /// No closed form — uses bisection search on cdf().
+        ///
+        /// Time: O(log(1/tol)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 1.0;
+            if (p == 1.0) return math.inf(T);
+
+            var low: T = 1.0;
+            var high: T = 2.0;
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+            }
+
+            const tol: T = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+            while (high - low > tol and iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                if (self.cdf(mid) < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            return (low + high) / 2.0;
+        }
+
+        /// Mean (expected value) of the distribution.
+        ///
+        /// E[X] = 1 + 1/a
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return 1.0 + 1.0 / self.a;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var[X] = (−√b + a·√π·erfcx(z)) / (a²·√b), where z = (a−1)/(2√b)
+        /// and erfcx(z) = exp(z²)·erfc(z).
+        ///
+        /// Computed using overflow-safe erfcx via rational polynomial approximation:
+        /// for z ≥ 0, erfcx(z) = erfcxPoly(z); for z < 0, erfcx(z) = 2·exp(z²) − erfcxPoly(|z|).
+        /// The helper erfcxPoly uses Abramowitz & Stegun coefficients (same as erf()).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const a1: T = 0.254829592;
+            const a2: T = -0.284496736;
+            const a3: T = 1.421413741;
+            const a4: T = -1.453152027;
+            const a5: T = 1.061405429;
+            const p: T = 0.3275911;
+
+            // Helper to compute erfcx(x) = exp(x^2)*erfc(x) for x >= 0
+            // using rational approximation of erfc, scaled appropriately.
+            const erfcxPoly = struct {
+                fn compute(x_: T) T {
+                    const t = 1.0 / (1.0 + p * @abs(x_));
+                    return a1 * t + a2 * t * t + a3 * t * t * t + a4 * t * t * t * t + a5 * t * t * t * t * t;
+                }
+            }.compute;
+
+            const sqrt_b = @sqrt(self.b);
+            const sqrt_pi = @sqrt(math.pi);
+            const z = (self.a - 1.0) / (2.0 * sqrt_b);
+
+            const erfcx_term: T = if (z >= 0.0) blk: {
+                break :blk erfcxPoly(z);
+            } else blk: {
+                const z_sq = z * z;
+                if (z_sq > 700.0) {
+                    break :blk math.inf(T);
+                } else {
+                    break :blk 2.0 * @exp(z_sq) - erfcxPoly(-z);
+                }
+            };
+
+            const numerator = -sqrt_b + self.a * sqrt_pi * erfcx_term;
+            const denominator = self.a * self.a * sqrt_b;
+            return numerator / denominator;
+        }
+
+        /// Mode of the distribution (always 1).
+        ///
+        /// The PDF is strictly decreasing from x=1 for b < a*(a+1)/2 (strict inequality).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 1.0;
+        }
+
+        /// Median of the distribution: x such that CDF(x) = 0.5.
+        ///
+        /// No simple closed form — delegates to quantile(0.5).
+        ///
+        /// Time: O(log(1/tol)) | Space: O(1)
+        pub fn median(self: Self) DistributionError!T {
+            return self.quantile(0.5);
+        }
+
+        /// Generate a random sample from this distribution.
+        ///
+        /// Uses inverse transform sampling via quantile(U), U ~ Uniform(0,1).
+        ///
+        /// Time: O(log(1/tol)) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch 1.0;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BenktanderI(a={d}, b={d})", .{ self.a, self.b });
+        }
+
+        /// Validate distribution parameters.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= 0.0 or !math.isFinite(self.a)) return error.InvalidParameter;
+            if (self.b <= 0.0 or !math.isFinite(self.b)) return error.InvalidParameter;
+            const bound = self.a * (self.a + 1.0) / 2.0;
+            if (self.b > bound) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
 // BenktanderII Distribution Tests (174th distribution)
 // ============================================================================
 
@@ -103989,5 +104192,596 @@ test "BenktanderII: validate fails for b>1" {
 
 test "BenktanderII: validate fails for b not finite" {
     var dist = BenktanderII(f64){ .a = 2.0, .b = math.inf(f64) };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+// ============================================================================
+// BenktanderI Distribution Tests (175th distribution)
+// ============================================================================
+
+test "BenktanderI: init with valid params (a=2, b=1) succeeds" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.a);
+    try testing.expectEqual(@as(f64, 1.0), dist.b);
+}
+
+test "BenktanderI: init with valid params (a=1, b=0.5) succeeds" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    try testing.expectEqual(@as(f64, 1.0), dist.a);
+    try testing.expectEqual(@as(f64, 0.5), dist.b);
+}
+
+test "BenktanderI: init with valid params (a=3, b=2) succeeds" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    try testing.expectEqual(@as(f64, 3.0), dist.a);
+    try testing.expectEqual(@as(f64, 2.0), dist.b);
+}
+
+test "BenktanderI: init at exact boundary (a=2, b=3.0) succeeds" {
+    // bound is a*(a+1)/2 = 2*3/2 = 3.0, constraint is b <= bound
+    const dist = try BenktanderI(f64).init(2.0, 3.0);
+    try testing.expectEqual(@as(f64, 2.0), dist.a);
+    try testing.expectEqual(@as(f64, 3.0), dist.b);
+}
+
+test "BenktanderI: init fails for a=0" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(0.0, 0.5));
+}
+
+test "BenktanderI: init fails for a<0" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(-1.0, 0.5));
+}
+
+test "BenktanderI: init fails for a not finite (infinite)" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(math.inf(f64), 0.5));
+}
+
+test "BenktanderI: init fails for a not finite (NaN)" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(math.nan(f64), 0.5));
+}
+
+test "BenktanderI: init fails for b=0" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(1.0, 0.0));
+}
+
+test "BenktanderI: init fails for b<0" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(1.0, -0.5));
+}
+
+test "BenktanderI: init fails for b not finite (infinite)" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(1.0, math.inf(f64)));
+}
+
+test "BenktanderI: init fails for b not finite (NaN)" {
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(1.0, math.nan(f64)));
+}
+
+test "BenktanderI: init fails for b exceeding upper bound (a=1, b=1.01)" {
+    // bound for a=1 is 1*2/2 = 1.0, so b=1.01 exceeds it
+    try testing.expectError(error.InvalidParameter, BenktanderI(f64).init(1.0, 1.01));
+}
+
+test "BenktanderI: pdf at x<1 returns 0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.5));
+}
+
+test "BenktanderI: pdf at x=0 returns 0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "BenktanderI: cdf at x<1 returns 0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.5));
+}
+
+test "BenktanderI: cdf at x=0 returns 0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "BenktanderI: sf at x<1 returns 1" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.5));
+}
+
+test "BenktanderI: sf at x=0 returns 1" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "BenktanderI: pdf at x=1.0 (a=2, b=1) is 2.0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=1.5 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.730023565064943;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.5), 1e-9);
+}
+
+test "BenktanderI: pdf at x=2.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.248431137476602;
+    try testing.expectApproxEqRel(expected, dist.pdf(2.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=3.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.0365834019836201;
+    try testing.expectApproxEqRel(expected, dist.pdf(3.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=5.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.00182728999625419;
+    try testing.expectApproxEqRel(expected, dist.pdf(5.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=1.0 (a=1, b=0.5) is 1.0" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 1.0;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=1.5 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.649754370638445;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.5), 1e-9);
+}
+
+test "BenktanderI: pdf at x=2.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.349959752689089;
+    try testing.expectApproxEqRel(expected, dist.pdf(2.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=3.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.111463636820836;
+    try testing.expectApproxEqRel(expected, dist.pdf(3.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=5.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.0184440233265793;
+    try testing.expectApproxEqRel(expected, dist.pdf(5.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=1.0 (a=3, b=2) is 2.66666666666667" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 2.66666666666667;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=1.5 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.694577421924859;
+    try testing.expectApproxEqRel(expected, dist.pdf(1.5), 1e-9);
+}
+
+test "BenktanderI: pdf at x=2.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.139849976562138;
+    try testing.expectApproxEqRel(expected, dist.pdf(2.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=3.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.00712687524711493;
+    try testing.expectApproxEqRel(expected, dist.pdf(3.0), 1e-9);
+}
+
+test "BenktanderI: pdf at x=5.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.0000567027104081931;
+    try testing.expectApproxEqRel(expected, dist.pdf(5.0), 1e-9);
+}
+
+test "BenktanderI: logpdf equals log(pdf) at x=1.5 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const x = 1.5;
+    const logpdf_val = dist.logpdf(x);
+    const pdf_val = dist.pdf(x);
+    const expected = @log(pdf_val);
+    try testing.expectApproxEqRel(expected, logpdf_val, 1e-9);
+}
+
+test "BenktanderI: logpdf at x<1 returns -inf" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.5)));
+}
+
+test "BenktanderI: cdf at x=1.0 (a=2, b=1) is 0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(1.0));
+}
+
+test "BenktanderI: cdf at x=1.5 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.646696914899009;
+    try testing.expectApproxEqRel(expected, dist.cdf(1.5), 1e-9);
+}
+
+test "BenktanderI: cdf at x=2.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.869097894507973;
+    try testing.expectApproxEqRel(expected, dist.cdf(2.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=3.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.976751380276492;
+    try testing.expectApproxEqRel(expected, dist.cdf(3.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=5.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.998434373620168;
+    try testing.expectApproxEqRel(expected, dist.cdf(5.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=1.0 (a=1, b=0.5) is 0" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(1.0));
+}
+
+test "BenktanderI: cdf at x=1.5 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.424642048404408;
+    try testing.expectApproxEqRel(expected, dist.cdf(1.5), 1e-9);
+}
+
+test "BenktanderI: cdf at x=2.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.667106225018260;
+    try testing.expectApproxEqRel(expected, dist.cdf(2.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=3.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.872472435598776;
+    try testing.expectApproxEqRel(expected, dist.cdf(3.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=5.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 0.971415371850450;
+    try testing.expectApproxEqRel(expected, dist.cdf(5.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=1.0 (a=3, b=2) is 0" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(1.0));
+}
+
+test "BenktanderI: cdf at x=1.5 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.780955267897869;
+    try testing.expectApproxEqRel(expected, dist.cdf(1.5), 1e-9);
+}
+
+test "BenktanderI: cdf at x=2.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.953994135744532;
+    try testing.expectApproxEqRel(expected, dist.cdf(2.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=3.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.997277568217667;
+    try testing.expectApproxEqRel(expected, dist.cdf(3.0), 1e-9);
+}
+
+test "BenktanderI: cdf at x=5.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.999971688060371;
+    try testing.expectApproxEqRel(expected, dist.cdf(5.0), 1e-9);
+}
+
+test "BenktanderI: cdf is monotone increasing" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const cdf1 = dist.cdf(1.0);
+    const cdf1_5 = dist.cdf(1.5);
+    const cdf2 = dist.cdf(2.0);
+    const cdf5 = dist.cdf(5.0);
+    try testing.expect(cdf1 < cdf1_5);
+    try testing.expect(cdf1_5 < cdf2);
+    try testing.expect(cdf2 < cdf5);
+}
+
+test "BenktanderI: cdf approaches 1 for large x" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const result = dist.cdf(1e6);
+    try testing.expect(result > 0.9999);
+}
+
+test "BenktanderI: sf at x=1.0 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.sf(1.0));
+}
+
+test "BenktanderI: sf plus cdf equals 1 at x=1.5 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const x = 1.5;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-9);
+}
+
+test "BenktanderI: sf plus cdf equals 1 at x=2.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const x = 2.0;
+    const sum = dist.cdf(x) + dist.sf(x);
+    try testing.expectApproxEqRel(1.0, sum, 1e-9);
+}
+
+test "BenktanderI: sf decreases with x" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const sf1 = dist.sf(1.0);
+    const sf2 = dist.sf(2.0);
+    const sf5 = dist.sf(5.0);
+    try testing.expect(sf1 > sf2);
+    try testing.expect(sf2 > sf5);
+}
+
+test "BenktanderI: pdf integrates to approximately 1 (Simpson's rule sanity)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    const lo: f64 = 1.0;
+    const hi: f64 = 50.0;
+    const h = (hi - lo) / @as(f64, n);
+    var i: usize = 0;
+    while (i <= n) : (i += 1) {
+        const x = lo + @as(f64, @floatFromInt(i)) * h;
+        const w: f64 = if (i == 0 or i == n) 0.5 else 1.0;
+        sum += w * dist.pdf(x) * h;
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 0.01);
+}
+
+test "BenktanderI: pdf integrates to approximately 1 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    var sum: f64 = 0.0;
+    const n = 10000;
+    const lo: f64 = 1.0;
+    const hi: f64 = 50.0;
+    const h = (hi - lo) / @as(f64, n);
+    var i: usize = 0;
+    while (i <= n) : (i += 1) {
+        const x = lo + @as(f64, @floatFromInt(i)) * h;
+        const w: f64 = if (i == 0 or i == n) 0.5 else 1.0;
+        sum += w * dist.pdf(x) * h;
+    }
+    try testing.expectApproxEqAbs(1.0, sum, 0.01);
+}
+
+test "BenktanderI: mean (a=2, b=1) is 1.5" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 1.5;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-9);
+}
+
+test "BenktanderI: mean (a=1, b=0.5) is 2.0" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 2.0;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-9);
+}
+
+test "BenktanderI: mean (a=3, b=2) is 1.33333333333333" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 1.33333333333333;
+    try testing.expectApproxEqRel(expected, dist.mean(), 1e-9);
+}
+
+test "BenktanderI: mean is 1 + 1/a (formula check)" {
+    const a_vals = [_]f64{ 0.5, 1.0, 2.0, 5.0 };
+    for (a_vals) |a| {
+        const b = a * (a + 1) / 2.0 * 0.9; // stay under bound
+        const dist = try BenktanderI(f64).init(a, b);
+        const expected = 1.0 + 1.0 / a;
+        try testing.expectApproxEqRel(expected, dist.mean(), 1e-9);
+    }
+}
+
+test "BenktanderI: variance (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected = 0.295641360765047;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
+}
+
+test "BenktanderI: variance (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const expected = 1.50662827463100;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
+}
+
+test "BenktanderI: variance (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const expected = 0.107448736361822;
+    try testing.expectApproxEqRel(expected, dist.variance(), 1e-4);
+}
+
+test "BenktanderI: variance is positive" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expect(dist.variance() > 0.0);
+}
+
+test "BenktanderI: mode is 1.0 (generic case, a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.mode());
+}
+
+test "BenktanderI: mode is 1.0 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    try testing.expectEqual(@as(f64, 1.0), dist.mode());
+}
+
+test "BenktanderI: mode is 1.0 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    try testing.expectEqual(@as(f64, 1.0), dist.mode());
+}
+
+test "BenktanderI: median (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const med = try dist.median();
+    // Verify round-trip: cdf(median) should equal 0.5
+    const cdf_val = dist.cdf(med);
+    try testing.expectApproxEqRel(0.5, cdf_val, 1e-6);
+}
+
+test "BenktanderI: median (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const med = try dist.median();
+    const cdf_val = dist.cdf(med);
+    try testing.expectApproxEqRel(0.5, cdf_val, 1e-6);
+}
+
+test "BenktanderI: median (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const med = try dist.median();
+    const cdf_val = dist.cdf(med);
+    try testing.expectApproxEqRel(0.5, cdf_val, 1e-6);
+}
+
+test "BenktanderI: quantile at p=0 returns 1.0" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectEqual(@as(f64, 1.0), try dist.quantile(0.0));
+}
+
+test "BenktanderI: quantile at p=1 returns +inf" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expect(math.isPositiveInf(try dist.quantile(1.0)));
+}
+
+test "BenktanderI: quantile at p<0 returns error" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "BenktanderI: quantile at p>1 returns error" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "BenktanderI: quantile inverts cdf at p=0.25 (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const p = 0.25;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-6);
+}
+
+test "BenktanderI: quantile inverts cdf at p=0.5 (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-6);
+}
+
+test "BenktanderI: quantile inverts cdf at p=0.75 (a=3, b=2)" {
+    const dist = try BenktanderI(f64).init(3.0, 2.0);
+    const p = 0.75;
+    const q = try dist.quantile(p);
+    const cdf_val = dist.cdf(q);
+    try testing.expectApproxEqRel(p, cdf_val, 1e-6);
+}
+
+test "BenktanderI: quantile is non-decreasing" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "BenktanderI: sample is >= 1.0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(sample >= 1.0);
+    }
+}
+
+test "BenktanderI: sample is finite" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        const sample = dist.sample(rng);
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "BenktanderI: samples have reasonable mean (a=2, b=1)" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    const expected_mean = 1.5;
+    var sum: f64 = 0.0;
+    var i: usize = 0;
+    while (i < 10000) : (i += 1) {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / 10000.0;
+    try testing.expectApproxEqAbs(expected_mean, sample_mean, 0.1);
+}
+
+test "BenktanderI: validate passes for valid params (a=2, b=1)" {
+    const dist = try BenktanderI(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "BenktanderI: validate passes for valid params (a=1, b=0.5)" {
+    const dist = try BenktanderI(f64).init(1.0, 0.5);
+    try dist.validate();
+}
+
+test "BenktanderI: validate passes at boundary (a=2, b=3.0)" {
+    const dist = try BenktanderI(f64).init(2.0, 3.0);
+    try dist.validate();
+}
+
+test "BenktanderI: validate fails for a=0" {
+    var dist = BenktanderI(f64){ .a = 0.0, .b = 0.5 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BenktanderI: validate fails for a<0" {
+    var dist = BenktanderI(f64){ .a = -1.0, .b = 0.5 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BenktanderI: validate fails for a not finite" {
+    var dist = BenktanderI(f64){ .a = math.inf(f64), .b = 0.5 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BenktanderI: validate fails for b=0" {
+    var dist = BenktanderI(f64){ .a = 2.0, .b = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BenktanderI: validate fails for b<0" {
+    var dist = BenktanderI(f64){ .a = 2.0, .b = -0.5 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BenktanderI: validate fails for b exceeding bound (a=1, b=1.01)" {
+    var dist = BenktanderI(f64){ .a = 1.0, .b = 1.01 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BenktanderI: validate fails for b not finite" {
+    var dist = BenktanderI(f64){ .a = 2.0, .b = math.inf(f64) };
     try testing.expectError(error.InvalidParameter, dist.validate());
 }
