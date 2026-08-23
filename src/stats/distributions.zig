@@ -102778,3 +102778,508 @@ test "ZeroTruncatedBinomial: validate fails after manual invalid p assignment" {
     dist.p = 1.5;
     try expectError(error.InvalidParameter, dist.validate());
 }
+
+pub fn ZeroTruncatedNegativeBinomial(comptime T: type) type {
+    return struct {
+        r: u64,
+        p: T,
+
+        const Self = @This();
+        const MAX_K: usize = 100000;
+
+        /// Create a ZeroTruncatedNegativeBinomial distribution.
+        ///
+        /// Errors: r = 0 (no support), p outside (0,1) or non-finite, or p = 1
+        /// (the untruncated distribution is degenerate at 0, so the zero-truncated
+        /// normalizing constant 1 - p^r is 0).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(r: u64, p: T) DistributionError!Self {
+            if (r == 0) return error.InvalidParameter;
+            if (!math.isFinite(p)) return error.InvalidParameter;
+            if (!(p > 0.0 and p < 1.0)) return error.InvalidParameter;
+            return Self{ .r = r, .p = p };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// log PMF(k) = NegativeBinomial(r,p).logpmf(k) - log(1 - p^r), for k >= 1
+        /// log PMF(k) = -inf, for k = 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const denom = -math.expm1(@as(T, @floatFromInt(self.r)) * @log(self.p));
+            return nb.logpmf(k) - @log(denom);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via exact partial sum over [1, min(k, MAX_K)].
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            const k_clamped = @min(k, MAX_K);
+            var sum: T = 0.0;
+            for (1..k_clamped + 1) |j| {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ prob.
+        ///
+        /// Errors: prob outside [0,1] or NaN.
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            if (prob == 0.0) return 1;
+
+            var cumsum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= prob) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Generate a random sample via rejection sampling: repeatedly sample
+        /// from NegativeBinomial(r, p) until a non-zero value is obtained.
+        ///
+        /// Time: O(r / (1 - p^r)) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            while (true) {
+                const sample_val = nb.sample(rng);
+                if (sample_val != 0) return sample_val;
+            }
+        }
+
+        /// Mean: E[X] = NegativeBinomial.mean() / (1 - p^r).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const denom = 1.0 - nb.pmf(0);
+            return nb.mean() / denom;
+        }
+
+        /// Variance: Var[X] = E[X^2] - mean^2, where E[X(X-1)] carries over unchanged
+        /// under truncation (the k=0 and k=1 terms of X(X-1) are always 0).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const denom = 1.0 - nb.pmf(0);
+            const mu_un = nb.mean();
+            const var_un = nb.variance();
+            const e_xx1_un = var_un + mu_un * mu_un - mu_un;
+            const e_xx1_tr = e_xx1_un / denom;
+            const mu_tr = mu_un / denom;
+            const e_x2_tr = e_xx1_tr + mu_tr;
+            return e_x2_tr - mu_tr * mu_tr;
+        }
+
+        /// Mode: call NegativeBinomial.mode(); if it returns 0, return 1 instead
+        /// (truncated distributions can't have mode at k=0); otherwise return unchanged.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            const nb = NegativeBinomial(T){ .r = self.r, .p = self.p };
+            const nb_mode = nb.mode();
+            if (nb_mode == 0) return 1;
+            return nb_mode;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ZeroTruncatedNegativeBinomial(r={d}, p={d:.4})", .{ self.r, self.p });
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.r == 0) return error.InvalidParameter;
+            if (!math.isFinite(self.p)) return error.InvalidParameter;
+            if (!(self.p > 0.0 and self.p < 1.0)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Zero-Truncated Negative Binomial Distribution Tests (TDD RED phase)
+// ============================================================================
+//
+// NOTE: Implementation not yet present — tests are written first to define
+// the expected behavior of ZeroTruncatedNegativeBinomial(comptime T: type) type.
+//
+// ZeroTruncatedNegativeBinomial(r, p) = NegativeBinomial(r,p) conditioned on X > 0.
+// - Support: k = 1, 2, 3, ... (unbounded, unlike ZeroTruncatedBinomial)
+// - Parameter validation: r >= 1 (integer), 0 < p < 1 strictly (p=1 is INVALID)
+// - denom = 1 - p^r (the P(NB > 0) normalizing constant)
+// - pmf(k) = NB.pmf(k) / denom for k >= 1; pmf(0) = 0
+
+// --- init tests ---
+
+test "ZeroTruncatedNegativeBinomial: init valid r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: init valid r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: init valid r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: init valid r=1 p=0.4 (edge case: geometric)" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(1, 0.4);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: init valid r=10 p=0.9" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(10, 0.9);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for r=0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(0, 0.5));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for p <= 0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, 0.0));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for p < 0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, -0.1));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for p = 1 (degenerate, denom=0)" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, 1.0));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for p > 1" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, 1.1));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for NaN p" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, math.nan(f64)));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for infinite p" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, math.inf(f64)));
+}
+
+test "ZeroTruncatedNegativeBinomial: init fails for negative infinite p" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, -math.inf(f64)));
+}
+
+test "ZeroTruncatedNegativeBinomial: f32 type support valid init" {
+    const dist = try ZeroTruncatedNegativeBinomial(f32).init(3, 0.4);
+    try dist.validate();
+}
+
+// --- pmf tests with ground truth vectors ---
+
+test "ZeroTruncatedNegativeBinomial: pmf(0) always equals 0" {
+    const Param = struct { r: u64, p: f64 };
+    for ([_]Param{ .{ .r = 3, .p = 0.4 }, .{ .r = 5, .p = 0.6 }, .{ .r = 2, .p = 0.3 }, .{ .r = 1, .p = 0.4 } }) |param| {
+        const dist = try ZeroTruncatedNegativeBinomial(f64).init(param.r, param.p);
+        try expectApproxEqAbs(0.0, dist.pmf(0), 1e-15);
+    }
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(1) exact value r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const expected: f64 = 0.1230769231;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(2) exact value r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const expected: f64 = 0.1476923077;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(3) exact value r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const expected: f64 = 0.1476923077;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(5) exact value r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const expected: f64 = 0.1116553846;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(1) exact value r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    const expected: f64 = 0.1686328938;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(2) exact value r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    const expected: f64 = 0.2023594726;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(3) exact value r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    const expected: f64 = 0.1888688411;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(5) exact value r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    const expected: f64 = 0.1087884525;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(1) exact value r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    const expected: f64 = 0.1384615385;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(2) exact value r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    const expected: f64 = 0.1453846154;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(3) exact value r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    const expected: f64 = 0.1356923077;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(5) exact value r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    const expected: f64 = 0.0997338462;
+    try expectApproxEqAbs(expected, dist.pmf(5), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: pmf(1) exact value r=1 p=0.4 (edge case, geometric)" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(1, 0.4);
+    const expected: f64 = 0.4;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+// --- logpmf tests ---
+
+test "ZeroTruncatedNegativeBinomial: logpmf = ln(pmf) for r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "ZeroTruncatedNegativeBinomial: logpmf = ln(pmf) for r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "ZeroTruncatedNegativeBinomial: logpmf = ln(pmf) for r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    for ([_]u64{ 1, 2, 3, 5 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+// --- cdf tests ---
+
+test "ZeroTruncatedNegativeBinomial: cdf(0) always equals 0" {
+    for ([_][2]u64{ [_]u64{ 3, 0 }, [_]u64{ 5, 0 }, [_]u64{ 2, 0 } }) |_| {
+        const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+        try expectApproxEqAbs(0.0, dist.cdf(0), 1e-15);
+    }
+}
+
+test "ZeroTruncatedNegativeBinomial: cdf is monotonically non-decreasing r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedNegativeBinomial: cdf is monotonically non-decreasing r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev - 1e-12);
+        prev = cur;
+    }
+}
+
+test "ZeroTruncatedNegativeBinomial: cdf approaches 1 for large k r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const cdf_large = dist.cdf(10000);
+    try expect(cdf_large > 0.9999);
+}
+
+// --- mean tests ---
+
+test "ZeroTruncatedNegativeBinomial: mean exact value r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const expected: f64 = 4.8076923077;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: mean exact value r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    const expected: f64 = 3.6143881564;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: mean exact value r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    const expected: f64 = 5.1282051282;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: mean exact value r=1 p=0.4 (geometric edge case)" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(1, 0.4);
+    const expected: f64 = 2.5;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: mean is always positive" {
+    for ([_][2]f64{ [_]f64{ 3, 0.4 }, [_]f64{ 5, 0.6 }, [_]f64{ 2, 0.3 }, [_]f64{ 1, 0.4 } }) |param| {
+        const dist = try ZeroTruncatedNegativeBinomial(f64).init(@as(u64, @intFromFloat(param[0])), param[1]);
+        try expect(dist.mean() > 0.0);
+    }
+}
+
+// --- variance tests ---
+
+test "ZeroTruncatedNegativeBinomial: variance exact value r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    const expected: f64 = 10.5399408284;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: variance exact value r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    const expected: f64 = 5.0081390369;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: variance exact value r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    const expected: f64 = 14.7271531887;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: variance exact value r=1 p=0.4 (geometric edge case)" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(1, 0.4);
+    const expected: f64 = 3.75;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "ZeroTruncatedNegativeBinomial: variance is always positive" {
+    for ([_][2]f64{ [_]f64{ 3, 0.4 }, [_]f64{ 5, 0.6 }, [_]f64{ 2, 0.3 }, [_]f64{ 1, 0.4 } }) |param| {
+        const dist = try ZeroTruncatedNegativeBinomial(f64).init(@as(u64, @intFromFloat(param[0])), param[1]);
+        try expect(dist.variance() > 0.0);
+    }
+}
+
+// --- mode tests ---
+
+test "ZeroTruncatedNegativeBinomial: mode equals 2 for r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    try expect(dist.mode() == 2);
+}
+
+test "ZeroTruncatedNegativeBinomial: mode equals 2 for r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    try expect(dist.mode() == 2);
+}
+
+test "ZeroTruncatedNegativeBinomial: mode equals 2 for r=2 p=0.3" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(2, 0.3);
+    try expect(dist.mode() == 2);
+}
+
+test "ZeroTruncatedNegativeBinomial: mode equals 1 for r=1 p=0.4 (untruncated mode=0, truncated mode=1)" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(1, 0.4);
+    try expect(dist.mode() == 1);
+}
+
+test "ZeroTruncatedNegativeBinomial: mode is always >= 1 (never returns 0)" {
+    for ([_][2]f64{ [_]f64{ 3, 0.4 }, [_]f64{ 5, 0.6 }, [_]f64{ 2, 0.3 }, [_]f64{ 1, 0.4 } }) |param| {
+        const dist = try ZeroTruncatedNegativeBinomial(f64).init(@as(u64, @intFromFloat(param[0])), param[1]);
+        const m = dist.mode();
+        try expect(m >= 1);
+    }
+}
+
+// --- validate tests ---
+
+test "ZeroTruncatedNegativeBinomial: validate succeeds for r=3 p=0.4" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: validate succeeds for r=5 p=0.6" {
+    const dist = try ZeroTruncatedNegativeBinomial(f64).init(5, 0.6);
+    try dist.validate();
+}
+
+test "ZeroTruncatedNegativeBinomial: validate fails for r=0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(0, 0.5));
+}
+
+test "ZeroTruncatedNegativeBinomial: validate fails for p=0" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, 0.0));
+}
+
+test "ZeroTruncatedNegativeBinomial: validate fails for p=1" {
+    try expectError(error.InvalidParameter, ZeroTruncatedNegativeBinomial(f64).init(3, 1.0));
+}
+
+test "ZeroTruncatedNegativeBinomial: validate fails after manual invalid r assignment" {
+    var dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    dist.r = 0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroTruncatedNegativeBinomial: validate fails after manual invalid p assignment (too high)" {
+    var dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    dist.p = 1.5;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroTruncatedNegativeBinomial: validate fails after manual invalid p assignment (p=1)" {
+    var dist = try ZeroTruncatedNegativeBinomial(f64).init(3, 0.4);
+    dist.p = 1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
