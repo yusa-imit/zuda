@@ -1,3 +1,32 @@
+**Session 825 Update (2026-08-24) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **@panic/std.debug.assert sweep — 8 containers + 3 distributions fixed** — commit 18ede19
+- **Mode**: STABILIZATION MODE (counter: 825)
+- **CI/Issues**: CI green, 0 open issues. `zig build test`: 12518/12525 passed, 7 skips, 0
+  failures (unchanged before/after — pure signature change, no functional regression). 6/6
+  cross-compile targets green.
+- Ran the repo-wide `grep -rn '@panic\|std.debug.assert' src/` sweep flagged as a standing item
+  since session 820/824. Fixed the 8 container `validate()` methods that returned `void` and
+  panicked internally via `std.debug.assert` instead of returning an error: `FenwickTree`,
+  `LazySegmentTree`, `PersistentArray`, `CountMinSketch`, `CuckooFilter`, `HyperLogLog`,
+  `MinHash`, `BloomFilter` — all now `pub fn validate(self: *const Self) !void` returning
+  `error.TreeInvariant`/`error.InvalidState`. Also fixed 3 `stats/distributions.zig`
+  distributions whose `validate()` already had the correct `!void` signature but still used
+  `std.debug.assert` internally: **Hypergeometric** (the specific item flagged at session 820),
+  **GeneralizedExponential**, **NegativeHypergeometric** — now return `error.InvalidParameter`.
+  Updated existing test call sites to `try x.validate()` in the 4 files that had them
+  (fenwick_tree, count_min_sketch, hyperloglog, bloom_filter); the other 4 containers had no
+  validate() test calls at all (noted gap, not filled this session — out of scope).
+- **Deliberately deferred**: ~20 more `std.debug.assert` sites remain in `src/algorithms/`
+  (ntt, snappy, knapsack, randomized_select, activity_selection, ddpg, dqn, dueling_dqn,
+  line_search) and internal private helpers of btree.zig/unrolled_linked_list.zig/r_tree.zig/
+  cuckoo_hash_map.zig/robin_hood_hash_map.zig. These are precondition checks in private code or
+  on already-validated internal state, not the public `validate()` contract — judged lower
+  priority than a full rewrite warrants in one session. Don't re-discover this via grep and
+  treat it as new; it's a known, explicitly-deferred backlog item.
+- Release check: 22 commits since v2.2.0 (9 feat, 1 fix, rest chore) — SKIP, NDArray phase still
+  has unchecked items in docs/milestones.md.
+
 **Session 820 Update (2026-08-23) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **format() backlog retrofit (batch 2/N)** — commit 9dcaeac
