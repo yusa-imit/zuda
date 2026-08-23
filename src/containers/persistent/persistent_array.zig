@@ -462,12 +462,12 @@ pub fn PersistentArray(comptime T: type) type {
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
-            std.debug.assert(self.tail.len <= BRANCH_FACTOR);
+        pub fn validate(self: *const Self) !void {
+            if (self.tail.len > BRANCH_FACTOR) return error.TreeInvariant;
             if (self.size == 0) {
-                std.debug.assert(self.root == null);
-                std.debug.assert(self.tail.len == 0);
-                std.debug.assert(self.height == 0);
+                if (self.root != null) return error.TreeInvariant;
+                if (self.tail.len != 0) return error.TreeInvariant;
+                if (self.height != 0) return error.TreeInvariant;
             }
         }
     };

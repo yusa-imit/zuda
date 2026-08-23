@@ -182,11 +182,11 @@ pub fn FenwickTree(comptime T: type) type {
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
+        pub fn validate(self: *const Self) !void {
             if (self.n == 0) {
-                std.debug.assert(self.tree.len == 0);
+                if (self.tree.len != 0) return error.TreeInvariant;
             } else {
-                std.debug.assert(self.tree.len == self.n + 1);
+                if (self.tree.len != self.n + 1) return error.TreeInvariant;
             }
         }
     };
@@ -485,7 +485,7 @@ test "FenwickTree: all same values correct sums" {
     try testing.expectEqual(@as(i32, 15), try tree.rangeSum(1, 3)); // [1..3] = 15
     try testing.expectEqual(@as(i32, 5), try tree.get(0));
     try testing.expectEqual(@as(i32, 5), try tree.get(4));
-    tree.validate();
+    try tree.validate();
 }
 
 test "FenwickTree: set to zero removes contribution" {
@@ -504,7 +504,7 @@ test "FenwickTree: set to zero removes contribution" {
     try testing.expectEqual(@as(i32, 0), try tree.get(2));
     try testing.expectEqual(@as(i32, 4), tree.prefixSum(4)); // total = 4
     try testing.expectEqual(@as(i32, 2), try tree.rangeSum(1, 3)); // [1,0,1] = 2
-    tree.validate();
+    try tree.validate();
 }
 
 test "FenwickTree: out-of-bounds returns errors" {
@@ -522,7 +522,7 @@ test "FenwickTree: out-of-bounds returns errors" {
     try testing.expectError(error.IndexOutOfBounds, tree.rangeSum(0, 3));
     // start > end is invalid range
     try testing.expectError(error.InvalidRange, tree.rangeSum(2, 1));
-    tree.validate();
+    try tree.validate();
 }
 
 test "FenwickTree: initZero incremental build matches init" {
@@ -547,8 +547,8 @@ test "FenwickTree: initZero incremental build matches init" {
         try tree_direct.rangeSum(1, 4),
         try tree_incremental.rangeSum(1, 4),
     );
-    tree_direct.validate();
-    tree_incremental.validate();
+    try tree_direct.validate();
+    try tree_incremental.validate();
 }
 
 test "FenwickTree: init-deinit loop memory safety" {
@@ -561,7 +561,7 @@ test "FenwickTree: init-deinit loop memory safety" {
         try testing.expectEqual(@as(i32, 15), tree.prefixSum(4));
         try tree.add(2, 10);
         try testing.expectEqual(@as(i32, 25), tree.prefixSum(4));
-        tree.validate();
+        try tree.validate();
         tree.deinit();
     }
 }

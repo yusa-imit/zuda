@@ -229,10 +229,10 @@ pub fn CuckooFilter(
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
-            std.debug.assert(self.buckets.len > 0);
+        pub fn validate(self: *const Self) !void {
+            if (self.buckets.len == 0) return error.InvalidState;
             const capacity = self.buckets.len * BUCKET_SIZE;
-            std.debug.assert(self.num_items <= capacity);
+            if (self.num_items > capacity) return error.InvalidState;
         }
     };
 }

@@ -151,10 +151,10 @@ pub fn HyperLogLog(
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
-            std.debug.assert(self.p >= 4 and self.p <= 18);
-            std.debug.assert(self.m == (@as(usize, 1) << self.p));
-            std.debug.assert(self.registers.len == self.m);
+        pub fn validate(self: *const Self) !void {
+            if (self.p < 4 or self.p > 18) return error.InvalidState;
+            if (self.m != (@as(usize, 1) << self.p)) return error.InvalidState;
+            if (self.registers.len != self.m) return error.InvalidState;
         }
     };
 }
@@ -405,7 +405,7 @@ test "HyperLogLog - clear then re-add restores cardinality" {
     for (0..50) |i| hll.add(@intCast(i));
     const after = hll.count();
     try testing.expect(after >= 40 and after <= 60);
-    hll.validate();
+    try hll.validate();
 }
 
 test "HyperLogLog - merge disjoint sketches approximates union" {
@@ -424,7 +424,7 @@ test "HyperLogLog - merge disjoint sketches approximates union" {
 
     // Merged count should approximate 100 (true cardinality of union)
     try testing.expect(merged_count >= 80 and merged_count <= 120);
-    hll1.validate();
+    try hll1.validate();
 }
 
 test "HyperLogLog - validate passes before and after add" {
@@ -432,13 +432,13 @@ test "HyperLogLog - validate passes before and after add" {
     var hll = try HLL.init(testing.allocator, 8, {});
     defer hll.deinit();
 
-    hll.validate(); // Must pass on fresh init
+    try hll.validate(); // Must pass on fresh init
     hll.add(1);
-    hll.validate(); // Must pass after single add
+    try hll.validate(); // Must pass after single add
     for (2..100) |i| hll.add(@intCast(i));
-    hll.validate(); // Must pass after many adds
+    try hll.validate(); // Must pass after many adds
     hll.clear();
-    hll.validate(); // Must pass after clear
+    try hll.validate(); // Must pass after clear
 }
 
 test "HyperLogLog - precision 4 minimum register count" {
@@ -454,7 +454,7 @@ test "HyperLogLog - precision 4 minimum register count" {
     for (0..8) |i| hll.add(@intCast(i));
     const est = hll.count();
     try testing.expect(est > 0);
-    hll.validate();
+    try hll.validate();
 }
 
 test "HyperLogLog - init-deinit loop memory safety" {
@@ -465,7 +465,7 @@ test "HyperLogLog - init-deinit loop memory safety" {
         var hll = try HLL.init(testing.allocator, 10, {});
         for (0..20) |i| hll.add(@intCast(i + cycle * 20));
         _ = hll.count();
-        hll.validate();
+        try hll.validate();
         hll.deinit();
     }
 }

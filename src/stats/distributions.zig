@@ -8046,9 +8046,9 @@ pub fn Hypergeometric(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
-            std.debug.assert(self.K <= self.N);
-            std.debug.assert(self.n <= self.N);
-            std.debug.assert(self.N >= 1);
+            if (self.K > self.N) return error.InvalidParameter;
+            if (self.n > self.N) return error.InvalidParameter;
+            if (self.N < 1) return error.InvalidParameter;
         }
     };
 }
@@ -60500,10 +60500,10 @@ pub fn GeneralizedExponential(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
-            std.debug.assert(self.alpha > 0.0);
-            std.debug.assert(self.lambda > 0.0);
-            std.debug.assert(math.isFinite(self.alpha));
-            std.debug.assert(math.isFinite(self.lambda));
+            if (self.alpha <= 0.0) return error.InvalidParameter;
+            if (self.lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (!math.isFinite(self.lambda)) return error.InvalidParameter;
         }
     };
 }
@@ -85630,10 +85630,10 @@ pub fn NegativeHypergeometric(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
-            std.debug.assert(self.K <= self.N);
-            std.debug.assert(self.r >= 1);
-            std.debug.assert(self.r <= self.N - self.K);
-            std.debug.assert(self.N >= 1);
+            if (self.K > self.N) return error.InvalidParameter;
+            if (self.r < 1) return error.InvalidParameter;
+            if (self.r > self.N - self.K) return error.InvalidParameter;
+            if (self.N < 1) return error.InvalidParameter;
         }
     };
 }

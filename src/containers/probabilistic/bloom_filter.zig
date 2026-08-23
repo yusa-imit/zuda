@@ -170,11 +170,11 @@ pub fn BloomFilter(
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
+        pub fn validate(self: *const Self) !void {
             const expected_words = (self.m + 63) / 64;
-            std.debug.assert(self.bits.len == expected_words);
-            std.debug.assert(self.m > 0);
-            std.debug.assert(self.k > 0);
+            if (self.bits.len != expected_words) return error.InvalidState;
+            if (self.m == 0) return error.InvalidState;
+            if (self.k == 0) return error.InvalidState;
         }
     };
 }
@@ -531,7 +531,7 @@ test "BloomFilter - high saturation behavior" {
 
     // Filter must not crash
     // Invariant checking must pass
-    filter.validate();
+    try filter.validate();
 
     // FPR should be in valid range (likely very high)
     const fpr = filter.estimatedFalsePositiveRate();
@@ -561,7 +561,7 @@ test "BloomFilter - defaultHashSlice with byte slices" {
     // Non-existent string: may or may not be found (probabilistic)
     // Just verify it doesn't crash and validate passes
     _ = filter.contains("qux");
-    filter.validate();
+    try filter.validate();
 }
 
 test "BloomFilter - memory safety loop" {

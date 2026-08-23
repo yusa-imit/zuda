@@ -148,9 +148,9 @@ pub fn MinHash(
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
-            std.debug.assert(self.signature.len == num_hashes);
-            std.debug.assert(self.params.len == num_hashes);
+        pub fn validate(self: *const Self) !void {
+            if (self.signature.len != num_hashes) return error.InvalidState;
+            if (self.params.len != num_hashes) return error.InvalidState;
         }
 
         // ── Private helpers ──────────────────────────────────────────────

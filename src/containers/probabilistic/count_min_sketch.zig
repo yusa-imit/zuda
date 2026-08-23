@@ -160,12 +160,12 @@ pub fn CountMinSketch(
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
-            std.debug.assert(self.d > 0);
-            std.debug.assert(self.w > 0);
-            std.debug.assert(self.table.len == self.d);
+        pub fn validate(self: *const Self) !void {
+            if (self.d == 0) return error.InvalidState;
+            if (self.w == 0) return error.InvalidState;
+            if (self.table.len != self.d) return error.InvalidState;
             for (self.table) |row| {
-                std.debug.assert(row.len == self.w);
+                if (row.len != self.w) return error.InvalidState;
             }
         }
     };
@@ -548,7 +548,7 @@ test "CountMinSketch - memory safety loop" {
         }
 
         // Verify basic invariant
-        sketch.validate();
+        try sketch.validate();
         try testing.expectEqual(@as(usize, 3), sketch.d);
         try testing.expectEqual(@as(usize, 50), sketch.w);
         try testing.expectEqual(@as(u64, 20), sketch.totalCount());

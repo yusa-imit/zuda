@@ -201,13 +201,13 @@ pub fn LazySegmentTree(
 
         /// Validate internal invariants
         /// Time: O(1) | Space: O(1)
-        pub fn validate(self: *const Self) void {
+        pub fn validate(self: *const Self) !void {
             if (self.n == 0) {
-                std.debug.assert(self.tree.len == 0);
-                std.debug.assert(self.lazy.len == 0);
+                if (self.tree.len != 0) return error.TreeInvariant;
+                if (self.lazy.len != 0) return error.TreeInvariant;
             } else {
-                std.debug.assert(self.tree.len == 4 * self.n);
-                std.debug.assert(self.lazy.len == 4 * self.n);
+                if (self.tree.len != 4 * self.n) return error.TreeInvariant;
+                if (self.lazy.len != 4 * self.n) return error.TreeInvariant;
             }
         }
     };
