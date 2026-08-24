@@ -1,3 +1,22 @@
+**Session 831 Update (2026-08-25) — FEATURE MODE [COMPLETED]:**
+
+✅ **WrappedExponential (179th distribution)** — commits e0e0762 + cb265ac
+- **Mode**: FEATURE MODE (counter: 831)
+- **CI/Issues**: CI green, 0 open issues at session start.
+- Fresh TDD cycle (not a recovery). Circular wrap of Exponential(λ) onto [0, 2π), completing
+  the Wrapped* family alongside WrappedNormal/WrappedCauchy/WrappedLaplace. Deliberately no
+  location/μ parameter (would force an ugly piecewise CDF; the standard textbook form starts
+  the wrap at 0 and has clean closed forms throughout).
+- Verified pdf/cdf/quantile/circular-mean/mean-resultant-length/circular-variance against
+  mpmath (30 dps) for two λ values before dispatching test-writer — 38/38 tests passed first
+  try, zero back-and-forth. Entropy uses the established 500-point midpoint quadrature pattern
+  (matches WrappedLaplace/Normal/Cauchy convention, no closed form attempted).
+- Grepped new implementation for `@panic`/`std.debug.assert`/`std.debug.print` — none found.
+  `zig build test` exit 0. Distribution count confirmed via grep: 179.
+- Noted but did not investigate: `ExponentialModifiedGaussian` (~line 49724) and `ExGaussian`
+  (~line 79658) both exist and appear to be the same distribution under two names — possible
+  pre-existing duplicate, flagged for a future stabilization session, not fixed this cycle.
+
 **Session 830 Update (2026-08-25) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **v2.3.0 released** — first release since v2.2.0 (32 commits accumulated)
