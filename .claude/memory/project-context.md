@@ -1,3 +1,36 @@
+**Session 830 Update (2026-08-25) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **v2.3.0 released** — first release since v2.2.0 (32 commits accumulated)
+- **Mode**: STABILIZATION MODE (counter: 830)
+- **CI/Issues**: CI green, 0 open issues. `zig build test`: 12696/12703 passed, 7 skips, 0
+  failures. 6/6 cross-compile targets green (both `-macos`/`-windows` and `-macos-none`/
+  `-windows-msvc` target string variants verified).
+- Fixed a real, recurring documentation-debt bug: `docs/milestones.md`'s Phase 6-11 detailed
+  subtask checkboxes (lines ~672-1047) were stale/unchecked despite the actual implementation
+  existing (`src/ndarray/`, `linalg/`, `stats/`, `signal/`, `numeric/`, `optimize/` all present)
+  and v2.0.4 already released back on 2026-05-07 per the Phase 12 section. This mismatch had
+  caused sessions 810/820/825 to defer release decisions under the false belief that a phase
+  was incomplete. Bulk-checked the stale boxes (240 items) and left a dated note explaining why.
+  Commit 7fe7838.
+- Confirmed via `git log` that v2.1.0 and v2.2.0 were both MINOR releases cut during ongoing
+  distribution-catalog growth (not phase completions) — real precedent for cutting v2.3.0 now
+  under the same pattern, once the doc-debt block was cleared.
+- Continued the standing format() backlog: delegated a 20-distribution batch to zig-developer
+  (Triangular, Kumaraswamy, LogLogistic, Rice, Nakagami, BirnbaumSaunders, GeneralizedLogistic,
+  Slash, Frechet, BetaPrime, FoldedNormal, GeneralizedPareto, LogCauchy, Burr, Dagum,
+  TruncatedNormal, PowerLaw, SkewNormal, HalfCauchy, LogUniform) — verified the diff myself
+  (140 insertions, all following the established `Name(field={d}, ...)` pattern, placed before
+  `validate()`) and confirmed 0 new test failures before committing. Commit 63f53c2. Coverage
+  now 112/178 (up from 92/178 at session start — 3 of the 92 already had format() added inline
+  during recent feature sessions).
+- Investigated the flagged flaky `skip_list` "reverse iterator empty after clear" test from
+  session 829 — ran it standalone 5x and the full file 3x, all passed every time. Could not
+  reproduce; leaving it as a known-flaky/low-probability item, not fixed (nothing to fix without
+  a reproduction).
+- Version bump 2.2.0 → 2.3.0 (commit 2b8e27d), tag `v2.3.0`, GitHub release published with
+  changelog covering distributions 171-178, the validate()-panic fix, SkewSlash CDF fix, and the
+  format()/docs work. 0 open issues to close.
+
 **Session 828 Update (2026-08-24) — FEATURE MODE [COMPLETED]:**
 
 ✅ **HalfGeneralizedNormal (177th distribution)** — commit eff5b5b
