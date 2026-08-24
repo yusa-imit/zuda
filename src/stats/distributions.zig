@@ -105367,6 +105367,304 @@ pub fn HalfGeneralizedNormal(comptime T: type) type {
     };
 }
 
+pub fn SkewGeneralizedNormal(comptime T: type) type {
+    return struct {
+        xi: T,
+        omega: T,
+        alpha: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a SkewGeneralizedNormal distribution (Azzalini skew-symmetric on GeneralizedNormal base)
+        ///
+        /// Parameters:
+        /// - xi: location (any finite real)
+        /// - omega: scale, must be > 0
+        /// - alpha: skewness (any finite real; alpha=0 → symmetric)
+        /// - beta: shape, must be > 0
+        ///
+        /// Errors: omega ≤ 0, beta ≤ 0, or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, omega: T, alpha: T, beta: T) DistributionError!Self {
+            if (!(omega > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(omega)) return error.InvalidParameter;
+            if (!(beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(beta)) return error.InvalidParameter;
+            if (!math.isFinite(xi)) return error.InvalidParameter;
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .xi = xi, .omega = omega, .alpha = alpha, .beta = beta };
+        }
+
+        /// Validate internal invariants: omega > 0, beta > 0, all parameters finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.omega > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.omega)) return error.InvalidParameter;
+            if (!(self.beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.beta)) return error.InvalidParameter;
+            if (!math.isFinite(self.xi)) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
+        }
+
+        /// Helper: g0(z, beta) = standard GeneralizedNormal pdf at z (scale=1, location=0)
+        /// = beta / (2*Gamma(1/beta)) * exp(-|z|^beta)
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn g0(z: T, beta: T) T {
+            const abs_z = @abs(z);
+            const term = math.pow(T, abs_z, beta);
+            const coeff = beta / (2.0 * @exp(logGamma(1.0 / beta)));
+            return coeff * @exp(-term);
+        }
+
+        /// Helper: G0(z, beta) = standard GeneralizedNormal cdf at z (scale=1, location=0)
+        /// = 0.5 + sign(z) * 0.5 * P(1/beta, |z|^beta)
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn G0(z: T, beta: T) T {
+            if (z == 0.0) return 0.5;
+            const abs_z = @abs(z);
+            const term = math.pow(T, abs_z, beta);
+            const p = regularizedGammaP(1.0 / beta, term);
+            if (z > 0.0) {
+                return 0.5 + 0.5 * p;
+            } else {
+                return 0.5 - 0.5 * p;
+            }
+        }
+
+        /// Probability density function f(x) = (2/omega) * g0(z,beta) * G0(alpha*z,beta)
+        /// where z = (x-xi)/omega
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+            const g0_z = g0(z, self.beta);
+            const G0_az = G0(self.alpha * z, self.beta);
+            return (2.0 / self.omega) * g0_z * G0_az;
+        }
+
+        /// Log probability density function ln(f(x))
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const z = (x - self.xi) / self.omega;
+            const abs_z = @abs(z);
+            const term = math.pow(T, abs_z, self.beta);
+
+            // log(g0(z, beta)) = ln(beta) - ln(2) - logGamma(1/beta) - |z|^beta
+            const log_g0 = @log(self.beta) - @log(2.0) - logGamma(1.0 / self.beta) - term;
+
+            // G0(alpha*z, beta)
+            const G0_az = G0(self.alpha * z, self.beta);
+            if (G0_az <= 0.0) return -math.inf(T);
+
+            return @log(2.0) - @log(self.omega) + log_g0 + @log(G0_az);
+        }
+
+        /// Cumulative distribution function (no closed form)
+        ///
+        /// Uses midpoint rule quadrature with 500 panels over adaptive left bound
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            // Find adaptive left bound where pdf is negligible
+            var left = self.xi - self.omega * 20.0;
+            while (self.pdf(left) > 1e-10) {
+                left -= self.omega * 10.0;
+            }
+
+            // Midpoint rule with 500 panels
+            const n_panels: u32 = 500;
+            const dx = (x - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const xi_m = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                integral += self.pdf(xi_m);
+            }
+            integral *= dx;
+
+            // Clamp to [0, 1]
+            if (integral < 0.0) return 0.0;
+            if (integral > 1.0) return 1.0;
+            return integral;
+        }
+
+        /// Survival function: 1 - cdf(x)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) via bisection
+        ///
+        /// Errors: p < 0, p > 1, or NaN → InvalidProbability
+        /// Returns -inf for p=0, +inf for p=1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0 or !math.isFinite(p)) return error.InvalidProbability;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            // Bisection search
+            var left: T = if (p < 0.5) self.xi - 100.0 * self.omega else self.xi;
+            var right: T = if (p < 0.5) self.xi else self.xi + 100.0 * self.omega;
+
+            // Expand bounds if needed
+            while (self.cdf(left) > p) left -= 50.0 * self.omega;
+            while (self.cdf(right) < p) right += 50.0 * self.omega;
+
+            const tolerance = 1e-10;
+            var iterations: u32 = 0;
+            while (right - left > tolerance and iterations < 100) : (iterations += 1) {
+                const mid = (left + right) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (cdf_mid < p) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+
+            return (left + right) / 2.0;
+        }
+
+        /// Mean of the distribution (no general closed form; computed via numeric quadrature)
+        ///
+        /// Integrates x*f(x) over [xi-30*omega, xi+30*omega] with 2000 panels
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const left = self.xi - 30.0 * self.omega;
+            const right = self.xi + 30.0 * self.omega;
+
+            const n_panels: u32 = 2000;
+            const dx = (right - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const x = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                integral += x * self.pdf(x);
+            }
+            integral *= dx;
+
+            return integral;
+        }
+
+        /// Variance of the distribution (no general closed form; computed via numeric quadrature)
+        ///
+        /// Computes E[X^2] - (E[X])^2 using two integration passes
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+
+            const left = self.xi - 30.0 * self.omega;
+            const right = self.xi + 30.0 * self.omega;
+
+            const n_panels: u32 = 2000;
+            const dx = (right - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const x = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                const dev = x - m;
+                integral += dev * dev * self.pdf(x);
+            }
+            integral *= dx;
+
+            return integral;
+        }
+
+        /// Mode of the distribution (no closed form in general)
+        ///
+        /// Uses golden-section search over [xi-10*omega, xi+10*omega], 100 iterations
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const left = self.xi - 10.0 * self.omega;
+            const right = self.xi + 10.0 * self.omega;
+
+            var a = left;
+            var b = right;
+            const golden_ratio = (1.0 + @sqrt(5.0)) / 2.0;
+            const resphi = 2.0 - golden_ratio;
+
+            for (0..100) |_| {
+                if (@abs(b - a) < 1e-10) break;
+                const x1 = a + resphi * (b - a);
+                const x2 = b - resphi * (b - a);
+                if (self.pdf(x1) > self.pdf(x2)) {
+                    b = x2;
+                } else {
+                    a = x1;
+                }
+            }
+
+            return (a + b) / 2.0;
+        }
+
+        /// Differential entropy (in nats)
+        ///
+        /// Computed via numeric integration of -f(x)*log(f(x)) over [xi-50*omega, xi+50*omega]
+        /// with 1000 panels for improved accuracy over skewed distributions
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const left = self.xi - 50.0 * self.omega;
+            const right = self.xi + 50.0 * self.omega;
+
+            const n_panels: u32 = 1000;
+            const dx = (right - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const x = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                const f_x = self.pdf(x);
+                if (f_x > 0.0) {
+                    integral += f_x * @log(f_x);
+                }
+            }
+            integral *= dx;
+
+            return -integral;
+        }
+
+        /// Draw a random sample using rejection-free sign-flip method
+        ///
+        /// Algorithm:
+        /// 1. Sample Z0 ~ GeneralizedNormal(0, 1, beta)
+        /// 2. Sample U ~ Uniform(0, 1)
+        /// 3. If U ≤ G0(alpha*Z0, beta): return xi + omega*Z0
+        ///    else: return xi - omega*Z0
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Sample from standard GeneralizedNormal(0, 1, beta)
+            const gen_norm = GeneralizedNormal(T).init(0.0, 1.0, self.beta) catch unreachable;
+            const z0 = gen_norm.sample(rng);
+
+            // Sample uniform
+            const u = rng.float(T);
+
+            // Selective sign flip
+            const G0_az0 = G0(self.alpha * z0, self.beta);
+            const sign: T = if (u <= G0_az0) @as(T, 1.0) else @as(T, -1.0);
+
+            return self.xi + self.omega * sign * z0;
+        }
+    };
+}
+
 // === HalfGeneralizedNormal Distribution Tests ===
 
 test "HalfGeneralizedNormal: init succeeds with valid params (beta=2.5, alpha=1.7)" {
@@ -105672,4 +105970,573 @@ test "HalfGeneralizedNormal: sample generates non-negative finite values" {
         try expect(sample_val >= 0.0);
         try expect(math.isFinite(sample_val));
     }
+}
+
+// === SkewGeneralizedNormal Distribution Tests (178th distribution) ===
+// ============================================================================
+// Azzalini-style skew-generalized-normal (skew exponential power) distribution
+// Parameters: xi (location), omega (scale > 0), alpha (skewness), beta (shape > 0)
+// Reduces to GeneralizedNormal when alpha=0, SkewNormal when beta=2
+
+test "SkewGeneralizedNormal: init with valid xi=0, omega=1, alpha=2, beta=2 succeeds" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    try expect(dist.xi == 0.0);
+    try expect(dist.omega == 1.0);
+    try expect(dist.alpha == 2.0);
+    try expect(dist.beta == 2.0);
+}
+
+test "SkewGeneralizedNormal: init with valid xi=1, omega=2, alpha=-3, beta=1.5 succeeds" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    try expect(dist.xi == 1.0);
+    try expect(dist.omega == 2.0);
+    try expect(dist.alpha == -3.0);
+    try expect(dist.beta == 1.5);
+}
+
+test "SkewGeneralizedNormal: init with omega=0 returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 0.0, 0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with omega<0 returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, -1.0, 0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with omega=nan returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, math.nan(f64), 0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with omega=inf returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, math.inf(f64), 0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with beta=0 returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with beta<0 returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with beta=nan returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with beta=inf returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with xi=nan returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(math.nan(f64), 1.0, 0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with xi=inf returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(math.inf(f64), 1.0, 0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with alpha=nan returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 1.0, math.nan(f64), 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: init with alpha=inf returns error.InvalidParameter" {
+    const result = SkewGeneralizedNormal(f64).init(0.0, 1.0, math.inf(f64), 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "SkewGeneralizedNormal: validate passes for valid params (Case A)" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    try dist.validate();
+}
+
+test "SkewGeneralizedNormal: validate passes for valid params (Case B)" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    try dist.validate();
+}
+
+test "SkewGeneralizedNormal: pdf (Case A) at x=-2 ≈ 0.000000000159" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const p = dist.pdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.000000000159), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case A) at x=-1 ≈ 0.000970881431" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.000970881431), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case A) at x=0 ≈ 0.564189583548" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.564189583548), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case A) at x=1 ≈ 0.414136615990" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.414136615990), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case A) at x=2 ≈ 0.020666985195" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const p = dist.pdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.020666985195), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case B) at x=-3 ≈ 0.032736666372" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const p = dist.pdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.032736666372), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case B) at x=1 ≈ 0.276933041858" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.276933041858), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case B) at x=3 ≈ 0.000227948674" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const p = dist.pdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.000227948674), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case C, alpha=0 symmetric) at x=-2 ≈ 0.000187833329" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const p = dist.pdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.000187833329), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case C, alpha=0 symmetric) at x=0 ≈ 0.559923260861" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.559923260861), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case C, alpha=0 symmetric) at x=2 ≈ 0.000187833329" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const p = dist.pdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.000187833329), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case D) at x=2 ≈ 0.367754217107" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const p = dist.pdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.367754217107), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case D) at x=3.5 ≈ 0.270578431755" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const p = dist.pdf(3.5);
+    try expectApproxEqAbs(@as(f64, 0.270578431755), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case E, beta=1 Laplace) at x=-1 ≈ 1.000000000000" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 1.000000000000), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf (Case E) at x=-0.5 ≈ 0.600423599106" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const p = dist.pdf(-0.5);
+    try expectApproxEqAbs(@as(f64, 0.600423599106), p, 1e-6);
+}
+
+test "SkewGeneralizedNormal: pdf always positive" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const p1 = dist.pdf(-2.0);
+    const p2 = dist.pdf(0.0);
+    const p3 = dist.pdf(2.0);
+    try expect(p1 > 0.0);
+    try expect(p2 > 0.0);
+    try expect(p3 > 0.0);
+}
+
+test "SkewGeneralizedNormal: logpdf = log(pdf) at x=0 (Case A)" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const x = 0.0;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "SkewGeneralizedNormal: logpdf = log(pdf) at x=1 (Case A)" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const x = 1.0;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "SkewGeneralizedNormal: logpdf = log(pdf) at x=1 (Case B)" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const x = 1.0;
+    const p = dist.pdf(x);
+    const lp = dist.logpdf(x);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "SkewGeneralizedNormal: logpdf is finite for normal points" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const lp1 = dist.logpdf(-2.0);
+    const lp2 = dist.logpdf(0.0);
+    const lp3 = dist.logpdf(2.0);
+    try expect(math.isFinite(lp1));
+    try expect(math.isFinite(lp2));
+    try expect(math.isFinite(lp3));
+}
+
+test "SkewGeneralizedNormal: cdf (Case A) at x=-2 ≈ 0.000000000008" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.000000000008), c, 1e-4);
+}
+
+test "SkewGeneralizedNormal: cdf (Case A) at x=-1 ≈ 0.000083666513" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.000083666513), c, 1e-4);
+}
+
+test "SkewGeneralizedNormal: cdf (Case A) at x=0 ≈ 0.147583617650" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.147583617650), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case A) at x=1 ≈ 0.842784459462" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.842784459462), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case A) at x=2 ≈ 0.995322265027" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.995322265027), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case B) at x=-3 ≈ 0.028239224064" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const c = dist.cdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.028239224064), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case B) at x=1 ≈ 0.889227420451" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.889227420451), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case B) at x=5 ≈ 0.999999999723" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const c = dist.cdf(5.0);
+    try expectApproxEqAbs(@as(f64, 0.999999999723), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case C, alpha=0) at x=0 = 0.5" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(0.5, c, 1e-2);
+}
+
+test "SkewGeneralizedNormal: cdf (Case C, alpha=0) at x=-2 ≈ 0.000014556479" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.000014556479), c, 1e-4);
+}
+
+test "SkewGeneralizedNormal: cdf (Case C, alpha=0) at x=2 ≈ 0.999985443521" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.999985443521), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case D) at x=2 ≈ 0.053926636225" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.053926636225), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case D) at x=3.5 ≈ 0.932078867990" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const c = dist.cdf(3.5);
+    try expectApproxEqAbs(@as(f64, 0.932078867990), c, 1e-3);
+}
+
+test "SkewGeneralizedNormal: cdf (Case E) at x=-1 = 0.25" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(0.25, c, 1e-2);
+}
+
+test "SkewGeneralizedNormal: cdf monotonically increasing" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c1 = dist.cdf(-2.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(2.0);
+    try expect(c1 < c2 and c2 < c3);
+}
+
+test "SkewGeneralizedNormal: cdf(-inf) approaches 0" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(-100.0);
+    try expect(c < 0.01);
+}
+
+test "SkewGeneralizedNormal: cdf(+inf) approaches 1" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const c = dist.cdf(100.0);
+    try expect(c > 0.99);
+}
+
+test "SkewGeneralizedNormal: sf(x) = 1 - cdf(x)" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try expectApproxEqAbs(1.0, c + s, 1e-8);
+}
+
+test "SkewGeneralizedNormal: quantile with invalid p<0 returns error.InvalidProbability" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 2.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "SkewGeneralizedNormal: quantile with invalid p>1 returns error.InvalidProbability" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 2.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "SkewGeneralizedNormal: quantile with NaN p returns error.InvalidProbability" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 2.0);
+    const result = dist.quantile(math.nan(f64));
+    try expectError(error.InvalidProbability, result);
+}
+
+test "SkewGeneralizedNormal: quantile(0) = -inf" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try expect(math.isNegativeInf(q));
+}
+
+test "SkewGeneralizedNormal: quantile(1) = +inf" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isPositiveInf(q));
+}
+
+test "SkewGeneralizedNormal: round-trip quantile(cdf(x)) ≈ x at x=0.5 (Case A)" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-2);
+}
+
+test "SkewGeneralizedNormal: round-trip quantile(cdf(x)) ≈ x at x=1.0 (Case B)" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const x = 1.0;
+    const c = dist.cdf(x);
+    const q = try dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-2);
+}
+
+test "SkewGeneralizedNormal: quantile is monotonically increasing" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try expect(q1 < q2 and q2 < q3);
+}
+
+test "SkewGeneralizedNormal: mean (Case A) ≈ 0.504626504404" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, 0.504626504404), m, 1e-4);
+}
+
+test "SkewGeneralizedNormal: mean (Case B) ≈ -0.244634087799" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, -0.244634087799), m, 1e-3);
+}
+
+test "SkewGeneralizedNormal: mean (Case C, alpha=0) = 0.0" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(0.0, m, 1e-2);
+}
+
+test "SkewGeneralizedNormal: mean (Case D) ≈ 2.722123548339" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, 2.722123548339), m, 1e-3);
+}
+
+test "SkewGeneralizedNormal: mean (Case E) = -0.625" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, -0.625), m, 1e-2);
+}
+
+test "SkewGeneralizedNormal: variance (Case A) ≈ 0.245352091053" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 0.245352091053), v, 1e-4);
+}
+
+test "SkewGeneralizedNormal: variance (Case B) ≈ 1.404838433976" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 1.404838433976), v, 1e-3);
+}
+
+test "SkewGeneralizedNormal: variance (Case C, alpha=0) ≈ 0.373282173907" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 0.373282173907), v, 1e-4);
+}
+
+test "SkewGeneralizedNormal: variance (Case D) ≈ 0.239013101010" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 0.239013101010), v, 1e-3);
+}
+
+test "SkewGeneralizedNormal: variance (Case E) = 0.359375" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 0.359375), v, 1e-2);
+}
+
+test "SkewGeneralizedNormal: mode (Case A) ≈ 0.375302673869" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const m = dist.mode();
+    try expectApproxEqAbs(@as(f64, 0.375302673869), m, 1e-2);
+}
+
+test "SkewGeneralizedNormal: mode (Case B) ≈ 0.401546940239" {
+    const dist = try SkewGeneralizedNormal(f64).init(1.0, 2.0, -3.0, 1.5);
+    const m = dist.mode();
+    try expectApproxEqAbs(@as(f64, 0.401546940239), m, 1e-2);
+}
+
+test "SkewGeneralizedNormal: mode (Case D) ≈ 2.410777541600" {
+    const dist = try SkewGeneralizedNormal(f64).init(2.0, 1.5, 5.0, 4.0);
+    const m = dist.mode();
+    try expectApproxEqAbs(@as(f64, 2.410777541600), m, 1e-2);
+}
+
+test "SkewGeneralizedNormal: mode (Case E, boundary) ≈ xi = -1.0" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const m = dist.mode();
+    try expectApproxEqAbs(-1.0, m, 1e-2);
+}
+
+test "SkewGeneralizedNormal: entropy (Case A) ≈ 0.699102817720" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    const e = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 0.699102817720), e, 1e-3);
+}
+
+test "SkewGeneralizedNormal: entropy (Case C) ≈ 0.913288872153" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const e = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 0.913288872153), e, 1e-3);
+}
+
+test "SkewGeneralizedNormal: entropy (Case E) ≈ 0.806852819437" {
+    const dist = try SkewGeneralizedNormal(f64).init(-1.0, 0.5, 1.0, 1.0);
+    const e = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 0.806852819437), e, 1e-3);
+}
+
+test "SkewGeneralizedNormal: sample generates finite values" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng);
+        try expect(math.isFinite(sample_val));
+    }
+}
+
+test "SkewGeneralizedNormal: sample stays within generous bounds" {
+    const dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 2.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    for (0..200) |_| {
+        const sample_val = dist.sample(rng);
+        try expect(sample_val >= -50.0 and sample_val <= 50.0);
+    }
+}
+
+test "SkewGeneralizedNormal: reduction alpha=0 matches GeneralizedNormal at x=-2" {
+    const skew_dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const gen_dist = try GeneralizedNormal(f64).init(0.0, 1.0, 3.0);
+    const skew_pdf = skew_dist.pdf(-2.0);
+    const gen_pdf = gen_dist.pdf(-2.0);
+    try expectApproxEqAbs(gen_pdf, skew_pdf, 1e-9);
+}
+
+test "SkewGeneralizedNormal: reduction alpha=0 matches GeneralizedNormal at x=0" {
+    const skew_dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const gen_dist = try GeneralizedNormal(f64).init(0.0, 1.0, 3.0);
+    const skew_pdf = skew_dist.pdf(0.0);
+    const gen_pdf = gen_dist.pdf(0.0);
+    try expectApproxEqAbs(gen_pdf, skew_pdf, 1e-9);
+}
+
+test "SkewGeneralizedNormal: reduction alpha=0 matches GeneralizedNormal at x=2" {
+    const skew_dist = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 0.0, 3.0);
+    const gen_dist = try GeneralizedNormal(f64).init(0.0, 1.0, 3.0);
+    const skew_pdf = skew_dist.pdf(2.0);
+    const gen_pdf = gen_dist.pdf(2.0);
+    try expectApproxEqAbs(gen_pdf, skew_pdf, 1e-9);
+}
+
+test "SkewGeneralizedNormal: reduction beta=2 matches SkewNormal at x=0" {
+    const skew_gn = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 3.0, 2.0);
+    const skew_n = try SkewNormal(f64).init(0.0, 1.0 / @sqrt(2.0), 3.0);
+    const sgn_pdf = skew_gn.pdf(0.0);
+    const sn_pdf = skew_n.pdf(0.0);
+    try expectApproxEqAbs(sn_pdf, sgn_pdf, 1e-9);
+}
+
+test "SkewGeneralizedNormal: reduction beta=2 matches SkewNormal at x=-1" {
+    const skew_gn = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 3.0, 2.0);
+    const skew_n = try SkewNormal(f64).init(0.0, 1.0 / @sqrt(2.0), 3.0);
+    const sgn_pdf = skew_gn.pdf(-1.0);
+    const sn_pdf = skew_n.pdf(-1.0);
+    // SkewNormal.pdf uses the shared A&S 7.1.26 erf() approximation (~1.5e-7 max
+    // error) while SkewGeneralizedNormal.pdf goes through regularizedGammaP for
+    // beta=2, a different and more precise code path — tolerance widened to
+    // account for the two implementations' differing numerical precision, not a
+    // logic mismatch (verified against scipy.stats.skewnorm to ~1e-15).
+    try expectApproxEqAbs(sn_pdf, sgn_pdf, 1e-6);
+}
+
+test "SkewGeneralizedNormal: reduction beta=2 matches SkewNormal at x=1" {
+    const skew_gn = try SkewGeneralizedNormal(f64).init(0.0, 1.0, 3.0, 2.0);
+    const skew_n = try SkewNormal(f64).init(0.0, 1.0 / @sqrt(2.0), 3.0);
+    const sgn_pdf = skew_gn.pdf(1.0);
+    const sn_pdf = skew_n.pdf(1.0);
+    try expectApproxEqAbs(sn_pdf, sgn_pdf, 1e-6);
 }
