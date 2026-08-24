@@ -14090,6 +14090,13 @@ pub fn Triangular(comptime T: type) type {
             return self.quantile(u) catch unreachable;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Triangular(a={d}, b={d}, c={d})", .{ self.a, self.b, self.c });
+        }
+
         /// Validate distribution invariants
         ///
         /// Time: O(1) | Space: O(1)
@@ -15663,6 +15670,13 @@ pub fn Kumaraswamy(comptime T: type) type {
             const one_minus_u = 1.0 - u;
             const one_minus_u_inv_b = math.pow(T, one_minus_u, 1.0 / self.b);
             return math.pow(T, 1.0 - one_minus_u_inv_b, 1.0 / self.a);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Kumaraswamy(a={d}, b={d})", .{ self.a, self.b });
         }
 
         /// Assert that parameters are valid: a > 0, b > 0, both finite
@@ -17370,6 +17384,13 @@ pub fn LogLogistic(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             return self.alpha * math.pow(T, u / (1.0 - u), 1.0 / self.beta);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogLogistic(alpha={d}, beta={d})", .{ self.alpha, self.beta });
         }
 
         /// Assert that parameters are valid: α > 0, β > 0, both finite.
@@ -19424,6 +19445,13 @@ pub fn Rice(comptime T: type) type {
 
         // ---- Debug / Validate ----
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Rice(nu={d}, sigma={d})", .{ self.nu, self.sigma });
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -20303,6 +20331,13 @@ pub fn Nakagami(comptime T: type) type {
             if (omega <= 0.0) return error.InvalidParameter;
             if (!math.isFinite(m) or !math.isFinite(omega)) return error.InvalidParameter;
             return Self{ .m = m, .omega = omega };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Nakagami(m={d}, omega={d})", .{ self.m, self.omega });
         }
 
         /// Validate distribution parameters
@@ -21755,6 +21790,13 @@ pub fn BirnbaumSaunders(comptime T: type) type {
             return Self{ .alpha = alpha, .beta = beta };
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BirnbaumSaunders(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -22425,6 +22467,13 @@ pub fn GeneralizedLogistic(comptime T: type) type {
             return Self{ .mu = mu, .s = s, .alpha = alpha };
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("GeneralizedLogistic(mu={d}, s={d}, alpha={d})", .{ self.mu, self.s, self.alpha });
+        }
+
         /// Assert all parameters are valid.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) DistributionError!void {
@@ -22925,6 +22974,13 @@ pub fn Slash(comptime T: type) type {
             if (!math.isFinite(mu)) return error.InvalidParameter;
             if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
             return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Slash(mu={d}, sigma={d})", .{ self.mu, self.sigma });
         }
 
         /// Assert all parameters are valid.
@@ -23443,6 +23499,13 @@ pub fn Frechet(comptime T: type) type {
             if (s <= 0.0 or !math.isFinite(s)) return error.InvalidParameter;
             if (!math.isFinite(m)) return error.InvalidParameter;
             return Self{ .alpha = alpha, .s = s, .m = m };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Frechet(alpha={d}, s={d}, m={d})", .{ self.alpha, self.s, self.m });
         }
 
         /// Assert all parameters are valid.
@@ -24209,6 +24272,13 @@ pub fn BetaPrime(comptime T: type) type {
             if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
             if (beta_param <= 0.0 or !math.isFinite(beta_param)) return error.InvalidParameter;
             return Self{ .alpha = alpha, .beta_param = beta_param };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BetaPrime(alpha={d}, beta_param={d})", .{ self.alpha, self.beta_param });
         }
 
         /// Assert all parameters are valid.
@@ -24994,6 +25064,13 @@ pub fn FoldedNormal(comptime T: type) type {
             return @abs(self.mu + self.sigma * z);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("FoldedNormal(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+        }
+
         /// Assert internal invariants: sigma > 0, finite; mu finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -25227,6 +25304,13 @@ pub fn GeneralizedPareto(comptime T: type) type {
         }
 
         // --- Validation ---
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("GeneralizedPareto(mu={d}, sigma={d}, xi={d})", .{ self.mu, self.sigma, self.xi });
+        }
 
         /// Assert internal invariants: σ > 0 and all fields finite.
         ///
@@ -26333,6 +26417,13 @@ pub fn LogCauchy(comptime T: type) type {
 
         // --- Validation ---
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogCauchy(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+        }
+
         /// Assert internal invariants: σ > 0 and all fields finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -26882,6 +26973,13 @@ pub fn Burr(comptime T: type) type {
         }
 
         // --- Validation ---
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Burr(c={d}, k={d}, mu={d}, sigma={d})", .{ self.c, self.k, self.mu, self.sigma });
+        }
 
         /// Assert internal invariants: c > 0, k > 0, σ > 0, all params finite.
         ///
@@ -27494,6 +27592,13 @@ pub fn Dagum(comptime T: type) type {
 
         // --- Validation ---
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Dagum(p={d}, a={d}, b={d})", .{ self.p, self.a, self.b });
+        }
+
         /// Assert internal invariants: p > 0, a > 0, b > 0, all params finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -28010,6 +28115,13 @@ pub fn TruncatedNormal(comptime T: type) type {
             const z = stdCdf(beta) - stdCdf(alpha);
             if (z <= 0.0) return error.InvalidParameter;
             return Self{ .mu = mu, .sigma = sigma, .a = a, .b = b, .z_const = z };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("TruncatedNormal(mu={d}, sigma={d}, a={d}, b={d})", .{ self.mu, self.sigma, self.a, self.b });
         }
 
         /// Validate internal invariants
@@ -28656,6 +28768,13 @@ pub fn PowerLaw(comptime T: type) type {
         pub fn init(a: T) DistributionError!Self {
             if (a <= 0.0 or !math.isFinite(a)) return error.InvalidParameter;
             return Self{ .a = a };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("PowerLaw(a={d})", .{self.a});
         }
 
         /// Validate internal invariants
@@ -29311,6 +29430,13 @@ pub fn SkewNormal(comptime T: type) type {
             if (!math.isFinite(xi)) return error.InvalidParameter;
             if (!math.isFinite(alpha)) return error.InvalidParameter;
             return Self{ .xi = xi, .omega = omega, .alpha = alpha };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("SkewNormal(xi={d}, omega={d}, alpha={d})", .{ self.xi, self.omega, self.alpha });
         }
 
         /// Validate internal invariants
@@ -30213,6 +30339,13 @@ pub fn HalfCauchy(comptime T: type) type {
             return self.gamma * math.tan(math.pi * u / 2.0);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("HalfCauchy(gamma={d})", .{self.gamma});
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -30841,6 +30974,13 @@ pub fn LogUniform(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             return self.a * @exp(u * self.log_ratio);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogUniform(a={d}, b={d})", .{ self.a, self.b });
         }
 
         /// Validate distribution parameters
