@@ -1,3 +1,19 @@
+**Session 828 Update (2026-08-24) — FEATURE MODE [COMPLETED]:**
+
+✅ **HalfGeneralizedNormal (177th distribution)** — commit eff5b5b
+- **Mode**: FEATURE MODE (counter: 828)
+- **CI/Issues**: CI green, 0 open issues.
+- Recovered a complete, uncommitted implementation left by an interrupted same-day session
+  (per `.claude/logs/agent-activity.jsonl` timestamps ~03:32-03:43 UTC): test-writer wrote 43
+  tests, zig-developer implemented, two follow-up test-writer calls fixed a boolean-assertion
+  bug (`expectApproxEqAbs` misused on `bool`) and an `Exponential` rate-vs-scale mismatch in
+  reduction tests.
+- Verified before trusting: independently recomputed pdf/cdf/mean/variance/entropy in Python,
+  matched to ~9 decimals; grepped diff for `@panic`/`std.debug.assert`/`std.debug.print` (none);
+  `zig build test` exit 0. Distribution count confirmed via grep: 177.
+- Reduces exactly to `Exponential(1/alpha)` at beta=1 and `HalfNormal` at beta=2 (both covered by
+  dedicated reduction tests).
+
 **Session 825 Update (2026-08-24) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **@panic/std.debug.assert sweep — 8 containers + 3 distributions fixed** — commit 18ede19
