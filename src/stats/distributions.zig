@@ -106680,3 +106680,409 @@ test "SkewGeneralizedNormal: reduction beta=2 matches SkewNormal at x=1" {
     const sn_pdf = skew_n.pdf(1.0);
     try expectApproxEqAbs(sn_pdf, sgn_pdf, 1e-6);
 }
+
+/// Wrapped Exponential distribution — the circular wrap of Exponential(λ) onto [0, 2π).
+///
+/// Completes the wrapped-distribution family alongside WrappedNormal, WrappedCauchy,
+/// and WrappedLaplace. Unlike those (symmetric, so they carry a location μ), the
+/// Exponential is one-sided — the standard construction fixes the wrap start at 0,
+/// so this distribution has a single parameter λ (rate). Its density is a sawtooth:
+/// maximal at θ=0 and decaying monotonically around the circle back to θ=2π⁻.
+pub fn WrappedExponential(comptime T: type) type {
+    return struct {
+        lambda: T, // rate parameter (λ > 0)
+        r: T, // pre-computed r = exp(-2πλ)
+
+        const Self = @This();
+
+        /// Create a WrappedExponential(λ) distribution.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(lambda: T) DistributionError!Self {
+            if (!(lambda > 0.0) or !math.isFinite(lambda)) return error.InvalidParameter;
+            const r = @exp(-2.0 * math.pi * lambda);
+            return Self{ .lambda = lambda, .r = r };
+        }
+
+        /// Probability density function at θ ∈ [0, 2π).
+        ///
+        /// f(θ) = λ·exp(-λθ) / (1 - r), r = exp(-2πλ)
+        ///
+        /// Returns 0 outside [0, 2π).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, theta: T) T {
+            if (theta < 0.0 or theta >= 2.0 * math.pi) return 0.0;
+            return self.lambda * @exp(-self.lambda * theta) / (1.0 - self.r);
+        }
+
+        /// Log probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, theta: T) T {
+            if (theta < 0.0 or theta >= 2.0 * math.pi) return -math.inf(T);
+            return @log(self.lambda) - self.lambda * theta - @log(1.0 - self.r);
+        }
+
+        /// Cumulative distribution function at θ.
+        ///
+        /// F(θ) = (1 - exp(-λθ)) / (1 - r) for θ ∈ [0, 2π); 0 below, 1 at/above 2π.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, theta: T) T {
+            if (theta <= 0.0) return 0.0;
+            if (theta >= 2.0 * math.pi) return 1.0;
+            return (1.0 - @exp(-self.lambda * theta)) / (1.0 - self.r);
+        }
+
+        /// Survival function: 1 - CDF(θ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, theta: T) T {
+            return 1.0 - self.cdf(theta);
+        }
+
+        /// Quantile function (inverse CDF) via exact closed form.
+        ///
+        /// Q(p) = -log(1 - p(1-r)) / λ
+        ///
+        /// Errors: error.InvalidProbability if p ∉ [0, 1] or p is NaN.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 2.0 * math.pi;
+            return -@log(1.0 - p * (1.0 - self.r)) / self.lambda;
+        }
+
+        /// Mode (most likely value) — density is maximized at θ = 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Median (50th percentile) via quantile(0.5).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.quantile(0.5) catch unreachable;
+        }
+
+        /// Circular mean direction: atan2(S, C) where C = E[cos θ] = λ²/(λ²+1),
+        /// S = E[sin θ] = λ/(λ²+1). Simplifies to atan(1/λ) for λ > 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn circularMean(self: Self) T {
+            const c = self.lambda * self.lambda / (self.lambda * self.lambda + 1.0);
+            const s = self.lambda / (self.lambda * self.lambda + 1.0);
+            return math.atan2(s, c);
+        }
+
+        /// Mean resultant length: R = λ / √(λ²+1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn meanResultantLength(self: Self) T {
+            return self.lambda / @sqrt(self.lambda * self.lambda + 1.0);
+        }
+
+        /// Circular variance: 1 - R.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn circularVariance(self: Self) T {
+            return 1.0 - self.meanResultantLength();
+        }
+
+        /// Differential entropy via 500-point midpoint quadrature over [0, 2π).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n: usize = 500;
+            const lo: T = 0.0;
+            const hi: T = 2.0 * math.pi;
+            const step = (hi - lo) / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n) |i| {
+                const x = lo + (@as(T, @floatFromInt(i)) + 0.5) * step;
+                const p = self.pdf(x);
+                if (p > 0.0) sum -= p * @log(p);
+            }
+            return sum * step;
+        }
+
+        /// Generate a random sample via inverse CDF method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch 0.0;
+        }
+
+        /// Format the distribution for debugging.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("WrappedExponential(lambda={d})", .{self.lambda});
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.lambda > 0.0) or !math.isFinite(self.lambda)) return error.InvalidParameter;
+            const expected_r = @exp(-2.0 * math.pi * self.lambda);
+            if (!math.isFinite(self.r) or @abs(self.r - expected_r) > 1e-9 * @max(expected_r, 1e-300)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// WrappedExponential Tests
+// ============================================================================
+
+test "WrappedExponential: init with valid lambda succeeds" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    try expect(dist.lambda == 1.0);
+}
+
+test "WrappedExponential: init with lambda=0.3 succeeds" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    try expect(dist.lambda == 0.3);
+}
+
+test "WrappedExponential: init rejects lambda=0" {
+    const result = WrappedExponential(f64).init(0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "WrappedExponential: init rejects negative lambda" {
+    const result = WrappedExponential(f64).init(-1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "WrappedExponential: init rejects NaN lambda" {
+    const result = WrappedExponential(f64).init(math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "WrappedExponential: init rejects inf lambda" {
+    const result = WrappedExponential(f64).init(math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "WrappedExponential: pdf(0) for lambda=1.0 ≈ 1.0018709366" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqRel(1.0018709365986606, p, 1e-9);
+}
+
+test "WrappedExponential: pdf(pi) for lambda=1.0 ≈ 0.0432947688" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const p = dist.pdf(math.pi);
+    try expectApproxEqRel(0.0432947687650234709, p, 1e-9);
+}
+
+test "WrappedExponential: pdf(0) for lambda=0.3 ≈ 0.3537050971" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const p = dist.pdf(0.0);
+    try expectApproxEqRel(0.35370509707974659, p, 1e-9);
+}
+
+test "WrappedExponential: pdf(2.0) for lambda=0.3 ≈ 0.1941174730" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const p = dist.pdf(2.0);
+    try expectApproxEqRel(0.19411747302313218, p, 1e-9);
+}
+
+test "WrappedExponential: pdf is non-negative" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const points = [_]f64{ 0.0, 0.5, 1.0, 2.0, math.pi, 2.0 * math.pi - 0.1 };
+    for (points) |theta| {
+        try expect(dist.pdf(theta) >= 0.0);
+    }
+}
+
+test "WrappedExponential: pdf returns 0 for theta<0" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    try expect(dist.pdf(-0.1) == 0.0);
+    try expect(dist.pdf(-1.0) == 0.0);
+}
+
+test "WrappedExponential: pdf returns 0 for theta>=2*pi" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    try expect(dist.pdf(2.0 * math.pi) == 0.0);
+    try expect(dist.pdf(2.0 * math.pi + 0.1) == 0.0);
+}
+
+test "WrappedExponential: cdf(0) = 0" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.cdf(0.0), 1e-10);
+}
+
+test "WrappedExponential: cdf(2*pi - epsilon) approximately 1" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const c = dist.cdf(2.0 * math.pi - 1e-6);
+    try expect(c > 0.99);
+}
+
+test "WrappedExponential: cdf(pi) for lambda=1.0 ≈ 0.9585761678" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const c = dist.cdf(math.pi);
+    try expectApproxEqRel(0.9585761678336372, c, 1e-9);
+}
+
+test "WrappedExponential: cdf(2.0) for lambda=0.3 ≈ 0.5319587469" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const c = dist.cdf(2.0);
+    try expectApproxEqRel(0.5319587468553814, c, 1e-9);
+}
+
+test "WrappedExponential: cdf is monotone non-decreasing" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    var prev: f64 = dist.cdf(0.0);
+    var theta: f64 = 0.0;
+    while (theta < 2.0 * math.pi) : (theta += 2.0 * math.pi / 50.0) {
+        const curr = dist.cdf(theta);
+        try expect(curr >= prev);
+        prev = curr;
+    }
+}
+
+test "WrappedExponential: quantile(0) = 0" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(0.0, q, 1e-10);
+}
+
+test "WrappedExponential: quantile(1) approximately 2*pi" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const q = try dist.quantile(1.0);
+    // At p=1, quantile approaches 2*pi but may not equal exactly due to log(0)
+    try expect(q > 2.0 * math.pi - 0.01);
+}
+
+test "WrappedExponential: quantile(0.7) for lambda=1.0 ≈ 1.1996249038" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const q = try dist.quantile(0.7);
+    try expectApproxEqRel(1.1996249037853680, q, 1e-9);
+}
+
+test "WrappedExponential: quantile round-trip cdf(quantile(p)) ≈ p" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const p_recovered = dist.cdf(q);
+    try expectApproxEqAbs(p, p_recovered, 1e-9);
+}
+
+test "WrappedExponential: quantile rejects p<0" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "WrappedExponential: quantile rejects p>1" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidProbability, result);
+}
+
+test "WrappedExponential: quantile rejects NaN p" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const result = dist.quantile(math.nan(f64));
+    try expectError(error.InvalidProbability, result);
+}
+
+test "WrappedExponential: mode = 0" {
+    const dist1 = try WrappedExponential(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist1.mode(), 1e-10);
+
+    const dist2 = try WrappedExponential(f64).init(0.3);
+    try expectApproxEqAbs(0.0, dist2.mode(), 1e-10);
+}
+
+test "WrappedExponential: meanResultantLength for lambda=1.0 ≈ 0.7071067812" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const r = dist.meanResultantLength();
+    try expectApproxEqRel(0.7071067811865475, r, 1e-9);
+}
+
+test "WrappedExponential: meanResultantLength for lambda=0.3 ≈ 0.2873478856" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const r = dist.meanResultantLength();
+    try expectApproxEqRel(0.2873478855663454, r, 1e-9);
+}
+
+test "WrappedExponential: circularVariance for lambda=1.0 ≈ 0.2928932188" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const v = dist.circularVariance();
+    // circularVariance = 1 - R = 1 - 0.7071067812 ≈ 0.2928932188
+    try expectApproxEqRel(1.0 - 0.7071067811865475, v, 1e-9);
+}
+
+test "WrappedExponential: circularVariance for lambda=0.3 ≈ 0.7126521144" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const v = dist.circularVariance();
+    // circularVariance = 1 - R = 1 - 0.2873478856 ≈ 0.7126521144
+    try expectApproxEqRel(1.0 - 0.2873478855663454, v, 1e-9);
+}
+
+test "WrappedExponential: circularVariance + meanResultantLength = 1" {
+    const lambda_values = [_]f64{ 0.1, 0.3, 0.5, 1.0, 2.0, 5.0 };
+    for (lambda_values) |lambda| {
+        const dist = try WrappedExponential(f64).init(lambda);
+        const sum = dist.circularVariance() + dist.meanResultantLength();
+        try expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+test "WrappedExponential: circular mean direction for lambda=1.0 ≈ pi/4" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    const mean_dir = dist.circularMean();
+    try expectApproxEqRel(0.7853981633974483, mean_dir, 1e-9);
+}
+
+test "WrappedExponential: circular mean direction for lambda=0.3 ≈ 1.2793395323" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const mean_dir = dist.circularMean();
+    try expectApproxEqRel(1.2793395323170295, mean_dir, 1e-9);
+}
+
+test "WrappedExponential: entropy for lambda=0.3 approximately 1.7018527" {
+    const dist = try WrappedExponential(f64).init(0.3);
+    const h = dist.entropy();
+    // Quadrature approximation has ~1e-3 error, loose tolerance
+    try expectApproxEqAbs(1.7018526952395672, h, 0.01);
+}
+
+test "WrappedExponential: entropy is non-negative" {
+    const lambda_values = [_]f64{ 0.1, 0.5, 1.0, 2.0 };
+    for (lambda_values) |lambda| {
+        const dist = try WrappedExponential(f64).init(lambda);
+        try expect(dist.entropy() >= 0.0);
+    }
+}
+
+test "WrappedExponential: validate passes for valid distribution" {
+    const dist = try WrappedExponential(f64).init(1.0);
+    try dist.validate();
+}
+
+test "WrappedExponential: validate fails when lambda corrupted to 0" {
+    var dist = try WrappedExponential(f64).init(1.0);
+    dist.lambda = 0.0;
+    // Also need to corrupt r to keep it consistent
+    dist.r = @exp(-2.0 * math.pi * 0.0);
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "WrappedExponential: validate fails when lambda corrupted to negative" {
+    var dist = try WrappedExponential(f64).init(1.0);
+    dist.lambda = -1.0;
+    dist.r = @exp(-2.0 * math.pi * (-1.0));
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
