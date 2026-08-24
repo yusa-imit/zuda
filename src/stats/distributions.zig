@@ -105248,3 +105248,428 @@ test "BetaNegativeBinomial: pmf sums to approximately 1 over wide k range Case A
     }
     try expectApproxEqAbs(1.0, sum, 1e-4);
 }
+
+pub fn HalfGeneralizedNormal(comptime T: type) type {
+    return struct {
+        beta: T,
+        alpha: T,
+
+        const Self = @This();
+
+        /// Create a HalfGeneralizedNormal distribution.
+        ///
+        /// Parameters: beta > 0 (shape), alpha > 0 (scale), both must be finite
+        ///
+        /// Errors: beta ≤ 0, alpha ≤ 0, or any parameter is non-finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(beta: T, alpha: T) DistributionError!Self {
+            if (!(beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(beta)) return error.InvalidParameter;
+            if (!(alpha > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(alpha)) return error.InvalidParameter;
+            return Self{ .beta = beta, .alpha = alpha };
+        }
+
+        /// Probability density function f(x) = (β/α) / Γ(1/β) · exp(-(x/α)^β) for x ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const scaled = x / self.alpha;
+            const term = math.pow(T, scaled, self.beta);
+            const coeff = self.beta / (self.alpha * @exp(logGamma(1.0 / self.beta)));
+            return coeff * @exp(-term);
+        }
+
+        /// Log probability density function ln(f(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < 0.0) return -math.inf(T);
+            const scaled = x / self.alpha;
+            const term = math.pow(T, scaled, self.beta);
+            return @log(self.beta) - @log(self.alpha) - logGamma(1.0 / self.beta) - term;
+        }
+
+        /// Cumulative distribution function F(x) = P(1/β, (x/α)^β) for x ≥ 0, else 0
+        ///
+        /// Uses regularized lower incomplete gamma function.
+        ///
+        /// Time: O(1) with regularizedGammaP | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const scaled = x / self.alpha;
+            const term = math.pow(T, scaled, self.beta);
+            return regularizedGammaP(1.0 / self.beta, term);
+        }
+
+        /// Mean of the distribution: E[X] = α · Γ(2/β) / Γ(1/β)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const gamma_ratio = logGamma(2.0 / self.beta) - logGamma(1.0 / self.beta);
+            return self.alpha * @exp(gamma_ratio);
+        }
+
+        /// Variance of the distribution: α² · (Γ(3/β)/Γ(1/β) - (Γ(2/β)/Γ(1/β))²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const log_gamma_1_beta = logGamma(1.0 / self.beta);
+            const log_gamma_2_beta = logGamma(2.0 / self.beta);
+            const log_gamma_3_beta = logGamma(3.0 / self.beta);
+
+            const ratio_2 = @exp(log_gamma_2_beta - log_gamma_1_beta);
+            const ratio_3 = @exp(log_gamma_3_beta - log_gamma_1_beta);
+
+            return self.alpha * self.alpha * (ratio_3 - ratio_2 * ratio_2);
+        }
+
+        /// Mode of the distribution: always 0 (pdf is monotonically decreasing on [0, ∞))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Differential entropy in nats: H = ln(α·Γ(1/β)/β) + 1/β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return logGamma(1.0 / self.beta) + @log(self.alpha) - @log(self.beta) + 1.0 / self.beta;
+        }
+
+        /// Generate a random sample using Gamma-based method
+        ///
+        /// Algorithm:
+        /// 1. Sample G ~ Gamma(1/β, 1)
+        /// 2. Return α·G^(1/β)
+        ///
+        /// Time: O(1) amortized | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const gamma_dist = Gamma(T).init(1.0 / self.beta, 1.0) catch unreachable;
+            const g = gamma_dist.sample(rng);
+            const g_power = math.pow(T, g, 1.0 / self.beta);
+            return self.alpha * g_power;
+        }
+
+        /// Validate that parameters are valid: beta > 0, alpha > 0, both finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.beta > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.beta)) return error.InvalidParameter;
+            if (!(self.alpha > 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.alpha)) return error.InvalidParameter;
+        }
+    };
+}
+
+// === HalfGeneralizedNormal Distribution Tests ===
+
+test "HalfGeneralizedNormal: init succeeds with valid params (beta=2.5, alpha=1.7)" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    try expectEqual(@as(f64, 2.5), dist.beta);
+    try expectEqual(@as(f64, 1.7), dist.alpha);
+}
+
+test "HalfGeneralizedNormal: init fails when beta=0" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(0.0, 1.7));
+}
+
+test "HalfGeneralizedNormal: init fails when beta<0" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(-1.0, 1.7));
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(-2.5, 1.7));
+}
+
+test "HalfGeneralizedNormal: init fails when beta is NaN" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(math.nan(f64), 1.7));
+}
+
+test "HalfGeneralizedNormal: init fails when beta is +inf" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(math.inf(f64), 1.7));
+}
+
+test "HalfGeneralizedNormal: init fails when alpha=0" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(2.5, 0.0));
+}
+
+test "HalfGeneralizedNormal: init fails when alpha<0" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(2.5, -1.0));
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(2.5, -1.7));
+}
+
+test "HalfGeneralizedNormal: init fails when alpha is NaN" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(2.5, math.nan(f64)));
+}
+
+test "HalfGeneralizedNormal: init fails when alpha is +inf" {
+    try expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(2.5, math.inf(f64)));
+}
+
+test "HalfGeneralizedNormal: pdf(0.1; beta=2.5, alpha=1.7) = 0.6624206111650952" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.6624206111650952;
+    try expectApproxEqRel(expected, dist.pdf(0.1), 1e-9);
+}
+
+test "HalfGeneralizedNormal: pdf(0.5; beta=2.5, alpha=1.7) = 0.6325921588931057" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.6325921588931057;
+    try expectApproxEqRel(expected, dist.pdf(0.5), 1e-9);
+}
+
+test "HalfGeneralizedNormal: pdf(1.0; beta=2.5, alpha=1.7) = 0.5084435175913236" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.5084435175913236;
+    try expectApproxEqRel(expected, dist.pdf(1.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: pdf(2.0; beta=2.5, alpha=1.7) = 0.14774548523831324" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.14774548523831324;
+    try expectApproxEqRel(expected, dist.pdf(2.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: pdf(3.0; beta=2.5, alpha=1.7) = 0.010588670348016757" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.010588670348016757;
+    try expectApproxEqRel(expected, dist.pdf(3.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: cdf(0.1; beta=2.5, alpha=1.7) = 0.06628178350654201" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.06628178350654201;
+    try expectApproxEqRel(expected, dist.cdf(0.1), 1e-9);
+}
+
+test "HalfGeneralizedNormal: cdf(0.5; beta=2.5, alpha=1.7) = 0.3271052423493402" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.3271052423493402;
+    try expectApproxEqRel(expected, dist.cdf(0.5), 1e-9);
+}
+
+test "HalfGeneralizedNormal: cdf(1.0; beta=2.5, alpha=1.7) = 0.6163669339443265" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.6163669339443265;
+    try expectApproxEqRel(expected, dist.cdf(1.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: cdf(2.0; beta=2.5, alpha=1.7) = 0.9386572373304654" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.9386572373304654;
+    try expectApproxEqRel(expected, dist.cdf(2.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: cdf(3.0; beta=2.5, alpha=1.7) = 0.9972628504508433" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.9972628504508433;
+    try expectApproxEqRel(expected, dist.cdf(3.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: pdf(x<0) returns 0 (support is x >= 0)" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    try expectApproxEqAbs(0.0, dist.pdf(-1.0), 1e-15);
+    try expectApproxEqAbs(0.0, dist.pdf(-0.5), 1e-15);
+    try expectApproxEqAbs(0.0, dist.pdf(-10.0), 1e-15);
+}
+
+test "HalfGeneralizedNormal: cdf(x<0) returns 0 (support is x >= 0)" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    try expectApproxEqAbs(0.0, dist.cdf(-1.0), 1e-15);
+    try expectApproxEqAbs(0.0, dist.cdf(-0.5), 1e-15);
+    try expectApproxEqAbs(0.0, dist.cdf(-10.0), 1e-15);
+}
+
+test "HalfGeneralizedNormal: mean(beta=2.5, alpha=1.7) = 0.8922669782174789" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.8922669782174789;
+    try expectApproxEqRel(expected, dist.mean(), 1e-9);
+}
+
+test "HalfGeneralizedNormal: variance(beta=2.5, alpha=1.7) = 0.40012510797813267" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.40012510797813267;
+    try expectApproxEqRel(expected, dist.variance(), 1e-9);
+}
+
+test "HalfGeneralizedNormal: entropy(beta=2.5, alpha=1.7) = 0.8110153368897991" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    const expected = 0.8110153368897991;
+    try expectApproxEqRel(expected, dist.entropy(), 1e-9);
+}
+
+test "HalfGeneralizedNormal: mode() = 0 for beta=0.5" {
+    const dist = try HalfGeneralizedNormal(f64).init(0.5, 1.7);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-14);
+}
+
+test "HalfGeneralizedNormal: mode() = 0 for beta=3.0" {
+    const dist = try HalfGeneralizedNormal(f64).init(3.0, 1.7);
+    try expectApproxEqAbs(0.0, dist.mode(), 1e-14);
+}
+
+test "HalfGeneralizedNormal: reduction to Exponential(alpha) when beta=1.0 at x=0.3" {
+    const hgn = try HalfGeneralizedNormal(f64).init(1.0, 1.7);
+    const exp = try Exponential(f64).init(1.0 / 1.7);
+    const expected = 0.493072607307647;
+    try expectApproxEqRel(expected, hgn.pdf(0.3), 1e-9);
+    try expectApproxEqRel(exp.pdf(0.3), hgn.pdf(0.3), 1e-9);
+}
+
+test "HalfGeneralizedNormal: reduction to Exponential(alpha) when beta=1.0 at x=1.0" {
+    const hgn = try HalfGeneralizedNormal(f64).init(1.0, 1.7);
+    const exp = try Exponential(f64).init(1.0 / 1.7);
+    const expected = 0.3266508076482062;
+    try expectApproxEqRel(expected, hgn.pdf(1.0), 1e-9);
+    try expectApproxEqRel(exp.pdf(1.0), hgn.pdf(1.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: reduction to Exponential(alpha) when beta=1.0 at x=2.0" {
+    const hgn = try HalfGeneralizedNormal(f64).init(1.0, 1.7);
+    const exp = try Exponential(f64).init(1.0 / 1.7);
+    const expected = 0.1813912752332832;
+    try expectApproxEqRel(expected, hgn.pdf(2.0), 1e-9);
+    try expectApproxEqRel(exp.pdf(2.0), hgn.pdf(2.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: reduction to HalfNormal when beta=2.0, alpha=sqrt(2) at x=0.3" {
+    const alpha_val = @sqrt(2.0);
+    const hgn = try HalfGeneralizedNormal(f64).init(2.0, alpha_val);
+    const hn = try HalfNormal(f64).init(1.0);
+    const expected = 0.7627756309210483;
+    try expectApproxEqRel(expected, hgn.pdf(0.3), 1e-9);
+    try expectApproxEqRel(hn.pdf(0.3), hgn.pdf(0.3), 1e-9);
+}
+
+test "HalfGeneralizedNormal: reduction to HalfNormal when beta=2.0, alpha=sqrt(2) at x=1.0" {
+    const alpha_val = @sqrt(2.0);
+    const hgn = try HalfGeneralizedNormal(f64).init(2.0, alpha_val);
+    const hn = try HalfNormal(f64).init(1.0);
+    const expected = 0.4839414490382868;
+    try expectApproxEqRel(expected, hgn.pdf(1.0), 1e-9);
+    try expectApproxEqRel(hn.pdf(1.0), hgn.pdf(1.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: reduction to HalfNormal when beta=2.0, alpha=sqrt(2) at x=2.0" {
+    const alpha_val = @sqrt(2.0);
+    const hgn = try HalfGeneralizedNormal(f64).init(2.0, alpha_val);
+    const hn = try HalfNormal(f64).init(1.0);
+    const expected = 0.10798193302637617;
+    try expectApproxEqRel(expected, hgn.pdf(2.0), 1e-9);
+    try expectApproxEqRel(hn.pdf(2.0), hgn.pdf(2.0), 1e-9);
+}
+
+test "HalfGeneralizedNormal: pdf integrates to approximately 1 over [0, 50]" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+
+    // Simpson's rule over [0, 50] with 1000 intervals
+    const a: f64 = 0.0;
+    const b: f64 = 50.0;
+    const n: usize = 1000;
+    const h = (b - a) / @as(f64, @floatFromInt(n));
+
+    var sum: f64 = dist.pdf(a) + dist.pdf(b);
+
+    var i: usize = 1;
+    while (i < n) : (i += 1) {
+        const x = a + @as(f64, @floatFromInt(i)) * h;
+        if (i % 2 == 0) {
+            sum += 2.0 * dist.pdf(x);
+        } else {
+            sum += 4.0 * dist.pdf(x);
+        }
+    }
+
+    const integral = sum * h / 3.0;
+    try expectApproxEqAbs(1.0, integral, 1e-3);
+}
+
+test "HalfGeneralizedNormal: cdf is monotonically non-decreasing" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+
+    const test_points = [_]f64{ 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0 };
+
+    for (0..test_points.len - 1) |i| {
+        const x1 = test_points[i];
+        const x2 = test_points[i + 1];
+        const cdf1 = dist.cdf(x1);
+        const cdf2 = dist.cdf(x2);
+        try expect(cdf1 <= cdf2);
+    }
+}
+
+test "HalfGeneralizedNormal: validate succeeds for valid params (beta=2.5, alpha=1.7)" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    try dist.validate();
+}
+
+test "HalfGeneralizedNormal: validate fails for beta=0" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = 0.0,
+        .alpha = 1.7,
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: validate fails for negative beta" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = -2.5,
+        .alpha = 1.7,
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: validate fails for non-finite beta (inf)" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = math.inf(f64),
+        .alpha = 1.7,
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: validate fails for non-finite beta (nan)" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = math.nan(f64),
+        .alpha = 1.7,
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: validate fails for alpha=0" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = 2.5,
+        .alpha = 0.0,
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: validate fails for negative alpha" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = 2.5,
+        .alpha = -1.7,
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: validate fails for non-finite alpha" {
+    var dist = HalfGeneralizedNormal(f64){
+        .beta = 2.5,
+        .alpha = math.inf(f64),
+    };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "HalfGeneralizedNormal: sample generates non-negative finite values" {
+    const dist = try HalfGeneralizedNormal(f64).init(2.5, 1.7);
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    for (0..100) |_| {
+        const sample_val = dist.sample(rng);
+        try expect(sample_val >= 0.0);
+        try expect(math.isFinite(sample_val));
+    }
+}

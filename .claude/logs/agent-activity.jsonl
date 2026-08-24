@@ -707,3 +707,7 @@
 {"timestamp":"2026-08-23T11:40:27Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for BenktanderI (175th distribution) in src/stats/distributions.zig","project":"zuda"}
 {"timestamp":"2026-08-23T11:43:03Z","action":"subagent","agent_type":"zig-developer","task":"Implement BenktanderI (175th distribution) to pass the failing tests","project":"zuda"}
 {"timestamp": "2026-08-23T23:35:35Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for BetaNegativeBinomial(r,alpha,beta) distribution (176th), ground truth pre-derived in scratchpad", "project": "zuda"}
+{"timestamp":"2026-08-24T03:32:29Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for HalfGeneralizedNormal distribution","project":"zuda"}
+{"timestamp":"2026-08-24T03:35:23Z","action":"subagent","agent_type":"zig-developer","task":"Implement HalfGeneralizedNormal (177th distribution) to pass the 43 failing tests","project":"zuda"}
+{"timestamp":"2026-08-24T03:37:54Z","action":"subagent","agent_type":"test-writer","task":"Fix 3 boolean-assertion bugs in HalfGeneralizedNormal tests (expectApproxEqAbs misused on bool, should be expect())","project":"zuda"}
+{"timestamp":"2026-08-24T03:43:43Z","action":"subagent","agent_type":"test-writer","task":"Fix Exponential rate-vs-scale parameterization bug in 3 HalfGeneralizedNormal reduction tests","project":"zuda"}
