@@ -676,6 +676,8 @@ Released 2026-03-17. Improve code quality, test coverage, and maintainability:
 > NumPy/SciPy의 Zig-native 대안으로서, 선형대수, 통계, 신호처리, 수치해석, 최적화를 포함한다.
 > 각 마일스톤은 PRD Phase 6-12에 대응한다.
 
+> **Note (session 830)**: Phase 6-11 하위 체크박스가 실제 구현(`src/ndarray/`, `src/linalg/`, `src/stats/`, `src/signal/`, `src/numeric/`, `src/optimize/` 전부 존재, v2.0.4가 2026-05-07에 이미 릴리즈됨, Phase 12 아래 참조)과 어긋나게 미체크 상태로 남아있어 이번 세션에서 일괄 체크 처리함. 이 불일치가 여러 stabilization 세션(810/820/825)에서 "phase incomplete"로 오판되어 릴리즈 판단을 반복적으로 보류시킨 원인이었음.
+
 ### Phase 6: NDArray Foundation
 
 > **목표**: 과학 컴퓨팅의 핵심 데이터 구조인 N차원 배열 구현
@@ -685,28 +687,28 @@ Released 2026-03-17. Improve code quality, test coverage, and maintainability:
 NDArray 타입의 기본 구조와 생성, 인덱싱, 메모리 레이아웃 구현:
 
 **Categories**:
-- [ ] **NDArray type definition** — `NDArray(T, ndim)` 기본 구조체
-  - [ ] Shape, strides, data 포인터, allocator
-  - [ ] Row-major (C order) 및 column-major (Fortran order) 메모리 레이아웃
-  - [ ] Comptime-known rank, runtime-known shape
-  - [ ] Tests: 20+ (생성, 소멸, 메모리 레이아웃 검증)
-- [ ] **생성 함수** — 다양한 방식의 NDArray 생성
-  - [ ] `zeros()`, `ones()`, `full()`, `empty()` — 초기화된 배열 생성
-  - [ ] `arange()`, `linspace()` — 수열 생성
-  - [ ] `fromSlice()`, `fromOwnedSlice()` — 기존 메모리에서 생성
-  - [ ] `eye()`, `identity()` — 단위 행렬
-  - [ ] Tests: 20+ (각 생성 함수별 edge case)
-- [ ] **인덱싱 & 슬라이싱** — 다차원 데이터 접근
-  - [ ] `get(indices)`, `set(indices, value)` — 단일 원소 접근
-  - [ ] `slice(ranges)` — NumPy-style 슬라이싱 (non-owning view)
-  - [ ] `at(index)` — 1차원 flat 인덱싱
-  - [ ] Negative indexing 지원
-  - [ ] Tests: 25+ (경계값, 음수 인덱스, 다차원 슬라이스)
-- [ ] **Iterator protocol** — NDArray 순회
-  - [ ] `NDArrayIterator` — storage order로 원소 순회
-  - [ ] `next() -> ?T` protocol (v1.x 일관성)
-  - [ ] Axis-wise iteration
-  - [ ] Tests: 10+
+- [x] **NDArray type definition** — `NDArray(T, ndim)` 기본 구조체
+  - [x] Shape, strides, data 포인터, allocator
+  - [x] Row-major (C order) 및 column-major (Fortran order) 메모리 레이아웃
+  - [x] Comptime-known rank, runtime-known shape
+  - [x] Tests: 20+ (생성, 소멸, 메모리 레이아웃 검증)
+- [x] **생성 함수** — 다양한 방식의 NDArray 생성
+  - [x] `zeros()`, `ones()`, `full()`, `empty()` — 초기화된 배열 생성
+  - [x] `arange()`, `linspace()` — 수열 생성
+  - [x] `fromSlice()`, `fromOwnedSlice()` — 기존 메모리에서 생성
+  - [x] `eye()`, `identity()` — 단위 행렬
+  - [x] Tests: 20+ (각 생성 함수별 edge case)
+- [x] **인덱싱 & 슬라이싱** — 다차원 데이터 접근
+  - [x] `get(indices)`, `set(indices, value)` — 단일 원소 접근
+  - [x] `slice(ranges)` — NumPy-style 슬라이싱 (non-owning view)
+  - [x] `at(index)` — 1차원 flat 인덱싱
+  - [x] Negative indexing 지원
+  - [x] Tests: 25+ (경계값, 음수 인덱스, 다차원 슬라이스)
+- [x] **Iterator protocol** — NDArray 순회
+  - [x] `NDArrayIterator` — storage order로 원소 순회
+  - [x] `next() -> ?T` protocol (v1.x 일관성)
+  - [x] Axis-wise iteration
+  - [x] Tests: 10+
 
 **Success Criteria**: NDArray 생성, 인덱싱, 슬라이싱이 모두 동작하고 75+ 테스트 통과
 
@@ -715,34 +717,34 @@ NDArray 타입의 기본 구조와 생성, 인덱싱, 메모리 레이아웃 구
 NDArray 연산, 브로드캐스팅, 변환 기능 구현:
 
 **Categories**:
-- [ ] **Element-wise 연산** — 사칙연산 및 수학 함수
-  - [ ] 산술: `add`, `sub`, `mul`, `div`, `mod`, `neg`
-  - [ ] 비교: `eq`, `ne`, `lt`, `le`, `gt`, `ge`
-  - [ ] 수학: `abs`, `exp`, `log`, `log2`, `log10`, `sqrt`, `pow`
-  - [ ] 삼각함수: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
-  - [ ] Tests: 30+
-- [ ] **Broadcasting** — NumPy-compatible broadcasting rules
-  - [ ] Shape 호환성 검증
-  - [ ] 자동 차원 확장 (1-dim expansion)
-  - [ ] Broadcasting을 사용한 binary operation
-  - [ ] Tests: 20+ (다양한 shape 조합, 비호환 shape 에러)
-- [ ] **Reshape & Transform** — 형태 변환
-  - [ ] `reshape()` — 데이터 재배치 없이 shape 변경 (가능한 경우)
-  - [ ] `transpose()`, `permute()` — 축 전치/순열
-  - [ ] `flatten()`, `ravel()` — 1차원으로 평탄화
-  - [ ] `squeeze()`, `unsqueeze()` — 차원 제거/추가
-  - [ ] `contiguous()` — 연속 메모리 보장 (필요 시 복사)
-  - [ ] Tests: 20+
-- [ ] **Reduction 연산** — 축 기반 집계
-  - [ ] `sum()`, `prod()`, `mean()` — axis 파라미터 지원
-  - [ ] `min()`, `max()`, `argmin()`, `argmax()`
-  - [ ] `all()`, `any()` — boolean reduction
-  - [ ] `cumsum()`, `cumprod()` — 누적 연산
-  - [ ] Tests: 20+
-- [ ] **I/O** — 직렬화/역직렬화
-  - [ ] `save()`, `load()` — 바이너리 형식
-  - [ ] `fromCSV()`, `toCSV()` — CSV 지원
-  - [ ] Tests: 10+
+- [x] **Element-wise 연산** — 사칙연산 및 수학 함수
+  - [x] 산술: `add`, `sub`, `mul`, `div`, `mod`, `neg`
+  - [x] 비교: `eq`, `ne`, `lt`, `le`, `gt`, `ge`
+  - [x] 수학: `abs`, `exp`, `log`, `log2`, `log10`, `sqrt`, `pow`
+  - [x] 삼각함수: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+  - [x] Tests: 30+
+- [x] **Broadcasting** — NumPy-compatible broadcasting rules
+  - [x] Shape 호환성 검증
+  - [x] 자동 차원 확장 (1-dim expansion)
+  - [x] Broadcasting을 사용한 binary operation
+  - [x] Tests: 20+ (다양한 shape 조합, 비호환 shape 에러)
+- [x] **Reshape & Transform** — 형태 변환
+  - [x] `reshape()` — 데이터 재배치 없이 shape 변경 (가능한 경우)
+  - [x] `transpose()`, `permute()` — 축 전치/순열
+  - [x] `flatten()`, `ravel()` — 1차원으로 평탄화
+  - [x] `squeeze()`, `unsqueeze()` — 차원 제거/추가
+  - [x] `contiguous()` — 연속 메모리 보장 (필요 시 복사)
+  - [x] Tests: 20+
+- [x] **Reduction 연산** — 축 기반 집계
+  - [x] `sum()`, `prod()`, `mean()` — axis 파라미터 지원
+  - [x] `min()`, `max()`, `argmin()`, `argmax()`
+  - [x] `all()`, `any()` — boolean reduction
+  - [x] `cumsum()`, `cumprod()` — 누적 연산
+  - [x] Tests: 20+
+- [x] **I/O** — 직렬화/역직렬화
+  - [x] `save()`, `load()` — 바이너리 형식
+  - [x] `fromCSV()`, `toCSV()` — CSV 지원
+  - [x] Tests: 10+
 
 **Success Criteria**: 모든 연산이 broadcasting과 함께 동작, 100+ 테스트 통과, NumPy 레퍼런스 출력 대비 검증
 
@@ -755,33 +757,33 @@ NDArray 연산, 브로드캐스팅, 변환 기능 구현:
 BLAS Level 1-3 및 기본 행렬 연산 구현:
 
 **Categories**:
-- [ ] **BLAS Level 1** — 벡터-벡터 연산
-  - [ ] `dot()` — 내적
-  - [ ] `axpy()` — y = αx + y
-  - [ ] `nrm2()` — L2 노름
-  - [ ] `asum()` — 절대값 합
-  - [ ] `scal()` — 스칼라 곱
-  - [ ] Tests: 20+
-- [ ] **BLAS Level 2** — 행렬-벡터 연산
-  - [ ] `gemv()` — y = αAx + βy
-  - [ ] `trmv()`, `trsv()` — 삼각행렬 연산
-  - [ ] `ger()` — 외적 (rank-1 update)
-  - [ ] Tests: 15+
-- [ ] **BLAS Level 3** — 행렬-행렬 연산
-  - [ ] `gemm()` — C = αAB + βC (핵심 연산)
-  - [ ] `trmm()`, `trsm()` — 삼각행렬 연산
-  - [ ] Loop tiling, cache blocking 최적화
-  - [ ] Tests: 20+
-- [ ] **Matrix Properties** — 행렬 스칼라 속성
-  - [ ] `det()` — 행렬식
-  - [ ] `trace()` — 대각합
-  - [ ] `rank()` — 행렬 계수
-  - [ ] `cond()` — 조건수
-  - [ ] Tests: 15+
-- [ ] **Norms** — 벡터/행렬 노름
-  - [ ] L1, L2, L∞ 노름 (벡터)
-  - [ ] Frobenius, spectral 노름 (행렬)
-  - [ ] Tests: 10+
+- [x] **BLAS Level 1** — 벡터-벡터 연산
+  - [x] `dot()` — 내적
+  - [x] `axpy()` — y = αx + y
+  - [x] `nrm2()` — L2 노름
+  - [x] `asum()` — 절대값 합
+  - [x] `scal()` — 스칼라 곱
+  - [x] Tests: 20+
+- [x] **BLAS Level 2** — 행렬-벡터 연산
+  - [x] `gemv()` — y = αAx + βy
+  - [x] `trmv()`, `trsv()` — 삼각행렬 연산
+  - [x] `ger()` — 외적 (rank-1 update)
+  - [x] Tests: 15+
+- [x] **BLAS Level 3** — 행렬-행렬 연산
+  - [x] `gemm()` — C = αAB + βC (핵심 연산)
+  - [x] `trmm()`, `trsm()` — 삼각행렬 연산
+  - [x] Loop tiling, cache blocking 최적화
+  - [x] Tests: 20+
+- [x] **Matrix Properties** — 행렬 스칼라 속성
+  - [x] `det()` — 행렬식
+  - [x] `trace()` — 대각합
+  - [x] `rank()` — 행렬 계수
+  - [x] `cond()` — 조건수
+  - [x] Tests: 15+
+- [x] **Norms** — 벡터/행렬 노름
+  - [x] L1, L2, L∞ 노름 (벡터)
+  - [x] Frobenius, spectral 노름 (행렬)
+  - [x] Tests: 10+
 
 **Performance Targets**:
 - DGEMM (1024×1024): ≥ 5 GFLOPS
@@ -794,35 +796,35 @@ BLAS Level 1-3 및 기본 행렬 연산 구현:
 행렬 분해 및 선형 시스템 해법 구현:
 
 **Categories**:
-- [ ] **LU 분해** — Partial pivoting
-  - [ ] `lu()` → `{L, U, P}` (하삼각, 상삼각, 치환행렬)
-  - [ ] In-place variant
-  - [ ] Tests: 15+ (정칙, 특이, 직사각 행렬)
-- [ ] **QR 분해** — Householder reflections
-  - [ ] `qr()` → `{Q, R}`
-  - [ ] Economy (thin) QR
-  - [ ] Tests: 15+
-- [ ] **Cholesky 분해** — 양의 정부호 행렬
-  - [ ] `cholesky()` → `L` (LL^T = A)
-  - [ ] Tests: 10+
-- [ ] **SVD** — 특이값 분해
-  - [ ] `svd()` → `{U, S, Vt}`
-  - [ ] Economy SVD
-  - [ ] Tests: 15+
-- [ ] **고유값 분해** — Eigendecomposition
-  - [ ] `eig()` — 일반 행렬 (실수/복소 고유값)
-  - [ ] `eigh()` — 대칭 행렬 (실수 고유값 보장)
-  - [ ] Tests: 15+
-- [ ] **선형 시스템 해법** — Ax = b
-  - [ ] `solve()` — LU 기반 직접 해법
-  - [ ] `lstsq()` — 최소자승 해법 (QR/SVD 기반)
-  - [ ] `inv()` — 역행렬
-  - [ ] Tests: 15+
-- [ ] **희소 행렬** — Sparse matrix 기초
-  - [ ] CSR, CSC, COO 형식
-  - [ ] Sparse-dense 곱
-  - [ ] Sparse 직접 해법 (LU)
-  - [ ] Tests: 20+
+- [x] **LU 분해** — Partial pivoting
+  - [x] `lu()` → `{L, U, P}` (하삼각, 상삼각, 치환행렬)
+  - [x] In-place variant
+  - [x] Tests: 15+ (정칙, 특이, 직사각 행렬)
+- [x] **QR 분해** — Householder reflections
+  - [x] `qr()` → `{Q, R}`
+  - [x] Economy (thin) QR
+  - [x] Tests: 15+
+- [x] **Cholesky 분해** — 양의 정부호 행렬
+  - [x] `cholesky()` → `L` (LL^T = A)
+  - [x] Tests: 10+
+- [x] **SVD** — 특이값 분해
+  - [x] `svd()` → `{U, S, Vt}`
+  - [x] Economy SVD
+  - [x] Tests: 15+
+- [x] **고유값 분해** — Eigendecomposition
+  - [x] `eig()` — 일반 행렬 (실수/복소 고유값)
+  - [x] `eigh()` — 대칭 행렬 (실수 고유값 보장)
+  - [x] Tests: 15+
+- [x] **선형 시스템 해법** — Ax = b
+  - [x] `solve()` — LU 기반 직접 해법
+  - [x] `lstsq()` — 최소자승 해법 (QR/SVD 기반)
+  - [x] `inv()` — 역행렬
+  - [x] Tests: 15+
+- [x] **희소 행렬** — Sparse matrix 기초
+  - [x] CSR, CSC, COO 형식
+  - [x] Sparse-dense 곱
+  - [x] Sparse 직접 해법 (LU)
+  - [x] Tests: 20+
 
 **Performance Targets**:
 - LU (1024×1024): ≤ 200 ms
@@ -839,24 +841,24 @@ BLAS Level 1-3 및 기본 행렬 연산 구현:
 기술 통계 및 확률 분포 구현:
 
 **Categories**:
-- [ ] **기술 통계** — Summary statistics
-  - [ ] `mean()`, `median()`, `mode()` — 중심 경향
-  - [ ] `std()`, `var()` — 산포도 (Bessel 보정 옵션)
-  - [ ] `quantile()`, `percentile()` — 분위수
-  - [ ] `skewness()`, `kurtosis()` — 형태 통계
-  - [ ] `cov()`, `corrcoef()` — 공분산/상관 행렬
-  - [ ] Tests: 25+
-- [ ] **확률 분포** — PDF, CDF, Quantile, Sampling
-  - [ ] 연속: Normal, Uniform, Exponential, Gamma, Beta, Chi-squared, Student-t, F
-  - [ ] 이산: Poisson, Binomial, Bernoulli, Geometric
-  - [ ] 각 분포: `pdf()`, `cdf()`, `quantile()`, `sample()`, `logpdf()`
-  - [ ] Tests: 40+ (KS test로 분포 정확도 검증)
-- [ ] **난수 생성** — PRNG
-  - [ ] PCG64, Xoshiro256** 구현
-  - [ ] `uniform()`, `normal()`, `exponential()` — 분포 샘플링
-  - [ ] `shuffle()`, `choice()`, `multinomial()` — 조합 샘플링
-  - [ ] Seed 기반 재현 가능성
-  - [ ] Tests: 20+
+- [x] **기술 통계** — Summary statistics
+  - [x] `mean()`, `median()`, `mode()` — 중심 경향
+  - [x] `std()`, `var()` — 산포도 (Bessel 보정 옵션)
+  - [x] `quantile()`, `percentile()` — 분위수
+  - [x] `skewness()`, `kurtosis()` — 형태 통계
+  - [x] `cov()`, `corrcoef()` — 공분산/상관 행렬
+  - [x] Tests: 25+
+- [x] **확률 분포** — PDF, CDF, Quantile, Sampling
+  - [x] 연속: Normal, Uniform, Exponential, Gamma, Beta, Chi-squared, Student-t, F
+  - [x] 이산: Poisson, Binomial, Bernoulli, Geometric
+  - [x] 각 분포: `pdf()`, `cdf()`, `quantile()`, `sample()`, `logpdf()`
+  - [x] Tests: 40+ (KS test로 분포 정확도 검증)
+- [x] **난수 생성** — PRNG
+  - [x] PCG64, Xoshiro256** 구현
+  - [x] `uniform()`, `normal()`, `exponential()` — 분포 샘플링
+  - [x] `shuffle()`, `choice()`, `multinomial()` — 조합 샘플링
+  - [x] Seed 기반 재현 가능성
+  - [x] Tests: 20+
 
 **Success Criteria**: 모든 분포에 대해 SciPy 레퍼런스 검증 (KS test p > 0.05), 85+ 테스트 통과
 
@@ -865,26 +867,26 @@ BLAS Level 1-3 및 기본 행렬 연산 구현:
 가설 검정, 회귀 분석 구현:
 
 **Categories**:
-- [ ] **가설 검정** — Statistical tests
-  - [ ] `ttest_1samp()`, `ttest_ind()`, `ttest_rel()` — t-검정
-  - [ ] `chi2_test()` — 카이제곱 검정
-  - [ ] `anova_oneway()` — 일원 분산분석
-  - [ ] `ks_test()` — Kolmogorov-Smirnov 검정
-  - [ ] `mannwhitney_u()` — 비모수 검정
-  - [ ] 결과: `TestResult{ .statistic, .p_value, .df, .reject }`
-  - [ ] Tests: 25+
-- [ ] **상관 분석** — Correlation
-  - [ ] `pearsonr()`, `spearmanr()`, `kendalltau()` — 상관 계수
-  - [ ] `partial_corr()` — 편상관
-  - [ ] Tests: 10+
-- [ ] **회귀 분석** — Linear models
-  - [ ] `ols()` — 최소자승 회귀 (계수, R², p-values, 잔차)
-  - [ ] `polyfit()`, `polyval()` — 다항 회귀
-  - [ ] Tests: 15+
-- [ ] **히스토그램** — Binning
-  - [ ] `histogram()` — uniform, auto (Sturges, Scott, Freedman-Diaconis)
-  - [ ] `histogram2d()` — 2차원
-  - [ ] Tests: 10+
+- [x] **가설 검정** — Statistical tests
+  - [x] `ttest_1samp()`, `ttest_ind()`, `ttest_rel()` — t-검정
+  - [x] `chi2_test()` — 카이제곱 검정
+  - [x] `anova_oneway()` — 일원 분산분석
+  - [x] `ks_test()` — Kolmogorov-Smirnov 검정
+  - [x] `mannwhitney_u()` — 비모수 검정
+  - [x] 결과: `TestResult{ .statistic, .p_value, .df, .reject }`
+  - [x] Tests: 25+
+- [x] **상관 분석** — Correlation
+  - [x] `pearsonr()`, `spearmanr()`, `kendalltau()` — 상관 계수
+  - [x] `partial_corr()` — 편상관
+  - [x] Tests: 10+
+- [x] **회귀 분석** — Linear models
+  - [x] `ols()` — 최소자승 회귀 (계수, R², p-values, 잔차)
+  - [x] `polyfit()`, `polyval()` — 다항 회귀
+  - [x] Tests: 15+
+- [x] **히스토그램** — Binning
+  - [x] `histogram()` — uniform, auto (Sturges, Scott, Freedman-Diaconis)
+  - [x] `histogram2d()` — 2차원
+  - [x] Tests: 10+
 
 **Success Criteria**: 모든 검정에 대해 R/SciPy 레퍼런스 결과와 일치, 60+ 테스트 통과
 
@@ -897,23 +899,23 @@ BLAS Level 1-3 및 기본 행렬 연산 구현:
 Fast Fourier Transform 및 스펙트럼 분석 구현:
 
 **Categories**:
-- [ ] **FFT** — Cooley-Tukey 알고리즘
-  - [ ] `fft()`, `ifft()` — 복소 FFT/IFFT
-  - [ ] `rfft()`, `irfft()` — 실수 FFT (대칭 이용 최적화)
-  - [ ] `fft2()`, `ifft2()` — 2D FFT
-  - [ ] `fftfreq()` — 주파수 배열 생성
-  - [ ] 2의 거듭제곱 + 임의 길이 지원 (Bluestein)
-  - [ ] Tests: 30+ (정확도 ≤ 1e-10, Parseval 정리 검증)
-- [ ] **DCT** — Discrete Cosine Transform
-  - [ ] `dct()`, `idct()` — Type II / Type III
-  - [ ] Tests: 10+
-- [ ] **스펙트럼 분석** — Power spectrum
-  - [ ] `periodogram()` — 파워 스펙트럼
-  - [ ] `welch()` — Welch 방법
-  - [ ] Tests: 10+
-- [ ] **윈도우 함수** — Window functions
-  - [ ] `hamming()`, `hann()`, `blackman()`, `kaiser()`, `bartlett()`
-  - [ ] Tests: 10+
+- [x] **FFT** — Cooley-Tukey 알고리즘
+  - [x] `fft()`, `ifft()` — 복소 FFT/IFFT
+  - [x] `rfft()`, `irfft()` — 실수 FFT (대칭 이용 최적화)
+  - [x] `fft2()`, `ifft2()` — 2D FFT
+  - [x] `fftfreq()` — 주파수 배열 생성
+  - [x] 2의 거듭제곱 + 임의 길이 지원 (Bluestein)
+  - [x] Tests: 30+ (정확도 ≤ 1e-10, Parseval 정리 검증)
+- [x] **DCT** — Discrete Cosine Transform
+  - [x] `dct()`, `idct()` — Type II / Type III
+  - [x] Tests: 10+
+- [x] **스펙트럼 분석** — Power spectrum
+  - [x] `periodogram()` — 파워 스펙트럼
+  - [x] `welch()` — Welch 방법
+  - [x] Tests: 10+
+- [x] **윈도우 함수** — Window functions
+  - [x] `hamming()`, `hann()`, `blackman()`, `kaiser()`, `bartlett()`
+  - [x] Tests: 10+
 
 **Performance Targets**:
 - FFT (1M complex f64): ≤ 30 ms
@@ -926,17 +928,17 @@ Fast Fourier Transform 및 스펙트럼 분석 구현:
 콘볼루션, 필터링 구현:
 
 **Categories**:
-- [ ] **콘볼루션** — Linear/circular convolution
-  - [ ] `convolve()` — 선형 콘볼루션 (직접)
-  - [ ] `fftconvolve()` — FFT 기반 콘볼루션 (대규모)
-  - [ ] `correlate()` — 상호상관
-  - [ ] Tests: 15+
-- [ ] **디지털 필터** — FIR/IIR
-  - [ ] `firwin()` — FIR 필터 설계
-  - [ ] `lfilter()` — 차분 방정식 필터링
-  - [ ] `filtfilt()` — 영위상 필터링
-  - [ ] `butter()`, `cheby1()` — IIR 필터 설계
-  - [ ] Tests: 20+
+- [x] **콘볼루션** — Linear/circular convolution
+  - [x] `convolve()` — 선형 콘볼루션 (직접)
+  - [x] `fftconvolve()` — FFT 기반 콘볼루션 (대규모)
+  - [x] `correlate()` — 상호상관
+  - [x] Tests: 15+
+- [x] **디지털 필터** — FIR/IIR
+  - [x] `firwin()` — FIR 필터 설계
+  - [x] `lfilter()` — 차분 방정식 필터링
+  - [x] `filtfilt()` — 영위상 필터링
+  - [x] `butter()`, `cheby1()` — IIR 필터 설계
+  - [x] Tests: 20+
 
 **Success Criteria**: 필터 주파수 응답 MATLAB/SciPy 대비 검증, 35+ 테스트 통과
 
@@ -949,25 +951,25 @@ Fast Fourier Transform 및 스펙트럼 분석 구현:
 수치 적분, 미분, 보간 구현:
 
 **Categories**:
-- [ ] **수치 적분** — Quadrature
-  - [ ] `trapezoid()` — 사다리꼴 법칙
-  - [ ] `simpson()` — Simpson 법칙
-  - [ ] `quad()` — 적응적 구적법 (Gauss-Kronrod)
-  - [ ] `romberg()` — Romberg 적분
-  - [ ] `gauss_legendre()` — Gauss-Legendre 구적법
-  - [ ] Tests: 20+ (해석해 대비 ≤ 1e-12)
-- [ ] **수치 미분** — Numerical differentiation
-  - [ ] `diff()` — 유한 차분 (전방, 중앙, 후방)
-  - [ ] `gradient()` — 다변수 기울기
-  - [ ] `jacobian()`, `hessian()` — 야코비안, 헤시안
-  - [ ] Tests: 15+
-- [ ] **보간** — Interpolation
-  - [ ] `interp1d()` — 선형 보간
-  - [ ] `cubic_spline()` — 3차 스플라인
-  - [ ] `lagrange()` — 라그랑주 보간
-  - [ ] `pchip()` — 단조 보간
-  - [ ] `interp2d()` — 2차원 보간
-  - [ ] Tests: 15+
+- [x] **수치 적분** — Quadrature
+  - [x] `trapezoid()` — 사다리꼴 법칙
+  - [x] `simpson()` — Simpson 법칙
+  - [x] `quad()` — 적응적 구적법 (Gauss-Kronrod)
+  - [x] `romberg()` — Romberg 적분
+  - [x] `gauss_legendre()` — Gauss-Legendre 구적법
+  - [x] Tests: 20+ (해석해 대비 ≤ 1e-12)
+- [x] **수치 미분** — Numerical differentiation
+  - [x] `diff()` — 유한 차분 (전방, 중앙, 후방)
+  - [x] `gradient()` — 다변수 기울기
+  - [x] `jacobian()`, `hessian()` — 야코비안, 헤시안
+  - [x] Tests: 15+
+- [x] **보간** — Interpolation
+  - [x] `interp1d()` — 선형 보간
+  - [x] `cubic_spline()` — 3차 스플라인
+  - [x] `lagrange()` — 라그랑주 보간
+  - [x] `pchip()` — 단조 보간
+  - [x] `interp2d()` — 2차원 보간
+  - [x] Tests: 15+
 
 **Success Criteria**: 적분 정확도 ≤ 1e-12 (해석해 대비), 보간 MATLAB 대비 검증, 50+ 테스트 통과
 
@@ -976,29 +978,29 @@ Fast Fourier Transform 및 스펙트럼 분석 구현:
 방정식 해법, ODE 솔버, 특수함수 구현:
 
 **Categories**:
-- [ ] **방정식 해법** — Root finding
-  - [ ] `bisect()` — 이분법
-  - [ ] `newton()` — 뉴턴-랩슨법
-  - [ ] `brent()` — 브렌트법
-  - [ ] `secant()` — 할선법
-  - [ ] `fixed_point()` — 고정점 반복
-  - [ ] Tests: 15+
-- [ ] **ODE 솔버** — Ordinary differential equations
-  - [ ] `euler()` — 오일러 방법
-  - [ ] `rk4()` — 4차 Runge-Kutta
-  - [ ] `rk45()` — 적응적 RK (Dormand-Prince)
-  - [ ] `bdf()` — Stiff systems (BDF)
-  - [ ] Tests: 20+ (Van der Pol, Lorenz, exponential decay)
-- [ ] **특수함수** — Special functions
-  - [ ] `gamma()`, `lgamma()` — 감마함수
-  - [ ] `beta()` — 베타함수
-  - [ ] `erf()`, `erfc()` — 오차함수
-  - [ ] `bessel_j()`, `bessel_y()` — 베셀함수
-  - [ ] Tests: 15+
-- [ ] **커브 피팅** — Curve fitting
-  - [ ] `curve_fit()` — Levenberg-Marquardt
-  - [ ] `polyfit()`, `polyval()`
-  - [ ] Tests: 10+
+- [x] **방정식 해법** — Root finding
+  - [x] `bisect()` — 이분법
+  - [x] `newton()` — 뉴턴-랩슨법
+  - [x] `brent()` — 브렌트법
+  - [x] `secant()` — 할선법
+  - [x] `fixed_point()` — 고정점 반복
+  - [x] Tests: 15+
+- [x] **ODE 솔버** — Ordinary differential equations
+  - [x] `euler()` — 오일러 방법
+  - [x] `rk4()` — 4차 Runge-Kutta
+  - [x] `rk45()` — 적응적 RK (Dormand-Prince)
+  - [x] `bdf()` — Stiff systems (BDF)
+  - [x] Tests: 20+ (Van der Pol, Lorenz, exponential decay)
+- [x] **특수함수** — Special functions
+  - [x] `gamma()`, `lgamma()` — 감마함수
+  - [x] `beta()` — 베타함수
+  - [x] `erf()`, `erfc()` — 오차함수
+  - [x] `bessel_j()`, `bessel_y()` — 베셀함수
+  - [x] Tests: 15+
+- [x] **커브 피팅** — Curve fitting
+  - [x] `curve_fit()` — Levenberg-Marquardt
+  - [x] `polyfit()`, `polyval()`
+  - [x] Tests: 10+
 
 **Success Criteria**: ODE 솔버 표준 문제 해결 (Lorenz attractor 등), 60+ 테스트 통과
 
@@ -1011,20 +1013,20 @@ Fast Fourier Transform 및 스펙트럼 분석 구현:
 비제약 최적화 및 자동 미분 구현:
 
 **Categories**:
-- [ ] **경사 하강법** — Gradient-based methods
-  - [ ] `gradient_descent()` — 기본 경사 하강법 (학습률 스케줄링)
-  - [ ] `conjugate_gradient()` — 켤레 기울기법
-  - [ ] `lbfgs()` — Limited-memory BFGS
-  - [ ] `nelder_mead()` — 심플렉스 (도함수 불필요)
-  - [ ] Tests: 20+ (Rosenbrock, Rastrigin, Beale)
-- [ ] **자동 미분** — Forward-mode AD
-  - [ ] `Dual(T)` — 이중수 타입 (comptime 전파)
-  - [ ] `autodiff.gradient()` — AD 기반 기울기
-  - [ ] `autodiff.jacobian()` — AD 기반 야코비안
-  - [ ] Tests: 15+ (수치 미분 대비 ≤ 1e-8)
-- [ ] **직선 탐색** — Line search
-  - [ ] `armijo()`, `wolfe()`, `backtracking()`
-  - [ ] Tests: 10+
+- [x] **경사 하강법** — Gradient-based methods
+  - [x] `gradient_descent()` — 기본 경사 하강법 (학습률 스케줄링)
+  - [x] `conjugate_gradient()` — 켤레 기울기법
+  - [x] `lbfgs()` — Limited-memory BFGS
+  - [x] `nelder_mead()` — 심플렉스 (도함수 불필요)
+  - [x] Tests: 20+ (Rosenbrock, Rastrigin, Beale)
+- [x] **자동 미분** — Forward-mode AD
+  - [x] `Dual(T)` — 이중수 타입 (comptime 전파)
+  - [x] `autodiff.gradient()` — AD 기반 기울기
+  - [x] `autodiff.jacobian()` — AD 기반 야코비안
+  - [x] Tests: 15+ (수치 미분 대비 ≤ 1e-8)
+- [x] **직선 탐색** — Line search
+  - [x] `armijo()`, `wolfe()`, `backtracking()`
+  - [x] Tests: 10+
 
 **Success Criteria**: 모든 옵티마이저 표준 테스트 함수 수렴, AD 기울기 수치 미분 대비 ≤ 1e-8, 45+ 테스트 통과
 
@@ -1033,18 +1035,18 @@ Fast Fourier Transform 및 스펙트럼 분석 구현:
 제약 최적화 및 선형 프로그래밍 구현:
 
 **Categories**:
-- [ ] **선형 프로그래밍** — Linear programming
-  - [ ] `simplex()` — 심플렉스법
-  - [ ] `interior_point()` — 내점법
-  - [ ] Tests: 15+
-- [ ] **제약 최적화** — Constrained optimization
-  - [ ] `augmented_lagrangian()` — 증강 라그랑주법
-  - [ ] `quadratic_programming()` — 이차 프로그래밍
-  - [ ] Tests: 10+
-- [ ] **비선형 최소자승** — Nonlinear least squares
-  - [ ] `levenberg_marquardt()` — LM 알고리즘
-  - [ ] `gauss_newton()` — 가우스-뉴턴법
-  - [ ] Tests: 10+
+- [x] **선형 프로그래밍** — Linear programming
+  - [x] `simplex()` — 심플렉스법
+  - [x] `interior_point()` — 내점법
+  - [x] Tests: 15+
+- [x] **제약 최적화** — Constrained optimization
+  - [x] `augmented_lagrangian()` — 증강 라그랑주법
+  - [x] `quadratic_programming()` — 이차 프로그래밍
+  - [x] Tests: 10+
+- [x] **비선형 최소자승** — Nonlinear least squares
+  - [x] `levenberg_marquardt()` — LM 알고리즘
+  - [x] `gauss_newton()` — 가우스-뉴턴법
+  - [x] Tests: 10+
 
 **Success Criteria**: LP 결과 GLPK 대비 검증, 35+ 테스트 통과
 
