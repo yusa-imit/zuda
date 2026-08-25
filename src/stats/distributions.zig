@@ -107695,3 +107695,902 @@ test "DiscreteGaussian: validate fails when sigma corrupted to NaN" {
     dist.sigma = std.math.nan(f64);
     try expectError(error.InvalidParameter, dist.validate());
 }
+
+/// Voigt Distribution: convolution of Normal + Cauchy
+///
+/// Used in spectroscopy to model line broadening.
+/// Voigt(mu, sigma, gamma) = Normal(mu, sigma) ⊗ Cauchy(mu, gamma)
+///
+/// Time: O(1) for all operations except pdf/cdf (O(n) where n=panel count)
+pub fn Voigt(comptime T: type) type {
+    return struct {
+        mu: T,      // location parameter
+        sigma: T,   // Gaussian scale (must be > 0)
+        gamma: T,   // Cauchy HWHM scale (must be > 0)
+
+        const Self = @This();
+
+        /// Initialize Voigt distribution with location, Gaussian scale, and Cauchy scale.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, gamma: T) DistributionError!Self {
+            if (sigma <= 0.0 or !math.isFinite(sigma)) return error.InvalidParameter;
+            if (gamma <= 0.0 or !math.isFinite(gamma)) return error.InvalidParameter;
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .gamma = gamma };
+        }
+
+        /// Compute Normal PDF at x with given mean and std dev.
+        fn normalPdf(x: T, mu_val: T, std_dev: T) T {
+            const z = (x - mu_val) / std_dev;
+            const coeff = 1.0 / (std_dev * @sqrt(2.0 * math.pi));
+            return coeff * @exp(-0.5 * z * z);
+        }
+
+        /// Probability density function via tan-substitution Simpson's rule.
+        ///
+        /// pdf(x) = (1/π) * ∫_{-π/2+ε}^{π/2-ε} Normal(x - gamma*tan(θ); mu, sigma) dθ
+        ///
+        /// Uses n=2000 panels over θ ∈ [-π/2+1e-9, π/2-1e-9]
+        ///
+        /// Time: O(2000) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            const n_panels: u32 = 2000;
+            const eps: T = 1e-9;
+            const lo: T = -math.pi / 2.0 + eps;
+            const hi: T = math.pi / 2.0 - eps;
+
+            const h = (hi - lo) / @as(T, @floatFromInt(n_panels));
+            var sum: T = 0.0;
+
+            var i: u32 = 0;
+            while (i <= n_panels) : (i += 1) {
+                const theta = lo + @as(T, @floatFromInt(i)) * h;
+                const t_theta = @tan(theta);
+                const sample_point = x - self.gamma * t_theta;
+                const contrib = normalPdf(sample_point, self.mu, self.sigma);
+
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+
+            return sum * h / (3.0 * math.pi);
+        }
+
+        /// Log probability density function.
+        ///
+        /// Time: O(2000) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            return @log(self.pdf(x));
+        }
+
+        /// Cumulative distribution function via Simpson's rule.
+        ///
+        /// cdf(x) = ∫_{mu-10σ}^{mu+10σ} Normal(t; mu, sigma) * [0.5 + arctan((x-t)/gamma)/π] dt
+        ///
+        /// Uses n=4000 panels over t ∈ [mu-10*sigma, mu+10*sigma]
+        ///
+        /// Time: O(4000) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            const n_panels: u32 = 4000;
+            const lo: T = self.mu - 10.0 * self.sigma;
+            const hi: T = self.mu + 10.0 * self.sigma;
+
+            const h = (hi - lo) / @as(T, @floatFromInt(n_panels));
+            var sum: T = 0.0;
+
+            var i: u32 = 0;
+            while (i <= n_panels) : (i += 1) {
+                const t = lo + @as(T, @floatFromInt(i)) * h;
+                const normal_contrib = normalPdf(t, self.mu, self.sigma);
+                const cauchy_contrib = 0.5 + math.atan((x - t) / self.gamma) / math.pi;
+                const contrib = normal_contrib * cauchy_contrib;
+
+                const w: T = if (i == 0 or i == n_panels) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+
+            const result = sum * h / 3.0;
+            if (result < 0.0) return 0.0;
+            if (result > 1.0) return 1.0;
+            return result;
+        }
+
+        /// Survival function.
+        ///
+        /// Time: O(4000) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) via bisection.
+        ///
+        /// Returns NaN for p outside [0,1], -inf for p=0, +inf for p=1.
+        ///
+        /// Time: O(100 * 4000) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (math.isNan(p) or p < 0.0 or p > 1.0) return math.nan(T);
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            var lo: T = self.mu - 1e6 * (self.sigma + self.gamma);
+            var hi: T = self.mu + 1e6 * (self.sigma + self.gamma);
+
+            var iter: usize = 0;
+            while (iter < 100) : (iter += 1) {
+                const mid = (lo + hi) / 2.0;
+                if (hi - lo < 1e-10 * (1.0 + @abs(mid))) break;
+                if (self.cdf(mid) < p) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            return (lo + hi) / 2.0;
+        }
+
+        /// Generate random sample.
+        ///
+        /// Uses direct composition: X = mu + Normal(0,sigma) + Cauchy(0,gamma)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const safe_u = @max(1e-10, @min(1.0 - 1e-10, u));
+            const cauchy_part = self.gamma * @tan(math.pi * (safe_u - 0.5));
+            return self.mu + self.sigma * rng.floatNorm(T) + cauchy_part;
+        }
+
+        /// Mean is undefined (inherits Cauchy's undefined mean).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return math.nan(T);
+        }
+
+        /// Variance is infinite (inherits Cauchy's infinite variance).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Mode is at mu (PDF is symmetric and unimodal).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.mu;
+        }
+
+        /// Median is at mu (symmetric distribution).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.mu;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Voigt(mu={d}, sigma={d}, gamma={d})", .{ self.mu, self.sigma, self.gamma });
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (self.gamma <= 0.0 or !math.isFinite(self.gamma)) return error.InvalidParameter;
+            if (!math.isFinite(self.mu)) return error.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Voigt Distribution Tests (convolution of Normal + Cauchy)
+// ============================================================================
+
+test "Voigt: init with valid parameters succeeds" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    try testing.expectEqual(0.0, dist.mu);
+    try testing.expectEqual(1.0, dist.sigma);
+    try testing.expectEqual(1.0, dist.gamma);
+
+    const dist2 = try Voigt(f64).init(5.0, 1.5, 0.7);
+    try testing.expectEqual(5.0, dist2.mu);
+    try testing.expectEqual(1.5, dist2.sigma);
+    try testing.expectEqual(0.7, dist2.gamma);
+}
+
+test "Voigt: init rejects sigma <= 0" {
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, 0.0, 1.0));
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, -1.0, 1.0));
+}
+
+test "Voigt: init rejects gamma <= 0" {
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, 1.0, 0.0));
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, 1.0, -1.0));
+}
+
+test "Voigt: init rejects non-finite mu" {
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(math.nan(f64), 1.0, 1.0));
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(math.inf(f64), 1.0, 1.0));
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(-math.inf(f64), 1.0, 1.0));
+}
+
+test "Voigt: init rejects non-finite sigma" {
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, math.nan(f64), 1.0));
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, math.inf(f64), 1.0));
+}
+
+test "Voigt: init rejects non-finite gamma" {
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, 1.0, math.nan(f64)));
+    try testing.expectError(error.InvalidParameter, Voigt(f64).init(0.0, 1.0, math.inf(f64)));
+}
+
+test "Voigt: validate passes for valid distribution" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "Voigt: validate fails when sigma corrupted to 0" {
+    var dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    dist.sigma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Voigt: validate fails when gamma corrupted to negative" {
+    var dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    dist.gamma = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Voigt: validate fails when mu corrupted to NaN" {
+    var dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    dist.mu = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- Ground truth tests: mu=0, sigma=1, gamma=1 (verified vs scipy.special.wofz) ---
+
+test "Voigt: pdf(mu=0, sigma=1, gamma=1, x=-3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.043385822323680), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=1, gamma=1, x=-1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.165795662689167), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=1, gamma=1, x=0.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.208709280520368), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=1, gamma=1, x=1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.165795662689167), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=1, gamma=1, x=3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.043385822323680), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=1, gamma=1, x=6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const p = dist.pdf(6.0);
+    try expectApproxEqAbs(@as(f64, 0.009377682517211), p, 1e-6);
+}
+
+// --- Ground truth tests: mu=0, sigma=2, gamma=0.5 ---
+
+test "Voigt: pdf(mu=0, sigma=2, gamma=0.5, x=-3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const p = dist.pdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.067732552806498), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=2, gamma=0.5, x=-1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.149106228520868), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=2, gamma=0.5, x=0.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.165174911309370), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=2, gamma=0.5, x=1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.149106228520868), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=2, gamma=0.5, x=3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const p = dist.pdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.067732552806498), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=0, sigma=2, gamma=0.5, x=6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const p = dist.pdf(6.0);
+    try expectApproxEqAbs(@as(f64, 0.008781826763141), p, 1e-6);
+}
+
+// --- Ground truth tests: mu=5, sigma=1.5, gamma=0.7 ---
+
+test "Voigt: pdf(mu=5, sigma=1.5, gamma=0.7, x=2.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const p = dist.pdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.054216988716482), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=5, sigma=1.5, gamma=0.7, x=4.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const p = dist.pdf(4.0);
+    try expectApproxEqAbs(@as(f64, 0.163008943777305), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=5, sigma=1.5, gamma=0.7, x=5.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const p = dist.pdf(5.0);
+    try expectApproxEqAbs(@as(f64, 0.190015658224166), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=5, sigma=1.5, gamma=0.7, x=6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const p = dist.pdf(6.0);
+    try expectApproxEqAbs(@as(f64, 0.163008943777305), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=5, sigma=1.5, gamma=0.7, x=8.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const p = dist.pdf(8.0);
+    try expectApproxEqAbs(@as(f64, 0.054216988716482), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=5, sigma=1.5, gamma=0.7, x=11.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const p = dist.pdf(11.0);
+    try expectApproxEqAbs(@as(f64, 0.007834882111722), p, 1e-6);
+}
+
+// --- Ground truth tests: mu=-3, sigma=0.8, gamma=1.2 ---
+
+test "Voigt: pdf(mu=-3, sigma=0.8, gamma=1.2, x=-6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const p = dist.pdf(-6.0);
+    try expectApproxEqAbs(@as(f64, 0.043143875139911), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=-3, sigma=0.8, gamma=1.2, x=-4.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const p = dist.pdf(-4.0);
+    try expectApproxEqAbs(@as(f64, 0.159154865710819), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=-3, sigma=0.8, gamma=1.2, x=-3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const p = dist.pdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.205236521366224), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=-3, sigma=0.8, gamma=1.2, x=-2.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const p = dist.pdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.159154865710819), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=-3, sigma=0.8, gamma=1.2, x=0.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.043143875139911), p, 1e-6);
+}
+
+test "Voigt: pdf(mu=-3, sigma=0.8, gamma=1.2, x=3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const p = dist.pdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.010741002221416), p, 1e-6);
+}
+
+// --- CDF ground truth tests: mu=0, sigma=1, gamma=1 ---
+
+test "Voigt: cdf(mu=0, sigma=1, gamma=1, x=-3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.114886380058731), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=1, gamma=1, x=-1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.306440167499942), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=1, gamma=1, x=0.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.500000000000000), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=1, gamma=1, x=1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.693559832500088), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=1, gamma=1, x=3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.885113619941221), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=1, gamma=1, x=6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(6.0);
+    try expectApproxEqAbs(@as(f64, 0.945913606203309), c, 1e-6);
+}
+
+// --- CDF ground truth tests: mu=0, sigma=2, gamma=0.5 ---
+
+test "Voigt: cdf(mu=0, sigma=2, gamma=0.5, x=-3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.121029736606657), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=2, gamma=0.5, x=-1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.340298748909039), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=2, gamma=0.5, x=0.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.500000000000000), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=2, gamma=0.5, x=1.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.659701251090961), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=2, gamma=0.5, x=3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.878970263393344), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=0, sigma=2, gamma=0.5, x=6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(6.0);
+    try expectApproxEqAbs(@as(f64, 0.967886402512800), c, 1e-6);
+}
+
+// --- CDF ground truth tests: mu=5, sigma=1.5, gamma=0.7 ---
+
+test "Voigt: cdf(mu=5, sigma=1.5, gamma=0.7, x=2.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.106645400829718), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=5, sigma=1.5, gamma=0.7, x=4.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(4.0);
+    try expectApproxEqAbs(@as(f64, 0.319299408450502), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=5, sigma=1.5, gamma=0.7, x=5.0) matches ground truth (with tolerance)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(5.0);
+    // Test with tolerance since scipy ground truth is 0.499999999999994 (floating point)
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-5);
+}
+
+test "Voigt: cdf(mu=5, sigma=1.5, gamma=0.7, x=6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(6.0);
+    try expectApproxEqAbs(@as(f64, 0.680700591549498), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=5, sigma=1.5, gamma=0.7, x=8.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(8.0);
+    try expectApproxEqAbs(@as(f64, 0.893354599170019), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=5, sigma=1.5, gamma=0.7, x=11.0) matches ground truth" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(11.0);
+    try expectApproxEqAbs(@as(f64, 0.960145005771651), c, 1e-6);
+}
+
+// --- CDF ground truth tests: mu=-3, sigma=0.8, gamma=1.2 ---
+
+test "Voigt: cdf(mu=-3, sigma=0.8, gamma=1.2, x=-6.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(-6.0);
+    try expectApproxEqAbs(@as(f64, 0.128856724744518), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=-3, sigma=0.8, gamma=1.2, x=-4.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(-4.0);
+    try expectApproxEqAbs(@as(f64, 0.311223609510530), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=-3, sigma=0.8, gamma=1.2, x=-3.0) matches ground truth (with tolerance)" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(-3.0);
+    // Test with tolerance since scipy ground truth is 0.499999999999900 (floating point)
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-5);
+}
+
+test "Voigt: cdf(mu=-3, sigma=0.8, gamma=1.2, x=-2.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.688776390489471), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=-3, sigma=0.8, gamma=1.2, x=0.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.871143275255503), c, 1e-6);
+}
+
+test "Voigt: cdf(mu=-3, sigma=0.8, gamma=1.2, x=3.0) matches ground truth" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(3.0);
+    try expectApproxEqAbs(@as(f64, 0.936067041189406), c, 1e-6);
+}
+
+// --- Symmetry tests: pdf(mu+d) == pdf(mu-d) ---
+
+test "Voigt: pdf symmetry around mu, d=1.0 (mu=0, sigma=1, gamma=1)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const pdf_right = dist.pdf(1.0);
+    const pdf_left = dist.pdf(-1.0);
+    try expectApproxEqRel(pdf_right, pdf_left, 1e-10);
+}
+
+test "Voigt: pdf symmetry around mu, d=3.0 (mu=0, sigma=1, gamma=1)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const pdf_right = dist.pdf(3.0);
+    const pdf_left = dist.pdf(-3.0);
+    try expectApproxEqRel(pdf_right, pdf_left, 1e-10);
+}
+
+test "Voigt: pdf symmetry around mu, d=1.0 (mu=5, sigma=1.5, gamma=0.7)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const pdf_right = dist.pdf(6.0);
+    const pdf_left = dist.pdf(4.0);
+    try expectApproxEqRel(pdf_right, pdf_left, 1e-10);
+}
+
+test "Voigt: pdf symmetry around mu, d=3.0 (mu=5, sigma=1.5, gamma=0.7)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const pdf_right = dist.pdf(8.0);
+    const pdf_left = dist.pdf(2.0);
+    try expectApproxEqRel(pdf_right, pdf_left, 1e-10);
+}
+
+test "Voigt: pdf symmetry around mu, d=6.0 (mu=5, sigma=1.5, gamma=0.7)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const pdf_right = dist.pdf(11.0);
+    const pdf_left = dist.pdf(-1.0);
+    // For far-from-mu points, use slightly looser tolerance due to numerical integration
+    try expectApproxEqRel(pdf_right, pdf_left, 1e-5);
+}
+
+// --- Peak test: pdf(mu) is maximum ---
+
+test "Voigt: pdf(mu) is peak/maximum (mu=0, sigma=1, gamma=1)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const pdf_peak = dist.pdf(0.0);
+    const pdf_minus_2 = dist.pdf(-2.0);
+    const pdf_plus_2 = dist.pdf(2.0);
+    const pdf_minus_5 = dist.pdf(-5.0);
+    const pdf_plus_5 = dist.pdf(5.0);
+    try testing.expect(pdf_peak > pdf_minus_2);
+    try testing.expect(pdf_peak > pdf_plus_2);
+    try testing.expect(pdf_peak > pdf_minus_5);
+    try testing.expect(pdf_peak > pdf_plus_5);
+}
+
+test "Voigt: pdf(mu) is peak/maximum (mu=5, sigma=1.5, gamma=0.7)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const pdf_peak = dist.pdf(5.0);
+    const pdf_minus_2 = dist.pdf(3.0);
+    const pdf_plus_2 = dist.pdf(7.0);
+    const pdf_minus_5 = dist.pdf(0.0);
+    const pdf_plus_5 = dist.pdf(10.0);
+    try testing.expect(pdf_peak > pdf_minus_2);
+    try testing.expect(pdf_peak > pdf_plus_2);
+    try testing.expect(pdf_peak > pdf_minus_5);
+    try testing.expect(pdf_peak > pdf_plus_5);
+}
+
+// --- CDF monotonicity ---
+
+test "Voigt: cdf is monotonically increasing (mu=0, sigma=1, gamma=1)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c_minus_3 = dist.cdf(-3.0);
+    const c_minus_1 = dist.cdf(-1.0);
+    const c_0 = dist.cdf(0.0);
+    const c_plus_1 = dist.cdf(1.0);
+    const c_plus_3 = dist.cdf(3.0);
+    try testing.expect(c_minus_3 < c_minus_1);
+    try testing.expect(c_minus_1 < c_0);
+    try testing.expect(c_0 < c_plus_1);
+    try testing.expect(c_plus_1 < c_plus_3);
+}
+
+test "Voigt: cdf is monotonically increasing (mu=5, sigma=1.5, gamma=0.7)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c_2 = dist.cdf(2.0);
+    const c_4 = dist.cdf(4.0);
+    const c_5 = dist.cdf(5.0);
+    const c_6 = dist.cdf(6.0);
+    const c_8 = dist.cdf(8.0);
+    try testing.expect(c_2 < c_4);
+    try testing.expect(c_4 < c_5);
+    try testing.expect(c_5 < c_6);
+    try testing.expect(c_6 < c_8);
+}
+
+// --- CDF at mu equals 0.5 ---
+
+test "Voigt: cdf(mu) ≈ 0.5 (mu=0, sigma=1, gamma=1)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-6);
+}
+
+test "Voigt: cdf(mu) ≈ 0.5 (mu=0, sigma=2, gamma=0.5)" {
+    const dist = try Voigt(f64).init(0.0, 2.0, 0.5);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-6);
+}
+
+test "Voigt: cdf(mu) ≈ 0.5 (mu=5, sigma=1.5, gamma=0.7)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const c = dist.cdf(5.0);
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-5);
+}
+
+test "Voigt: cdf(mu) ≈ 0.5 (mu=-3, sigma=0.8, gamma=1.2)" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const c = dist.cdf(-3.0);
+    try expectApproxEqAbs(@as(f64, 0.5), c, 1e-5);
+}
+
+// --- mean() and variance() ---
+
+test "Voigt: mean() returns NaN (undefined)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Voigt: mean() returns NaN for arbitrary params" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Voigt: variance() returns +inf (infinite variance)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const v = dist.variance();
+    try testing.expect(math.isInf(v));
+}
+
+test "Voigt: variance() returns +inf for arbitrary params" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const v = dist.variance();
+    try testing.expect(math.isInf(v));
+}
+
+// --- mode() and median() ---
+
+test "Voigt: mode() equals mu exactly" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const mode = dist.mode();
+    try testing.expectEqual(0.0, mode);
+}
+
+test "Voigt: mode() equals mu for arbitrary mu" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const mode = dist.mode();
+    try testing.expectEqual(5.0, mode);
+}
+
+test "Voigt: mode() equals mu for negative mu" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const mode = dist.mode();
+    try testing.expectEqual(-3.0, mode);
+}
+
+test "Voigt: median() equals mu exactly" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const median = dist.median();
+    try testing.expectEqual(0.0, median);
+}
+
+test "Voigt: median() equals mu for arbitrary mu" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const median = dist.median();
+    try testing.expectEqual(5.0, median);
+}
+
+test "Voigt: median() equals mu for negative mu" {
+    const dist = try Voigt(f64).init(-3.0, 0.8, 1.2);
+    const median = dist.median();
+    try testing.expectEqual(-3.0, median);
+}
+
+// --- quantile edge cases ---
+
+test "Voigt: quantile(0.0) returns -inf" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expect(math.isInf(q) and q < 0.0);
+}
+
+test "Voigt: quantile(1.0) returns +inf" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0.0);
+}
+
+test "Voigt: quantile(p < 0) returns NaN" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "Voigt: quantile(p > 1) returns NaN" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "Voigt: quantile(NaN) returns NaN" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(math.nan(f64));
+    try testing.expect(math.isNan(q));
+}
+
+test "Voigt: quantile(0.5) ≈ mu (median)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const q = dist.quantile(0.5);
+    try expectApproxEqAbs(0.0, q, 1e-3);
+}
+
+test "Voigt: quantile(0.5) ≈ mu for arbitrary mu" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const q = dist.quantile(0.5);
+    try expectApproxEqAbs(5.0, q, 1e-3);
+}
+
+// --- quantile round-trip: quantile(cdf(x)) ≈ x ---
+
+test "Voigt: round-trip quantile(cdf(x)) ≈ x at x=0.5 (mu=0)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const q = dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-3);
+}
+
+test "Voigt: round-trip quantile(cdf(x)) ≈ x at x=1.0 (mu=0)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const x = 1.0;
+    const c = dist.cdf(x);
+    const q = dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-3);
+}
+
+test "Voigt: round-trip quantile(cdf(x)) ≈ x at x=4.0 (mu=5)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const x = 4.0;
+    const c = dist.cdf(x);
+    const q = dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-3);
+}
+
+test "Voigt: round-trip quantile(cdf(x)) ≈ x at x=6.0 (mu=5)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const x = 6.0;
+    const c = dist.cdf(x);
+    const q = dist.quantile(c);
+    try expectApproxEqAbs(x, q, 1e-3);
+}
+
+// --- logpdf and sf consistency ---
+
+test "Voigt: logpdf(x) ≈ ln(pdf(x))" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const x = 1.0;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    try expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "Voigt: logpdf(x) ≈ ln(pdf(x)) at x=-1.5 (mu=5)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const x = 3.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    try expectApproxEqAbs(@log(pdf_val), logpdf_val, 1e-10);
+}
+
+test "Voigt: sf(x) = 1 - cdf(x)" {
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const x = 0.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try expectApproxEqAbs(1.0, c + s, 1e-10);
+}
+
+test "Voigt: sf(x) = 1 - cdf(x) at x=1.5 (mu=5)" {
+    const dist = try Voigt(f64).init(5.0, 1.5, 0.7);
+    const x = 5.5;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try expectApproxEqAbs(1.0, c + s, 1e-10);
+}
+
+// --- sample() smoke test ---
+
+test "Voigt: sample() returns finite value" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(math.isFinite(s));
+}
+
+test "Voigt: 100 samples all finite" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Voigt: samples vary with different seed" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(99);
+    const dist = try Voigt(f64).init(0.0, 1.0, 1.0);
+    var samples1 = [_]f64{0.0} ** 10;
+    var samples2 = [_]f64{0.0} ** 10;
+    for (0..10) |i| {
+        samples1[i] = dist.sample(rng1.random());
+        samples2[i] = dist.sample(rng2.random());
+    }
+    var has_diff = false;
+    for (0..10) |i| {
+        if (samples1[i] != samples2[i]) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
