@@ -107086,3 +107086,612 @@ test "WrappedExponential: validate fails when lambda corrupted to negative" {
     const result = dist.validate();
     try expectError(error.InvalidParameter, result);
 }
+
+// ============================================================================
+// DiscreteGaussian Distribution (180th total)
+// ============================================================================
+
+/// Discrete Gaussian distribution on integers, symmetric about 0.
+///
+/// pmf(k) = exp(-k²/(2σ²)) / Z(σ), k ∈ ℤ
+/// where Z(σ) is computed via truncated direct summation.
+///
+/// Parameters:
+///   - sigma (σ): Scale parameter (σ > 0, finite)
+///
+pub fn DiscreteGaussian(comptime T: type) type {
+    return struct {
+        sigma: T,
+        logZ: T, // cached log(Z), where Z = Σ exp(-k²/(2σ²))
+        variance_cached: T, // cached variance = Σ k² · pmf(k)
+        k_bound: i64, // truncation bound K for cdf/quantile/sample
+
+        const Self = @This();
+
+        /// Compute the truncation bound K for summation: K = min(ceil(9.5*sigma) + 10, 200000)
+        fn computeBound(sigma: T) i64 {
+            const bound_float: i64 = @intFromFloat(@ceil(9.5 * sigma) + 10.0);
+            return @min(bound_float, 200000);
+        }
+
+        /// Initialize DiscreteGaussian(sigma).
+        /// Requires: sigma > 0 and finite.
+        /// Computes Z and variance via truncated direct summation.
+        ///
+        /// Time: O(σ) | Space: O(1)
+        pub fn init(sigma: T) DistributionError!Self {
+            if (!(sigma > 0.0) or !math.isFinite(sigma)) return error.InvalidParameter;
+
+            const k_bound = computeBound(sigma);
+            const two_sigma_sq = 2.0 * sigma * sigma;
+
+            // Compute Z and variance via truncated summation, using symmetry.
+            // Z = 1 + 2*Σ_{k=1}^{K} exp(-k²/(2σ²))
+            // Variance = 1 + 2*Σ_{k=1}^{K} k²·exp(-k²/(2σ²)) / Z
+            var sum_exp: T = 1.0; // k=0 term
+            var sum_k2_exp: T = 0.0; // Σ k²·exp(-k²/(2σ²))
+
+            for (1..@intCast(k_bound + 1)) |uk| {
+                const k: T = @floatFromInt(uk);
+                const exponent = -(k * k) / two_sigma_sq;
+                const term = @exp(exponent);
+                sum_exp += 2.0 * term;
+                sum_k2_exp += 2.0 * k * k * term;
+            }
+
+            const logZ = @log(sum_exp);
+            const variance_cached = sum_k2_exp / sum_exp;
+
+            return Self{
+                .sigma = sigma,
+                .logZ = logZ,
+                .variance_cached = variance_cached,
+                .k_bound = k_bound,
+            };
+        }
+
+        /// Log probability mass function: logpmf(k) = -k²/(2σ²) - logZ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: i64) T {
+            const k_float: T = @floatFromInt(k);
+            const two_sigma_sq = 2.0 * self.sigma * self.sigma;
+            return -(k_float * k_float) / two_sigma_sq - self.logZ;
+        }
+
+        /// Probability mass function: pmf(k) = exp(logpmf(k))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: i64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Cumulative distribution function: CDF(k) = Σ_{j=-K}^{k} pmf(j)
+        /// Computed via truncated direct summation.
+        ///
+        /// Time: O(σ) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            if (k < -self.k_bound) return 0.0;
+            if (k >= self.k_bound) return 1.0;
+
+            var cumsum: T = 0.0;
+            var kj: i64 = -self.k_bound;
+            while (kj <= k) : (kj += 1) {
+                cumsum += self.pmf(kj);
+            }
+            return cumsum;
+        }
+
+        /// Survival function: sf(k) = 1 - cdf(k)
+        ///
+        /// Time: O(σ) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k such that cdf(k) ≥ u.
+        /// Validates u ∈ [0, 1]; iterates cumulative sum from -K.
+        ///
+        /// Time: O(σ) | Space: O(1)
+        pub fn quantile(self: Self, u: T) DistributionError!i64 {
+            if (math.isNan(u) or u < 0.0 or u > 1.0) return error.InvalidProbability;
+
+            if (u <= 0.0) return -1_000_000;
+            if (u >= 1.0) return 1_000_000;
+
+            var cumsum: T = 0.0;
+            var kj: i64 = -self.k_bound;
+            while (kj <= self.k_bound) : (kj += 1) {
+                cumsum += self.pmf(kj);
+                if (cumsum >= u) return kj;
+            }
+            return self.k_bound;
+        }
+
+        /// Mean = 0 (exact by symmetry)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Variance = cached value from init
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.variance_cached;
+        }
+
+        /// Mode = 0 (pmf is maximized at k=0 for all sigma > 0)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) i64 {
+            _ = self;
+            return 0;
+        }
+
+        /// Shannon entropy: H = Variance/(2σ²) + logZ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const two_sigma_sq = 2.0 * self.sigma * self.sigma;
+            return self.variance_cached / two_sigma_sq + self.logZ;
+        }
+
+        /// Draw a random sample via inverse CDF transform.
+        ///
+        /// Time: O(σ) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) i64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch 0;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.sigma > 0.0) or !math.isFinite(self.sigma)) return error.InvalidParameter;
+            if (!math.isFinite(self.logZ)) return error.InvalidParameter;
+        }
+
+        /// Format the distribution for debugging.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("DiscreteGaussian(sigma={d})", .{self.sigma});
+        }
+    };
+}
+
+// ============================================================================
+// DiscreteGaussian Distribution (180th total)
+// ============================================================================
+
+test "DiscreteGaussian: init with valid sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(1.0, dist.sigma, 1e-10);
+}
+
+test "DiscreteGaussian: init with valid sigma=0.5" {
+    const dist = try DiscreteGaussian(f64).init(0.5);
+    try expectApproxEqRel(0.5, dist.sigma, 1e-10);
+}
+
+test "DiscreteGaussian: init with valid sigma=2.0" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(2.0, dist.sigma, 1e-10);
+}
+
+test "DiscreteGaussian: init with valid sigma=5.0" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expectApproxEqRel(5.0, dist.sigma, 1e-10);
+}
+
+test "DiscreteGaussian: init with valid sigma=10.0" {
+    const dist = try DiscreteGaussian(f64).init(10.0);
+    try expectApproxEqRel(10.0, dist.sigma, 1e-10);
+}
+
+test "DiscreteGaussian: init rejects sigma=0" {
+    try expectError(error.InvalidParameter, DiscreteGaussian(f64).init(0.0));
+}
+
+test "DiscreteGaussian: init rejects negative sigma" {
+    try expectError(error.InvalidParameter, DiscreteGaussian(f64).init(-1.0));
+    try expectError(error.InvalidParameter, DiscreteGaussian(f64).init(-5.5));
+}
+
+test "DiscreteGaussian: init rejects NaN sigma" {
+    try expectError(error.InvalidParameter, DiscreteGaussian(f64).init(std.math.nan(f64)));
+}
+
+test "DiscreteGaussian: init rejects infinite sigma" {
+    try expectError(error.InvalidParameter, DiscreteGaussian(f64).init(std.math.inf(f64)));
+    try expectError(error.InvalidParameter, DiscreteGaussian(f64).init(-std.math.inf(f64)));
+}
+
+test "DiscreteGaussian: pmf(0) for sigma=1.0 ≈ 0.398942278" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.398942278266862, dist.pmf(0), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(1) for sigma=1.0 ≈ 0.241970723" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.241970723224461, dist.pmf(1), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(-1) for sigma=1.0 ≈ 0.241970723" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.241970723224461, dist.pmf(-1), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(0) for sigma=2.0 ≈ 0.199471140" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.199471140200716, dist.pmf(0), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(1) for sigma=2.0 ≈ 0.176032663" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.176032663382150, dist.pmf(1), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(2) for sigma=2.0 ≈ 0.120985362" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.12098536225957167, dist.pmf(2), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(3) for sigma=2.0 ≈ 0.064758798" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.06475879783294586, dist.pmf(3), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(0) for sigma=0.5 ≈ 0.786570707" {
+    const dist = try DiscreteGaussian(f64).init(0.5);
+    try expectApproxEqRel(0.786570707041948, dist.pmf(0), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(1) for sigma=0.5 ≈ 0.106450769" {
+    const dist = try DiscreteGaussian(f64).init(0.5);
+    try expectApproxEqRel(0.106450769423145, dist.pmf(1), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(0) for sigma=5.0 ≈ 0.079788456" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expectApproxEqRel(0.079788456080287, dist.pmf(0), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(1) for sigma=5.0 ≈ 0.078208539" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expectApproxEqRel(0.078208538795091, dist.pmf(1), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(0) for sigma=10.0 ≈ 0.039894228" {
+    const dist = try DiscreteGaussian(f64).init(10.0);
+    try expectApproxEqRel(0.039894228040143, dist.pmf(0), 1e-9);
+}
+
+test "DiscreteGaussian: pmf(1) for sigma=10.0 ≈ 0.039695255" {
+    const dist = try DiscreteGaussian(f64).init(10.0);
+    try expectApproxEqRel(0.039695254747701, dist.pmf(1), 1e-9);
+}
+
+test "DiscreteGaussian: logpmf = log(pmf)" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    for ([_]i64{ 0, 1, -1, 2, -2 }) |k| {
+        const pmf_val = dist.pmf(k);
+        const logpmf_val = dist.logpmf(k);
+        try expectApproxEqAbs(@log(pmf_val), logpmf_val, 1e-9);
+    }
+}
+
+test "DiscreteGaussian: pmf symmetry pmf(k)=pmf(-k) for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    for (1..10) |uk| {
+        const k: i64 = @intCast(uk);
+        try expectApproxEqAbs(dist.pmf(k), dist.pmf(-k), 1e-10);
+    }
+}
+
+test "DiscreteGaussian: pmf symmetry pmf(k)=pmf(-k) for sigma=2.0" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    for (1..15) |uk| {
+        const k: i64 = @intCast(uk);
+        try expectApproxEqAbs(dist.pmf(k), dist.pmf(-k), 1e-10);
+    }
+}
+
+test "DiscreteGaussian: cdf(-2) for sigma=1.0 ≈ 0.058558138" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.058558137642108536, dist.cdf(-2), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(-1) for sigma=1.0 ≈ 0.300528861" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.30052886086656916, dist.cdf(-1), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(0) for sigma=1.0 ≈ 0.699471139" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.6994711391334308, dist.cdf(0), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(1) for sigma=1.0 ≈ 0.941441862" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.9414418623578915, dist.cdf(1), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(2) for sigma=1.0 ≈ 0.995432829" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.9954328285821967, dist.cdf(2), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(-3) for sigma=2.0 ≈ 0.103246404" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.10324640425792042, dist.cdf(-3), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(-1) for sigma=2.0 ≈ 0.400264430" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.40026442989964184, dist.cdf(-1), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(0) for sigma=2.0 ≈ 0.599735701" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.5997355701003582, dist.cdf(0), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(1) for sigma=2.0 ≈ 0.775768233" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.7757682334825079, dist.cdf(1), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(2) for sigma=2.0 ≈ 0.896753596" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.8967535957420796, dist.cdf(2), 1e-9);
+}
+
+test "DiscreteGaussian: cdf(3) for sigma=2.0 ≈ 0.961512394" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(0.9615123935750255, dist.cdf(3), 1e-9);
+}
+
+test "DiscreteGaussian: cdf is monotonically non-decreasing for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    var prev_cdf = dist.cdf(-5);
+    var k: i64 = -4;
+    while (k < 6) : (k += 1) {
+        const curr_cdf = dist.cdf(k);
+        try expect(curr_cdf >= prev_cdf - 1e-10);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "DiscreteGaussian: cdf(k) + sf(k) = 1 for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    var k: i64 = -3;
+    while (k < 4) : (k += 1) {
+        const sum = dist.cdf(k) + dist.sf(k);
+        try expectApproxEqAbs(1.0, sum, 1e-10);
+    }
+}
+
+test "DiscreteGaussian: mean() = 0 exactly for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+}
+
+test "DiscreteGaussian: mean() = 0 exactly for sigma=2.0" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+}
+
+test "DiscreteGaussian: mean() = 0 exactly for sigma=5.0" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+}
+
+test "DiscreteGaussian: variance() for sigma=1.0 ≈ 0.999999789" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(0.999999788767728, dist.variance(), 1e-9);
+}
+
+test "DiscreteGaussian: variance() for sigma=2.0 ≈ 4.0" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(4.000000000000000, dist.variance(), 1e-9);
+}
+
+test "DiscreteGaussian: variance() for sigma=0.5 ≈ 0.215012675 (NOT sigma²=0.25)" {
+    const dist = try DiscreteGaussian(f64).init(0.5);
+    try expectApproxEqRel(0.215012675088138, dist.variance(), 1e-9);
+}
+
+test "DiscreteGaussian: variance() for sigma=5.0 ≈ 25.0" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expectApproxEqRel(25.000000000000000, dist.variance(), 1e-9);
+}
+
+test "DiscreteGaussian: variance() for sigma=10.0 ≈ 100.0" {
+    const dist = try DiscreteGaussian(f64).init(10.0);
+    try expectApproxEqRel(100.000000000000000, dist.variance(), 1e-9);
+}
+
+test "DiscreteGaussian: mode() = 0 for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expect(dist.mode() == 0);
+}
+
+test "DiscreteGaussian: mode() = 0 for sigma=2.0" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expect(dist.mode() == 0);
+}
+
+test "DiscreteGaussian: mode() = 0 for sigma=5.0" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expect(dist.mode() == 0);
+}
+
+test "DiscreteGaussian: mode() = 0 for sigma=0.5" {
+    const dist = try DiscreteGaussian(f64).init(0.5);
+    try expect(dist.mode() == 0);
+}
+
+test "DiscreteGaussian: entropy() for sigma=1.0 ≈ 1.418938433" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectApproxEqRel(1.418938432939113, dist.entropy(), 1e-6);
+}
+
+test "DiscreteGaussian: entropy() for sigma=2.0 ≈ 2.112085714" {
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    try expectApproxEqRel(2.112085713764618, dist.entropy(), 1e-6);
+}
+
+test "DiscreteGaussian: entropy() for sigma=0.5 ≈ 0.670098010" {
+    const dist = try DiscreteGaussian(f64).init(0.5);
+    try expectApproxEqRel(0.670098009821142, dist.entropy(), 1e-6);
+}
+
+test "DiscreteGaussian: entropy() for sigma=5.0 ≈ 3.028376446" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try expectApproxEqRel(3.028376445638773, dist.entropy(), 1e-6);
+}
+
+test "DiscreteGaussian: entropy() for sigma=10.0 ≈ 3.721523626" {
+    const dist = try DiscreteGaussian(f64).init(10.0);
+    try expectApproxEqRel(3.721523626198719, dist.entropy(), 1e-6);
+}
+
+test "DiscreteGaussian: entropy is non-negative for multiple sigmas" {
+    const sigmas = [_]f64{ 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (sigmas) |sigma| {
+        const dist = try DiscreteGaussian(f64).init(sigma);
+        try expect(dist.entropy() >= 0.0);
+    }
+}
+
+test "DiscreteGaussian: quantile(0.5) is near 0 for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    const q = try dist.quantile(0.5);
+    try expect(q >= -1 and q <= 1);
+}
+
+test "DiscreteGaussian: quantile(0) returns minimum for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    const q = try dist.quantile(0.0);
+    try expect(q < -100);
+}
+
+test "DiscreteGaussian: quantile(1) returns maximum for sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    const q = try dist.quantile(1.0);
+    try expect(q > 100);
+}
+
+test "DiscreteGaussian: quantile rejects u < 0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "DiscreteGaussian: quantile rejects u > 1" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "DiscreteGaussian: quantile rejects NaN" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(std.math.nan(f64)));
+}
+
+test "DiscreteGaussian: quantile roundtrip cdf(quantile(u)) >= u" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_val = dist.cdf(q);
+        try expect(cdf_val >= p - 1e-10);
+    }
+}
+
+test "DiscreteGaussian: sample returns i64 values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    const s = dist.sample(rng);
+    try expect(@as(i64, s) == s);
+}
+
+test "DiscreteGaussian: sample stays bounded within 20*sigma for sigma=1.0" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    const bound: i64 = 20;
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(@abs(s) <= bound);
+    }
+}
+
+test "DiscreteGaussian: sample stays bounded within 20*sigma for sigma=2.0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try DiscreteGaussian(f64).init(2.0);
+    const bound: i64 = 40;
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        const s = dist.sample(rng);
+        try expect(@abs(s) <= bound);
+    }
+}
+
+test "DiscreteGaussian: sample empirical mean close to 0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const s = @as(f64, @floatFromInt(dist.sample(rng)));
+        sum += s;
+    }
+    const m = sum / @as(f64, n);
+    try expect(@abs(m) < 0.5);
+}
+
+test "DiscreteGaussian: f32 type support" {
+    const dist = try DiscreteGaussian(f32).init(1.0);
+    try expect(dist.pmf(0) > 0.0);
+    try expect(dist.cdf(0) > 0.0);
+    try expect(dist.mean() == 0.0);
+    try expect(dist.mode() == 0);
+    try expect(math.isFinite(dist.entropy()));
+}
+
+test "DiscreteGaussian: validate passes for valid distribution sigma=1.0" {
+    const dist = try DiscreteGaussian(f64).init(1.0);
+    try dist.validate();
+}
+
+test "DiscreteGaussian: validate passes for valid distribution sigma=5.0" {
+    const dist = try DiscreteGaussian(f64).init(5.0);
+    try dist.validate();
+}
+
+test "DiscreteGaussian: validate fails when sigma corrupted to 0" {
+    var dist = try DiscreteGaussian(f64).init(1.0);
+    dist.sigma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DiscreteGaussian: validate fails when sigma corrupted to negative" {
+    var dist = try DiscreteGaussian(f64).init(1.0);
+    dist.sigma = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DiscreteGaussian: validate fails when sigma corrupted to NaN" {
+    var dist = try DiscreteGaussian(f64).init(1.0);
+    dist.sigma = std.math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
