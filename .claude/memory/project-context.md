@@ -1,3 +1,28 @@
+**Session 834 Update (2026-08-25) — FEATURE MODE [COMPLETED]:**
+
+✅ **Voigt (181st distribution)** — commit 55c9d54
+- **Mode**: FEATURE MODE (counter: 834)
+- **CI/Issues**: CI green (last 3 runs success/cancelled/success), 0 open issues.
+- Recovered a complete, uncommitted implementation (899 lines) left in the working tree —
+  convolution of Normal+Cauchy, used in spectroscopy for line broadening. Session 831 had
+  flagged Voigt as deferred/higher-risk (no closed form, assumed to need Gauss-Hermite
+  quadrature or a Faddeeva-function approximation). The recovered implementation instead uses:
+  `pdf()` via tan-substitution Simpson's rule (reparametrizes the infinite-domain convolution
+  integral onto θ ∈ [-π/2+ε, π/2-ε], n=2000 panels); `cdf()` via direct Simpson's rule over
+  t ∈ [mu-10σ, mu+10σ] (n=4000 panels) against the Cauchy-CDF kernel; `quantile()` via 100-step
+  bisection on cdf(). `mean()`→NaN, `variance()`→+inf (inherited from the Cauchy component).
+- Verified before trusting: read the full diff for `@panic`/`std.debug.assert`/
+  `std.debug.print` (none found); ran `zig build test --summary all` — 12906/12913 passed, 7
+  skips, 0 failures. Tests were already ground-truthed against `scipy.special.wofz`.
+- Also noticed (not this session's work, no memory previously recorded): session 833 shipped
+  **DiscreteGaussian (180th, commit 7997fc3)** between session 831 and this one.
+- **Next priority**: no standing feature candidate — grep root.zig's doc-comment list first.
+  Voigt is now COMPLETE, remove from any future "deferred" list. Remaining candidates: Neyman
+  Type B/C (higher-order contagious models, likely no closed-form pmf); skew-generalized-t
+  variants beyond SkewT/SkewSlash/SkewGeneralizedNormal (grep first — may already exist).
+  Unresolved flag from session 831: `ExponentialModifiedGaussian` (~line 49724) vs `ExGaussian`
+  (~line 79658) possible duplicate, still not investigated.
+
 **Session 831 Update (2026-08-25) — FEATURE MODE [COMPLETED]:**
 
 ✅ **WrappedExponential (179th distribution)** — commits e0e0762 + cb265ac
@@ -128,51 +153,13 @@
   `std.debug.assert` instead of returning errors — technically violates the "No @panic" rule
   (assert panics in Debug/ReleaseSafe), a real but pre-existing bug worth a dedicated fix session.
 
-**Session 818 Update (2026-08-22) — FEATURE MODE [COMPLETED]:**
+## Older sessions (compressed 2026-08-25 per 200-line rule)
 
-✅ **ZeroTruncatedPoisson (171st)** — commit 984fd10
-- **Mode**: FEATURE MODE (counter: 818)
-- **CI/Issues**: CI green, 0 open issues.
-- Fresh TDD cycle (not a recovery) — Poisson(λ) conditioned on X>0, distinct from
-  ZeroInflatedPoisson (a mixture adding mass AT zero; ZTP instead removes zero and renormalizes).
-  Was previously only used inline inside HurdlePoisson's mean/variance helpers, never exposed as
-  a standalone public distribution. Pre-derived and independently verified (python3, double
-  precision) pmf/cdf/mean/variance/mode at λ=0.5/2.0/5.0 before dispatching test-writer; formulas
-  cross-checked exactly against HurdlePoisson's existing inline `mu_ztp`/`var_ztp` derivation.
-  p0 = 1-exp(-λ) computed via `-math.expm1(-lambda)` for numerical stability.
-- **Result**: 78/78 new tests passed first try (test-writer wrote them against verified ground
-  truth, zig-developer implemented to match with 0 discrepancies). Full suite: 12194/12201 passed,
-  7 pre-existing skips, 0 failures.
-- **Distribution count**: 171 (confirmed via
-  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
-- **Next priority**: no standing feature candidate — grep root.zig's doc-comment list first.
-  Ruled out this session: Katz family (already covered — its pmf recurrence collapses exactly to
-  Poisson/Binomial/NegativeBinomial depending on parameter sign, not a new distribution despite
-  the name sounding novel). Remaining candidates from prior sessions still worth checking (grep
-  first): Neyman Type B/C, zero-truncated variants of Binomial/NegativeBinomial (same "remove k=0,
-  renormalize" pattern as this session, likely straightforward), Benktander Type I/II (heavy-tailed
-  Pareto alternatives — formulas not yet independently verified, do that before committing to it).
-
-**Session 809 Update (2026-07-20) — FEATURE MODE [COMPLETED]:**
-
-✅ **Hermite (167th)** — commit f26a480
-- **Mode**: FEATURE MODE (counter: 809)
-- **CI/Issues**: CI green, 0 open issues.
-- Found a complete, uncommitted Hermite(a1,a2) implementation left from a prior session
-  (X = Y1 + 2*Y2, Y1~Poisson(a1), Y2~Poisson(a2)); pmf via direct double-sum (no special
-  functions needed), log-sum-exp stabilized, closed-form mean=a1+2a2, variance=a1+4a2.
-  Independently re-derived pmf(0..5) in plain Python before trusting — exact match.
-  `zig build test` clean (0 failures), committed and pushed.
-- **Distribution count**: 167 (confirmed via
-  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
-- **Next priority**: no standing feature candidate — grep root.zig's doc-comment list first.
-  Sessions 778–807 (MarshallOlkinExponential 149th → Sichel 166th) are condensed into
-  `distributions_history.md` in the auto-memory system; this file's detailed per-session
-  entries below (791, 793, 796, 797) predate that — see the auto-memory MEMORY.md index for
-  the fuller newer history if needed.
-
-## Older sessions (compressed 2026-08-23 per 200-line rule)
-
+- **818** (2026-08-22): ZeroTruncatedPoisson (171st, commit 984fd10) — Poisson(λ) conditioned on
+  X>0, `p0 = 1-exp(-λ)` via `-math.expm1(-lambda)` for stability. Ruled out Katz family as a
+  duplicate (collapses to Poisson/Binomial/NegativeBinomial by sign).
+- **809** (2026-07-20): Hermite (167th, commit f26a480) — recovered X=Y1+2*Y2 Poisson-sum,
+  closed-form mean/variance, log-sum-exp stabilized pmf.
 - **797** (2026-07-18): BorelTanner (160th, commit 79a655d) — generalized Borel with runtime
   shift n; mode has NO closed form (verified n=5,mu=0.6→mode=8, not 5).
 - **791** (2026-07-17): HurdleBinomial (156th, commit 5da1ff3) closed out the Hurdle-model trio.
