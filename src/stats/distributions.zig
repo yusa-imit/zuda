@@ -108027,3 +108027,890 @@ test "Voigt: samples vary with different seed" {
     }
     try testing.expect(has_diff);
 }
+
+/// Efron's Double Poisson distribution DP(μ, φ) — discrete distribution on {0,1,2,...}
+/// for count data with over/under-dispersion relative to Poisson.
+/// μ > 0 is the mean parameter; φ > 0 is the dispersion parameter.
+/// φ = 1 gives exactly Poisson(μ).
+/// φ < 1 models overdispersion; φ > 1 models underdispersion.
+///
+/// Time: O(k*) for pmf/cdf where k* is effective support size | Space: O(1)
+pub fn DoublePoisson(comptime T: type) type {
+    return struct {
+        mu: T,
+        phi: T,
+        log_z: T, // cached log normalizing constant
+
+        const Self = @This();
+
+        /// Initialize DoublePoisson(μ, φ).
+        /// μ > 0; φ > 0; both finite.
+        ///
+        /// Computes and caches the log normalizing constant log Z(μ, φ).
+        ///
+        /// Time: O(k*) where k* ≈ effective support size | Space: O(1)
+        pub fn init(mu: T, phi: T) DistributionError!Self {
+            if (!(mu > 0.0) or !math.isFinite(mu)) return error.InvalidParameter;
+            if (!(phi > 0.0) or !math.isFinite(phi)) return error.InvalidParameter;
+            const lz = computeDoublePoissonLogZ(T, mu, phi);
+            return Self{ .mu = mu, .phi = phi, .log_z = lz };
+        }
+
+        /// Probability mass function P(X=k).
+        ///
+        /// P(X=k) = exp(log_f0(k)) / Z(μ, φ)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function.
+        ///
+        /// log P(X=k) = log_f0(k) - log(Z)
+        /// where:
+        ///   log_f0(0) = 0.5*log(φ) - φ*μ
+        ///   log_f0(k) = 0.5*log(φ) - φ*μ - k + k*log(k) - logΓ(k+1) + φ*k*(1 + log(μ) - log(k))  for k ≥ 1
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const kf: T = @floatFromInt(k);
+            var log_f0: T = 0.5 * @log(self.phi) - self.phi * self.mu;
+
+            if (k > 0) {
+                const log_k = @log(kf);
+                const log_mu = @log(self.mu);
+                log_f0 = log_f0 - kf + kf * log_k - logGamma(kf + 1.0) +
+                         self.phi * kf * (1.0 + log_mu - log_k);
+            }
+
+            return log_f0 - self.log_z;
+        }
+
+        /// Cumulative distribution function P(X ≤ k).
+        ///
+        /// F(k) = Σ_{j=0}^{k} P(X=j)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var i: u64 = 0;
+            while (i <= k) : (i += 1) {
+                sum += self.pmf(i);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k).
+        ///
+        /// S(k) = 1 - F(k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function (inverse CDF) - returns k such that P(X ≤ k) ≥ p.
+        ///
+        /// Time: O(k*) where k* is the result | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0) or !(p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= p) return k;
+            }
+            return k;
+        }
+
+        /// Mean of the distribution.
+        ///
+        /// Computed numerically: Σ k·P(X=k)
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var sum: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 1;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                sum += @as(T, @floatFromInt(k)) * pmf_k;
+            }
+            return sum;
+        }
+
+        /// Variance of the distribution.
+        ///
+        /// Var = E[X²] - (E[X])²
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const m = self.mean();
+            var e_x2: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 1;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                const kf: T = @floatFromInt(k);
+                e_x2 += kf * kf * pmf_k;
+            }
+            return e_x2 - m * m;
+        }
+
+        /// Mode of the distribution.
+        ///
+        /// Finds k with maximum pmf via scanning (no closed form for DoublePoisson).
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var max_pmf: T = self.pmf(0);
+            var mode_val: u64 = 0;
+            var consecutive_below: u64 = 0;
+
+            var k: u64 = 1;
+            while (k < 100_000 and consecutive_below < 5) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k > max_pmf) {
+                    max_pmf = pmf_k;
+                    mode_val = k;
+                    consecutive_below = 0;
+                } else {
+                    consecutive_below += 1;
+                }
+            }
+            return mode_val;
+        }
+
+        /// Entropy of the distribution in nats.
+        ///
+        /// H = -Σ P(X=k)·log(P(X=k))
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            const eps = math.floatEps(T);
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                const pmf_k = self.pmf(k);
+                if (pmf_k < eps) break;
+                if (pmf_k > 0.0) {
+                    sum -= pmf_k * @log(pmf_k);
+                }
+            }
+            return sum;
+        }
+
+        /// Generate a random sample from this distribution using inverse CDF.
+        ///
+        /// Time: O(k*) where k* is the sample value | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var cumulative: T = 0.0;
+            var k: u64 = 0;
+            while (k < 100_000) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= u) return k;
+            }
+            return k;
+        }
+
+        /// Assert that parameters are valid.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.mu > 0.0) or !math.isFinite(self.mu)) return DistributionError.InvalidParameter;
+            if (!(self.phi > 0.0) or !math.isFinite(self.phi)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.log_z)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+/// Compute log Z(μ, φ) = log(Σ_{k=0}^∞ exp(log_f0(k))).
+///
+/// Uses unimodal two-pass approach:
+/// - Pass 1: walk k=0,1,2,... tracking max log-term.
+/// - Once past the peak, stop when the term is 40 log-units below the max.
+/// - Pass 2: sum exp(log_term - log_max) over the same range.
+/// - Return log_max + log(sum).
+///
+/// Time: O(k*) where k* ≈ effective support size | Space: O(1)
+fn computeDoublePoissonLogZ(comptime T: type, mu: T, phi: T) T {
+    const MAX_K: u64 = 50_000;
+
+    // Compute log_f0 for a given k
+    const logF0 = struct {
+        fn compute(k: u64, mu_: T, phi_: T) T {
+            const kf: T = @floatFromInt(k);
+            var result: T = 0.5 * @log(phi_) - phi_ * mu_;
+
+            if (k > 0) {
+                const log_k = @log(kf);
+                const log_mu = @log(mu_);
+                result = result - kf + kf * log_k - logGamma(kf + 1.0) +
+                        phi_ * kf * (1.0 + log_mu - log_k);
+            }
+
+            return result;
+        }
+    }.compute;
+
+    // Pass 1: find effective truncation k_stop and max log-term
+    var log_max: T = logF0(0, mu, phi);
+    var past_peak: bool = false;
+    var k_stop: u64 = 0;
+
+    var k: u64 = 1;
+    while (k <= MAX_K) : (k += 1) {
+        const lt = logF0(k, mu, phi);
+        if (lt > log_max) {
+            log_max = lt;
+        } else {
+            past_peak = true;
+        }
+        if (past_peak and lt < log_max - 40.0) {
+            k_stop = k;
+            break;
+        }
+        k_stop = k;
+    }
+
+    // Pass 2: sum exp(log_term - log_max)
+    var sum: T = 0.0;
+    var j: u64 = 0;
+    while (j <= k_stop) : (j += 1) {
+        const lt = logF0(j, mu, phi);
+        sum += @exp(lt - log_max);
+    }
+
+    return log_max + @log(sum);
+}
+
+// ============================================================================
+// DoublePoisson (Efron's Double Poisson) Distribution Tests
+// ============================================================================
+
+test "DoublePoisson: init with valid params (3.0, 1.5) succeeds" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    try testing.expect(math.isFinite(dist.mu));
+    try testing.expect(math.isFinite(dist.phi));
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "DoublePoisson: init with valid params (5.0, 0.5) succeeds" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    try testing.expect(math.isFinite(dist.mu));
+    try testing.expect(math.isFinite(dist.phi));
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "DoublePoisson: init with valid params (2.0, 1.0) succeeds (Poisson case)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    try testing.expect(math.isFinite(dist.mu));
+    try testing.expect(math.isFinite(dist.phi));
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "DoublePoisson: init with valid params (0.5, 2.0) succeeds" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    try testing.expect(math.isFinite(dist.mu));
+    try testing.expect(math.isFinite(dist.phi));
+    try testing.expect(math.isFinite(dist.log_z));
+}
+
+test "DoublePoisson: init with mu=0 returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(0.0, 1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with mu<0 returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(-1.0, 1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with mu=inf returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(math.inf(f64), 1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with mu=NaN returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(math.nan(f64), 1.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with phi=0 returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(3.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with phi<0 returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(3.0, -0.5);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with phi=inf returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(3.0, math.inf(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoublePoisson: init with phi=NaN returns InvalidParameter" {
+    const result = DoublePoisson(f64).init(3.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- log_z validation ---
+
+test "DoublePoisson: log_z for (3.0, 1.5) ≈ -0.0138213" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const expected: f64 = -0.013821306545352880706406663106998203357315479542393;
+    try expectApproxEqAbs(expected, dist.log_z, 1e-9);
+}
+
+test "DoublePoisson: log_z for (5.0, 0.5) ≈ 0.0260200" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const expected: f64 = 0.026019997068942118343672533989919227753791474632261;
+    try expectApproxEqAbs(expected, dist.log_z, 1e-9);
+}
+
+test "DoublePoisson: log_z for (2.0, 1.0) ≈ 0 (Poisson case)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    try expectApproxEqAbs(0.0, dist.log_z, 1e-9);
+}
+
+test "DoublePoisson: log_z for (0.5, 2.0) ≈ -0.0999610" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const expected: f64 = -0.099961026905930683050377302606208058954635279115611;
+    try expectApproxEqAbs(expected, dist.log_z, 1e-9);
+}
+
+// --- pmf values (ground truth from mpmath dps=50) ---
+
+test "DoublePoisson: pmf(0) for (3.0, 1.5) ≈ 0.0137950" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.013795040445789783;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(1) for (3.0, 1.5) ≈ 0.1181822" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.11818220841084633;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(2) for (3.0, 1.5) ≈ 0.2531170" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.2531169524248736;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(3) for (3.0, 1.5) ≈ 0.2782129" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.27821286895845426;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(4) for (3.0, 1.5) ≈ 0.1935122" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(4);
+    const expected: f64 = 0.19351215344572495;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(5) for (3.0, 1.5) ≈ 0.0948992" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(5);
+    const expected: f64 = 0.09489915303164413;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(0) for (5.0, 0.5) ≈ 0.0565521" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.05655206349461757;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(3) for (5.0, 0.5) ≈ 0.1221778" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const pmf_val = dist.pmf(3);
+    const expected: f64 = 0.12217781994177736;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(0) for (2.0, 1.0) ≈ 0.1353353 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.1353352832366127;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(2) for (2.0, 1.0) ≈ 0.2706706 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(2);
+    const expected: f64 = 0.2706705664732254;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(0) for (0.5, 2.0) ≈ 0.5749539" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const pmf_val = dist.pmf(0);
+    const expected: f64 = 0.5749539186847563;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+test "DoublePoisson: pmf(1) for (0.5, 2.0) ≈ 0.3907217" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const pmf_val = dist.pmf(1);
+    const expected: f64 = 0.3907216973405232;
+    try expectApproxEqAbs(expected, pmf_val, 1e-9);
+}
+
+// --- cdf values (ground truth from mpmath) ---
+
+test "DoublePoisson: cdf(0) for (3.0, 1.5) ≈ 0.0137950" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_val = dist.cdf(0);
+    const expected: f64 = 0.013795040445789783;
+    try expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "DoublePoisson: cdf(1) for (3.0, 1.5) ≈ 0.1319772" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_val = dist.cdf(1);
+    const expected: f64 = 0.13197724885663611;
+    try expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "DoublePoisson: cdf(2) for (3.0, 1.5) ≈ 0.3850942" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_val = dist.cdf(2);
+    const expected: f64 = 0.3850942012815097;
+    try expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "DoublePoisson: cdf(3) for (3.0, 1.5) ≈ 0.6633071" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_val = dist.cdf(3);
+    const expected: f64 = 0.6633070702399639;
+    try expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "DoublePoisson: cdf(0) for (0.5, 2.0) ≈ 0.5749539" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const cdf_val = dist.cdf(0);
+    const expected: f64 = 0.5749539186847563;
+    try expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "DoublePoisson: cdf(1) for (0.5, 2.0) ≈ 0.9656756" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const cdf_val = dist.cdf(1);
+    const expected: f64 = 0.9656756160252795;
+    try expectApproxEqAbs(expected, cdf_val, 1e-9);
+}
+
+test "DoublePoisson: cdf is monotone non-decreasing for (3.0, 1.5)" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    var prev_cdf: f64 = 0.0;
+    for (0..10) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "DoublePoisson: cdf monotone for (5.0, 0.5)" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    var prev_cdf: f64 = 0.0;
+    for (0..15) |k| {
+        const curr_cdf = dist.cdf(k);
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "DoublePoisson: cdf reaches ~1.0 at high k for (3.0, 1.5)" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_val = dist.cdf(50);
+    try testing.expectApproxEqAbs(1.0, cdf_val, 1e-6);
+}
+
+// --- logpmf consistency ---
+
+test "DoublePoisson: logpmf consistent with pmf for (3.0, 1.5) k=0" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(0);
+    const logpmf_val = dist.logpmf(0);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "DoublePoisson: logpmf consistent with pmf for (3.0, 1.5) k=2" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const pmf_val = dist.pmf(2);
+    const logpmf_val = dist.logpmf(2);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "DoublePoisson: logpmf consistent with pmf for (5.0, 0.5) k=4" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const pmf_val = dist.pmf(4);
+    const logpmf_val = dist.logpmf(4);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+test "DoublePoisson: logpmf consistent with pmf for (2.0, 1.0) k=1" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const pmf_val = dist.pmf(1);
+    const logpmf_val = dist.logpmf(1);
+    const expected = @log(pmf_val);
+    try expectApproxEqAbs(expected, logpmf_val, 1e-9);
+}
+
+// --- sf = 1 - cdf ---
+
+test "DoublePoisson: sf(k) = 1 - cdf(k) for (3.0, 1.5) k=1" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_val = dist.cdf(1);
+    const sf_val = dist.sf(1);
+    try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+}
+
+test "DoublePoisson: sf(k) = 1 - cdf(k) for (5.0, 0.5) k=3" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const cdf_val = dist.cdf(3);
+    const sf_val = dist.sf(3);
+    try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+}
+
+test "DoublePoisson: sf(k) = 1 - cdf(k) for (0.5, 2.0) k=2" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const cdf_val = dist.cdf(2);
+    const sf_val = dist.sf(2);
+    try expectApproxEqAbs(1.0, cdf_val + sf_val, 1e-9);
+}
+
+// --- pmf/cdf relationship ---
+
+test "DoublePoisson: cdf(k) = cdf(k-1) + pmf(k) for (3.0, 1.5) k=2" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_k = dist.cdf(2);
+    const cdf_k_minus_1 = dist.cdf(1);
+    const pmf_k = dist.pmf(2);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+test "DoublePoisson: cdf(k) = cdf(k-1) + pmf(k) for (5.0, 0.5) k=4" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const cdf_k = dist.cdf(4);
+    const cdf_k_minus_1 = dist.cdf(3);
+    const pmf_k = dist.pmf(4);
+    try expectApproxEqAbs(cdf_k, cdf_k_minus_1 + pmf_k, 1e-9);
+}
+
+// --- pmf sums to ~1.0 ---
+
+test "DoublePoisson: pmf sums to ~1.0 for (3.0, 1.5)" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    var sum: f64 = 0.0;
+    for (0..500) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "DoublePoisson: pmf sums to ~1.0 for (5.0, 0.5)" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    var sum: f64 = 0.0;
+    for (0..500) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "DoublePoisson: pmf sums to ~1.0 for (2.0, 1.0)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..500) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "DoublePoisson: pmf sums to ~1.0 for (0.5, 2.0)" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    var sum: f64 = 0.0;
+    for (0..500) |k| {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+// --- mean values ---
+
+test "DoublePoisson: mean for (3.0, 1.5) ≈ 3.0141851" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const m = dist.mean();
+    const expected: f64 = 3.0141850825332987778798292129652534579895644713793;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+test "DoublePoisson: mean for (5.0, 0.5) ≈ 4.9570978" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const m = dist.mean();
+    const expected: f64 = 4.9570977520063352118558404901886899566628598991006;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+test "DoublePoisson: mean for (2.0, 1.0) = 2.0 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(2.0, m, 1e-6);
+}
+
+test "DoublePoisson: mean for (0.5, 2.0) ≈ 0.4605249" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const m = dist.mean();
+    const expected: f64 = 0.46052489160941188364320116741047256938097491165909;
+    try expectApproxEqAbs(expected, m, 1e-6);
+}
+
+// --- variance values ---
+
+test "DoublePoisson: variance for (3.0, 1.5) ≈ 1.9847060" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const v = dist.variance();
+    const expected: f64 = 1.9847059997869464599659643086496869511639439342973;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "DoublePoisson: variance for (5.0, 0.5) ≈ 9.9297402" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const v = dist.variance();
+    const expected: f64 = 9.9297402259646726876696756035240135412599985030072;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "DoublePoisson: variance for (2.0, 1.0) = 2.0 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(2.0, v, 1e-6);
+}
+
+test "DoublePoisson: variance for (0.5, 2.0) ≈ 0.3217495" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const v = dist.variance();
+    const expected: f64 = 0.32174945900839420074025158456741813259088305864649;
+    try expectApproxEqAbs(expected, v, 1e-6);
+}
+
+test "DoublePoisson: variance < mean when phi > 1 (underdispersed)" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const m = dist.mean();
+    const v = dist.variance();
+    try testing.expect(v < m);
+}
+
+test "DoublePoisson: variance > mean when phi < 1 (overdispersed)" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const m = dist.mean();
+    const v = dist.variance();
+    try testing.expect(v > m);
+}
+
+test "DoublePoisson: variance = mean when phi = 1.0 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const m = dist.mean();
+    const v = dist.variance();
+    try expectApproxEqAbs(m, v, 1e-6);
+}
+
+// --- mode values ---
+
+test "DoublePoisson: mode for (3.0, 1.5) = 3" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const mode_val = dist.mode();
+    try testing.expectEqual(3, mode_val);
+}
+
+test "DoublePoisson: mode for (5.0, 0.5) = 4" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const mode_val = dist.mode();
+    try testing.expectEqual(4, mode_val);
+}
+
+test "DoublePoisson: mode for (2.0, 1.0) = 1 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    try testing.expectEqual(1, mode_val);
+}
+
+test "DoublePoisson: mode for (0.5, 2.0) = 0" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const mode_val = dist.mode();
+    try testing.expectEqual(0, mode_val);
+}
+
+// --- entropy values ---
+
+test "DoublePoisson: entropy for (3.0, 1.5) ≈ 1.7399811" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const e = dist.entropy();
+    const expected: f64 = 1.739981074952619489422208096209647431896877030298;
+    try expectApproxEqAbs(expected, e, 1e-6);
+}
+
+test "DoublePoisson: entropy for (5.0, 0.5) ≈ 2.5003515" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const e = dist.entropy();
+    const expected: f64 = 2.5003514674634046949587256144618903584087011598109;
+    try expectApproxEqAbs(expected, e, 1e-6);
+}
+
+test "DoublePoisson: entropy for (2.0, 1.0) ≈ 1.7048826 (Poisson)" {
+    const dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const e = dist.entropy();
+    const expected: f64 = 1.7048826439329838383775866444923403974209760657661;
+    try expectApproxEqAbs(expected, e, 1e-6);
+}
+
+test "DoublePoisson: entropy for (0.5, 2.0) ≈ 0.8062247" {
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const e = dist.entropy();
+    const expected: f64 = 0.80622470799948532197735950337509392630515388010545;
+    try expectApproxEqAbs(expected, e, 1e-6);
+}
+
+// --- quantile tests ---
+
+test "DoublePoisson: quantile rejects p < 0 as InvalidProbability" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "DoublePoisson: quantile rejects p > 1 as InvalidProbability" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "DoublePoisson: quantile at p=0.0 returns 0" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(0, q);
+}
+
+test "DoublePoisson: quantile at p=0.5 returns valid k for (3.0, 1.5)" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0);
+    try testing.expect(q <= 10);
+}
+
+test "DoublePoisson: quantile-cdf roundtrip for (3.0, 1.5) at cdf(2)" {
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const cdf_k = dist.cdf(2);
+    const q = try dist.quantile(cdf_k);
+    try testing.expect(q >= 2);
+}
+
+test "DoublePoisson: quantile-cdf roundtrip for (5.0, 0.5) at cdf(4)" {
+    const dist = try DoublePoisson(f64).init(5.0, 0.5);
+    const cdf_k = dist.cdf(4);
+    const q = try dist.quantile(cdf_k);
+    try testing.expect(q >= 4);
+}
+
+// --- sample tests ---
+
+test "DoublePoisson: sample() returns valid k for (3.0, 1.5)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0);
+}
+
+test "DoublePoisson: sample() returns valid k for (0.5, 2.0)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    const s = dist.sample(rng.random());
+    try testing.expect(s >= 0);
+}
+
+test "DoublePoisson: 100 samples all valid for (3.0, 1.5)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0);
+    }
+}
+
+test "DoublePoisson: 100 samples all valid for (0.5, 2.0)" {
+    var rng = std.Random.DefaultPrng.init(42);
+    const dist = try DoublePoisson(f64).init(0.5, 2.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s >= 0);
+    }
+}
+
+test "DoublePoisson: samples vary with different seed for (3.0, 1.5)" {
+    var rng1 = std.Random.DefaultPrng.init(42);
+    var rng2 = std.Random.DefaultPrng.init(99);
+    const dist = try DoublePoisson(f64).init(3.0, 1.5);
+    var has_diff = false;
+    for (0..10) |_| {
+        const s1 = dist.sample(rng1.random());
+        const s2 = dist.sample(rng2.random());
+        if (s1 != s2) {
+            has_diff = true;
+            break;
+        }
+    }
+    try testing.expect(has_diff);
+}
+
+// --- Special case: phi=1 reduces to Poisson ---
+
+test "DoublePoisson: phi=1.0 pmf matches Poisson for k=0" {
+    const poisson_dist = try Poisson(f64).init(2.0);
+    const dp_dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const poisson_pmf = poisson_dist.pmf(0);
+    const dp_pmf = dp_dist.pmf(0);
+    try expectApproxEqAbs(poisson_pmf, dp_pmf, 1e-9);
+}
+
+test "DoublePoisson: phi=1.0 pmf matches Poisson for k=3" {
+    const poisson_dist = try Poisson(f64).init(2.0);
+    const dp_dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const poisson_pmf = poisson_dist.pmf(3);
+    const dp_pmf = dp_dist.pmf(3);
+    try expectApproxEqAbs(poisson_pmf, dp_pmf, 1e-9);
+}
+
+test "DoublePoisson: phi=1.0 mean matches Poisson" {
+    const poisson_dist = try Poisson(f64).init(2.0);
+    const dp_dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const poisson_mean = poisson_dist.mean();
+    const dp_mean = dp_dist.mean();
+    try expectApproxEqAbs(poisson_mean, dp_mean, 1e-6);
+}
+
+test "DoublePoisson: phi=1.0 variance matches Poisson" {
+    const poisson_dist = try Poisson(f64).init(2.0);
+    const dp_dist = try DoublePoisson(f64).init(2.0, 1.0);
+    const poisson_var = poisson_dist.variance();
+    const dp_var = dp_dist.variance();
+    try expectApproxEqAbs(poisson_var, dp_var, 1e-6);
+}
