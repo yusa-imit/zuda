@@ -1,3 +1,39 @@
+**Session 835 Update (2026-08-26) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **Fixed duplicate distribution: removed `ExponentialModifiedGaussian`** — commit 1285984
+- **Mode**: STABILIZATION MODE (counter: 835)
+- **CI/Issues**: CI green, 0 open issues. `zig build test --summary all`: 12906/12913 passed at
+  session start (12862/12869 after the fix — 44 fewer tests, exactly the removed distribution's
+  test count). 6/6 cross-compile check **skipped** this session — a stale/idle `zig build test`
+  process (PID 99101, 28+ min at 0% CPU, not started by this session) was running when the
+  concurrency check ran; per protocol, didn't proceed with cross-compile while another heavy zig
+  process was present, and didn't kill a process this session didn't start.
+- Resolved the duplicate flagged since session 831 (unconfirmed) and re-flagged at session 834
+  (`ExponentialModifiedGaussian` ~line 49724 vs `ExGaussian` ~line 79658). Confirmed mathematically
+  identical: EMG's `Φ(z)` term and ExGaussian's `erfc(u)` term are the same expression via
+  `erfc(u) = 2(1-Φ(u√2))` — verified algebraically before touching code, not just by eyeballing
+  similar field names. Removed `ExponentialModifiedGaussian` (kept `ExGaussian`, which has the
+  more numerically robust implementation: asymptotic `logErfc` for large arguments avoiding
+  underflow, `@max`/`@min`-clamped `cdf`/`sf`, precomputed `sigma_sq`/`lambda_sigma_sq_2`
+  constants). Deleted via precise `sed` line-range removal (implementation 49714-49952, its test
+  block 50108-50435) verified against clean section-header boundaries before applying, not a
+  freeform edit — zero stray fragments, confirmed via `grep -n "ExponentialModifiedGaussian"`
+  returning nothing repo-wide afterward (excluding historical memory notes).
+- Also fixed a related doc-only bug found while touching `src/root.zig`'s giant distribution-list
+  doc comment: `ConwayMaxwellBinomial` was listed twice in that comment (not a code duplicate —
+  only one `pub fn ConwayMaxwellBinomial` exists — just a stale doc-string typo). Deduplicated the
+  mention in the same commit.
+- Distribution count: 181 → **180** (verified via
+  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`). Updated
+  `docs/milestones.md`'s stale "178 distributions" line to 180 and refreshed its test-count line.
+- Release check: 10 commits since v2.3.0 (3 feat, 1 fix, rest chore) — SKIP, consistent with the
+  established "let the catalog grow" pattern (v2.3.0 itself wasn't cut until 32 commits had
+  accumulated). Not urgent yet, recheck next stabilization session.
+- **Next priority (stabilization)**: cross-compile check still owed — was skipped this session
+  only because of the stale concurrent process, not because of any real blocker; worth doing next
+  time if the machine is idle. format() backlog (89/172 as of session 820) remains the default
+  filler task otherwise.
+
 **Session 834 Update (2026-08-25) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Voigt (181st distribution)** — commit 55c9d54
@@ -75,86 +111,18 @@
   changelog covering distributions 171-178, the validate()-panic fix, SkewSlash CDF fix, and the
   format()/docs work. 0 open issues to close.
 
-**Session 828 Update (2026-08-24) — FEATURE MODE [COMPLETED]:**
+## Older sessions (compressed 2026-08-26 per 200-line rule)
 
-✅ **HalfGeneralizedNormal (177th distribution)** — commit eff5b5b
-- **Mode**: FEATURE MODE (counter: 828)
-- **CI/Issues**: CI green, 0 open issues.
-- Recovered a complete, uncommitted implementation left by an interrupted same-day session
-  (per `.claude/logs/agent-activity.jsonl` timestamps ~03:32-03:43 UTC): test-writer wrote 43
-  tests, zig-developer implemented, two follow-up test-writer calls fixed a boolean-assertion
-  bug (`expectApproxEqAbs` misused on `bool`) and an `Exponential` rate-vs-scale mismatch in
-  reduction tests.
-- Verified before trusting: independently recomputed pdf/cdf/mean/variance/entropy in Python,
-  matched to ~9 decimals; grepped diff for `@panic`/`std.debug.assert`/`std.debug.print` (none);
-  `zig build test` exit 0. Distribution count confirmed via grep: 177.
-- Reduces exactly to `Exponential(1/alpha)` at beta=1 and `HalfNormal` at beta=2 (both covered by
-  dedicated reduction tests).
-
-**Session 825 Update (2026-08-24) — STABILIZATION MODE [COMPLETED]:**
-
-✅ **@panic/std.debug.assert sweep — 8 containers + 3 distributions fixed** — commit 18ede19
-- **Mode**: STABILIZATION MODE (counter: 825)
-- **CI/Issues**: CI green, 0 open issues. `zig build test`: 12518/12525 passed, 7 skips, 0
-  failures (unchanged before/after — pure signature change, no functional regression). 6/6
-  cross-compile targets green.
-- Ran the repo-wide `grep -rn '@panic\|std.debug.assert' src/` sweep flagged as a standing item
-  since session 820/824. Fixed the 8 container `validate()` methods that returned `void` and
-  panicked internally via `std.debug.assert` instead of returning an error: `FenwickTree`,
-  `LazySegmentTree`, `PersistentArray`, `CountMinSketch`, `CuckooFilter`, `HyperLogLog`,
-  `MinHash`, `BloomFilter` — all now `pub fn validate(self: *const Self) !void` returning
-  `error.TreeInvariant`/`error.InvalidState`. Also fixed 3 `stats/distributions.zig`
-  distributions whose `validate()` already had the correct `!void` signature but still used
-  `std.debug.assert` internally: **Hypergeometric** (the specific item flagged at session 820),
-  **GeneralizedExponential**, **NegativeHypergeometric** — now return `error.InvalidParameter`.
-  Updated existing test call sites to `try x.validate()` in the 4 files that had them
-  (fenwick_tree, count_min_sketch, hyperloglog, bloom_filter); the other 4 containers had no
-  validate() test calls at all (noted gap, not filled this session — out of scope).
-- **Deliberately deferred**: ~20 more `std.debug.assert` sites remain in `src/algorithms/`
-  (ntt, snappy, knapsack, randomized_select, activity_selection, ddpg, dqn, dueling_dqn,
-  line_search) and internal private helpers of btree.zig/unrolled_linked_list.zig/r_tree.zig/
-  cuckoo_hash_map.zig/robin_hood_hash_map.zig. These are precondition checks in private code or
-  on already-validated internal state, not the public `validate()` contract — judged lower
-  priority than a full rewrite warrants in one session. Don't re-discover this via grep and
-  treat it as new; it's a known, explicitly-deferred backlog item.
-- Release check: 22 commits since v2.2.0 (9 feat, 1 fix, rest chore) — SKIP, NDArray phase still
-  has unchecked items in docs/milestones.md.
-
-**Session 820 Update (2026-08-23) — STABILIZATION MODE [COMPLETED]:**
-
-✅ **format() backlog retrofit (batch 2/N)** — commit 9dcaeac
-- **Mode**: STABILIZATION MODE (counter: 820)
-- **CI/Issues**: CI green (last 5 runs all success/cancelled-superseded), 0 open issues, no release
-  trigger (13 commits since v2.2.0 tag are all `feat:`, no phase-completion checkbox flipped —
-  per the strict release protocol this does NOT warrant a MINOR bump on its own).
-- Full checklist run: `zig build test` 12283/12290 passed, 7 pre-existing skips, 0 failures
-  (the diff-format-looking output in stderr is from a test that exercises the internal testing
-  harness's own expectEqualSlices diff printer — exit code 0, not a real failure, verify via exit
-  code not just grepping stderr). All 6 cross-compile targets (x86_64/aarch64 linux/macos,
-  x86_64-windows, wasm32-wasi) build clean. 100% `validate()` coverage confirmed (58/58 containers,
-  174 validate() defs across 172 distributions). No tautological/sentinel tests found (session 775's
-  cleanup held).
-- Since the full stabilization checklist was clean with nothing to fix, worked the standing
-  backlog item instead: added `format()` + a smoke test to 20 more distributions (LogNormal,
-  Cauchy, Gumbel, NegativeBinomial, Hypergeometric, Zipf, DiscreteUniform, Logarithmic, Skellam,
-  Rademacher, VonMises, Rayleigh, HalfNormal, MaxwellBoltzmann, Levy, Lomax, Gompertz,
-  InverseGaussian, Chi, Erlang) — mirrors commit 4194f1c's pattern exactly (format() placed
-  immediately before validate(), test uses `std.Io.Writer.fixed` + `dist.format(&stream)` +
-  `containsAtLeast` on the type name, NOT the broken `{f}`/`std.fmt.allocPrint` path).
-- **format() coverage**: 89/172 (up from 69/172). 83 distributions still missing — continue this
-  same batch pattern in future stabilization sessions when the rest of the checklist is clean.
-- **Next priority (stabilization)**: format() backlog is the default filler task when CI/issues/
-  tests/cross-compile are all clean — remaining candidates (grep `pub fn validate(` without a
-  preceding `pub fn format(` in the same type block, or diff the type-start list against
-  `pub fn format(` occurrences) include Categorical, Multinomial, Dirichlet, BetaBinomial,
-  DirichletMultinomial, Triangular, Kumaraswamy, LogLogistic, Nakagami, BirnbaumSaunders,
-  GeneralizedPareto, Burr, Dagum, TruncatedNormal, SkewNormal, HalfCauchy, Logistic, and ~65 more.
-  Also noted but NOT fixed (out of scope for this task): Hypergeometric's `validate()` uses
-  `std.debug.assert` instead of returning errors — technically violates the "No @panic" rule
-  (assert panics in Debug/ReleaseSafe), a real but pre-existing bug worth a dedicated fix session.
-
-## Older sessions (compressed 2026-08-25 per 200-line rule)
-
+- **828** (2026-08-24): HalfGeneralizedNormal (177th, commit eff5b5b) — recovered uncommitted work,
+  reduces to `Exponential(1/alpha)` at beta=1 and `HalfNormal` at beta=2.
+- **825** (2026-08-24): `@panic`/`std.debug.assert` sweep (commit 18ede19) — fixed 8 containers'
+  + 3 distributions' (Hypergeometric, GeneralizedExponential, NegativeHypergeometric) `validate()`
+  to return errors instead of panicking. ~20 sites deliberately deferred in `src/algorithms/` +
+  internal tree/hash-map helpers (private, not the public `validate()` contract) — known backlog,
+  don't re-discover as new.
+- **820** (2026-08-23): format() backlog batch 2 (commit 9dcaeac) — coverage 89/172. Confirmed
+  100% validate() coverage (58/58 containers), no tautological tests. Flagged (later fixed at
+  session 825): Hypergeometric's `validate()` used `std.debug.assert`.
 - **818** (2026-08-22): ZeroTruncatedPoisson (171st, commit 984fd10) — Poisson(λ) conditioned on
   X>0, `p0 = 1-exp(-λ)` via `-math.expm1(-lambda)` for stability. Ruled out Katz family as a
   duplicate (collapses to Poisson/Binomial/NegativeBinomial by sign).
