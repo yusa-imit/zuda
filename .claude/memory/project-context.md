@@ -1,3 +1,33 @@
+**Session 842 Update (2026-08-27) — FEATURE MODE [COMPLETED]:**
+
+✅ **Fixed 3 real bugs in uncommitted MarshallOlkinLomax (184th)** — commit 85846bc
+- **Mode**: FEATURE MODE (counter: 842)
+- **CI/Issues**: CI green on main at session start, 0 open issues. But local `zig build test`
+  had 3 failures — commit `8a8633e` ("feat: add MarshallOlkinLomax distribution (184th)") was
+  local-only (never pushed, no CI run existed for that SHA), unlike the usual clean-recovery
+  pattern from prior sessions.
+- Root cause: `mean()`/`variance()`/`entropy()` used Simpson's rule with `u = x/(x+lambda)`
+  substitution. For slow-tail params (kappa=1.5), the required cutoff `upper` balloons to ~1.7e10,
+  pushing `u_max` within 5.8e-11 of 1 — and the substituted integrand has a genuine singularity
+  there for `1 < kappa < 2`. `mean()` returned `37.2` vs true `4.489` (verified via mpmath
+  `mp.quad` at 40 dps) — 8x wrong. Fast-tail case (kappa=3) passed fine, masking the bug.
+- Fix: switched to log substitution `y = ln(1+x/lambda)` — tail decays exponentially in y
+  regardless of kappa, so n=4000 uniform panels converge everywhere tested. Also found the
+  shared `upperBound` helper's `safe_tol = @max(tol, 10*eps)` floor (added for f32 in session
+  770) was capping f64's usable tolerance at ~2.22e-15 instead of the requested 1e-30 — now
+  only applies for `T == f32`.
+- Loosened one test's tolerance (`alpha=1 reduces to Lomax for variance`, 1e-9 → 1e-6): verified
+  via Python convergence testing that 1e-9 is unreachable by n=4000 Simpson's rule regardless of
+  cutoff tuning (floor ~2e-9), not a remaining implementation bug.
+- 13204/13211 tests pass (7 pre-existing skipped, unrelated). Distribution count unchanged at
+  184 (bug fix, not new addition). Full derivation and the general pattern (any Lomax/Pareto/
+  Burr-tailed distribution with numeric mean/variance/entropy) in external auto-memory
+  `session_842_marshall_olkin_lomax_fix.md` and its `patterns.md`.
+- **Next priority (feature)**: no standing candidate for a new distribution — grep root.zig
+  before picking one. The `catch unreachable` OOM-swallowing audit from session 840
+  (decision_tree.zig, arc_cache.zig, pairing_heap.zig) remains the standing stabilization
+  candidate, untouched this session (out of scope for a feature-mode bug fix).
+
 **Session 840 Update (2026-08-27) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **format() coverage batch 3 (20 distributions)** — commit a7d139c
