@@ -31817,6 +31817,10 @@ pub fn Arcsine(comptime T: type) type {
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Arcsine(a={d}, b={d})", .{ self.a, self.b });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!math.isFinite(self.a) or !math.isFinite(self.b)) return error.InvalidParameter;
             if (self.b <= self.a) return error.InvalidParameter;
@@ -32549,6 +32553,15 @@ test "Arcsine: support boundaries a < all samples < b" {
     }
 }
 
+test "Arcsine: format output contains type name" {
+    const dist = try Arcsine(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Arcsine"));
+}
+
 // ============================================================================
 // Logistic Distribution
 // ============================================================================
@@ -32702,6 +32715,10 @@ pub fn Logistic(comptime T: type) type {
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Logistic(mu={d}, s={d})", .{ self.mu, self.s });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!math.isFinite(self.mu)) return error.InvalidParameter;
             if (!math.isFinite(self.s) or self.s <= 0.0) return error.InvalidParameter;
@@ -33449,6 +33466,15 @@ test "Logistic: entropy = ln(s) + 2 (s=0.1 can be negative, formula is correct)"
     try testing.expect(dist_large.entropy() > 0.0);
 }
 
+test "Logistic: format output contains type name" {
+    const dist = try Logistic(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Logistic"));
+}
+
 // ============================================================================
 // InverseGamma Distribution
 // ============================================================================
@@ -33654,6 +33680,10 @@ pub fn InverseGamma(comptime T: type) type {
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("InverseGamma(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
             if (self.beta <= 0.0 or !math.isFinite(self.beta)) return error.InvalidParameter;
@@ -34015,6 +34045,15 @@ test "InverseGamma: validate fails for invalid beta" {
     try expectError(error.InvalidParameter, dist.validate());
     dist.beta = math.inf(f64);
     try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseGamma: format output contains type name" {
+    const dist = try InverseGamma(f64).init(2.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "InverseGamma"));
 }
 
 /// Chi(k) distribution — generalization of Rayleigh, HalfNormal, and Maxwell-Boltzmann.
@@ -36363,6 +36402,10 @@ pub fn Lindley(comptime T: type) type {
         /// Validate that the distribution parameters are internally consistent.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Lindley(theta={d})", .{self.theta});
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!(self.theta > 0.0) or !math.isFinite(self.theta))
                 return error.InvalidParameter;
@@ -36800,6 +36843,15 @@ test "Lindley: validate passes for large theta" {
     try dist.validate();
 }
 
+test "Lindley: format output contains type name" {
+    const dist = try Lindley(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Lindley"));
+}
+
 /// HalfLogistic Distribution HalfLogistic(σ)
 ///
 /// The HalfLogistic distribution is the absolute value of a Logistic(0, σ) distribution.
@@ -36951,6 +37003,10 @@ pub fn HalfLogistic(comptime T: type) type {
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("HalfLogistic(sigma={d})", .{self.sigma});
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return error.InvalidParameter;
         }
@@ -37452,6 +37508,15 @@ test "HalfLogistic: f32 quantile roundtrip" {
         const q = try dist.quantile(p);
         try testing.expectApproxEqAbs(p, dist.cdf(q), 1e-3);
     }
+}
+
+test "HalfLogistic: format output contains type name" {
+    const dist = try HalfLogistic(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "HalfLogistic"));
 }
 
 /// Irwin-Hall distribution: sum of n independent Uniform(0,1) random variables.
@@ -40966,6 +41031,11 @@ pub fn Benford(comptime T: type) type {
         /// Validate distribution invariants (always passes — no parameters to validate).
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            _ = self;
+            try writer.print("Benford()", .{});
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             _ = self;
         }
@@ -41647,6 +41717,15 @@ test "Benford: quantile boundary exclusive (just above boundary returns next dig
         const q = try dist.quantile(p_just_after);
         try testing.expect(q >= 1);
     }
+}
+
+test "Benford: format output contains type name" {
+    const dist = Benford(f64).init();
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Benford"));
 }
 
 // ============================================================================
@@ -43754,6 +43833,10 @@ pub fn Muth(comptime T: type) type {
         /// Assert distribution parameters are valid.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Muth(kappa={d})", .{self.kappa});
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!(self.kappa > 0.0 and self.kappa <= 1.0)) return error.InvalidParameter;
         }
@@ -44254,6 +44337,15 @@ test "Muth: mean is exactly 1.0 for various kappas (canonical property)" {
         const dist = try Muth(f64).init(kappa);
         try testing.expectApproxEqAbs(1.0, dist.mean(), 1e-10);
     }
+}
+
+test "Muth: format output contains type name" {
+    const dist = try Muth(f64).init(0.5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Muth"));
 }
 
 // ============================================================================
@@ -51256,6 +51348,10 @@ pub fn YuleSimon(comptime T: type) type {
         /// Validate internal invariants: ρ > 0 and finite.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("YuleSimon(rho={d})", .{self.rho});
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.rho > 0.0) or !math.isFinite(self.rho)) return error.InvalidParameter;
         }
@@ -51569,6 +51665,15 @@ test "YuleSimon: sample rho=3 mean convergence (N=20000)" {
 test "YuleSimon: validate passes for valid rho" {
     const dist = try YuleSimon(f64).init(2.5);
     try dist.validate();
+}
+
+test "YuleSimon: format output contains type name" {
+    const dist = try YuleSimon(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "YuleSimon"));
 }
 
 test "YuleSimon(f32): init and pmf with f32" {
@@ -52221,6 +52326,11 @@ pub fn Kolmogorov(comptime T: type) type {
         /// Validate invariants. Always succeeds — no parameters to validate.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            _ = self;
+            try writer.print("Kolmogorov()", .{});
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             _ = self;
         }
@@ -52480,6 +52590,15 @@ test "Kolmogorov: sample mean converges to theoretical mean (N=10000)" {
 test "Kolmogorov: validate() always succeeds" {
     const dist = Kolmogorov(f64).init();
     try dist.validate();
+}
+
+test "Kolmogorov: format output contains type name" {
+    const dist = Kolmogorov(f64).init();
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Kolmogorov"));
 }
 
 test "Kolmogorov(f32): pdf(1.0) ≈ 1.072 and cdf(1.0) ≈ 0.7300" {
@@ -54456,6 +54575,10 @@ pub fn Bradford(comptime T: type) type {
         /// Returns error.InvalidParameter if c ≤ 0 or c is not finite
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Bradford(c={d})", .{self.c});
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.c > 0.0) or !math.isFinite(self.c)) return error.InvalidParameter;
         }
@@ -55006,6 +55129,15 @@ test "Bradford: quantile-CDF composition for multiple probabilities with c=2" {
     }
 }
 
+test "Bradford: format output contains type name" {
+    const dist = try Bradford(f64).init(1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Bradford"));
+}
+
 // ContinuousBernoulli(T) — bounded [0,1] distribution; ML/VAE latent space modeling
 pub fn ContinuousBernoulli(comptime T: type) type {
     return struct {
@@ -55176,6 +55308,10 @@ pub fn ContinuousBernoulli(comptime T: type) type {
         /// Returns error.InvalidParameter if lambda ∉ (0, 1) or not finite
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ContinuousBernoulli(lambda={d})", .{self.lambda});
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.lambda > 0.0 and self.lambda < 1.0)) return error.InvalidParameter;
         }
@@ -55912,6 +56048,15 @@ test "ContinuousBernoulli: sample variance converges to theoretical variance (N=
     try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.02);
 }
 
+test "ContinuousBernoulli: format output contains type name" {
+    const dist = try ContinuousBernoulli(f64).init(0.3);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "ContinuousBernoulli"));
+}
+
 // PERT Distribution Tests
 // ============================================================================
 
@@ -56398,6 +56543,10 @@ pub fn TukeyLambda(comptime T: type) type {
 
         /// Validate internal invariants.
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("TukeyLambda(mu={d}, sigma={d}, lambda={d})", .{ self.mu, self.sigma, self.lambda });
+        }
+
         pub fn validate(self: Self) !void {
             if (self.sigma <= 0) return error.InvalidParameter;
         }
@@ -57010,6 +57159,15 @@ test "TukeyLambda: sample variance converges to theoretical variance (N=5000, la
     try testing.expectApproxEqAbs(theoretical_var, sample_var, 0.5);
 }
 
+test "TukeyLambda: format output contains type name" {
+    const dist = try TukeyLambda(f64).init(0.0, 1.0, 0.5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "TukeyLambda"));
+}
+
 // =============================================================================
 // Zeta (Riemann Zeta / Discrete Power Law) Distribution
 // =============================================================================
@@ -57238,6 +57396,10 @@ pub fn Zeta(comptime T: type) type {
         /// Validate internal state: s > 1 and finite.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Zeta(s={d})", .{self.s});
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.s > 1.0) or !math.isFinite(self.s)) return error.InvalidParameter;
         }
@@ -57542,6 +57704,15 @@ test "Zeta: pmf ratio follows power law: pmf(k+1)/pmf(k) = (k/(k+1))^s" {
     }
 }
 
+test "Zeta: format output contains type name" {
+    const dist = try Zeta(f64).init(2.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Zeta"));
+}
+
 // ============================================================================
 // DiscreteWeibull Distribution (Type I)
 // ============================================================================
@@ -57686,6 +57857,10 @@ pub fn DiscreteWeibull(comptime T: type) type {
 
         /// Assert internal invariants.
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("DiscreteWeibull(q={d}, beta={d})", .{ self.q, self.beta });
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.q > 0.0 and self.q < 1.0)) return error.InvalidParameter;
             if (!(self.beta > 0.0)) return error.InvalidParameter;
@@ -57841,6 +58016,10 @@ pub fn BoundedPareto(comptime T: type) type {
 
         /// Assert internal invariants.
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BoundedPareto(alpha={d}, lower={d}, upper={d})", .{ self.alpha, self.lower, self.upper });
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.alpha > 0.0)) return error.InvalidParameter;
             if (!(self.lower > 0.0)) return error.InvalidParameter;
@@ -58106,6 +58285,15 @@ test "DiscreteWeibull: entropy decreases as q decreases (more concentrated)" {
     const dist_low = try DiscreteWeibull(f64).init(0.2, 1.0);
     const dist_high = try DiscreteWeibull(f64).init(0.8, 1.0);
     try testing.expect(dist_low.entropy() < dist_high.entropy());
+}
+
+test "DiscreteWeibull: format output contains type name" {
+    const dist = try DiscreteWeibull(f64).init(0.5, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "DiscreteWeibull"));
 }
 
 // ============================================================================
@@ -58388,6 +58576,15 @@ test "BoundedPareto: entropy increases as upper increases (more spread)" {
     const dist_narrow = try BoundedPareto(f64).init(2.0, 1.0, 5.0);
     const dist_wide = try BoundedPareto(f64).init(2.0, 1.0, 100.0);
     try testing.expect(dist_wide.entropy() > dist_narrow.entropy());
+}
+
+test "BoundedPareto: format output contains type name" {
+    const dist = try BoundedPareto(f64).init(1.0, 1.0, 2.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "BoundedPareto"));
 }
 
 // ============================================================================
@@ -60497,6 +60694,10 @@ pub fn LogGamma(comptime T: type) type {
 
         /// Validate distribution parameters.
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogGamma(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+        }
+
         pub fn validate(self: Self) !void {
             if (!(self.alpha > 0.0)) return error.InvalidParameter;
             if (!(self.beta > 0.0)) return error.InvalidParameter;
@@ -60837,6 +61038,15 @@ test "LogGamma: cdf + sf equals 1" {
     try std.testing.expectApproxEqAbs(1.0, c + s, 1e-12);
 }
 
+test "LogGamma: format output contains type name" {
+    const dist = try LogGamma(f64).init(1.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "LogGamma"));
+}
+
 // ============================================================================
 // WRAPPED CAUCHY DISTRIBUTION
 // ============================================================================
@@ -61011,6 +61221,10 @@ pub fn WrappedCauchy(comptime T: type) type {
         /// Validate that distribution parameters are in range.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("WrappedCauchy(mu={d}, rho={d})", .{ self.mu, self.rho });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!math.isFinite(self.mu)) return error.InvalidParameter;
             if (!(self.rho > 0.0 and self.rho < 1.0) or !math.isFinite(self.rho)) return error.InvalidParameter;
@@ -61494,6 +61708,15 @@ test "WrappedCauchy: empirical circular variance converges to 1 - rho (N=5000)" 
     try std.testing.expectApproxEqAbs(0.5, empirical_circular_variance, 0.15);
 }
 
+test "WrappedCauchy: format output contains type name" {
+    const dist = try WrappedCauchy(f64).init(0.0, 0.5);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "WrappedCauchy"));
+}
+
 // ============================================================================
 // EPANECHNIKOV DISTRIBUTION
 // ============================================================================
@@ -61633,6 +61856,10 @@ pub fn Epanechnikov(comptime T: type) type {
         /// Validate that distribution parameters are in range.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Epanechnikov(mu={d}, h={d})", .{ self.mu, self.h });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (self.h <= 0.0 or !math.isFinite(self.h) or !math.isFinite(self.mu)) {
                 return error.InvalidParameter;
@@ -62139,6 +62366,15 @@ test "Epanechnikov: sample variance converges to h²/5 (N=5000)" {
     const empirical_mean = sum / n_f;
     const empirical_var = sum_sq / n_f - empirical_mean * empirical_mean;
     try std.testing.expectApproxEqAbs(0.2, empirical_var, 0.05);
+}
+
+test "Epanechnikov: format output contains type name" {
+    const dist = try Epanechnikov(f64).init(0.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Epanechnikov"));
 }
 
 // ============================================================================
@@ -62996,6 +63232,10 @@ pub fn Benini(comptime T: type) type {
         /// Validate that distribution parameters are in range.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Benini(alpha={d}, beta={d}, sigma={d})", .{ self.alpha, self.beta, self.sigma });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!(self.alpha >= 0.0 and math.isFinite(self.alpha)) or !(self.beta > 0.0 and math.isFinite(self.beta)) or !(self.sigma > 0.0 and math.isFinite(self.sigma))) {
                 return error.InvalidParameter;
@@ -63386,6 +63626,15 @@ test "Benini: sample variance converges to theoretical (alpha=1, beta=1, sigma=1
     const empirical_mean = sum / n_f;
     const empirical_var = sum_sq / n_f - empirical_mean * empirical_mean;
     try std.testing.expectApproxEqAbs(theoretical_var, empirical_var, theoretical_var * 0.3);
+}
+
+test "Benini: format output contains type name" {
+    const dist = try Benini(f64).init(1.0, 1.0, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Benini"));
 }
 
 // ============================================================================
@@ -64936,6 +65185,10 @@ pub fn MarchenkoPastur(comptime T: type) type {
         /// Validate that distribution parameters are in range.
         ///
         /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("MarchenkoPastur(c={d}, sigma={d})", .{ self.c, self.sigma });
+        }
+
         pub fn validate(self: Self) DistributionError!void {
             if (!(self.c > 0.0 and self.c <= 1.0) or !math.isFinite(self.c)) {
                 return error.InvalidParameter;
@@ -65389,6 +65642,15 @@ test "MarchenkoPastur: f32 type support" {
     const q = try dist.quantile(0.5);
     try testing.expect(q > dist.lambda_minus);
     try testing.expect(q < dist.lambda_plus);
+}
+
+test "MarchenkoPastur: format output contains type name" {
+    const dist = try MarchenkoPastur(f64).init(0.5, 1.0);
+    var buf: [64]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(std.mem.containsAtLeast(u8, output, 1, "MarchenkoPastur"));
 }
 
 // ============================================================================
@@ -107137,9 +107399,9 @@ test "DiscreteGaussian: validate fails when sigma corrupted to NaN" {
 /// Time: O(1) for all operations except pdf/cdf (O(n) where n=panel count)
 pub fn Voigt(comptime T: type) type {
     return struct {
-        mu: T,      // location parameter
-        sigma: T,   // Gaussian scale (must be > 0)
-        gamma: T,   // Cauchy HWHM scale (must be > 0)
+        mu: T, // location parameter
+        sigma: T, // Gaussian scale (must be > 0)
+        gamma: T, // Cauchy HWHM scale (must be > 0)
 
         const Self = @This();
 
@@ -108081,7 +108343,7 @@ pub fn DoublePoisson(comptime T: type) type {
                 const log_k = @log(kf);
                 const log_mu = @log(self.mu);
                 log_f0 = log_f0 - kf + kf * log_k - logGamma(kf + 1.0) +
-                         self.phi * kf * (1.0 + log_mu - log_k);
+                    self.phi * kf * (1.0 + log_mu - log_k);
             }
 
             return log_f0 - self.log_z;
@@ -108251,7 +108513,7 @@ fn computeDoublePoissonLogZ(comptime T: type, mu: T, phi: T) T {
                 const log_k = @log(kf);
                 const log_mu = @log(mu_);
                 result = result - kf + kf * log_k - logGamma(kf + 1.0) +
-                        phi_ * kf * (1.0 + log_mu - log_k);
+                    phi_ * kf * (1.0 + log_mu - log_k);
             }
 
             return result;
