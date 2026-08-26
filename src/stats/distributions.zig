@@ -108914,3 +108914,659 @@ test "DoublePoisson: phi=1.0 variance matches Poisson" {
     const dp_var = dp_dist.variance();
     try expectApproxEqAbs(poisson_var, dp_var, 1e-6);
 }
+
+// ============================================================================
+// Zero-Inflated Geometric Distribution
+// ============================================================================
+
+/// Zero-Inflated Geometric distribution: Mixture of point mass at 0 (prob π)
+/// and Geometric(p) (prob 1-π).
+///
+/// P(X = 0) = π
+/// P(X = k) = (1-π) · p · (1-p)^(k-1) for k ≥ 1
+///
+/// Parameters:
+///   - π (pi): Inflation probability [0, 1) — probability of structural zero
+///   - p: Success probability (0, 1] — parameter of base Geometric
+///
+/// Time complexity notes:
+///   - init: O(1)
+///   - pmf/logpmf/mean/variance/mode: O(1)
+///   - cdf: O(1) — closed-form solution (unlike ZeroInflatedNegativeBinomial)
+///   - quantile/sample/entropy: O(k) or O(MAX_K)
+pub fn ZeroInflatedGeometric(comptime T: type) type {
+    return struct {
+        pi: T,
+        p: T,
+
+        const Self = @This();
+        const MAX_K: usize = 50000;
+
+        /// Create a ZeroInflatedGeometric distribution.
+        ///
+        /// Errors: π < 0, π ≥ 1, π non-finite, p ≤ 0, p > 1, or p non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(pi: T, p: T) DistributionError!Self {
+            if (!math.isFinite(pi)) return error.InvalidParameter;
+            if (!(pi >= 0.0 and pi < 1.0)) return error.InvalidParameter;
+            if (!math.isFinite(p)) return error.InvalidParameter;
+            if (!(p > 0.0 and p <= 1.0)) return error.InvalidParameter;
+            return Self{ .pi = pi, .p = p };
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// log PMF(k) = log(π)                             for k=0
+        /// log PMF(k) = log(1-π) + geom.logpmf(k)         for k≥1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) {
+                return @log(self.pi);
+            }
+            const geom = Geometric(T){ .p = self.p };
+            return @log(1.0 - self.pi) + geom.logpmf(k);
+        }
+
+        /// PMF at k.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) {
+                return self.pi;
+            }
+            const geom = Geometric(T){ .p = self.p };
+            return (1.0 - self.pi) * geom.pmf(k);
+        }
+
+        /// CDF: P(X ≤ k) via closed-form formula.
+        ///
+        /// P(X ≤ k) = π + (1-π) · geom.cdf(k)
+        ///
+        /// This is O(1) because Geometric.cdf is O(1), unlike
+        /// ZeroInflatedNegativeBinomial which uses O(k) partial sum.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            const geom = Geometric(T){ .p = self.p };
+            return self.pi + (1.0 - self.pi) * geom.cdf(@intCast(k));
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k*) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!u64 {
+            if (!(prob >= 0.0 and prob <= 1.0)) return error.InvalidProbability;
+            if (prob == 0.0) return 0;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                cumsum += self.pmf(k);
+                if (cumsum >= prob) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Sample using inverse CDF method.
+        ///
+        /// Draw u ~ Uniform(0,1). If u < π, return 0 (structural zero).
+        /// Otherwise, sample from Geometric(p).
+        ///
+        /// Time: O(E[X]) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            if (u < self.pi) return 0;
+            const geom = Geometric(T){ .p = self.p };
+            return geom.sample(rng);
+        }
+
+        /// Mean: (1-π)/p.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return (1.0 - self.pi) / self.p;
+        }
+
+        /// Variance: (1-π)·(1-p+π)/p².
+        ///
+        /// Derived from mixture variance formula:
+        /// Var(X) = (1-π)·Var0 + (1-π)·π·Mean0²
+        ///        = (1-π)·(1-p)/p² + (1-π)·π·(1/p)²
+        ///        = (1-π)·(1-p+π)/p²
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const geom_mean = 1.0 / self.p;
+            const geom_variance = (1.0 - self.p) / (self.p * self.p);
+            const one_minus_pi = 1.0 - self.pi;
+            return one_minus_pi * geom_variance + one_minus_pi * self.pi * geom_mean * geom_mean;
+        }
+
+        /// Mode: closed-form solution (not numeric scan).
+        ///
+        /// Geometric.pmf(k) is strictly decreasing for k≥1, so only
+        /// candidates are k=0 (pmf=π) and k=1 (pmf=(1-π)·p).
+        /// If π > (1-π)·p, mode=0; else mode=1 (tie goes to larger k).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            if (self.pi > (1.0 - self.pi) * self.p) {
+                return 0;
+            }
+            return 1;
+        }
+
+        /// Differential entropy via truncated sum −Σ P(k)·log P(k).
+        ///
+        /// Time: O(MAX_K) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const p_val = self.pmf(k);
+                // Compare against exact 0 rather than a fixed epsilon like
+                // 1e-300 — such a literal underflows to 0 in f32, silently
+                // disabling this check (p < 0.0 is never true) and, worse,
+                // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
+                // once pmf() itself underflows to exact 0 in T.
+                if (p_val == 0.0) break;
+                sum -= p_val * self.logpmf(k);
+            }
+            return sum;
+        }
+
+        /// Validate internal invariants.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.pi)) return error.InvalidParameter;
+            if (!(self.pi >= 0.0 and self.pi < 1.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.p)) return error.InvalidParameter;
+            if (!(self.p > 0.0 and self.p <= 1.0)) return error.InvalidParameter;
+        }
+
+        /// Format for display.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ZeroInflatedGeometric(π={d:.4}, p={d:.4})", .{ self.pi, self.p });
+        }
+    };
+}
+
+// ============================================================================
+// Zero-Inflated Geometric Distribution Tests (TDD RED phase)
+// ============================================================================
+//
+// NOTE: Implementation not yet present — tests are written first to define
+// the expected behavior of ZeroInflatedGeometric(comptime T: type) type.
+
+// --- ZeroInflatedGeometric Tests ---
+
+test "ZeroInflatedGeometric: init valid pi=0 (Geom boundary), p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.0, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init valid pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init valid pi=0.5, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.5, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init valid pi=0.9, p=0.3" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.9, 0.3);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init valid pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init valid p=1.0 (Geom boundary), pi=0.2" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.2, 1.0);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init valid f32 type" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.5);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: init fails for pi < 0" {
+    const result = ZeroInflatedGeometric(f64).init(-0.1, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for pi >= 1" {
+    const result = ZeroInflatedGeometric(f64).init(1.0, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for pi > 1" {
+    const result = ZeroInflatedGeometric(f64).init(1.5, 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for NaN pi" {
+    const result = ZeroInflatedGeometric(f64).init(math.nan(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for infinite pi" {
+    const result = ZeroInflatedGeometric(f64).init(math.inf(f64), 0.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for p <= 0" {
+    const result = ZeroInflatedGeometric(f64).init(0.3, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for p < 0" {
+    const result = ZeroInflatedGeometric(f64).init(0.3, -0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for p > 1" {
+    const result = ZeroInflatedGeometric(f64).init(0.3, 1.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for NaN p" {
+    const result = ZeroInflatedGeometric(f64).init(0.3, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: init fails for infinite p" {
+    const result = ZeroInflatedGeometric(f64).init(0.3, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "ZeroInflatedGeometric: pmf reduction to Geometric for pi=0, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.0, 0.5);
+    const geom = try Geometric(f64).init(0.5);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(geom.pmf(k), dist.pmf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedGeometric: pmf(0) = pi for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // Spot check: pmf(0) should equal pi exactly since geom.pmf(0) = 0
+    try expectApproxEqAbs(0.3, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedGeometric: pmf(0) = pi for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    try expectApproxEqAbs(0.1, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedGeometric: pmf(1) = (1-pi)*p for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // Spot check: pmf(1) = (1-pi)*p = 0.7*0.4 = 0.28
+    try expectApproxEqAbs(0.28, dist.pmf(1), 1e-12);
+}
+
+test "ZeroInflatedGeometric: pmf(1) = (1-pi)*p for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    // Spot check: pmf(1) = 0.9*0.5 = 0.45
+    try expectApproxEqAbs(0.45, dist.pmf(1), 1e-12);
+}
+
+test "ZeroInflatedGeometric: pmf(2) = (1-pi)*p*(1-p) for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // Spot check: pmf(2) = 0.7*0.4*0.6 = 0.168
+    try expectApproxEqAbs(0.168, dist.pmf(2), 1e-12);
+}
+
+test "ZeroInflatedGeometric: pmf positive for all k >= 1" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    for ([_]u64{ 1, 2, 3, 5, 10 }) |k| {
+        try expect(dist.pmf(k) > 0.0);
+    }
+}
+
+test "ZeroInflatedGeometric: logpmf = log(pmf)" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.4, 0.5);
+    for ([_]u64{ 0, 1, 2, 3, 5, 10 }) |k| {
+        try expectApproxEqAbs(@log(dist.pmf(k)), dist.logpmf(k), 1e-10);
+    }
+}
+
+test "ZeroInflatedGeometric: pmf sums to 1 (truncated)" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k <= 200) : (k += 1) {
+        sum += dist.pmf(k);
+        if (dist.pmf(k) < 1e-15) break;
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-8);
+}
+
+test "ZeroInflatedGeometric: cdf(0) = pi exactly for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // Since geom.pmf(0)=0, cdf(0) = pi + (1-pi)*0 = pi
+    try expectApproxEqAbs(0.3, dist.cdf(0), 1e-12);
+}
+
+test "ZeroInflatedGeometric: cdf(0) = pi exactly for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    try expectApproxEqAbs(0.1, dist.cdf(0), 1e-12);
+}
+
+test "ZeroInflatedGeometric: cdf is monotonically non-decreasing" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.4, 0.5);
+    var prev = dist.cdf(0);
+    for ([_]u64{ 1, 2, 3, 4, 5, 10, 20 }) |k| {
+        const cur = dist.cdf(k);
+        try expect(cur >= prev);
+        prev = cur;
+    }
+}
+
+test "ZeroInflatedGeometric: cdf approaches 1 for large k" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try expect(dist.cdf(100) > 0.999);
+}
+
+test "ZeroInflatedGeometric: cdf reduction to Geometric for pi=0" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.0, 0.5);
+    const geom = try Geometric(f64).init(0.5);
+    for ([_]u64{ 0, 5, 10, 20 }) |k| {
+        try expectApproxEqAbs(geom.cdf(@intCast(k)), dist.cdf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedGeometric: quantile(0) = 0" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try expect((try dist.quantile(0.0)) == 0);
+}
+
+test "ZeroInflatedGeometric: quantile(1) is defined" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.4, 0.5);
+    const q = try dist.quantile(1.0);
+    try expectApproxEqAbs(@as(f64, 1.0), dist.cdf(q), 1e-9);
+}
+
+test "ZeroInflatedGeometric: quantile fails for p < 0" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try expectError(error.InvalidProbability, dist.quantile(-0.01));
+}
+
+test "ZeroInflatedGeometric: quantile fails for p > 1" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try expectError(error.InvalidProbability, dist.quantile(1.01));
+}
+
+test "ZeroInflatedGeometric: quantile fails for NaN" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "ZeroInflatedGeometric: cdf(quantile(p)) >= p roundtrip" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    for ([_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 }) |p| {
+        const q = try dist.quantile(p);
+        try expect(dist.cdf(q) >= p - 1e-12);
+    }
+}
+
+test "ZeroInflatedGeometric: mean = (1-pi)/p for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // Spot check: mean = (1-0.3)/0.4 = 0.7/0.4 = 1.75
+    try expectApproxEqAbs(1.75, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedGeometric: mean = (1-pi)/p for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    // Spot check: mean = 0.9/0.5 = 1.8
+    try expectApproxEqAbs(1.8, dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedGeometric: mean = geom.mean() for pi=0 (Geom reduction)" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.0, 0.5);
+    const geom = try Geometric(f64).init(0.5);
+    try expectApproxEqAbs(geom.mean(), dist.mean(), 1e-10);
+}
+
+test "ZeroInflatedGeometric: mean increases with decreasing pi for fixed p" {
+    const dist1 = try ZeroInflatedGeometric(f64).init(0.1, 0.4);
+    const dist2 = try ZeroInflatedGeometric(f64).init(0.5, 0.4);
+    try expect(dist1.mean() > dist2.mean());
+}
+
+test "ZeroInflatedGeometric: variance = (1-pi)*(1-p+pi)/p^2 for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // Spot check: variance = 0.7*(1-0.4+0.3)/0.16 = 0.7*0.9/0.16 = 3.9375
+    try expectApproxEqAbs(3.9375, dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedGeometric: variance = (1-pi)*(1-p+pi)/p^2 for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    // Spot check: variance = 0.9*(1-0.5+0.1)/0.25 = 0.9*0.6/0.25 = 2.16
+    try expectApproxEqAbs(2.16, dist.variance(), 1e-10);
+}
+
+test "ZeroInflatedGeometric: variance > 0 for all valid params" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try expect(dist.variance() > 0.0);
+}
+
+test "ZeroInflatedGeometric: mode = 0 when pi > (1-pi)*p for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    // 0.3 > 0.7*0.4 = 0.28, so mode should be 0
+    try expect(dist.mode() == 0);
+}
+
+test "ZeroInflatedGeometric: mode = 1 when pi <= (1-pi)*p for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    // 0.1 < 0.9*0.5 = 0.45, so mode should be 1
+    try expect(dist.mode() == 1);
+}
+
+test "ZeroInflatedGeometric: mode = 0 for dominant inflation (pi=0.9, p=0.5)" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.9, 0.5);
+    try expect(dist.mode() == 0);
+}
+
+test "ZeroInflatedGeometric: entropy is positive and finite" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedGeometric: entropy is positive for pi=0.1, p=0.5" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.1, 0.5);
+    const h = dist.entropy();
+    try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedGeometric: p=1.0 boundary case gives pmf(0)=1.0" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 1.0);
+    // Geom(1.0) has all probability at k=1
+    // So ZIG.pmf(0) = pi = 0.3
+    try expectApproxEqAbs(0.3, dist.pmf(0), 1e-12);
+}
+
+test "ZeroInflatedGeometric: p=1.0 boundary case gives pmf(1)=1-pi" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 1.0);
+    // ZIG.pmf(1) = (1-pi)*p = 0.7*1.0 = 0.7
+    try expectApproxEqAbs(0.7, dist.pmf(1), 1e-12);
+}
+
+test "ZeroInflatedGeometric: p=1.0 boundary case gives pmf(k>=2)=0.0" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 1.0);
+    for ([_]u64{ 2, 3, 10 }) |k| {
+        try expectApproxEqAbs(0.0, dist.pmf(k), 1e-12);
+    }
+}
+
+test "ZeroInflatedGeometric: sample is non-negative integer" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    for (0..200) |_| {
+        const s = dist.sample(rng);
+        try expect(s <= 1000000); // Bound check, not tautological >= 0 on u64
+    }
+}
+
+test "ZeroInflatedGeometric: sample empirical mean close to theoretical for pi=0.3, p=0.4" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(theoretical_mean, sample_mean, 0.3);
+}
+
+test "ZeroInflatedGeometric: sample with high pi produces majority zeros" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+    const dist = try ZeroInflatedGeometric(f64).init(0.95, 0.5);
+    var zero_count: usize = 0;
+    const n = 500;
+    for (0..n) |_| {
+        if (dist.sample(rng) == 0) zero_count += 1;
+    }
+    const ratio = @as(f64, @floatFromInt(zero_count)) / @as(f64, n);
+    try expect(ratio > 0.85); // Mostly zeros but not necessarily 100%
+}
+
+test "ZeroInflatedGeometric: sample Geom reduction for pi=0" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try ZeroInflatedGeometric(f64).init(0.0, 0.5);
+    var sum: f64 = 0.0;
+    const n = 3000;
+    for (0..n) |_| {
+        sum += @as(f64, @floatFromInt(dist.sample(rng)));
+    }
+    const sample_mean = sum / @as(f64, n);
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(theoretical_mean, sample_mean, 0.3);
+}
+
+test "ZeroInflatedGeometric: validate passes for valid pi, p" {
+    const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
+    try dist.validate();
+}
+
+test "ZeroInflatedGeometric: validate fails for pi < 0 (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = -0.1, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for pi >= 1 (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = 1.0, .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for NaN pi (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = math.nan(f64), .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for infinite pi (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = math.inf(f64), .p = 0.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for p <= 0 (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = 0.3, .p = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for p < 0 (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = 0.3, .p = -0.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for p > 1 (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = 0.3, .p = 1.1 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for NaN p (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = 0.3, .p = math.nan(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ZeroInflatedGeometric: validate fails for infinite p (unsafe struct)" {
+    const dist = ZeroInflatedGeometric(f64){ .pi = 0.3, .p = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- f32 Type Tests ---
+
+test "ZeroInflatedGeometric: f32 init with valid parameters" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), dist.pi, 1e-6);
+}
+
+test "ZeroInflatedGeometric: f32 pmf(0) for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), dist.pmf(0), 1e-6);
+}
+
+test "ZeroInflatedGeometric: f32 pmf(1) for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 0.28), dist.pmf(1), 1e-6);
+}
+
+test "ZeroInflatedGeometric: f32 mean for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 1.75), dist.mean(), 1e-6);
+}
+
+test "ZeroInflatedGeometric: f32 variance for pi=0.3, p=0.4" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    try testing.expectApproxEqAbs(@as(f32, 3.9375), dist.variance(), 1e-5);
+}
+
+test "ZeroInflatedGeometric: f32 cdf(0) is positive" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.5, 0.5);
+    const c = dist.cdf(0);
+    try testing.expect(c > 0.0);
+}
+
+test "ZeroInflatedGeometric: f32 quantile(0.5) produces valid result" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q <= 1000000);
+}
+
+test "ZeroInflatedGeometric: f32 entropy is finite and positive" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "ZeroInflatedGeometric: f32 sample produces valid results" {
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    const dist = try ZeroInflatedGeometric(f32).init(0.3, 0.4);
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try testing.expect(s <= 1000000);
+    }
+}
+
+test "ZeroInflatedGeometric: f32 validate() passes for valid parameters" {
+    const dist = try ZeroInflatedGeometric(f32).init(0.5, 0.5);
+    try dist.validate();
+}
