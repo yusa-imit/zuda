@@ -109585,3 +109585,670 @@ test "ZeroInflatedGeometric: f32 validate() passes for valid parameters" {
     const dist = try ZeroInflatedGeometric(f32).init(0.5, 0.5);
     try dist.validate();
 }
+
+// ============================================================================
+// MarshallOlkinWeibull Distribution (TDD red phase - tests only)
+// ============================================================================
+
+// Marshall-Olkin Extended Weibull distribution
+//
+// The Marshall-Olkin extended Weibull is obtained by applying the Marshall-Olkin
+// construction to a Weibull baseline distribution. It adds a resilience parameter
+// alpha to the Weibull distribution.
+//
+// Parameters:
+//   - alpha: resilience/tilt parameter (α > 0)
+//   - k: Weibull shape parameter (k > 0)
+//   - lambda: Weibull scale parameter (λ > 0)
+//
+// Support: [0, ∞)
+//
+// Special cases:
+//   - alpha=1 reduces exactly to Weibull(k, lambda)
+//   - k=1 reduces exactly to MarshallOlkinExponential(alpha, rate=1/lambda)
+//
+// Mode: 0 if k ≤ 1, else found via golden section search
+//
+// Mean: No closed form; computed via numerical integration of S(x)
+// Variance: Computed from E[X²] - E[X]²
+// Entropy: Numerical integration of -f(x)·log(f(x))
+
+pub fn MarshallOlkinWeibull(comptime T: type) type {
+    return struct {
+        alpha: T,
+        k: T,
+        lambda: T,
+
+        const Self = @This();
+
+        /// Create a Marshall-Olkin Extended Weibull distribution.
+        ///
+        /// Parameters:
+        ///   - alpha > 0: resilience/tilt parameter
+        ///   - k > 0: Weibull shape parameter
+        ///   - lambda > 0: Weibull scale parameter
+        ///
+        /// Errors: alpha ≤ 0, k ≤ 0, lambda ≤ 0, or any non-finite parameter.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, k: T, lambda: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (k <= 0.0 or !math.isFinite(k)) return error.InvalidParameter;
+            if (lambda <= 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .k = k, .lambda = lambda };
+        }
+
+        /// Survival function S(x) = α·Sbar(x) / (1 - (1-α)·Sbar(x))
+        /// where Sbar(x) = exp(-(x/λ)^k).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            const scaled = x / self.lambda;
+            const sbar = @exp(-math.pow(T, scaled, self.k));
+            const denom = 1.0 - (1.0 - self.alpha) * sbar;
+            return self.alpha * sbar / denom;
+        }
+
+        /// Cumulative distribution function F(x) = 1 - S(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return 1.0 - self.sf(x);
+        }
+
+        /// Probability density function f(x) = α·gbar(x) / (1 - (1-α)·Sbar(x))²
+        /// where gbar(x) = (k/λ)·(x/λ)^(k-1)·exp(-(x/λ)^k).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const scaled = x / self.lambda;
+            const scaled_pow = math.pow(T, scaled, self.k);
+            const sbar = @exp(-scaled_pow);
+            const gbar = (self.k / self.lambda) * math.pow(T, scaled, self.k - 1.0) * sbar;
+            const denom = 1.0 - (1.0 - self.alpha) * sbar;
+            return self.alpha * gbar / (denom * denom);
+        }
+
+        /// Quantile function via closed-form inversion.
+        /// Given p in [0,1], let q = 1-p.
+        /// Sbar_target = q / (α + q·(1-α))
+        /// x = λ·(-ln(Sbar_target))^(1/k)
+        ///
+        /// Errors: !(0 ≤ p ≤ 1) → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p >= 1.0) return math.inf(T);
+
+            const q = 1.0 - p;
+            const sbar_target = q / (self.alpha + q * (1.0 - self.alpha));
+            const ln_sbar = @log(sbar_target);
+            const x = self.lambda * math.pow(T, -ln_sbar, 1.0 / self.k);
+            return x;
+        }
+
+        /// Mode of the distribution.
+        /// If k ≤ 1: mode = 0 (density is non-increasing from boundary)
+        /// If k > 1: mode found via golden-section search on pdf(x) over [ε, upperBound]
+        ///
+        /// Time: O(100 iterations) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.k <= 1.0) {
+                return 0.0;
+            }
+
+            // Golden section search for k > 1
+            const phi_ratio = (1.0 + @sqrt(@as(T, 5.0))) / 2.0;
+            var lo: T = 1e-10;
+            var hi: T = self.upperBound(1e-14);
+            var a = lo + (hi - lo) / (phi_ratio + 1.0);
+            var b = hi - (hi - lo) / (phi_ratio + 1.0);
+            var iter: usize = 0;
+
+            while (iter < 100) : (iter += 1) {
+                if (hi - lo < 1e-12 * (1.0 + lo)) break;
+                if (self.pdf(a) < self.pdf(b)) {
+                    lo = a;
+                } else {
+                    hi = b;
+                }
+                a = lo + (hi - lo) / (phi_ratio + 1.0);
+                b = hi - (hi - lo) / (phi_ratio + 1.0);
+            }
+
+            return (lo + hi) / 2.0;
+        }
+
+        /// Mean via numerical integration: E[X] = ∫₀^∞ S(x) dx
+        /// Computed using Simpson's rule with 1000 panels.
+        ///
+        /// Time: O(1000) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            return self.simpsonSf(ub, 1000);
+        }
+
+        /// Upper bound x such that S(x) < tol. Used for numerical integration.
+        fn upperBound(self: Self, tol: T) T {
+            var u: T = 1.0;
+            var i: usize = 0;
+            while (self.sf(u) > tol and i < 200) : (i += 1) {
+                u *= 2.0;
+            }
+            return u;
+        }
+
+        /// Variance via E[X²] = 2·∫₀^∞ x·S(x) dx, then Var = E[X²] − E[X]².
+        ///
+        /// Time: O(1000) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const ex1 = self.mean();
+            const ex2 = 2.0 * self.simpsonXSf(ub, 1000);
+            return ex2 - ex1 * ex1;
+        }
+
+        /// Standard deviation.
+        ///
+        /// Time: O(1000) | Space: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Shannon entropy H = −∫₀^∞ f(x)·ln f(x) dx via numerical integration.
+        ///
+        /// Time: O(1000) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const n: usize = 1000;
+            const h = ub / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const f = self.pdf(x);
+                const contrib: T = if (f > 0.0) -f * @log(f) else 0.0;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Assert distribution parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.k <= 0.0 or !math.isFinite(self.k)) return error.InvalidParameter;
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Format for printing.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("MarshallOlkinWeibull(alpha={d}, k={d}, lambda={d})", .{ self.alpha, self.k, self.lambda });
+        }
+
+        /// Simpson's rule: ∫₀^upper S(x) dx with n (even) subintervals.
+        fn simpsonSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * self.sf(x);
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Simpson's rule: ∫₀^upper x·S(x) dx with n (even) subintervals.
+        fn simpsonXSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * (x * self.sf(x));
+            }
+            return sum * h / 3.0;
+        }
+    };
+}
+
+// ============================================================================
+// MarshallOlkinWeibull Tests
+// ============================================================================
+
+test "MarshallOlkinWeibull: init succeeds with valid params alpha=2.0, k=1.5, lambda=3.0" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try expect(dist.alpha == 2.0);
+    try expect(dist.k == 1.5);
+    try expect(dist.lambda == 3.0);
+}
+
+test "MarshallOlkinWeibull: init succeeds with alpha=0.5, k=2.0, lambda=1.0" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    try expect(dist.alpha == 0.5);
+    try expect(dist.k == 2.0);
+    try expect(dist.lambda == 1.0);
+}
+
+test "MarshallOlkinWeibull: init fails when alpha is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(0.0, 1.5, 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when alpha is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(-1.0, 1.5, 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when k is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, 0.0, 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when k is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, -1.5, 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when lambda is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, 1.5, 0.0));
+}
+
+test "MarshallOlkinWeibull: init fails when lambda is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, 1.5, -3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when alpha is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(math.nan(f64), 1.5, 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when alpha is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(math.inf(f64), 1.5, 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when k is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, math.nan(f64), 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when k is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, math.inf(f64), 3.0));
+}
+
+test "MarshallOlkinWeibull: init fails when lambda is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, 1.5, math.nan(f64)));
+}
+
+test "MarshallOlkinWeibull: init fails when lambda is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinWeibull(f64).init(2.0, 1.5, math.inf(f64)));
+}
+
+test "MarshallOlkinWeibull: validate succeeds for valid distribution" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try dist.validate();
+}
+
+test "MarshallOlkinWeibull: pdf(2.0) for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 0.1897203445431008;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: pdf(5.0) for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 0.12048039635833345;
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: cdf(2.0) for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 0.26563870969564674;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: cdf(5.0) for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 0.7916471089366554;
+    try expectApproxEqAbs(dist.cdf(5.0), expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: pdf at negative x is zero" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try expectApproxEqAbs(dist.pdf(-1.0), 0.0, 1e-15);
+}
+
+test "MarshallOlkinWeibull: cdf at negative x is zero" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try expectApproxEqAbs(dist.cdf(-1.0), 0.0, 1e-15);
+}
+
+test "MarshallOlkinWeibull: sf at negative x is one" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try expectApproxEqAbs(dist.sf(-1.0), 1.0, 1e-15);
+}
+
+test "MarshallOlkinWeibull: cdf + sf = 1 for x >= 0" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 1.0) {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+test "MarshallOlkinWeibull: quantile(0.5) for alpha=2, k=1.5, lambda=3 matches median" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 3.194117511401143;
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(q, expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: quantile(0.1) for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 1.0282780341243645;
+    const q = try dist.quantile(0.1);
+    try expectApproxEqAbs(q, expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: quantile(0.9) for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 6.162963944723362;
+    const q = try dist.quantile(0.9);
+    try expectApproxEqAbs(q, expected, 1e-10);
+}
+
+test "MarshallOlkinWeibull: quantile at p=0 equals 0" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const result = try dist.quantile(0.0);
+    try expectApproxEqAbs(result, 0.0, 1e-12);
+}
+
+test "MarshallOlkinWeibull: quantile at p=1 equals infinity" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const result = try dist.quantile(1.0);
+    try expect(math.isInf(result));
+}
+
+test "MarshallOlkinWeibull: quantile rejects p<0" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "MarshallOlkinWeibull: quantile rejects p>1" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "MarshallOlkinWeibull: quantile inverts cdf for alpha=2, k=1.5, lambda=3, p=0.5" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const p: f64 = 0.5;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinWeibull: quantile inverts cdf for alpha=0.5, k=2, lambda=1, p=0.3" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    const p: f64 = 0.3;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinWeibull: quantile inverts cdf for alpha=1, k=1, lambda=2, p=0.7" {
+    const dist = try MarshallOlkinWeibull(f64).init(1.0, 1.0, 2.0);
+    const p: f64 = 0.7;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinWeibull: cdf inverts quantile for alpha=2, k=1.5, lambda=3, x=2.0" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const x: f64 = 2.0;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-9);
+}
+
+test "MarshallOlkinWeibull: cdf inverts quantile for alpha=0.5, k=2, lambda=1, x=1.5" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    const x: f64 = 1.5;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-9);
+}
+
+test "MarshallOlkinWeibull: mode is 0.0 when k <= 1 (alpha=2, k=1, lambda=3)" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.0, 3.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "MarshallOlkinWeibull: mode is 0.0 when k <= 1 (alpha=0.5, k=0.7, lambda=1)" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 0.7, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "MarshallOlkinWeibull: mode matches verified value for alpha=2, k=1.5, lambda=3 (interior mode)" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 2.6705472588273556;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-4);
+}
+
+test "MarshallOlkinWeibull: mode matches verified value for alpha=0.5, k=2, lambda=1 (interior mode)" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    const expected = 0.4604429119997366;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-4);
+}
+
+test "MarshallOlkinWeibull: mode is 0.0 for alpha=3, k=0.7, lambda=1 (k<1)" {
+    const dist = try MarshallOlkinWeibull(f64).init(3.0, 0.7, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "MarshallOlkinWeibull: mean for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 3.44583884;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: mean for alpha=0.5, k=2, lambda=1 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    const expected = 0.71441121;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: mean for alpha=1, k=1, lambda=2 (Exponential) matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(1.0, 1.0, 2.0);
+    const expected = 2.0;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: variance for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 4.04705275;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: variance for alpha=0.5, k=2, lambda=1 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    const expected = 0.18276381;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: variance for alpha=1, k=1, lambda=2 (Exponential) matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(1.0, 1.0, 2.0);
+    const expected = 4.0;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: entropy for alpha=2, k=1.5, lambda=3 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const expected = 2.04187765;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-3);
+}
+
+test "MarshallOlkinWeibull: entropy for alpha=0.5, k=2, lambda=1 matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(0.5, 2.0, 1.0);
+    const expected = 0.46308325;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-3);
+}
+
+test "MarshallOlkinWeibull: entropy for alpha=1, k=1, lambda=2 (Exponential) matches verified value" {
+    const dist = try MarshallOlkinWeibull(f64).init(1.0, 1.0, 2.0);
+    const expected = 1.6931471805599453;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-5);
+}
+
+test "MarshallOlkinWeibull: alpha=1 reduces exactly to Weibull for pdf(2.0)" {
+    const dist = try MarshallOlkinWeibull(f64).init(1.0, 1.5, 3.0);
+    const x = 2.0;
+    const scaled = x / 3.0;
+    const scaled_pow = math.pow(f64, scaled, 1.5);
+    const weibull_pdf = (1.5 / 3.0) * math.pow(f64, scaled, 0.5) * @exp(-scaled_pow);
+    try expectApproxEqAbs(dist.pdf(x), weibull_pdf, 1e-12);
+}
+
+test "MarshallOlkinWeibull: alpha=1 reduces exactly to Weibull for cdf(2.0)" {
+    const dist = try MarshallOlkinWeibull(f64).init(1.0, 1.5, 3.0);
+    const x = 2.0;
+    const scaled = x / 3.0;
+    const scaled_pow = math.pow(f64, scaled, 1.5);
+    const weibull_cdf = 1.0 - @exp(-scaled_pow);
+    try expectApproxEqAbs(dist.cdf(x), weibull_cdf, 1e-12);
+}
+
+test "MarshallOlkinWeibull: k=1 reduces exactly to MarshallOlkinExponential for pdf" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.0, 3.0);
+    const moe = try MarshallOlkinExponential(f64).init(2.0, 1.0 / 3.0);
+    const x = 2.0;
+    try expectApproxEqAbs(dist.pdf(x), moe.pdf(x), 1e-12);
+}
+
+test "MarshallOlkinWeibull: k=1 reduces exactly to MarshallOlkinExponential for cdf" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.0, 3.0);
+    const moe = try MarshallOlkinExponential(f64).init(2.0, 1.0 / 3.0);
+    const x = 2.0;
+    try expectApproxEqAbs(dist.cdf(x), moe.cdf(x), 1e-12);
+}
+
+test "MarshallOlkinWeibull: pdf is always non-negative for x>=0" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "MarshallOlkinWeibull: cdf is monotonically non-decreasing" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 10.0) : (x += 0.2) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "MarshallOlkinWeibull: variance is finite and non-negative" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v >= 0.0);
+}
+
+test "MarshallOlkinWeibull: stdDev is positive" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const sd = dist.stdDev();
+    try expect(sd > 0.0);
+}
+
+test "MarshallOlkinWeibull: entropy is finite and non-negative" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h >= 0.0);
+}
+
+test "MarshallOlkinWeibull: sample produces finite non-negative values" {
+    const dist = try MarshallOlkinWeibull(f64).init(2.0, 1.5, 3.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 0.0);
+    }
+}
+
+test "MarshallOlkinWeibull: f32 init succeeds with valid params" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    try expect(dist.alpha == 2.0);
+    try expect(dist.k == 1.5);
+    try expect(dist.lambda == 3.0);
+}
+
+test "MarshallOlkinWeibull: f32 pdf produces finite result" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const p = dist.pdf(2.0);
+    try expect(math.isFinite(p));
+    try expect(p >= 0.0);
+}
+
+test "MarshallOlkinWeibull: f32 cdf produces finite in-range result" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const c = dist.cdf(2.0);
+    try expect(math.isFinite(c));
+    try expect(c >= 0.0 and c <= 1.0);
+}
+
+test "MarshallOlkinWeibull: f32 quantile produces finite non-negative result" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q));
+    try expect(q >= 0.0);
+}
+
+test "MarshallOlkinWeibull: f32 mean produces finite positive result" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0);
+}
+
+test "MarshallOlkinWeibull: f32 variance produces finite non-negative result" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v >= 0.0);
+}
+
+test "MarshallOlkinWeibull: f32 entropy produces finite non-negative result" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h >= 0.0);
+}
+
+test "MarshallOlkinWeibull: f32 sample produces finite non-negative value" {
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    const s = dist.sample(rng);
+    try expect(math.isFinite(s));
+    try expect(s >= 0.0);
+}
+
+test "MarshallOlkinWeibull: f32 validate() passes for valid parameters" {
+    const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
+    try dist.validate();
+}
