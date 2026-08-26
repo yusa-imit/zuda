@@ -110514,3 +110514,816 @@ test "MarshallOlkinWeibull: f32 validate() passes for valid parameters" {
     const dist = try MarshallOlkinWeibull(f32).init(2.0, 1.5, 3.0);
     try dist.validate();
 }
+
+pub fn MarshallOlkinLomax(comptime T: type) type {
+    return struct {
+        alpha: T,
+        kappa: T,
+        lambda: T,
+
+        const Self = @This();
+
+        /// Create a Marshall-Olkin Extended Lomax distribution.
+        ///
+        /// Parameters:
+        ///   - alpha > 0: resilience/tilt parameter
+        ///   - kappa > 0: Lomax shape parameter
+        ///   - lambda > 0: Lomax scale parameter
+        ///
+        /// Errors: alpha ≤ 0, kappa ≤ 0, lambda ≤ 0, or any non-finite parameter.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T, kappa: T, lambda: T) DistributionError!Self {
+            if (alpha <= 0.0 or !math.isFinite(alpha)) return error.InvalidParameter;
+            if (kappa <= 0.0 or !math.isFinite(kappa)) return error.InvalidParameter;
+            if (lambda <= 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{ .alpha = alpha, .kappa = kappa, .lambda = lambda };
+        }
+
+        /// Survival function S(x) = α·Sbar(x) / (1 - (1-α)·Sbar(x))
+        /// where Sbar(x) = (1 + x/λ)^(-κ).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            const ratio = x / self.lambda;
+            const sbar = math.pow(T, 1.0 + ratio, -self.kappa);
+            const denom = 1.0 - (1.0 - self.alpha) * sbar;
+            return self.alpha * sbar / denom;
+        }
+
+        /// Cumulative distribution function F(x) = 1 - S(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return 1.0 - self.sf(x);
+        }
+
+        /// Probability density function f(x) = α·fbar(x) / (1 - (1-α)·Sbar(x))²
+        /// where fbar(x) = (κ/λ)·(1+x/λ)^(-(κ+1)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const ratio = x / self.lambda;
+            const sbar = math.pow(T, 1.0 + ratio, -self.kappa);
+            const fbar = (self.kappa / self.lambda) * math.pow(T, 1.0 + ratio, -(self.kappa + 1.0));
+            const denom = 1.0 - (1.0 - self.alpha) * sbar;
+            return self.alpha * fbar / (denom * denom);
+        }
+
+        /// Quantile function via closed-form inversion.
+        /// Given p in [0,1], let q = 1-p.
+        /// Sbar_target = q / (α + q·(1-α))
+        /// x = λ·(Sbar_target^(-1/κ) - 1)
+        ///
+        /// Errors: !(0 ≤ p ≤ 1) → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p >= 1.0) return math.inf(T);
+
+            const q = 1.0 - p;
+            const sbar_target = q / (self.alpha + q * (1.0 - self.alpha));
+            const x = self.lambda * (math.pow(T, sbar_target, -1.0 / self.kappa) - 1.0);
+            return x;
+        }
+
+        /// Mode of the distribution.
+        /// If kappa ≤ 1: mode = 0 (baseline Lomax is non-increasing)
+        /// If kappa > 1 AND alpha ≤ 1 + (kappa+1)/(kappa-1): mode = 0
+        /// Otherwise: sbar_target = (kappa+1) / ((alpha-1)*(kappa-1)),
+        ///            mode = lambda * (sbar_target^(-1/kappa) - 1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.kappa <= 1.0) return 0.0;
+
+            const threshold = 1.0 + (self.kappa + 1.0) / (self.kappa - 1.0);
+            if (self.alpha <= threshold) return 0.0;
+
+            const sbar_target = (self.kappa + 1.0) / ((self.alpha - 1.0) * (self.kappa - 1.0));
+            const x = self.lambda * (math.pow(T, sbar_target, -1.0 / self.kappa) - 1.0);
+            return x;
+        }
+
+        /// Mean via numerical integration: E[X] = ∫₀^∞ S(x) dx
+        /// Returns +∞ if kappa ≤ 1.0 (tail is not integrable).
+        /// Uses u-substitution u = x/(x+lambda), n=4000 panels.
+        ///
+        /// Time: O(4000) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.kappa <= 1.0) return math.inf(T);
+            const ub = self.upperBound(1e-30);
+            return self.simpsonSfSubstitution(ub, 4000);
+        }
+
+        /// Upper bound x such that S(x) < tol. Used for numerical integration.
+        ///
+        /// Time: O(log(upper)) | Space: O(1)
+        fn upperBound(self: Self, tol: T) T {
+            // For very small tolerances (especially with f32 which can underflow),
+            // use a type-appropriate minimum to avoid numerical issues.
+            // Use 10x epsilon as a fallback to catch underflow cases without
+            // significantly reducing f64 accuracy (1e-30 >> 10*2.22e-16).
+            const eps = math.floatEps(T);
+            const safe_tol = @max(tol, 10.0 * eps);
+
+            var u: T = 1.0;
+            var i: usize = 0;
+            while (self.sf(u) > safe_tol and i < 200) : (i += 1) {
+                u *= 2.0;
+            }
+            return u;
+        }
+
+        /// Variance via E[X²] = 2·∫₀^∞ x·S(x) dx, then Var = E[X²] − E[X]².
+        /// Returns +∞ if kappa ≤ 2.0 (second moment is not integrable).
+        ///
+        /// Time: O(4000) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.kappa <= 2.0) return math.inf(T);
+            const ub = self.upperBound(1e-30);
+            const ex1 = self.mean();
+            const ex2 = 2.0 * self.simpsonXSfSubstitution(ub, 4000);
+            return ex2 - ex1 * ex1;
+        }
+
+        /// Standard deviation.
+        ///
+        /// Time: O(4000) | Space: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Shannon entropy H = −∫₀^∞ f(x)·ln f(x) dx via numerical integration.
+        /// Uses u-substitution u = x/(x+lambda), n=4000 panels.
+        ///
+        /// Time: O(4000) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ub = self.upperBound(1e-30);
+            const u_max = ub / (ub + self.lambda);
+            const n: usize = 4000;
+            const du = u_max / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+
+            for (0..n + 1) |i| {
+                const u = @as(T, @floatFromInt(i)) * du;
+                const one_minus_u = 1.0 - u;
+                const x = self.lambda * u / one_minus_u;
+                const jacobian = self.lambda / (one_minus_u * one_minus_u);
+                const f = self.pdf(x);
+                const contrib: T = if (f > 0.0) -f * @log(f) else 0.0;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib * jacobian;
+            }
+            return sum * du / 3.0;
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Assert distribution parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return error.InvalidParameter;
+            if (self.kappa <= 0.0 or !math.isFinite(self.kappa)) return error.InvalidParameter;
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Format for printing.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("MarshallOlkinLomax(alpha={d}, kappa={d}, lambda={d})", .{ self.alpha, self.kappa, self.lambda });
+        }
+
+        /// Simpson's rule for ∫₀^upper S(x) dx with u-substitution.
+        /// u = x/(x+lambda), x = lambda*u/(1-u), dx = lambda/(1-u)^2 du
+        /// ∫ S(x) dx → ∫ S(x(u)) * lambda/(1-u)^2 du
+        fn simpsonSfSubstitution(self: Self, upper: T, n: usize) T {
+            const u_max = upper / (upper + self.lambda);
+            const du = u_max / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+
+            for (0..n + 1) |i| {
+                const u = @as(T, @floatFromInt(i)) * du;
+                const one_minus_u = 1.0 - u;
+                const x = self.lambda * u / one_minus_u;
+                const jacobian = self.lambda / (one_minus_u * one_minus_u);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * self.sf(x) * jacobian;
+            }
+            return sum * du / 3.0;
+        }
+
+        /// Simpson's rule for ∫₀^upper x·S(x) dx with u-substitution.
+        /// Used to compute E[X²] = 2 * ∫ x·S(x) dx
+        fn simpsonXSfSubstitution(self: Self, upper: T, n: usize) T {
+            const u_max = upper / (upper + self.lambda);
+            const du = u_max / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+
+            for (0..n + 1) |i| {
+                const u = @as(T, @floatFromInt(i)) * du;
+                const one_minus_u = 1.0 - u;
+                const x = self.lambda * u / one_minus_u;
+                const jacobian = self.lambda / (one_minus_u * one_minus_u);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * (x * self.sf(x) * jacobian);
+            }
+            return sum * du / 3.0;
+        }
+    };
+}
+
+// ============================================================================
+// MarshallOlkinLomax Tests
+// ============================================================================
+
+test "MarshallOlkinLomax: init succeeds with valid params alpha=2.0, kappa=3.0, lambda=1.0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expect(dist.alpha == 2.0);
+    try expect(dist.kappa == 3.0);
+    try expect(dist.lambda == 1.0);
+}
+
+test "MarshallOlkinLomax: init succeeds with alpha=0.5, kappa=4.0, lambda=2.0" {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    try expect(dist.alpha == 0.5);
+    try expect(dist.kappa == 4.0);
+    try expect(dist.lambda == 2.0);
+}
+
+test "MarshallOlkinLomax: init fails when alpha is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(0.0, 3.0, 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when alpha is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(-1.0, 3.0, 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when kappa is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, 0.0, 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when kappa is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, -3.0, 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when lambda is zero" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, 3.0, 0.0));
+}
+
+test "MarshallOlkinLomax: init fails when lambda is negative" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, 3.0, -1.0));
+}
+
+test "MarshallOlkinLomax: init fails when alpha is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(math.nan(f64), 3.0, 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when alpha is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(math.inf(f64), 3.0, 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when kappa is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, math.nan(f64), 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when kappa is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, math.inf(f64), 1.0));
+}
+
+test "MarshallOlkinLomax: init fails when lambda is NaN" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, 3.0, math.nan(f64)));
+}
+
+test "MarshallOlkinLomax: init fails when lambda is infinite" {
+    try expectError(error.InvalidParameter, MarshallOlkinLomax(f64).init(2.0, 3.0, math.inf(f64)));
+}
+
+test "MarshallOlkinLomax: validate succeeds for valid distribution" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try dist.validate();
+}
+
+test "MarshallOlkinLomax: pdf at negative x is zero" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectApproxEqAbs(dist.pdf(-1.0), 0.0, 1e-15);
+}
+
+test "MarshallOlkinLomax: cdf at negative x is zero" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectApproxEqAbs(dist.cdf(-1.0), 0.0, 1e-15);
+}
+
+test "MarshallOlkinLomax: sf at negative x is one" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectApproxEqAbs(dist.sf(-1.0), 1.0, 1e-15);
+}
+
+test "MarshallOlkinLomax: cdf + sf = 1 for x >= 0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 1.0) {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqAbs(sum, 1.0, 1e-10);
+    }
+}
+
+// Case A: alpha=2.0, kappa=3.0, lambda=1.0 (kappa>2, both mean and variance finite)
+test "MarshallOlkinLomax: Case A pdf(0.0)=1.5" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectApproxEqAbs(dist.pdf(0.0), 1.5, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A pdf(0.5)=0.7053..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.7053061224489796;
+    try expectApproxEqAbs(dist.pdf(0.5), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A pdf(1.0)=0.2963..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.2962962962962963;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A pdf(2.0)=0.0689..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.06887755102040817;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A pdf(5.0)=0.00459..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.004587058548705643;
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A cdf(0.0)=0.0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectApproxEqAbs(dist.cdf(0.0), 0.0, 1e-12);
+}
+
+test "MarshallOlkinLomax: Case A cdf(0.5)=0.5429..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.5428571428571429;
+    try expectApproxEqAbs(dist.cdf(0.5), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A cdf(1.0)=0.7778..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.7777777777777778;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A cdf(2.0)=0.9286..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.9285714285714286;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case A cdf(5.0)=0.9908..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.9907834101382489;
+    try expectApproxEqAbs(dist.cdf(5.0), expected, 1e-9);
+}
+
+// Case B: alpha=0.5, kappa=4.0, lambda=2.0 (kappa>2, both finite)
+test "MarshallOlkinLomax: Case B pdf(0.0)=4.0" {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    try expectApproxEqAbs(dist.pdf(0.0), 4.0, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B pdf(0.5)=0.5182..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.5181997417098162;
+    try expectApproxEqAbs(dist.pdf(0.5), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B pdf(1.0)=0.1621..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.16213173203227624;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B pdf(2.0)=0.0333..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.03329864724245578;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B pdf(5.0)=0.00192..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.0019167201174759437;
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B cdf(0.0)=0.0" {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    try expectApproxEqAbs(dist.cdf(0.0), 0.0, 1e-12);
+}
+
+test "MarshallOlkinLomax: Case B cdf(0.5)=0.7425..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.7424547283702213;
+    try expectApproxEqAbs(dist.cdf(0.5), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B cdf(1.0)=0.8904..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.8904109589041096;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B cdf(2.0)=0.9677..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.967741935483871;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: Case B cdf(5.0)=0.9967..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.9966569160050146;
+    try expectApproxEqAbs(dist.cdf(5.0), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: quantile(0.5) for Case A (median)" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(dist.cdf(q), 0.5, 1e-9);
+}
+
+test "MarshallOlkinLomax: quantile(0.1) for Case A" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const q = try dist.quantile(0.1);
+    try expectApproxEqAbs(dist.cdf(q), 0.1, 1e-9);
+}
+
+test "MarshallOlkinLomax: quantile(0.9) for Case A" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const q = try dist.quantile(0.9);
+    try expectApproxEqAbs(dist.cdf(q), 0.9, 1e-9);
+}
+
+test "MarshallOlkinLomax: quantile at p=0 equals 0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const result = try dist.quantile(0.0);
+    try expectApproxEqAbs(result, 0.0, 1e-12);
+}
+
+test "MarshallOlkinLomax: quantile at p=1 equals infinity" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const result = try dist.quantile(1.0);
+    try expect(math.isInf(result));
+}
+
+test "MarshallOlkinLomax: quantile rejects p<0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "MarshallOlkinLomax: quantile rejects p>1" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "MarshallOlkinLomax: quantile inverts cdf for Case A, p=0.5" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const p: f64 = 0.5;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinLomax: quantile inverts cdf for Case A, p=0.3" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const p: f64 = 0.3;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinLomax: quantile inverts cdf for Case B, p=0.7" {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const p: f64 = 0.7;
+    const x = try dist.quantile(p);
+    const p_recovered = dist.cdf(x);
+    try expectApproxEqAbs(p_recovered, p, 1e-9);
+}
+
+test "MarshallOlkinLomax: cdf inverts quantile for Case A, x=0.5" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const x: f64 = 0.5;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-9);
+}
+
+test "MarshallOlkinLomax: cdf inverts quantile for Case B, x=1.5" {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const x: f64 = 1.5;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-9);
+}
+
+// Mode tests — 7 verified cases
+test "MarshallOlkinLomax: mode for alpha=5.0, kappa=2.0, lambda=1.0" {
+    const dist = try MarshallOlkinLomax(f64).init(5.0, 2.0, 1.0);
+    const expected = 0.15470053837925148;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-6);
+}
+
+test "MarshallOlkinLomax: mode for alpha=10.0, kappa=2.0, lambda=1.0" {
+    const dist = try MarshallOlkinLomax(f64).init(10.0, 2.0, 1.0);
+    const expected = 0.7320508075688772;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-6);
+}
+
+test "MarshallOlkinLomax: mode for alpha=3.0, kappa=2.0, lambda=1.0 (below threshold)" {
+    const dist = try MarshallOlkinLomax(f64).init(3.0, 2.0, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-6);
+}
+
+test "MarshallOlkinLomax: mode for alpha=3.99, kappa=2.0, lambda=1.0 (just below threshold)" {
+    const dist = try MarshallOlkinLomax(f64).init(3.99, 2.0, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-6);
+}
+
+test "MarshallOlkinLomax: mode for alpha=1.5, kappa=3.0, lambda=1.0 (below threshold)" {
+    const dist = try MarshallOlkinLomax(f64).init(1.5, 3.0, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-6);
+}
+
+test "MarshallOlkinLomax: mode for alpha=2.6, kappa=5.0, lambda=1.0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.6, 5.0, 1.0);
+    const expected = 0.012994;
+    try expectApproxEqAbs(dist.mode(), expected, 1e-5);
+}
+
+test "MarshallOlkinLomax: mode for alpha=2.4, kappa=5.0, lambda=1.0 (below threshold)" {
+    const dist = try MarshallOlkinLomax(f64).init(2.4, 5.0, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-6);
+}
+
+// Mean/variance/entropy tests — Case A and Case B
+test "MarshallOlkinLomax: Case A mean()=0.7471..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.7471014557828484;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "MarshallOlkinLomax: Case A variance()=1.2902..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 1.290231896260336;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "MarshallOlkinLomax: Case A entropy()=0.6703..." {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const expected = 0.6703386511452419;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-4);
+}
+
+test "MarshallOlkinLomax: Case B mean()=0.4415..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.4415051446247130;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "MarshallOlkinLomax: Case B variance()=0.5320..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.5319535893319811;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "MarshallOlkinLomax: Case B entropy()=0.0938..." {
+    const dist = try MarshallOlkinLomax(f64).init(0.5, 4.0, 2.0);
+    const expected = 0.09384525346015040;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-4);
+}
+
+// Case C: kappa in (1,2]: mean finite, variance infinite
+test "MarshallOlkinLomax: Case C mean() finite (alpha=3.0, kappa=1.5, lambda=1.0)" {
+    const dist = try MarshallOlkinLomax(f64).init(3.0, 1.5, 1.0);
+    const expected = 4.489280515318492;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-4);
+}
+
+test "MarshallOlkinLomax: Case C variance() is infinite (alpha=3.0, kappa=1.5, lambda=1.0)" {
+    const dist = try MarshallOlkinLomax(f64).init(3.0, 1.5, 1.0);
+    const v = dist.variance();
+    try expect(math.isInf(v));
+}
+
+// Case D: kappa<=1, both mean and variance infinite
+test "MarshallOlkinLomax: Case D mean() is infinite (alpha=1.0, kappa=1.0, lambda=1.0)" {
+    const dist = try MarshallOlkinLomax(f64).init(1.0, 1.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isInf(m));
+}
+
+test "MarshallOlkinLomax: Case D variance() is infinite (alpha=1.0, kappa=1.0, lambda=1.0)" {
+    const dist = try MarshallOlkinLomax(f64).init(1.0, 1.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isInf(v));
+}
+
+// Reduction check: alpha=1 matches Lomax
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for pdf(1.0)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    const x = 1.0;
+    try expectApproxEqAbs(mol.pdf(x), lomax.pdf(x), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for pdf(2.5)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    const x = 2.5;
+    try expectApproxEqAbs(mol.pdf(x), lomax.pdf(x), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for cdf(1.0)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    const x = 1.0;
+    try expectApproxEqAbs(mol.cdf(x), lomax.cdf(x), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for cdf(2.5)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    const x = 2.5;
+    try expectApproxEqAbs(mol.cdf(x), lomax.cdf(x), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for sf(1.0)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    const x = 1.0;
+    try expectApproxEqAbs(mol.sf(x), lomax.sf(x), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for sf(2.5)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    const x = 2.5;
+    try expectApproxEqAbs(mol.sf(x), lomax.sf(x), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for mean (kappa=3, lambda=2)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    try expectApproxEqAbs(mol.mean(), lomax.mean(), 1e-9);
+}
+
+test "MarshallOlkinLomax: alpha=1 reduces to Lomax for variance (kappa=3, lambda=2)" {
+    const mol = try MarshallOlkinLomax(f64).init(1.0, 3.0, 2.0);
+    const lomax = try Lomax(f64).init(2.0, 3.0);
+    try expectApproxEqAbs(mol.variance(), lomax.variance(), 1e-9);
+}
+
+test "MarshallOlkinLomax: stdDev is sqrt(variance)" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const v = dist.variance();
+    const expected = @sqrt(v);
+    try expectApproxEqAbs(dist.stdDev(), expected, 1e-9);
+}
+
+test "MarshallOlkinLomax: pdf is always non-negative for x>=0" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "MarshallOlkinLomax: cdf is monotonically non-decreasing" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 10.0) : (x += 0.2) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "MarshallOlkinLomax: variance is finite and non-negative (Case A)" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v >= 0.0);
+}
+
+test "MarshallOlkinLomax: stdDev is positive" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const sd = dist.stdDev();
+    try expect(sd > 0.0);
+}
+
+test "MarshallOlkinLomax: entropy is finite and non-negative" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h >= 0.0);
+}
+
+test "MarshallOlkinLomax: sample produces finite non-negative values" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..50) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 0.0);
+    }
+}
+
+test "MarshallOlkinLomax: sample mean roughly matches theoretical mean (statistical test)" {
+    const dist = try MarshallOlkinLomax(f64).init(2.0, 3.0, 1.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const n: usize = 500;
+    for (0..n) |_| {
+        sum += dist.sample(rng);
+    }
+    const sample_mean = sum / @as(f64, @floatFromInt(n));
+    const theoretical_mean = dist.mean();
+    try expectApproxEqAbs(sample_mean, theoretical_mean, 0.2);
+}
+
+// f32 smoke tests
+test "MarshallOlkinLomax: f32 init succeeds with valid params" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    try expect(dist.alpha == 2.0);
+    try expect(dist.kappa == 3.0);
+    try expect(dist.lambda == 1.0);
+}
+
+test "MarshallOlkinLomax: f32 pdf produces finite result" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const p = dist.pdf(1.0);
+    try expect(math.isFinite(p));
+    try expect(p >= 0.0);
+}
+
+test "MarshallOlkinLomax: f32 cdf produces finite in-range result" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const c = dist.cdf(1.0);
+    try expect(math.isFinite(c));
+    try expect(c >= 0.0 and c <= 1.0);
+}
+
+test "MarshallOlkinLomax: f32 quantile produces finite non-negative result" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q));
+    try expect(q >= 0.0);
+}
+
+test "MarshallOlkinLomax: f32 mean produces finite positive result" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0);
+}
+
+test "MarshallOlkinLomax: f32 variance produces finite non-negative result" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v >= 0.0);
+}
+
+test "MarshallOlkinLomax: f32 entropy produces finite non-negative result" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+    try expect(h >= 0.0);
+}
+
+test "MarshallOlkinLomax: f32 sample produces finite non-negative value" {
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    const s = dist.sample(rng);
+    try expect(math.isFinite(s));
+    try expect(s >= 0.0);
+}
+
+test "MarshallOlkinLomax: f32 validate() passes for valid parameters" {
+    const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
+    try dist.validate();
+}
