@@ -109072,7 +109072,13 @@ pub fn ZeroInflatedGeometric(comptime T: type) type {
                 // disabling this check (p < 0.0 is never true) and, worse,
                 // letting sum -= p * logpmf(k) evaluate 0 * (-inf) = NaN
                 // once pmf() itself underflows to exact 0 in T.
-                if (p_val == 0.0) break;
+                if (p_val == 0.0) {
+                    // pmf(0) is EXACTLY 0 whenever pi=0 (a valid boundary
+                    // parameter) — that's not tail underflow, so don't treat
+                    // it as "reached the tail, stop"; skip past it instead.
+                    if (k == 0) continue;
+                    break;
+                }
                 sum -= p_val * self.logpmf(k);
             }
             return sum;
@@ -109381,6 +109387,15 @@ test "ZeroInflatedGeometric: entropy is positive and finite" {
     const dist = try ZeroInflatedGeometric(f64).init(0.3, 0.4);
     const h = dist.entropy();
     try expect(h > 0.0 and math.isFinite(h));
+}
+
+test "ZeroInflatedGeometric: entropy at pi=0 boundary reduces to Geometric entropy" {
+    // Regression: pmf(0) is EXACTLY 0 when pi=0, which must not be mistaken
+    // for tail-underflow and short-circuit the truncated entropy sum.
+    // Ground truth (Python, p=0.4): H(Geometric(0.4)) ≈ 1.6825291675
+    const dist = try ZeroInflatedGeometric(f64).init(0.0, 0.4);
+    const h = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 1.6825291675231404), h, 1e-6);
 }
 
 test "ZeroInflatedGeometric: entropy is positive for pi=0.1, p=0.5" {
