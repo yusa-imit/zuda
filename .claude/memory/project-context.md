@@ -1,3 +1,58 @@
+**Session 840 Update (2026-08-27) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **format() coverage batch 3 (20 distributions)** — commit a7d139c
+- **Mode**: STABILIZATION MODE (counter: 840)
+- **CI/Issues**: CI green on main at session start, 0 open issues. `zig build test --summary
+  all`: 13091/13098 passed at start, 13111/13118 after (exactly 20 new tests, 0 failures).
+- Checklist was clean (no bugs, no issues), so continued the standing format() backlog:
+  Arcsine, Logistic, InverseGamma, Lindley, HalfLogistic, Benford, Muth, YuleSimon, Kolmogorov,
+  Bradford, ContinuousBernoulli, TukeyLambda, Zeta, LogGamma, WrappedCauchy, Epanechnikov,
+  Benini, MarchenkoPastur, DiscreteWeibull, BoundedPareto. Coverage now 136/183 (up from
+  116/183 — the 89/172 figure in older notes was stale, batch 2 plus feature-session inline
+  additions had already pushed it well past that).
+- Used a Python script (not manual Edit calls) to locate each distribution's `validate()`
+  insertion point and its own last test's closing brace via brace-counting — safer than
+  scanning for `// ====` section-header comments, which turned out to be unreliable here:
+  some distributions share a combined test section with a neighboring distribution (e.g.
+  DiscreteWeibull/BoundedPareto tests are both grouped after both structs, not one-per-struct),
+  so naive backward-search-for-nearest-bar picked the wrong boundary. Anchoring on
+  `test "<Name>: ` occurrences + brace-matching worked correctly for all 20.
+- Caught 2 compile errors before committing: `Benford(f64).init()` and `Kolmogorov(f64).init()`
+  return `Self` directly (no params to validate), not `DistributionError!Self` like the other
+  18 — the generated smoke tests incorrectly used `try` on these two. Fixed by dropping `try`
+  for those two only. Ran `zig fmt` afterward (267 insertions, cosmetic brace-spacing only,
+  verified via diff before trusting) and re-ran the full suite to confirm still green.
+- All 6 cross-compile targets (x86_64/aarch64 linux/macos, x86_64-windows, wasm32-wasi) verified
+  clean, sequentially, machine was idle (`pgrep -f "zig build"` empty before starting).
+- New item found but NOT fixed (out of scope for a format-only cycle, needs its own session):
+  a `catch unreachable` audit turned up real allocator-failure-swallowing sites in library code
+  (not test helpers) — `decision_tree.zig`'s 3x `counts.getOrPut(label) catch unreachable`,
+  `arc_cache.zig`'s `list_map.put(entry, .T2) catch unreachable` in the cache-hit path,
+  `pairing_heap.zig`'s 2x `pairs.append(...) catch unreachable` in `combineSiblings`. These
+  swallow real OOM errors into a panic, violating the "no `@panic` in library code" rule, but
+  fixing them requires changing return signatures (e.g. `giniImpurity`, `get()`) which ripples
+  into callers — a bigger refactor than fits a filler cycle. Contrast with confirmed-safe
+  `catch unreachable` sites also found: `deque.zig` Iterator.get() (bounds already checked),
+  `persistent_hashmap.zig` initCapacity(_, 0) (no allocation possible), `correlation.zig` matrix
+  `.get()` (indices provably in range) — don't re-flag these as bugs.
+- Release check: `git log v2.3.0..HEAD` shows commits since v2.3.0 are a mix of `feat:`/`fix:`/
+  `chore:` — no phase-completion checkbox flipped in `docs/milestones.md`, so per protocol this
+  does NOT trigger a release. Recheck next stabilization session so it doesn't silently grow.
+- **Next priority (stabilization)**: the `catch unreachable` OOM-swallowing audit above is the
+  new standing candidate for a dedicated fix session (3 files: decision_tree.zig, arc_cache.zig,
+  pairing_heap.zig). format() backlog continues otherwise — 47 distributions still lack it as
+  of this session; grep `pub fn format(` count vs total before resuming, don't trust this number
+  after future sessions add more distributions.
+
+**Session 839 Update (2026-08-27) — FEATURE MODE:** MarshallOlkinWeibull (183rd, commit e1f19d7)
+— recovered clean uncommitted work, completes the Marshall-Olkin family (Exponential+Weibull).
+See external auto-memory `session_839_marshall_olkin_weibull.md` for full detail (not duplicated
+here to save space — this file tracks repo-local context, that one has the verification trail).
+
+**Session 836 Update (2026-08-26) — FEATURE MODE:** DoublePoisson (181st, Efron's dispersion
+model, commit 502558c) — recovered clean uncommitted work, phi=1 reduces exactly to Poisson.
+See external auto-memory `session_836_double_poisson.md` for detail.
+
 **Session 835 Update (2026-08-26) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **Fixed duplicate distribution: removed `ExponentialModifiedGaussian`** — commit 1285984
@@ -34,84 +89,18 @@
   time if the machine is idle. format() backlog (89/172 as of session 820) remains the default
   filler task otherwise.
 
-**Session 834 Update (2026-08-25) — FEATURE MODE [COMPLETED]:**
+## Older sessions (compressed 2026-08-27 per 200-line rule)
 
-✅ **Voigt (181st distribution)** — commit 55c9d54
-- **Mode**: FEATURE MODE (counter: 834)
-- **CI/Issues**: CI green (last 3 runs success/cancelled/success), 0 open issues.
-- Recovered a complete, uncommitted implementation (899 lines) left in the working tree —
-  convolution of Normal+Cauchy, used in spectroscopy for line broadening. Session 831 had
-  flagged Voigt as deferred/higher-risk (no closed form, assumed to need Gauss-Hermite
-  quadrature or a Faddeeva-function approximation). The recovered implementation instead uses:
-  `pdf()` via tan-substitution Simpson's rule (reparametrizes the infinite-domain convolution
-  integral onto θ ∈ [-π/2+ε, π/2-ε], n=2000 panels); `cdf()` via direct Simpson's rule over
-  t ∈ [mu-10σ, mu+10σ] (n=4000 panels) against the Cauchy-CDF kernel; `quantile()` via 100-step
-  bisection on cdf(). `mean()`→NaN, `variance()`→+inf (inherited from the Cauchy component).
-- Verified before trusting: read the full diff for `@panic`/`std.debug.assert`/
-  `std.debug.print` (none found); ran `zig build test --summary all` — 12906/12913 passed, 7
-  skips, 0 failures. Tests were already ground-truthed against `scipy.special.wofz`.
-- Also noticed (not this session's work, no memory previously recorded): session 833 shipped
-  **DiscreteGaussian (180th, commit 7997fc3)** between session 831 and this one.
-- **Next priority**: no standing feature candidate — grep root.zig's doc-comment list first.
-  Voigt is now COMPLETE, remove from any future "deferred" list. Remaining candidates: Neyman
-  Type B/C (higher-order contagious models, likely no closed-form pmf); skew-generalized-t
-  variants beyond SkewT/SkewSlash/SkewGeneralizedNormal (grep first — may already exist).
-  Unresolved flag from session 831: `ExponentialModifiedGaussian` (~line 49724) vs `ExGaussian`
-  (~line 79658) possible duplicate, still not investigated.
-
-**Session 831 Update (2026-08-25) — FEATURE MODE [COMPLETED]:**
-
-✅ **WrappedExponential (179th distribution)** — commits e0e0762 + cb265ac
-- **Mode**: FEATURE MODE (counter: 831)
-- **CI/Issues**: CI green, 0 open issues at session start.
-- Fresh TDD cycle (not a recovery). Circular wrap of Exponential(λ) onto [0, 2π), completing
-  the Wrapped* family alongside WrappedNormal/WrappedCauchy/WrappedLaplace. Deliberately no
-  location/μ parameter (would force an ugly piecewise CDF; the standard textbook form starts
-  the wrap at 0 and has clean closed forms throughout).
-- Verified pdf/cdf/quantile/circular-mean/mean-resultant-length/circular-variance against
-  mpmath (30 dps) for two λ values before dispatching test-writer — 38/38 tests passed first
-  try, zero back-and-forth. Entropy uses the established 500-point midpoint quadrature pattern
-  (matches WrappedLaplace/Normal/Cauchy convention, no closed form attempted).
-- Grepped new implementation for `@panic`/`std.debug.assert`/`std.debug.print` — none found.
-  `zig build test` exit 0. Distribution count confirmed via grep: 179.
-- Noted but did not investigate: `ExponentialModifiedGaussian` (~line 49724) and `ExGaussian`
-  (~line 79658) both exist and appear to be the same distribution under two names — possible
-  pre-existing duplicate, flagged for a future stabilization session, not fixed this cycle.
-
-**Session 830 Update (2026-08-25) — STABILIZATION MODE [COMPLETED]:**
-
-✅ **v2.3.0 released** — first release since v2.2.0 (32 commits accumulated)
-- **Mode**: STABILIZATION MODE (counter: 830)
-- **CI/Issues**: CI green, 0 open issues. `zig build test`: 12696/12703 passed, 7 skips, 0
-  failures. 6/6 cross-compile targets green (both `-macos`/`-windows` and `-macos-none`/
-  `-windows-msvc` target string variants verified).
-- Fixed a real, recurring documentation-debt bug: `docs/milestones.md`'s Phase 6-11 detailed
-  subtask checkboxes (lines ~672-1047) were stale/unchecked despite the actual implementation
-  existing (`src/ndarray/`, `linalg/`, `stats/`, `signal/`, `numeric/`, `optimize/` all present)
-  and v2.0.4 already released back on 2026-05-07 per the Phase 12 section. This mismatch had
-  caused sessions 810/820/825 to defer release decisions under the false belief that a phase
-  was incomplete. Bulk-checked the stale boxes (240 items) and left a dated note explaining why.
-  Commit 7fe7838.
-- Confirmed via `git log` that v2.1.0 and v2.2.0 were both MINOR releases cut during ongoing
-  distribution-catalog growth (not phase completions) — real precedent for cutting v2.3.0 now
-  under the same pattern, once the doc-debt block was cleared.
-- Continued the standing format() backlog: delegated a 20-distribution batch to zig-developer
-  (Triangular, Kumaraswamy, LogLogistic, Rice, Nakagami, BirnbaumSaunders, GeneralizedLogistic,
-  Slash, Frechet, BetaPrime, FoldedNormal, GeneralizedPareto, LogCauchy, Burr, Dagum,
-  TruncatedNormal, PowerLaw, SkewNormal, HalfCauchy, LogUniform) — verified the diff myself
-  (140 insertions, all following the established `Name(field={d}, ...)` pattern, placed before
-  `validate()`) and confirmed 0 new test failures before committing. Commit 63f53c2. Coverage
-  now 112/178 (up from 92/178 at session start — 3 of the 92 already had format() added inline
-  during recent feature sessions).
-- Investigated the flagged flaky `skip_list` "reverse iterator empty after clear" test from
-  session 829 — ran it standalone 5x and the full file 3x, all passed every time. Could not
-  reproduce; leaving it as a known-flaky/low-probability item, not fixed (nothing to fix without
-  a reproduction).
-- Version bump 2.2.0 → 2.3.0 (commit 2b8e27d), tag `v2.3.0`, GitHub release published with
-  changelog covering distributions 171-178, the validate()-panic fix, SkewSlash CDF fix, and the
-  format()/docs work. 0 open issues to close.
-
-## Older sessions (compressed 2026-08-26 per 200-line rule)
+- **834** (2026-08-25): Voigt (181st, commit 55c9d54) — recovered uncommitted, Normal+Cauchy
+  convolution via tan-substitution Simpson's quadrature. Session 833 shipped DiscreteGaussian
+  (180th, commit 7997fc3), no memory entry at the time.
+- **831** (2026-08-25): WrappedExponential (179th, commits e0e0762+cb265ac) — fresh TDD, completes
+  Wrapped* family. First flagged the `ExponentialModifiedGaussian`/`ExGaussian` duplicate (later
+  confirmed and fixed at session 835).
+- **830** (2026-08-25): v2.3.0 released (32 commits since v2.2.0) — commit 2b8e27d/tag v2.3.0.
+  Fixed stale `docs/milestones.md` Phase 6-11 checkboxes (240 items, commit 7fe7838) that had
+  caused false "phase incomplete" release blocks at sessions 810/820/825. format() batch to
+  92/178→112/178 (commit 63f53c2).
 
 - **828** (2026-08-24): HalfGeneralizedNormal (177th, commit eff5b5b) — recovered uncommitted work,
   reduces to `Exponential(1/alpha)` at beta=1 and `HalfNormal` at beta=2.
