@@ -119,7 +119,7 @@ pub fn Normal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Normal(mean={d}, std={d})", .{ self.mean, self.std });
+            try writer.print("Normal(mean={d:.1}, std={d:.1})", .{ self.mean, self.std });
         }
 
         /// Assert that parameters are valid: std > 0, both finite.
@@ -218,7 +218,7 @@ pub fn Uniform(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Uniform(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("Uniform(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         /// Assert that parameters are valid: a < b, both finite.
@@ -331,7 +331,7 @@ pub fn Exponential(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Exponential(rate={d})", .{self.rate});
+            try writer.print("Exponential(rate={d:.1})", .{self.rate});
         }
 
         /// Assert that parameters are valid: rate > 0 and finite.
@@ -539,7 +539,7 @@ pub fn Gamma(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Gamma(shape={d}, rate={d})", .{ self.shape, self.rate });
+            try writer.print("Gamma(shape={d:.1}, rate={d:.1})", .{ self.shape, self.rate });
         }
 
         /// Assert that parameters are valid: shape > 0, rate > 0, both finite.
@@ -698,7 +698,7 @@ pub fn Beta(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Beta(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+            try writer.print("Beta(alpha={d:.1}, beta={d:.1})", .{ self.alpha, self.beta });
         }
 
         /// Assert that parameters are valid: alpha > 0, beta > 0, both finite.
@@ -834,7 +834,7 @@ pub fn ChiSquared(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ChiSquared(k={d})", .{self.k});
+            try writer.print("ChiSquared(k={d:.1})", .{self.k});
         }
 
         /// Assert that parameters are valid: k > 0 and finite.
@@ -1030,7 +1030,7 @@ pub fn StudentT(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("StudentT(nu={d})", .{self.nu});
+            try writer.print("StudentT(nu={d:.1})", .{self.nu});
         }
 
         /// Assert that parameters are valid: nu > 0 and finite.
@@ -1229,7 +1229,7 @@ pub fn FDistribution(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("FDistribution(d1={d}, d2={d})", .{ self.d1, self.d2 });
+            try writer.print("FDistribution(d1={d:.1}, d2={d:.1})", .{ self.d1, self.d2 });
         }
 
         /// Assert that parameters are valid: d1 > 0, d2 > 0, both finite.
@@ -1334,7 +1334,7 @@ pub fn Bernoulli(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Bernoulli(p={d})", .{self.p});
+            try writer.print("Bernoulli(p={d:.1})", .{self.p});
         }
 
         /// Validate internal invariants: 0 < p ≤ 1 and p is finite
@@ -1474,7 +1474,7 @@ pub fn Geometric(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Geometric(p={d})", .{self.p});
+            try writer.print("Geometric(p={d:.1})", .{self.p});
         }
 
         /// Validate internal invariants: 0 < p ≤ 1 and p is finite
@@ -1620,7 +1620,7 @@ pub fn Poisson(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Poisson(rate={d})", .{self.rate});
+            try writer.print("Poisson(rate={d:.1})", .{self.rate});
         }
 
         /// Assert that parameters are valid: rate (λ) > 0 and finite.
@@ -1764,7 +1764,7 @@ pub fn Binomial(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Binomial(n={d}, p={d})", .{ self.n, self.p });
+            try writer.print("Binomial(n={d:.1}, p={d:.1})", .{ self.n, self.p });
         }
 
         /// Assert that parameters are valid: n ≥ 1, 0 ≤ p ≤ 1.
@@ -4087,7 +4087,7 @@ pub fn Laplace(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Laplace(location={d}, scale={d})", .{ self.location, self.scale });
+            try writer.print("Laplace(location={d:.1}, scale={d:.1})", .{ self.location, self.scale });
         }
 
         /// Assert that parameters are valid: scale > 0 and finite, location finite.
@@ -4293,7 +4293,7 @@ pub fn Weibull(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Weibull(shape={d}, scale={d})", .{ self.shape, self.scale });
+            try writer.print("Weibull(shape={d:.1}, scale={d:.1})", .{ self.shape, self.scale });
         }
 
         /// Assert that parameters are valid: shape > 0, scale > 0, both finite.
@@ -5167,7 +5167,7 @@ pub fn Pareto(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Pareto(x_m={d}, alpha={d})", .{ self.x_m, self.alpha });
+            try writer.print("Pareto(x_m={d:.1}, alpha={d:.1})", .{ self.x_m, self.alpha });
         }
 
         /// Assert that parameters are valid: x_m > 0, alpha > 0, both finite.
@@ -5682,7 +5682,7 @@ pub fn LogNormal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("LogNormal(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+            try writer.print("LogNormal(mu={d:.1}, sigma={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Assert that parameters are valid: sigma > 0, both finite.
@@ -6166,7 +6166,7 @@ pub fn Cauchy(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Cauchy(x0={d}, gamma={d})", .{ self.x0, self.gamma });
+            try writer.print("Cauchy(x0={d:.1}, gamma={d:.1})", .{ self.x0, self.gamma });
         }
 
         /// Assert that parameters are valid: gamma > 0, both finite.
@@ -6662,7 +6662,7 @@ pub fn Gumbel(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Gumbel(mu={d}, beta={d})", .{ self.mu, self.beta });
+            try writer.print("Gumbel(mu={d:.1}, beta={d:.1})", .{ self.mu, self.beta });
         }
 
         /// Validate internal invariants: β > 0, μ and β are finite
@@ -7616,7 +7616,7 @@ pub fn NegativeBinomial(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("NegativeBinomial(r={d}, p={d})", .{ self.r, self.p });
+            try writer.print("NegativeBinomial(r={d:.1}, p={d:.1})", .{ self.r, self.p });
         }
 
         /// Validate internal invariants: r ≥ 1 and 0 < p ≤ 1
@@ -8039,7 +8039,7 @@ pub fn Hypergeometric(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Hypergeometric(N={d}, K={d}, n={d})", .{ self.N, self.K, self.n });
+            try writer.print("Hypergeometric(N={d:.1}, K={d:.1}, n={d:.1})", .{ self.N, self.K, self.n });
         }
 
         /// Assert internal invariants
@@ -8472,6 +8472,13 @@ pub fn Categorical(comptime T: type) type {
             return @min(lo, self.k - 1);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Categorical(k={})", .{self.k});
+        }
+
         /// Validate invariants: k ≥ 2, probs sum to ≈1.0, all probs ≥ 0.
         /// Time: O(k) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -8857,6 +8864,19 @@ test "Categorical: sample distribution empirical [0.7, 0.3]" {
     try expectApproxEqRel(0.7, freq0, 0.05); // Allow 5% tolerance for stochastic test
 }
 
+test "Categorical: format" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.7, 0.3 };
+    const cat = try Categorical(f64).init(allocator, &weights);
+    defer cat.deinit();
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try cat.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "Categorical(k=2)"));
+}
+
 // ============================================================================
 // Multinomial Distribution
 // ============================================================================
@@ -9031,6 +9051,13 @@ pub fn Multinomial(comptime T: type) type {
             counts[self.probs.len - 1] = remaining;
 
             return counts;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Multinomial(n={}, k={})", .{ self.n, self.probs.len });
         }
 
         /// Check invariants: n ≥ 1, probs.len ≥ 2, all probs ≥ 0, sum(probs) ≈ 1.0
@@ -9553,6 +9580,19 @@ test "Multinomial: binomial equivalence k=2" {
     try expectApproxEqRel(10.0 * 0.6 * 0.4, dist.variance(0), 1e-10);
 }
 
+test "Multinomial: format" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+    const dist = try Multinomial(f64).init(allocator, 10, &weights);
+    defer dist.deinit();
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "Multinomial(n=10, k=2)"));
+}
+
 // ============================================================================
 // DIRICHLET DISTRIBUTION
 // ============================================================================
@@ -9755,6 +9795,13 @@ pub fn Dirichlet(comptime T: type) type {
             xs[xs.len - 1] = 1.0 - partial;
 
             return xs;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Dirichlet(k={}, alpha0={d:.1})", .{ self.alphas.len, self.alpha0 });
         }
 
         /// Validate invariants: k ≥ 2, all αᵢ > 0, α₀ ≈ Σαᵢ.
@@ -10127,6 +10174,19 @@ test "Dirichlet: validate fails when alpha0 is inconsistent with alphas sum" {
     try expectError(error.InvalidParameter, dist.validate());
 }
 
+test "Dirichlet: format" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, 2.0, 3.0 };
+    const dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "Dirichlet(k=3, alpha0=6.0)"));
+}
+
 // ============================================================================
 // Zipf Distribution
 // ============================================================================
@@ -10299,7 +10359,7 @@ pub fn Zipf(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Zipf(n={d}, s={d})", .{ self.n, self.s });
+            try writer.print("Zipf(n={d:.1}, s={d:.1})", .{ self.n, self.s });
         }
 
         /// Validate internal invariants
@@ -10899,6 +10959,13 @@ pub fn BetaBinomial(comptime T: type) type {
             return count;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BetaBinomial(n={}, alpha={d:.1}, beta={d:.1})", .{ self.n, self.alpha, self.beta });
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -11171,6 +11238,16 @@ test "BetaBinomial: validate passes on valid distribution" {
     try dist.validate();
 }
 
+test "BetaBinomial: format" {
+    const dist = try BetaBinomial(f64).init(10, 2.0, 3.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "BetaBinomial(n=10, alpha=2.0, beta=3.0)"));
+}
+
 // ============================================================================
 // Dirichlet-Multinomial Distribution
 // ============================================================================
@@ -11344,6 +11421,13 @@ pub fn DirichletMultinomial(comptime T: type) type {
             counts[k - 1] = remaining;
 
             return counts;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("DirichletMultinomial(n={}, k={}, alpha0={d:.1})", .{ self.n, self.alphas.len, self.alpha0 });
         }
 
         /// Validate invariants: n ≥ 1, k ≥ 2, all αᵢ > 0 and finite, α₀ ≈ Σαᵢ.
@@ -11766,6 +11850,19 @@ test "DirichletMultinomial: large n and k means are correct" {
     try testing.expect(dist.variance(0) > 0.0);
 }
 
+test "DirichletMultinomial: format" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0 };
+    const dist = try DirichletMultinomial(f64).init(allocator, 10, &alphas);
+    defer dist.deinit();
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "DirichletMultinomial(n=10, k=2, alpha0=5.0)"));
+}
+
 // ============================================================================
 // DiscreteUniform Distribution
 // ============================================================================
@@ -11905,7 +12002,7 @@ pub fn DiscreteUniform(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("DiscreteUniform(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("DiscreteUniform(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         /// Validate internal invariants: b ≥ a
@@ -12403,7 +12500,7 @@ pub fn Logarithmic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Logarithmic(p={d})", .{self.p});
+            try writer.print("Logarithmic(p={d:.1})", .{self.p});
         }
 
         /// Assert that parameters are valid: p ∈ (0, 1) and finite.
@@ -13013,7 +13110,7 @@ pub fn Skellam(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Skellam(mu1={d}, mu2={d})", .{ self.mu1, self.mu2 });
+            try writer.print("Skellam(mu1={d:.1}, mu2={d:.1})", .{ self.mu1, self.mu2 });
         }
 
         /// Assert that parameters are valid: μ₁ > 0, μ₂ > 0, and finite
@@ -14094,7 +14191,7 @@ pub fn Triangular(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Triangular(a={d}, b={d}, c={d})", .{ self.a, self.b, self.c });
+            try writer.print("Triangular(a={d:.1}, b={d:.1}, c={d:.1})", .{ self.a, self.b, self.c });
         }
 
         /// Validate distribution invariants
@@ -14653,7 +14750,7 @@ pub fn VonMises(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("VonMises(mu={d}, kappa={d})", .{ self.mu, self.kappa });
+            try writer.print("VonMises(mu={d:.1}, kappa={d:.1})", .{ self.mu, self.kappa });
         }
 
         /// Assert that parameters are valid: κ > 0, both finite, μ finite.
@@ -15117,7 +15214,7 @@ pub fn Rayleigh(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Rayleigh(sigma={d})", .{self.sigma});
+            try writer.print("Rayleigh(sigma={d:.1})", .{self.sigma});
         }
 
         /// Assert that parameters are valid: sigma > 0 and finite.
@@ -15676,7 +15773,7 @@ pub fn Kumaraswamy(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Kumaraswamy(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("Kumaraswamy(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         /// Assert that parameters are valid: a > 0, b > 0, both finite
@@ -16228,7 +16325,7 @@ pub fn HalfNormal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("HalfNormal(sigma={d})", .{self.sigma});
+            try writer.print("HalfNormal(sigma={d:.1})", .{self.sigma});
         }
 
         /// Assert that parameters are valid: sigma > 0, finite.
@@ -16871,7 +16968,7 @@ pub fn MaxwellBoltzmann(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("MaxwellBoltzmann(a={d})", .{self.a});
+            try writer.print("MaxwellBoltzmann(a={d:.1})", .{self.a});
         }
 
         /// Assert that parameters are valid: a > 0, finite.
@@ -17390,7 +17487,7 @@ pub fn LogLogistic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("LogLogistic(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+            try writer.print("LogLogistic(alpha={d:.1}, beta={d:.1})", .{ self.alpha, self.beta });
         }
 
         /// Assert that parameters are valid: α > 0, β > 0, both finite.
@@ -17978,7 +18075,7 @@ pub fn Levy(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Levy(mu={d}, c={d})", .{ self.mu, self.c });
+            try writer.print("Levy(mu={d:.1}, c={d:.1})", .{ self.mu, self.c });
         }
 
         /// Assert that parameters are valid: c > 0 and both μ, c are finite.
@@ -18572,7 +18669,7 @@ pub fn Lomax(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Lomax(lambda={d}, kappa={d})", .{ self.lambda, self.kappa });
+            try writer.print("Lomax(lambda={d:.1}, kappa={d:.1})", .{ self.lambda, self.kappa });
         }
 
         /// Validate distribution parameters
@@ -19165,7 +19262,7 @@ pub fn Gompertz(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Gompertz(eta={d}, b={d})", .{ self.eta, self.b });
+            try writer.print("Gompertz(eta={d:.1}, b={d:.1})", .{ self.eta, self.b });
         }
 
         /// Validate distribution parameters
@@ -19449,7 +19546,7 @@ pub fn Rice(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Rice(nu={d}, sigma={d})", .{ self.nu, self.sigma });
+            try writer.print("Rice(nu={d:.1}, sigma={d:.1})", .{ self.nu, self.sigma });
         }
 
         /// Validate distribution parameters
@@ -20337,7 +20434,7 @@ pub fn Nakagami(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Nakagami(m={d}, omega={d})", .{ self.m, self.omega });
+            try writer.print("Nakagami(m={d:.1}, omega={d:.1})", .{ self.m, self.omega });
         }
 
         /// Validate distribution parameters
@@ -21050,7 +21147,7 @@ pub fn InverseGaussian(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("InverseGaussian(mu={d}, lambda={d})", .{ self.mu, self.lambda });
+            try writer.print("InverseGaussian(mu={d:.1}, lambda={d:.1})", .{ self.mu, self.lambda });
         }
 
         /// Validate distribution parameters
@@ -21794,7 +21891,7 @@ pub fn BirnbaumSaunders(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("BirnbaumSaunders(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+            try writer.print("BirnbaumSaunders(alpha={d:.1}, beta={d:.1})", .{ self.alpha, self.beta });
         }
 
         /// Validate distribution parameters
@@ -22471,7 +22568,7 @@ pub fn GeneralizedLogistic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("GeneralizedLogistic(mu={d}, s={d}, alpha={d})", .{ self.mu, self.s, self.alpha });
+            try writer.print("GeneralizedLogistic(mu={d:.1}, s={d:.1}, alpha={d:.1})", .{ self.mu, self.s, self.alpha });
         }
 
         /// Assert all parameters are valid.
@@ -22980,7 +23077,7 @@ pub fn Slash(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Slash(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+            try writer.print("Slash(mu={d:.1}, sigma={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Assert all parameters are valid.
@@ -23505,7 +23602,7 @@ pub fn Frechet(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Frechet(alpha={d}, s={d}, m={d})", .{ self.alpha, self.s, self.m });
+            try writer.print("Frechet(alpha={d:.1}, s={d:.1}, m={d:.1})", .{ self.alpha, self.s, self.m });
         }
 
         /// Assert all parameters are valid.
@@ -24278,7 +24375,7 @@ pub fn BetaPrime(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("BetaPrime(alpha={d}, beta_param={d})", .{ self.alpha, self.beta_param });
+            try writer.print("BetaPrime(alpha={d:.1}, beta_param={d:.1})", .{ self.alpha, self.beta_param });
         }
 
         /// Assert all parameters are valid.
@@ -25068,7 +25165,7 @@ pub fn FoldedNormal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("FoldedNormal(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+            try writer.print("FoldedNormal(mu={d:.1}, sigma={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Assert internal invariants: sigma > 0, finite; mu finite.
@@ -25309,7 +25406,7 @@ pub fn GeneralizedPareto(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("GeneralizedPareto(mu={d}, sigma={d}, xi={d})", .{ self.mu, self.sigma, self.xi });
+            try writer.print("GeneralizedPareto(mu={d:.1}, sigma={d:.1}, xi={d:.1})", .{ self.mu, self.sigma, self.xi });
         }
 
         /// Assert internal invariants: σ > 0 and all fields finite.
@@ -26421,7 +26518,7 @@ pub fn LogCauchy(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("LogCauchy(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+            try writer.print("LogCauchy(mu={d:.1}, sigma={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Assert internal invariants: σ > 0 and all fields finite.
@@ -26978,7 +27075,7 @@ pub fn Burr(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Burr(c={d}, k={d}, mu={d}, sigma={d})", .{ self.c, self.k, self.mu, self.sigma });
+            try writer.print("Burr(c={d:.1}, k={d:.1}, mu={d:.1}, sigma={d:.1})", .{ self.c, self.k, self.mu, self.sigma });
         }
 
         /// Assert internal invariants: c > 0, k > 0, σ > 0, all params finite.
@@ -27596,7 +27693,7 @@ pub fn Dagum(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Dagum(p={d}, a={d}, b={d})", .{ self.p, self.a, self.b });
+            try writer.print("Dagum(p={d:.1}, a={d:.1}, b={d:.1})", .{ self.p, self.a, self.b });
         }
 
         /// Assert internal invariants: p > 0, a > 0, b > 0, all params finite.
@@ -28121,7 +28218,7 @@ pub fn TruncatedNormal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("TruncatedNormal(mu={d}, sigma={d}, a={d}, b={d})", .{ self.mu, self.sigma, self.a, self.b });
+            try writer.print("TruncatedNormal(mu={d:.1}, sigma={d:.1}, a={d:.1}, b={d:.1})", .{ self.mu, self.sigma, self.a, self.b });
         }
 
         /// Validate internal invariants
@@ -28774,7 +28871,7 @@ pub fn PowerLaw(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("PowerLaw(a={d})", .{self.a});
+            try writer.print("PowerLaw(a={d:.1})", .{self.a});
         }
 
         /// Validate internal invariants
@@ -29436,7 +29533,7 @@ pub fn SkewNormal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("SkewNormal(xi={d}, omega={d}, alpha={d})", .{ self.xi, self.omega, self.alpha });
+            try writer.print("SkewNormal(xi={d:.1}, omega={d:.1}, alpha={d:.1})", .{ self.xi, self.omega, self.alpha });
         }
 
         /// Validate internal invariants
@@ -30343,7 +30440,7 @@ pub fn HalfCauchy(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("HalfCauchy(gamma={d})", .{self.gamma});
+            try writer.print("HalfCauchy(gamma={d:.1})", .{self.gamma});
         }
 
         /// Validate distribution parameters
@@ -30980,7 +31077,7 @@ pub fn LogUniform(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("LogUniform(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("LogUniform(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         /// Validate distribution parameters
@@ -31818,7 +31915,7 @@ pub fn Arcsine(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Arcsine(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("Arcsine(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -32716,7 +32813,7 @@ pub fn Logistic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Logistic(mu={d}, s={d})", .{ self.mu, self.s });
+            try writer.print("Logistic(mu={d:.1}, s={d:.1})", .{ self.mu, self.s });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -33681,7 +33778,7 @@ pub fn InverseGamma(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("InverseGamma(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+            try writer.print("InverseGamma(alpha={d:.1}, beta={d:.1})", .{ self.alpha, self.beta });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -34252,7 +34349,7 @@ pub fn Chi(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Chi(k={d})", .{self.k});
+            try writer.print("Chi(k={d:.1})", .{self.k});
         }
 
         /// Validate distribution parameters
@@ -34906,6 +35003,13 @@ pub fn NoncentralChiSquared(comptime T: type) type {
             return 2.0 * gamma_val;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NoncentralChiSquared(k={d:.1}, lambda={d:.1})", .{ self.k, self.lambda });
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -35222,6 +35326,16 @@ test "NoncentralChiSquared: sample lambda=0 empirical mean converges to k" {
     try expectApproxEqAbs(k, empirical, 0.1);
 }
 
+test "NoncentralChiSquared: format" {
+    const dist = try NoncentralChiSquared(f64).init(5.0, 2.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "NoncentralChiSquared(k=5.0, lambda=2.0)"));
+}
+
 pub fn ToppLeone(comptime T: type) type {
     return struct {
         alpha: T, // shape parameter, alpha > 0
@@ -35367,6 +35481,13 @@ pub fn ToppLeone(comptime T: type) type {
             const u = rng.float(T);
             const upow = math.pow(T, u, 1.0 / self.alpha);
             return 1.0 - @sqrt(1.0 - upow);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ToppLeone(alpha={d:.1})", .{self.alpha});
         }
 
         /// Validate distribution parameters
@@ -35691,6 +35812,16 @@ test "ToppLeone: quantile(0.5) gives median with cdf(median) ≈ 0.5" {
     try expectApproxEqAbs(0.5, dist.cdf(median), 1e-10);
 }
 
+test "ToppLeone: format" {
+    const dist = try ToppLeone(f64).init(1.5);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "ToppLeone(alpha=1.5)"));
+}
+
 // ============================================================================
 // WignerSemicircle(R) — Semicircle law / semicircular distribution
 // ============================================================================
@@ -35845,6 +35976,13 @@ pub fn WignerSemicircle(comptime T: type) type {
                 const v = (rng.float(T) * 2.0 - 1.0) * R;
                 if (u * u + v * v <= R * R) return u;
             }
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("WignerSemicircle(radius={d:.1})", .{self.radius});
         }
 
         /// Validate that the distribution parameters are internally consistent.
@@ -36200,6 +36338,16 @@ test "WignerSemicircle: f32 quantile roundtrip" {
     }
 }
 
+test "WignerSemicircle: format" {
+    const dist = try WignerSemicircle(f64).init(2.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "WignerSemicircle(radius=2.0)"));
+}
+
 // ============================================================================
 // Lindley Distribution
 // ============================================================================
@@ -36403,7 +36551,7 @@ pub fn Lindley(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Lindley(theta={d})", .{self.theta});
+            try writer.print("Lindley(theta={d:.1})", .{self.theta});
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -37004,7 +37152,7 @@ pub fn HalfLogistic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("HalfLogistic(sigma={d})", .{self.sigma});
+            try writer.print("HalfLogistic(sigma={d:.1})", .{self.sigma});
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -37733,6 +37881,13 @@ pub fn IrwinHall(comptime T: type) type {
             return sum;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("IrwinHall(n={})", .{self.n});
+        }
+
         /// Validate distribution parameters
         ///
         /// Time: O(1) | Space: O(1)
@@ -38321,6 +38476,16 @@ test "IrwinHall: f32 quantile roundtrip" {
     }
 }
 
+test "IrwinHall: format" {
+    const dist = try IrwinHall(f64).init(5);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "IrwinHall(n=5)"));
+}
+
 // ============================================================================
 // Bates Distribution
 // Bates(n): mean of n independent Uniform(0,1) random variables
@@ -38539,6 +38704,13 @@ pub fn Bates(comptime T: type) type {
                 s += rng.float(T);
             }
             return s / @as(T, @floatFromInt(self.n));
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Bates(n={})", .{self.n});
         }
 
         /// Validate distribution parameters
@@ -39327,6 +39499,16 @@ test "Bates: f32 variance matches formula" {
     try testing.expectApproxEqAbs(1.0 / 48.0, v, 1e-5);
 }
 
+test "Bates: format" {
+    const dist = try Bates(f64).init(5);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "Bates(n=5)"));
+}
+
 // ============================================================================
 // Johnson SU Distribution
 // ============================================================================
@@ -39546,6 +39728,13 @@ pub fn JohnsonSU(comptime T: type) type {
             const ur2 = rng.float(T);
             const z = @sqrt(-2.0 * @log(ur1)) * @cos(2.0 * math.pi * ur2);
             return self.xi + self.lambda * math.sinh((z - self.gamma) / self.delta);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("JohnsonSU(xi={d:.1}, lambda={d:.1}, gamma={d:.1}, delta={d:.1})", .{ self.xi, self.lambda, self.gamma, self.delta });
         }
 
         /// Validate distribution parameters
@@ -40087,6 +40276,16 @@ test "JohnsonSU: f32 variance(0,1,0,1)" {
     try testing.expectApproxEqAbs(expected, v, 1e-4);
 }
 
+test "JohnsonSU: format" {
+    const dist = try JohnsonSU(f64).init(0.0, 1.0, 0.5, 2.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "JohnsonSU(xi=0.0, lambda=1.0, gamma=0.5, delta=2.0)"));
+}
+
 /// Asymmetric Laplace distribution — two-sided exponential with different tail rates
 ///
 /// The Asymmetric Laplace distribution (ALD) generalizes the Laplace distribution
@@ -40276,6 +40475,13 @@ pub fn AsymmetricLaplace(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sf(self: Self, x: T) T {
             return 1.0 - self.cdf(x);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("AsymmetricLaplace(mu={d:.1}, sigma={d:.1}, kappa={d:.1})", .{ self.mu, self.sigma, self.kappa });
         }
 
         /// Assert that parameters are valid: sigma > 0, kappa > 0, all finite.
@@ -40886,6 +41092,16 @@ test "AsymmetricLaplace: kappa and 1/kappa have same variance" {
 test "AsymmetricLaplace: validate succeeds and returns no error" {
     const dist = try AsymmetricLaplace(f64).init(2.5, 0.5, 1.2);
     try dist.validate();
+}
+
+test "AsymmetricLaplace: format" {
+    const dist = try AsymmetricLaplace(f64).init(0.0, 1.0, 1.5);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "AsymmetricLaplace(mu=0.0, sigma=1.0, kappa=1.5)"));
 }
 
 /// Benford distribution (First-Digit Law) — Benford()
@@ -41894,6 +42110,13 @@ pub fn LogLaplace(comptime T: type) type {
             }
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogLaplace(mu={d:.1}, b={d:.1})", .{ self.mu, self.b });
+        }
+
         /// Assert that distribution parameters are valid: b > 0, all parameters finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -42349,6 +42572,16 @@ test "LogLaplace: cdf derivative ≈ pdf (finite difference at x=2.0, tolerance 
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
 
+test "LogLaplace: format" {
+    const dist = try LogLaplace(f64).init(1.0, 0.5);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "LogLaplace(mu=1.0, b=0.5)"));
+}
+
 // ============================================================================
 // RaisedCosine Distribution
 // ============================================================================
@@ -42505,6 +42738,13 @@ pub fn RaisedCosine(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             return self.quantile(u) catch unreachable;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("RaisedCosine(mu={d:.1}, s={d:.1})", .{ self.mu, self.s });
         }
 
         /// Assert that distribution parameters are valid: s > 0, all parameters finite.
@@ -42974,6 +43214,16 @@ test "RaisedCosine: cdf derivative ≈ pdf (finite difference at x=0.5, toleranc
     try testing.expectApproxEqAbs(pdf_actual, pdf_approx, 1e-3);
 }
 
+test "RaisedCosine: format" {
+    const dist = try RaisedCosine(f64).init(0.5, 1.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "RaisedCosine(mu=0.5, s=1.0)"));
+}
+
 // ============================================================================
 // GompertzMakeham Distribution
 // ============================================================================
@@ -43140,6 +43390,13 @@ pub fn GompertzMakeham(comptime T: type) type {
         /// Time: O(log(1/ε)) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("GompertzMakeham(c={d:.1}, eta={d:.1}, b={d:.1})", .{ self.c, self.eta, self.b });
         }
 
         /// Assert distribution parameters are valid.
@@ -43679,6 +43936,16 @@ test "GompertzMakeham: sf at negative x is 1.0" {
     try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(-0.001), 1e-10);
 }
 
+test "GompertzMakeham: format" {
+    const dist = try GompertzMakeham(f64).init(0.5, 1.0, 2.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "GompertzMakeham(c=0.5, eta=1.0, b=2.0)"));
+}
+
 // ============================================================================
 // Muth Distribution
 // ============================================================================
@@ -43834,7 +44101,7 @@ pub fn Muth(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Muth(kappa={d})", .{self.kappa});
+            try writer.print("Muth(kappa={d:.1})", .{self.kappa});
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -44542,6 +44809,13 @@ pub fn NoncentralT(comptime T: type) type {
             return sum * h / 3.0;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NoncentralT(nu={d:.1}, delta={d:.1})", .{ self.nu, self.delta });
+        }
+
         /// Validate that distribution parameters are in range.
         ///
         /// Time: O(1) | Space: O(1)
@@ -45161,6 +45435,16 @@ test "NoncentralT(f32): cdf with f32 is in [0, 1]" {
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
 
+test "NoncentralT: format" {
+    const dist = try NoncentralT(f64).init(5.0, 1.5);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "NoncentralT(nu=5.0, delta=1.5)"));
+}
+
 // ============================================================================
 // Generalized Gamma Distribution
 // ============================================================================
@@ -45329,6 +45613,13 @@ pub fn GeneralizedGamma(comptime T: type) type {
         pub fn entropy(self: Self) T {
             const k = self.d / self.p;
             return @log(self.a / self.p) + logGamma(k) + k - ((self.d - 1.0) / self.p) * digamma(T, k);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("GeneralizedGamma(a={d:.1}, d={d:.1}, p={d:.1})", .{ self.a, self.d, self.p });
         }
 
         /// Validate that distribution parameters are in range.
@@ -45939,6 +46230,16 @@ test "GeneralizedGamma(f32): cdf with f32 is in [0, 1]" {
     try testing.expect(c >= 0.0 and c <= 1.0);
 }
 
+test "GeneralizedGamma: format" {
+    const dist = try GeneralizedGamma(f64).init(1.0, 2.0, 3.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "GeneralizedGamma(a=1.0, d=2.0, p=3.0)"));
+}
+
 // ============================================================================
 // NONCENTRAL F DISTRIBUTION
 // ============================================================================
@@ -46168,6 +46469,13 @@ pub fn NoncentralF(comptime T: type) type {
             const y = 2.0 * noncentralFGammaSample(T, rng, self.d2 / 2.0);
 
             return (x / self.d1) / (y / self.d2);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NoncentralF(d1={d:.1}, d2={d:.1}, lambda={d:.1})", .{ self.d1, self.d2, self.lambda });
         }
 
         /// Validate distribution parameters
@@ -46619,6 +46927,16 @@ test "NoncentralF(f32): cdf in [0, 1]" {
     const dist = try NoncentralF(f32).init(5.0, 10.0, 2.0);
     const c = dist.cdf(1.0);
     try testing.expect(c >= 0.0 and c <= 1.0);
+}
+
+test "NoncentralF: format" {
+    const dist = try NoncentralF(f64).init(4.0, 10.0, 2.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "NoncentralF(d1=4.0, d2=10.0, lambda=2.0)"));
 }
 
 // ============================================================================
@@ -49946,7 +50264,7 @@ pub fn HyperbolicSecant(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("HyperbolicSecant(mu={d}, sigma={d})", .{ self.mu, self.sigma });
+            try writer.print("HyperbolicSecant(mu={d:.1}, sigma={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Validate distribution parameters.
@@ -50520,7 +50838,7 @@ pub fn NoncentralBeta(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("NoncentralBeta(alpha={d}, beta={d}, lambda={d})", .{ self.alpha, self.beta, self.lambda });
+            try writer.print("NoncentralBeta(alpha={d:.1}, beta={d:.1}, lambda={d:.1})", .{ self.alpha, self.beta, self.lambda });
         }
 
         /// Validate distribution parameters
@@ -51349,7 +51667,7 @@ pub fn YuleSimon(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("YuleSimon(rho={d})", .{self.rho});
+            try writer.print("YuleSimon(rho={d:.1})", .{self.rho});
         }
 
         pub fn validate(self: Self) !void {
@@ -53949,7 +54267,7 @@ pub fn Erlang(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Erlang(k={d}, lambda={d})", .{ self.k, self.lambda });
+            try writer.print("Erlang(k={d:.1}, lambda={d:.1})", .{ self.k, self.lambda });
         }
 
         /// Validate distribution parameters
@@ -54576,7 +54894,7 @@ pub fn Bradford(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Bradford(c={d})", .{self.c});
+            try writer.print("Bradford(c={d:.1})", .{self.c});
         }
 
         pub fn validate(self: Self) !void {
@@ -55309,7 +55627,7 @@ pub fn ContinuousBernoulli(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ContinuousBernoulli(lambda={d})", .{self.lambda});
+            try writer.print("ContinuousBernoulli(lambda={d:.1})", .{self.lambda});
         }
 
         pub fn validate(self: Self) !void {
@@ -56544,7 +56862,7 @@ pub fn TukeyLambda(comptime T: type) type {
         /// Validate internal invariants.
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("TukeyLambda(mu={d}, sigma={d}, lambda={d})", .{ self.mu, self.sigma, self.lambda });
+            try writer.print("TukeyLambda(mu={d:.1}, sigma={d:.1}, lambda={d:.1})", .{ self.mu, self.sigma, self.lambda });
         }
 
         pub fn validate(self: Self) !void {
@@ -57397,7 +57715,7 @@ pub fn Zeta(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Zeta(s={d})", .{self.s});
+            try writer.print("Zeta(s={d:.1})", .{self.s});
         }
 
         pub fn validate(self: Self) !void {
@@ -57858,7 +58176,7 @@ pub fn DiscreteWeibull(comptime T: type) type {
         /// Assert internal invariants.
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("DiscreteWeibull(q={d}, beta={d})", .{ self.q, self.beta });
+            try writer.print("DiscreteWeibull(q={d:.1}, beta={d:.1})", .{ self.q, self.beta });
         }
 
         pub fn validate(self: Self) !void {
@@ -58017,7 +58335,7 @@ pub fn BoundedPareto(comptime T: type) type {
         /// Assert internal invariants.
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("BoundedPareto(alpha={d}, lower={d}, upper={d})", .{ self.alpha, self.lower, self.upper });
+            try writer.print("BoundedPareto(alpha={d:.1}, lower={d:.1}, upper={d:.1})", .{ self.alpha, self.lower, self.upper });
         }
 
         pub fn validate(self: Self) !void {
@@ -60695,7 +61013,7 @@ pub fn LogGamma(comptime T: type) type {
         /// Validate distribution parameters.
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("LogGamma(alpha={d}, beta={d})", .{ self.alpha, self.beta });
+            try writer.print("LogGamma(alpha={d:.1}, beta={d:.1})", .{ self.alpha, self.beta });
         }
 
         pub fn validate(self: Self) !void {
@@ -61222,7 +61540,7 @@ pub fn WrappedCauchy(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("WrappedCauchy(mu={d}, rho={d})", .{ self.mu, self.rho });
+            try writer.print("WrappedCauchy(mu={d:.1}, rho={d:.1})", .{ self.mu, self.rho });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -61857,7 +62175,7 @@ pub fn Epanechnikov(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Epanechnikov(mu={d}, h={d})", .{ self.mu, self.h });
+            try writer.print("Epanechnikov(mu={d:.1}, h={d:.1})", .{ self.mu, self.h });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -63233,7 +63551,7 @@ pub fn Benini(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Benini(alpha={d}, beta={d}, sigma={d})", .{ self.alpha, self.beta, self.sigma });
+            try writer.print("Benini(alpha={d:.1}, beta={d:.1}, sigma={d:.1})", .{ self.alpha, self.beta, self.sigma });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -65186,7 +65504,7 @@ pub fn MarchenkoPastur(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("MarchenkoPastur(c={d}, sigma={d})", .{ self.c, self.sigma });
+            try writer.print("MarchenkoPastur(c={d:.1}, sigma={d:.1})", .{ self.c, self.sigma });
         }
 
         pub fn validate(self: Self) DistributionError!void {
@@ -67217,7 +67535,7 @@ pub fn UQuadratic(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("UQuadratic(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("UQuadratic(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
     };
 }
@@ -67657,7 +67975,7 @@ pub fn GeneralizedRayleigh(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("GeneralizedRayleigh(α={d}, β={d})", .{ self.alpha, self.beta });
+            try writer.print("GeneralizedRayleigh(α={d:.1}, β={d:.1})", .{ self.alpha, self.beta });
         }
     };
 }
@@ -68168,7 +68486,7 @@ pub fn ARGUS(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ARGUS(χ={d}, c={d})", .{ self.chi, self.cutoff });
+            try writer.print("ARGUS(χ={d:.1}, c={d:.1})", .{ self.chi, self.cutoff });
         }
     };
 }
@@ -68648,7 +68966,7 @@ pub fn FlorySchulz(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("FlorySchulz(a={d})", .{self.a});
+            try writer.print("FlorySchulz(a={d:.1})", .{self.a});
         }
     };
 }
@@ -69302,7 +69620,7 @@ pub fn CrystalBall(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("CrystalBall(α={d}, n={d}, μ={d}, σ={d})", .{ self.alpha, self.n, self.mu, self.sigma });
+            try writer.print("CrystalBall(α={d:.1}, n={d:.1}, μ={d:.1}, σ={d:.1})", .{ self.alpha, self.n, self.mu, self.sigma });
         }
     };
 }
@@ -69858,7 +70176,7 @@ pub fn Trapezoidal(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Trapezoidal(a={d}, b={d}, c={d}, d={d})", .{ self.a, self.b, self.c, self.d });
+            try writer.print("Trapezoidal(a={d:.1}, b={d:.1}, c={d:.1}, d={d:.1})", .{ self.a, self.b, self.c, self.d });
         }
     };
 }
@@ -72013,7 +72331,7 @@ pub fn DiscreteLaplace(comptime T: type) type {
 
         /// Format the distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("DiscreteLaplace(p={d})", .{self.p});
+            try writer.print("DiscreteLaplace(p={d:.1})", .{self.p});
         }
     };
 }
@@ -72458,7 +72776,7 @@ pub fn Landau(comptime T: type) type {
 
         /// Format distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Landau(μ={d}, c={d})", .{ self.mu, self.c });
+            try writer.print("Landau(μ={d:.1}, c={d:.1})", .{ self.mu, self.c });
         }
     };
 }
@@ -73106,7 +73424,7 @@ pub fn Davis(comptime T: type) type {
 
         /// Format distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Davis(b={d}, n={d}, μ={d})", .{ self.b, self.n, self.mu });
+            try writer.print("Davis(b={d:.1}, n={d:.1}, μ={d:.1})", .{ self.b, self.n, self.mu });
         }
     };
 }
@@ -75038,7 +75356,7 @@ pub fn GeneralizedInverseGaussian(comptime T: type) type {
 
         /// Format for printing
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("GIG(λ={d}, ψ={d}, χ={d})", .{ self.lambda, self.psi, self.chi });
+            try writer.print("GIG(λ={d:.1}, ψ={d:.1}, χ={d:.1})", .{ self.lambda, self.psi, self.chi });
         }
     };
 }
@@ -75731,7 +76049,7 @@ pub fn NormalInverseGaussian(comptime T: type) type {
 
         /// Format for printing
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("NIG(α={d}, β={d}, μ={d}, δ={d})", .{ self.alpha, self.beta, self.mu, self.delta });
+            try writer.print("NIG(α={d:.1}, β={d:.1}, μ={d:.1}, δ={d:.1})", .{ self.alpha, self.beta, self.mu, self.delta });
         }
     };
 }
@@ -76989,7 +77307,7 @@ pub fn GeneralizedHyperbolic(comptime T: type) type {
 
         /// Format for printing
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("GH(λ={d}, α={d}, β={d}, δ={d}, μ={d})", .{ self.lambda, self.alpha, self.beta, self.delta, self.mu });
+            try writer.print("GH(λ={d:.1}, α={d:.1}, β={d:.1}, δ={d:.1}, μ={d:.1})", .{ self.lambda, self.alpha, self.beta, self.delta, self.mu });
         }
     };
 }
@@ -77938,7 +78256,7 @@ pub fn WrappedNormal(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("WrappedNormal(μ={d}, σ={d})", .{ self.mu, self.sigma });
+            try writer.print("WrappedNormal(μ={d:.1}, σ={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Validate internal invariants.
@@ -78539,7 +78857,7 @@ pub fn WrappedLaplace(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("WrappedLaplace(μ={d}, b={d})", .{ self.mu, self.b });
+            try writer.print("WrappedLaplace(μ={d:.1}, b={d:.1})", .{ self.mu, self.b });
         }
 
         /// Validate internal invariants.
@@ -79046,7 +79364,7 @@ pub fn QExponential(comptime T: type) type {
         }
 
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("QExponential(q={d}, λ={d})", .{ self.q, self.lambda });
+            try writer.print("QExponential(q={d:.1}, λ={d:.1})", .{ self.q, self.lambda });
         }
     };
 }
@@ -79548,7 +79866,7 @@ pub fn ExGaussian(comptime T: type) type {
         }
 
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ExGaussian(μ={d}, σ={d}, λ={d})", .{ self.mu, self.sigma, self.lambda });
+            try writer.print("ExGaussian(μ={d:.1}, σ={d:.1}, λ={d:.1})", .{ self.mu, self.sigma, self.lambda });
         }
     };
 }
@@ -84746,7 +85064,7 @@ pub fn Kappa(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Kappa(xi={d}, alpha={d}, kappa={d}, h={d})", .{ self.xi, self.alpha, self.kappa, self.h });
+            try writer.print("Kappa(xi={d:.1}, alpha={d:.1}, kappa={d:.1}, h={d:.1})", .{ self.xi, self.alpha, self.kappa, self.h });
         }
     };
 }
@@ -85458,7 +85776,7 @@ pub fn NegativeHypergeometric(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("NegativeHypergeometric(N={d}, K={d}, r={d})", .{ self.N, self.K, self.r });
+            try writer.print("NegativeHypergeometric(N={d:.1}, K={d:.1}, r={d:.1})", .{ self.N, self.K, self.r });
         }
 
         /// Assert internal invariants
@@ -86027,7 +86345,7 @@ pub fn Champernowne(comptime T: type) type {
 
         /// Format distribution for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Champernowne(α={d}, λ={d}, y0={d})", .{ self.alpha, self.lambda, self.y0 });
+            try writer.print("Champernowne(α={d:.1}, λ={d:.1}, y0={d:.1})", .{ self.alpha, self.lambda, self.y0 });
         }
     };
 }
@@ -86776,7 +87094,7 @@ pub fn Meixner(comptime T: type) type {
 
         /// Format for printing
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Meixner(a={d}, b={d}, m={d}, d={d})", .{ self.a, self.b, self.m, self.d });
+            try writer.print("Meixner(a={d:.1}, b={d:.1}, m={d:.1}, d={d:.1})", .{ self.a, self.b, self.m, self.d });
         }
     };
 }
@@ -87286,7 +87604,7 @@ pub fn MarshallOlkinExponential(comptime T: type) type {
 
         /// Format for printing.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("MarshallOlkinExponential(alpha={d}, lambda={d})", .{ self.alpha, self.lambda });
+            try writer.print("MarshallOlkinExponential(alpha={d:.1}, lambda={d:.1})", .{ self.alpha, self.lambda });
         }
 
         /// Simpson's rule: ∫₀^upper x·S(x) dx with n (even) subintervals.
@@ -89061,7 +89379,7 @@ pub fn ZeroInflatedNegativeBinomial(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ZeroInflatedNegativeBinomial(π={d:.4}, r={d}, p={d:.4})", .{ self.pi, self.r, self.p });
+            try writer.print("ZeroInflatedNegativeBinomial(π={d:.4}, r={d:.1}, p={d:.4})", .{ self.pi, self.r, self.p });
         }
     };
 }
@@ -89711,7 +90029,7 @@ pub fn ZeroInflatedBinomial(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ZeroInflatedBinomial(π={d:.4}, n={d}, p={d:.4})", .{ self.pi, self.n, self.p });
+            try writer.print("ZeroInflatedBinomial(π={d:.4}, n={d:.1}, p={d:.4})", .{ self.pi, self.n, self.p });
         }
     };
 }
@@ -90083,7 +90401,7 @@ pub fn ZeroTruncatedPoisson(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ZeroTruncatedPoisson(λ={d})", .{self.lambda});
+            try writer.print("ZeroTruncatedPoisson(λ={d:.1})", .{self.lambda});
         }
 
         /// Assert that parameters are valid: lambda > 0 and finite.
@@ -91431,7 +91749,7 @@ pub fn HurdleNegativeBinomial(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("HurdleNegativeBinomial(π={d:.4}, r={d}, p={d:.4})", .{ self.pi, self.r, self.p });
+            try writer.print("HurdleNegativeBinomial(π={d:.4}, r={d:.1}, p={d:.4})", .{ self.pi, self.r, self.p });
         }
     };
 }
@@ -92314,7 +92632,7 @@ pub fn HurdleBinomial(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("HurdleBinomial(π={d:.4}, n={d}, p={d:.4})", .{ self.pi, self.n, self.p });
+            try writer.print("HurdleBinomial(π={d:.4}, n={d:.1}, p={d:.4})", .{ self.pi, self.n, self.p });
         }
     };
 }
@@ -99036,7 +99354,7 @@ pub fn GeneralizedHermite(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("GeneralizedHermite(a1={d:.4}, a2={d:.4}, m={d})", .{ self.a1, self.a2, self.m });
+            try writer.print("GeneralizedHermite(a1={d:.4}, a2={d:.4}, m={d:.1})", .{ self.a1, self.a2, self.m });
         }
     };
 }
@@ -102122,7 +102440,7 @@ pub fn ZeroTruncatedBinomial(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ZeroTruncatedBinomial(n={d}, p={d:.4})", .{ self.n, self.p });
+            try writer.print("ZeroTruncatedBinomial(n={d:.1}, p={d:.4})", .{ self.n, self.p });
         }
 
         /// Validate internal invariants.
@@ -102738,7 +103056,7 @@ pub fn ZeroTruncatedNegativeBinomial(comptime T: type) type {
 
         /// Format for display.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("ZeroTruncatedNegativeBinomial(r={d}, p={d:.4})", .{ self.r, self.p });
+            try writer.print("ZeroTruncatedNegativeBinomial(r={d:.1}, p={d:.4})", .{ self.r, self.p });
         }
 
         /// Validate internal invariants.
@@ -103288,7 +103606,7 @@ pub fn BenktanderII(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("BenktanderII(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("BenktanderII(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         /// Validate distribution parameters.
@@ -103489,7 +103807,7 @@ pub fn BenktanderI(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("BenktanderI(a={d}, b={d})", .{ self.a, self.b });
+            try writer.print("BenktanderI(a={d:.1}, b={d:.1})", .{ self.a, self.b });
         }
 
         /// Validate distribution parameters.
@@ -106519,7 +106837,7 @@ pub fn WrappedExponential(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("WrappedExponential(lambda={d})", .{self.lambda});
+            try writer.print("WrappedExponential(lambda={d:.1})", .{self.lambda});
         }
 
         /// Validate internal invariants.
@@ -106954,7 +107272,7 @@ pub fn DiscreteGaussian(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("DiscreteGaussian(sigma={d})", .{self.sigma});
+            try writer.print("DiscreteGaussian(sigma={d:.1})", .{self.sigma});
         }
     };
 }
@@ -107571,7 +107889,7 @@ pub fn Voigt(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("Voigt(mu={d}, sigma={d}, gamma={d})", .{ self.mu, self.sigma, self.gamma });
+            try writer.print("Voigt(mu={d:.1}, sigma={d:.1}, gamma={d:.1})", .{ self.mu, self.sigma, self.gamma });
         }
 
         /// Validate internal invariants.
@@ -110058,7 +110376,7 @@ pub fn MarshallOlkinWeibull(comptime T: type) type {
 
         /// Format for printing.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("MarshallOlkinWeibull(alpha={d}, k={d}, lambda={d})", .{ self.alpha, self.k, self.lambda });
+            try writer.print("MarshallOlkinWeibull(alpha={d:.1}, k={d:.1}, lambda={d:.1})", .{ self.alpha, self.k, self.lambda });
         }
 
         /// Simpson's rule: ∫₀^upper S(x) dx with n (even) subintervals.
@@ -110701,7 +111019,7 @@ pub fn MarshallOlkinLomax(comptime T: type) type {
 
         /// Format for printing.
         pub fn format(self: Self, writer: *std.Io.Writer) !void {
-            try writer.print("MarshallOlkinLomax(alpha={d}, kappa={d}, lambda={d})", .{ self.alpha, self.kappa, self.lambda });
+            try writer.print("MarshallOlkinLomax(alpha={d:.1}, kappa={d:.1}, lambda={d:.1})", .{ self.alpha, self.kappa, self.lambda });
         }
 
         /// Simpson's rule for ∫₀^∞ S(x) dx with log substitution.
