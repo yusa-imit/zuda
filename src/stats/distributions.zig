@@ -111327,3 +111327,759 @@ test "MarshallOlkinLomax: f32 validate() passes for valid parameters" {
     const dist = try MarshallOlkinLomax(f32).init(2.0, 3.0, 1.0);
     try dist.validate();
 }
+
+pub fn FoldedLogistic(comptime T: type) type {
+    return struct {
+        mu: T,
+        s: T,
+
+        const Self = @This();
+
+        // --- Lifecycle ---
+
+        /// Initialize FoldedLogistic(μ, s) distribution.
+        /// Returns error.InvalidParameter if s ≤ 0, s not finite, or μ not finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, s: T) DistributionError!Self {
+            if (s <= 0.0 or !math.isFinite(s)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(mu)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .mu = mu, .s = s };
+        }
+
+        // --- PDF / LogPDF ---
+
+        /// Logistic pdf: f(x; mu, s) = exp(-(x-mu)/s) / (s*(1+exp(-(x-mu)/s))^2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn logisticPdf(mu: T, s: T, x: T) T {
+            const inv_s = 1.0 / s;
+            const z = (x - mu) * inv_s;
+            const exp_z = @exp(-z);
+            const denom = 1.0 + exp_z;
+            return exp_z / (s * denom * denom);
+        }
+
+        /// Logistic cdf: F(x; mu, s) = 1 / (1 + exp(-(x-mu)/s))
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn logisticCdf(mu: T, s: T, x: T) T {
+            const inv_s = 1.0 / s;
+            const z = (x - mu) * inv_s;
+            return 1.0 / (1.0 + @exp(-z));
+        }
+
+        /// Probability density function.
+        /// f(y) = logisticPdf(y) + logisticPdf(-y) for y ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, y: T) T {
+            if (y < 0.0) return 0.0;
+            const term1 = logisticPdf(self.mu, self.s, y);
+            const term2 = logisticPdf(self.mu, self.s, -y);
+            return term1 + term2;
+        }
+
+        /// Log-probability density function.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, y: T) T {
+            const p = self.pdf(y);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        // --- CDF / SF ---
+
+        /// Cumulative distribution function.
+        /// F(y) = logisticCdf(y) - logisticCdf(-y) for y ≥ 0, else 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, y: T) T {
+            if (y <= 0.0) return 0.0;
+            const f_y = logisticCdf(self.mu, self.s, y);
+            const f_neg_y = logisticCdf(self.mu, self.s, -y);
+            return f_y - f_neg_y;
+        }
+
+        /// Survival function: 1 − CDF(y).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, y: T) T {
+            return 1.0 - self.cdf(y);
+        }
+
+        // --- Quantile ---
+
+        /// Quantile (inverse CDF) function via bisection on [0, hi].
+        /// Returns error.InvalidProbability if prob < 0 or prob > 1.
+        ///
+        /// Time: O(log(hi)) ≈ O(1) for standard ranges | Space: O(1)
+        pub fn quantile(self: Self, prob: T) DistributionError!T {
+            if (prob < 0.0 or prob > 1.0) return error.InvalidProbability;
+            if (prob == 0.0) return 0.0;
+            if (prob == 1.0) return math.inf(T);
+
+            var hi: T = @max(@abs(self.mu) + self.s, self.s);
+            while (self.cdf(hi) < prob) hi *= 2.0;
+            var lo: T = 0.0;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const mid = 0.5 * (lo + hi);
+                if (self.cdf(mid) < prob) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        // --- Moments ---
+
+        /// Mean via composite Simpson's rule.
+        /// No closed form, numeric integration on [0, upper] with upper = |μ| + 20·s.
+        ///
+        /// Time: O(1000) ≈ O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const upper = @abs(self.mu) + 20.0 * self.s;
+            const n: usize = 1000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const y = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(y);
+                const contrib = y * f;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Variance via composite Simpson's rule.
+        /// No closed form, numeric integration on [0, upper] with upper = |μ| + 20·s.
+        ///
+        /// Time: O(1000) ≈ O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mean_val = self.mean();
+            const upper = @abs(self.mu) + 20.0 * self.s;
+            const n: usize = 1000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const y = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(y);
+                const dev = y - mean_val;
+                const contrib = dev * dev * f;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Mode of the distribution.
+        /// Uses golden section search to find the peak on [0, upper].
+        /// Compares interior maximum against pdf(0) to handle boundary case.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const upper = @abs(self.mu) + 20.0 * self.s;
+            const phi_inv: T = 2.0 / (1.0 + @sqrt(5.0));
+            var lo: T = 0.0;
+            var hi: T = upper;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                const range = hi - lo;
+                const x1 = hi - phi_inv * range;
+                const x2 = lo + phi_inv * range;
+                if (self.pdf(x1) < self.pdf(x2)) {
+                    lo = x1;
+                } else {
+                    hi = x2;
+                }
+            }
+            const interior_mode = 0.5 * (lo + hi);
+            const pdf_interior = self.pdf(interior_mode);
+            const pdf_zero = self.pdf(0.0);
+            if (pdf_interior >= pdf_zero) {
+                return interior_mode;
+            } else {
+                return 0.0;
+            }
+        }
+
+        // --- Entropy ---
+
+        /// Differential entropy via composite Simpson's rule.
+        /// H ≈ ∫₀^upper -f(y)·log(f(y)) dy with 1000 subintervals.
+        /// upper = |μ| + 20·s
+        ///
+        /// Time: O(1000) ≈ O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const upper = @abs(self.mu) + 20.0 * self.s;
+            const n: usize = 1000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const y = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(y);
+                if (f <= 0.0) continue;
+                const contrib = -f * @log(f);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        // --- Sampling ---
+
+        /// Generate a random sample via logistic sampling and folding.
+        /// u ~ Uniform(0,1), x = μ + s·ln(u/(1-u)), return |x|
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            const x = self.mu + self.s * @log(u / (1.0 - u));
+            return @abs(x);
+        }
+
+        // --- Validation ---
+
+        /// Assert internal invariants: s > 0, finite; μ finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.s <= 0.0 or !math.isFinite(self.s)) {
+                return error.InvalidParameter;
+            }
+            if (!math.isFinite(self.mu)) {
+                return error.InvalidParameter;
+            }
+        }
+
+        // --- Format ---
+
+        /// Format the distribution as "FoldedLogistic(mu=..., s=...)".
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("FoldedLogistic(mu={d:.4}, s={d:.4})", .{ self.mu, self.s });
+        }
+    };
+}
+
+// ============================================================================
+// Folded Logistic Distribution Tests
+// ============================================================================
+//
+// Tests for FoldedLogistic: fold of Logistic(mu, s) at 0. Y = |X| where X ~ Logistic(mu, s).
+// Parameters: mu ∈ ℝ (location), s > 0 (scale)
+// Support: [0, +∞)
+//
+// Expected formulas (for zig-developer implementation):
+// Logistic pdf: f(x; mu, s) = exp(-(x-mu)/s) / (s*(1+exp(-(x-mu)/s))^2)
+// Logistic cdf: F(x; mu, s) = 1/(1+exp(-(x-mu)/s))
+// Folded pdf: g(y) = f(y; mu, s) + f(-y; mu, s) for y >= 0, else 0
+// Folded cdf: G(y) = F(y; mu, s) - F(-y; mu, s) for y >= 0, else 0
+// Mean/variance/entropy: numeric Simpson's rule, no closed form
+// Mode: compare golden-section-search interior max against pdf(0)
+// Quantile: bisection on [0, upper_bound]
+// Sample: via inverse CDF using logistic sampling
+
+test "FoldedLogistic: init with valid mu=0, s=1" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.0), dist.s);
+}
+
+test "FoldedLogistic: init with positive mu" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    try testing.expectEqual(@as(f64, 2.0), dist.mu);
+    try testing.expectEqual(@as(f64, 1.5), dist.s);
+}
+
+test "FoldedLogistic: init with negative mu" {
+    const dist = try FoldedLogistic(f64).init(-3.0, 2.0);
+    try testing.expectEqual(@as(f64, -3.0), dist.mu);
+    try testing.expectEqual(@as(f64, 2.0), dist.s);
+}
+
+test "FoldedLogistic: init with large mu" {
+    const dist = try FoldedLogistic(f64).init(1000.0, 1.0);
+    try testing.expectEqual(@as(f64, 1000.0), dist.mu);
+}
+
+test "FoldedLogistic: init with very small s" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1e-10);
+    try testing.expectEqual(@as(f64, 1e-10), dist.s);
+}
+
+test "FoldedLogistic: init with large s" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1e10);
+    try testing.expectEqual(@as(f64, 1e10), dist.s);
+}
+
+test "FoldedLogistic: init rejects s <= 0" {
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(0.0, 0.0));
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(0.0, -1.0));
+}
+
+test "FoldedLogistic: init rejects non-finite s" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(0.0, inf));
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(0.0, -inf));
+    const nan = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(0.0, nan));
+}
+
+test "FoldedLogistic: init rejects non-finite mu" {
+    const inf = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(inf, 1.0));
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(-inf, 1.0));
+    const nan = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, FoldedLogistic(f64).init(nan, 1.0));
+}
+
+// --- PDF Tests ---
+
+test "FoldedLogistic: pdf at y=0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const p = dist.pdf(0.0);
+    const expected = 0.220121346203871602;
+    try testing.expectApproxEqRel(p, expected, 1e-6);
+}
+
+test "FoldedLogistic: pdf at y=0.5 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const p = dist.pdf(0.5);
+    const expected = 0.220161097091155857;
+    try testing.expectApproxEqRel(p, expected, 1e-6);
+}
+
+test "FoldedLogistic: pdf at y=1.0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const p = dist.pdf(1.0);
+    const expected = 0.219433983536490079;
+    try testing.expectApproxEqRel(p, expected, 1e-6);
+}
+
+test "FoldedLogistic: pdf at y=2.0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const p = dist.pdf(2.0);
+    const expected = 0.207165450794263404;
+    try testing.expectApproxEqRel(p, expected, 1e-6);
+}
+
+test "FoldedLogistic: pdf at y=5.0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const p = dist.pdf(5.0);
+    const expected = 0.076148505100036180;
+    try testing.expectApproxEqRel(p, expected, 1e-6);
+}
+
+test "FoldedLogistic: pdf non-negative everywhere" {
+    const dist = try FoldedLogistic(f64).init(1.0, 1.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "FoldedLogistic: pdf(negative y) returns 0" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try testing.expectEqual(@as(f64, 0.0), dist.pdf(-0.1));
+}
+
+test "FoldedLogistic: pdf symmetry in mu" {
+    const dist_pos = try FoldedLogistic(f64).init(2.0, 1.5);
+    const dist_neg = try FoldedLogistic(f64).init(-2.0, 1.5);
+    const y_vals = [_]f64{ 0.0, 0.5, 1.0, 2.0, 5.0 };
+    for (y_vals) |y| {
+        try testing.expectApproxEqRel(dist_pos.pdf(y), dist_neg.pdf(y), 1e-10);
+    }
+}
+
+test "FoldedLogistic: pdf equals 2*logistic_pdf at y for mu=0 (HalfLogistic reduction)" {
+    // For mu=0, the folded logistic pdf should equal 2*logistic_pdf(y)
+    const dist = try FoldedLogistic(f64).init(0.0, 1.5);
+    const y_vals = [_]f64{ 0.5, 1.0, 2.0 };
+    for (y_vals) |y| {
+        const pdf_folded = dist.pdf(y);
+        // Logistic pdf at (y; 0, s) = exp(-y/s) / (s*(1+exp(-y/s))^2)
+        const s = 1.5;
+        const exp_term = @exp(-y / s);
+        const logistic_pdf_y = exp_term / (s * (1.0 + exp_term) * (1.0 + exp_term));
+        const expected = 2.0 * logistic_pdf_y;
+        try testing.expectApproxEqRel(pdf_folded, expected, 1e-10);
+    }
+}
+
+// --- CDF Tests ---
+
+test "FoldedLogistic: cdf at y=0 equals 0 for any valid mu, s" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 1.0 },
+        [_]f64{ -1.0, 1.0 },
+        [_]f64{ 0.0, 2.0 },
+        [_]f64{ 5.0, 3.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try FoldedLogistic(f64).init(case[0], case[1]);
+        const c = dist.cdf(0.0);
+        try testing.expectEqual(@as(f64, 0.0), c);
+    }
+}
+
+test "FoldedLogistic: cdf at y=0.5 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const c = dist.cdf(0.5);
+    const expected = 0.110072316489079969;
+    try testing.expectApproxEqRel(c, expected, 1e-6);
+}
+
+test "FoldedLogistic: cdf at y=1.0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const c = dist.cdf(1.0);
+    const expected = 0.220040709212065272;
+    try testing.expectApproxEqRel(c, expected, 1e-6);
+}
+
+test "FoldedLogistic: cdf at y=2.0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const c = dist.cdf(2.0);
+    const expected = 0.435030830871335938;
+    try testing.expectApproxEqRel(c, expected, 1e-6);
+}
+
+test "FoldedLogistic: cdf at y=5.0 with mu=2.0, s=1.5 (verified vector)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const c = dist.cdf(5.0);
+    const expected = 0.871481118632815757;
+    try testing.expectApproxEqRel(c, expected, 1e-6);
+}
+
+test "FoldedLogistic: cdf is monotonically non-decreasing" {
+    const dist = try FoldedLogistic(f64).init(1.0, 1.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 10.0) : (x += 0.5) {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "FoldedLogistic: cdf(negative y) returns 0" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "FoldedLogistic: cdf approaches 1 as y -> large" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    const c = dist.cdf(1e6);
+    try testing.expect(c > 0.9999);
+}
+
+// --- Quantile Tests ---
+
+test "FoldedLogistic: quantile(0) returns 0" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-15);
+}
+
+test "FoldedLogistic: quantile(0.5) median with mu=2.0, s=1.5 (verified value)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const q = try dist.quantile(0.5);
+    const expected = 2.32009659636020686;
+    try testing.expectApproxEqRel(q, expected, 1e-4);
+}
+
+test "FoldedLogistic: quantile(0.9) with mu=2.0, s=1.5 (verified value)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const q = try dist.quantile(0.9);
+    const expected = 5.41753197221272303;
+    try testing.expectApproxEqRel(q, expected, 1e-4);
+}
+
+test "FoldedLogistic: quantile(1) returns +inf" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "FoldedLogistic: quantile(p) increases with p" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    const q1 = try dist.quantile(0.25);
+    const q2 = try dist.quantile(0.5);
+    const q3 = try dist.quantile(0.75);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+}
+
+test "FoldedLogistic: quantile rejects p < 0" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "FoldedLogistic: quantile rejects p > 1" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "FoldedLogistic: cdf-quantile roundtrip consistency" {
+    const dist = try FoldedLogistic(f64).init(1.0, 2.0);
+    const p_vals = [_]f64{ 0.05, 0.25, 0.5, 0.75, 0.95 };
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expectApproxEqAbs(p, c, 1e-8);
+    }
+}
+
+test "FoldedLogistic: quantile-cdf roundtrip consistency" {
+    const dist = try FoldedLogistic(f64).init(0.5, 1.5);
+    const y_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (y_vals) |y| {
+        const c = dist.cdf(y);
+        const q = try dist.quantile(c);
+        try testing.expectApproxEqAbs(y, q, 1e-8);
+    }
+}
+
+// --- Mode Tests ---
+
+test "FoldedLogistic: mode with mu=2.0, s=1.5 is interior (NOT 0)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const m = dist.mode();
+    // Mode should be around 0.437 for these parameters
+    try testing.expect(m > 0.0); // Interior, not at boundary
+    try testing.expectApproxEqAbs(m, 0.437, 0.05);
+    // Verify pdf at mode exceeds pdf at 0
+    try testing.expect(dist.pdf(m) > dist.pdf(0.0));
+}
+
+test "FoldedLogistic: mode with mu=0.1, s=1.5 is at 0 (boundary case)" {
+    const dist = try FoldedLogistic(f64).init(0.1, 1.5);
+    const m = dist.mode();
+    // For small |mu|/s, mode should be at 0
+    try testing.expectApproxEqAbs(0.0, m, 0.01);
+}
+
+test "FoldedLogistic: mode with mu=0, s=1 is at 0" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    try testing.expectApproxEqAbs(0.0, m, 1e-10);
+}
+
+test "FoldedLogistic: mode pdf value is largest on [0, upper]" {
+    const dist = try FoldedLogistic(f64).init(5.0, 1.0);
+    const m = dist.mode();
+    const pdf_mode = dist.pdf(m);
+    const pdf_zero = dist.pdf(0.0);
+    // Mode should have pdf >= pdf at any boundary
+    try testing.expect(pdf_mode >= pdf_zero - 1e-10);
+}
+
+// --- Mean / Variance Tests ---
+
+test "FoldedLogistic: mean with mu=2.0, s=1.5 (verified value)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const mean = dist.mean();
+    const expected = 2.70188757523264483;
+    try testing.expectApproxEqRel(mean, expected, 1e-4);
+}
+
+test "FoldedLogistic: variance with mu=2.0, s=1.5 (verified value)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const v = dist.variance();
+    const expected = 4.10200683162047797;
+    try testing.expectApproxEqRel(v, expected, 1e-4);
+}
+
+test "FoldedLogistic: mean is positive and finite" {
+    const dist = try FoldedLogistic(f64).init(1.0, 2.0);
+    const mean = dist.mean();
+    try testing.expect(mean > 0.0);
+    try testing.expect(math.isFinite(mean));
+}
+
+test "FoldedLogistic: variance is non-negative and finite" {
+    const dist = try FoldedLogistic(f64).init(1.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(v >= 0.0);
+    try testing.expect(math.isFinite(v));
+}
+
+// --- Entropy Tests ---
+
+test "FoldedLogistic: entropy with mu=2.0, s=1.5 (verified value)" {
+    const dist = try FoldedLogistic(f64).init(2.0, 1.5);
+    const h = dist.entropy();
+    const expected = 1.93950721494799781;
+    try testing.expectApproxEqRel(h, expected, 1e-4);
+}
+
+test "FoldedLogistic: entropy is finite and positive" {
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h > 0.0);
+}
+
+test "FoldedLogistic: entropy is finite for various parameters" {
+    const test_cases = [_][2]f64{
+        [_]f64{ 0.0, 1.0 },
+        [_]f64{ 1.0, 1.0 },
+        [_]f64{ 2.0, 0.5 },
+        [_]f64{ -3.0, 2.0 },
+    };
+    for (test_cases) |case| {
+        const dist = try FoldedLogistic(f64).init(case[0], case[1]);
+        const h = dist.entropy();
+        try testing.expect(math.isFinite(h));
+    }
+}
+
+test "FoldedLogistic: entropy increases with s" {
+    const dist1 = try FoldedLogistic(f64).init(0.0, 1.0);
+    const dist2 = try FoldedLogistic(f64).init(0.0, 2.0);
+    const h1 = dist1.entropy();
+    const h2 = dist2.entropy();
+    try testing.expect(h2 > h1); // larger s -> larger entropy
+}
+
+// --- Sampling Tests ---
+
+test "FoldedLogistic: sample() produces non-negative finite values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try testing.expect(s >= 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "FoldedLogistic: sample() with different seeds produces different values" {
+    const dist = try FoldedLogistic(f64).init(1.0, 1.0);
+    var prng1 = std.Random.DefaultPrng.init(42);
+    var prng2 = std.Random.DefaultPrng.init(43);
+    const s1 = dist.sample(prng1.random());
+    const s2 = dist.sample(prng2.random());
+    try testing.expect(s1 != s2); // extremely unlikely to be equal
+}
+
+test "FoldedLogistic: sample() rough empirical CDF check" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try FoldedLogistic(f64).init(0.0, 1.0);
+    var count_below_one: usize = 0;
+    const num_samples = 1000;
+    for (0..num_samples) |_| {
+        if (dist.sample(rng) <= 1.0) {
+            count_below_one += 1;
+        }
+    }
+    const empirical_cdf = @as(f64, @floatFromInt(count_below_one)) / @as(f64, @floatFromInt(num_samples));
+    const theoretical_cdf = dist.cdf(1.0);
+    try testing.expectApproxEqAbs(empirical_cdf, theoretical_cdf, 0.05); // loose tolerance for sampling
+}
+
+// --- Validate Tests ---
+
+test "FoldedLogistic: validate() passes for valid parameters" {
+    const dist = try FoldedLogistic(f64).init(1.0, 1.0);
+    try dist.validate();
+}
+
+test "FoldedLogistic: validate() rejects s <= 0" {
+    var dist = FoldedLogistic(f64){ .mu = 0.0, .s = 0.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+    dist.s = -1.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "FoldedLogistic: validate() rejects non-finite s" {
+    const inf = math.inf(f64);
+    var dist = FoldedLogistic(f64){ .mu = 0.0, .s = inf };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+    dist.s = -inf;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "FoldedLogistic: validate() rejects non-finite mu" {
+    const inf = math.inf(f64);
+    var dist = FoldedLogistic(f64){ .mu = inf, .s = 1.0 };
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- f32 Tests ---
+
+test "FoldedLogistic: f32 init with valid parameters" {
+    const dist = try FoldedLogistic(f32).init(1.0, 1.0);
+    try testing.expectEqual(@as(f32, 1.0), dist.mu);
+    try testing.expectEqual(@as(f32, 1.0), dist.s);
+}
+
+test "FoldedLogistic: f32 pdf at y=0 with mu=2.0, s=1.5" {
+    const dist = try FoldedLogistic(f32).init(2.0, 1.5);
+    const p = dist.pdf(0.0);
+    const expected = 0.220121346203871602;
+    try testing.expectApproxEqAbs(@as(f32, @floatCast(expected)), p, 1e-4);
+}
+
+test "FoldedLogistic: f32 cdf(0) equals 0" {
+    const dist = try FoldedLogistic(f32).init(1.0, 1.0);
+    const c = dist.cdf(0.0);
+    try testing.expectEqual(@as(f32, 0.0), c);
+}
+
+test "FoldedLogistic: f32 quantile(0.5) produces finite positive result" {
+    const dist = try FoldedLogistic(f32).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+    try testing.expect(q > 0.0);
+}
+
+test "FoldedLogistic: f32 mean produces finite positive result" {
+    const dist = try FoldedLogistic(f32).init(0.0, 1.0);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+    try testing.expect(m > 0.0);
+}
+
+test "FoldedLogistic: f32 variance produces finite non-negative result" {
+    const dist = try FoldedLogistic(f32).init(1.0, 2.0);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+    try testing.expect(v >= 0.0);
+}
+
+test "FoldedLogistic: f32 entropy produces finite non-negative result" {
+    const dist = try FoldedLogistic(f32).init(0.0, 1.0);
+    const h = dist.entropy();
+    try testing.expect(math.isFinite(h));
+    try testing.expect(h >= 0.0);
+}
+
+test "FoldedLogistic: f32 sample() produces non-negative finite value" {
+    var prng = std.Random.DefaultPrng.init(77);
+    const rng = prng.random();
+    const dist = try FoldedLogistic(f32).init(0.0, 1.0);
+    const s = dist.sample(rng);
+    try testing.expect(math.isFinite(s));
+    try testing.expect(s >= 0.0);
+}
+
+test "FoldedLogistic: f32 validate() passes for valid parameters" {
+    const dist = try FoldedLogistic(f32).init(2.0, 1.5);
+    try dist.validate();
+}
