@@ -694,6 +694,27 @@ pub fn Beta(comptime T: type) type {
             return (self.alpha * self.beta) / (sum * sum * (sum + 1.0));
         }
 
+        /// Mode of the distribution
+        ///
+        /// - If α > 1, β > 1: (α-1)/(α+β-2)
+        /// - If α ≤ 1, β > 1: 0
+        /// - If α > 1, β ≤ 1: 1
+        /// - If α ≤ 1, β ≤ 1: no unique mode, returns 0.5
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha > 1.0 and self.beta > 1.0) {
+                return (self.alpha - 1.0) / (self.alpha + self.beta - 2.0);
+            } else if (self.alpha <= 1.0 and self.beta > 1.0) {
+                return 0.0;
+            } else if (self.alpha > 1.0 and self.beta <= 1.0) {
+                return 1.0;
+            } else {
+                // alpha ≤ 1 and beta ≤ 1: no unique mode
+                return 0.5;
+            }
+        }
+
         /// Format for debug printing.
         ///
         /// Time: O(1) | Space: O(1)
@@ -706,6 +727,268 @@ pub fn Beta(comptime T: type) type {
         pub fn validate(self: Self) !void {
             if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) return DistributionError.InvalidParameter;
             if (self.beta <= 0.0 or !math.isFinite(self.beta)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// Beta-Rectangular Distribution (Mixture)
+// ============================================================================
+
+/// Beta-Rectangular distribution: mixture of Uniform(0,1) and Beta(alpha,beta)
+///
+/// A continuous distribution on [0,1] defined as:
+/// f(x) = theta * 1 + (1-theta) * BetaPdf(x; alpha, beta)
+///
+/// This is a mixture where theta ∈ [0,1] controls the weight on the uniform component.
+/// - At theta=0: reduces to Beta(alpha,beta)
+/// - At theta=1: reduces to Uniform(0,1)
+/// - At alpha=1, beta=1: the Beta component is also Uniform, so result is always Uniform
+///
+/// Parameters:
+///   - theta: mixing weight on uniform component, ∈ [0, 1]
+///   - alpha: shape parameter of Beta component, α > 0
+///   - beta: shape parameter of Beta component, β > 0
+///
+/// Time: O(1) for most operations; O(n) for entropy (numeric integration with n=4000 panels)
+pub fn BetaRectangular(comptime T: type) type {
+    return struct {
+        theta: T,
+        alpha: T,
+        beta: T,
+
+        const Self = @This();
+
+        /// Create a beta-rectangular distribution with given parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta: T, alpha: T, beta_param: T) DistributionError!Self {
+            if (theta < 0.0 or theta > 1.0) return error.InvalidParameter;
+            if (alpha <= 0.0 or beta_param <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(theta) or !math.isFinite(alpha) or !math.isFinite(beta_param)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .theta = theta, .alpha = alpha, .beta = beta_param };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = theta * 1 + (1-theta) * BetaPdf(x; alpha, beta), x ∈ [0,1]
+        /// 0 elsewhere
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0 or x > 1.0) return 0.0;
+
+            // PDF at x=0 or x=1 boundaries (need special handling for Beta component)
+            if (x == 0.0) {
+                const beta_pdf_0 = if (self.alpha < 1.0) math.inf(T) else if (self.alpha == 1.0) self.beta else 0.0;
+                return self.theta * 1.0 + (1.0 - self.theta) * beta_pdf_0;
+            }
+            if (x == 1.0) {
+                const beta_pdf_1 = if (self.beta < 1.0) math.inf(T) else if (self.beta == 1.0) self.alpha else 0.0;
+                return self.theta * 1.0 + (1.0 - self.theta) * beta_pdf_1;
+            }
+
+            // Interior: use log-space computation for Beta component
+            const log_beta_pdf = (self.alpha - 1.0) * @log(x) +
+                (self.beta - 1.0) * @log(1.0 - x) -
+                logBeta(self.alpha, self.beta);
+            const beta_pdf = @exp(log_beta_pdf);
+
+            return self.theta * 1.0 + (1.0 - self.theta) * beta_pdf;
+        }
+
+        /// Log probability density function
+        ///
+        /// log f(x) = log(theta + (1-theta)*g(x)) where g is Beta pdf
+        /// Returns -inf for x outside [0,1]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p = self.pdf(x);
+            if (p <= 0.0) return -math.inf(T);
+            return @log(p);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = theta * x + (1-theta) * I_x(alpha, beta)
+        /// where I_x is the regularized incomplete beta function
+        ///
+        /// Time: O(1) with finite iterations | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            if (x >= 1.0) return 1.0;
+
+            const uniform_cdf = x;
+            const beta_cdf = regularizedBetaI(self.alpha, self.beta, x);
+
+            return self.theta * uniform_cdf + (1.0 - self.theta) * beta_cdf;
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Uses bisection search on the CDF
+        ///
+        /// Time: O(log(1/ε)) where ε is tolerance | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return 1.0;
+
+            // Bisection search on [0, 1]
+            const tolerance = 1e-10;
+            var left: T = 0.0;
+            var right: T = 1.0;
+            var mid: T = 0.5;
+
+            for (0..100) |_| {
+                mid = (left + right) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (@abs(cdf_mid - p) < tolerance) break;
+
+                if (cdf_mid < p) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+
+            return mid;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Sample u ~ Uniform(0,1). If u < theta, return Uniform(0,1) sample,
+        /// else return Beta(alpha,beta) sample using Gamma ratio method
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+
+            if (u < self.theta) {
+                // Sample from Uniform(0,1)
+                return rng.float(T);
+            } else {
+                // Sample from Beta(alpha,beta) using Gamma ratio
+                const gamma_alpha = Gamma(T){ .shape = self.alpha, .rate = 1.0 };
+                const gamma_beta = Gamma(T){ .shape = self.beta, .rate = 1.0 };
+
+                const x = gamma_alpha.sample(rng);
+                const y = gamma_beta.sample(rng);
+
+                return x / (x + y);
+            }
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = theta * 0.5 + (1-theta) * alpha/(alpha+beta)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const uniform_mean = 0.5;
+            const beta_mean = self.alpha / (self.alpha + self.beta);
+
+            return self.theta * uniform_mean + (1.0 - self.theta) * beta_mean;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Uses mixture variance formula:
+        /// Var(X) = E[Var(X|component)] + Var(E[X|component])
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const uniform_second_moment = 1.0 / 3.0; // E[X^2] for Uniform(0,1)
+
+            const beta_mean = self.alpha / (self.alpha + self.beta);
+            const beta_sum = self.alpha + self.beta;
+            const beta_var = (self.alpha * self.beta) / (beta_sum * beta_sum * (beta_sum + 1.0));
+            const beta_second_moment = beta_var + beta_mean * beta_mean;
+
+            const overall_mean = self.mean();
+            const overall_second_moment = self.theta * uniform_second_moment +
+                (1.0 - self.theta) * beta_second_moment;
+
+            return overall_second_moment - overall_mean * overall_mean;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Since f(x) = theta + (1-theta)*g(x) for constant theta,
+        /// adding theta never changes the location of the maximum of g(x).
+        /// Therefore mode is identical to Beta(alpha,beta) mode:
+        /// - If alpha > 1, beta > 1: (alpha-1)/(alpha+beta-2)
+        /// - If alpha ≤ 1, beta > 1: 0
+        /// - If alpha > 1, beta ≤ 1: 1
+        /// - If alpha ≤ 1, beta ≤ 1: no unique mode (return 0.5)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.alpha > 1.0 and self.beta > 1.0) {
+                return (self.alpha - 1.0) / (self.alpha + self.beta - 2.0);
+            } else if (self.alpha <= 1.0 and self.beta > 1.0) {
+                return 0.0;
+            } else if (self.alpha > 1.0 and self.beta <= 1.0) {
+                return 1.0;
+            } else {
+                // alpha ≤ 1 and beta ≤ 1: undefined/bimodal, return convention
+                return 0.5;
+            }
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// No closed form for mixture entropy. Uses numeric integration via Simpson's rule:
+        /// H = -∫[0,1] f(x) log f(x) dx with n=4000 panels
+        ///
+        /// Time: O(4000) ≈ O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const n: usize = 4000;
+            const h = 1.0 / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+
+            for (0..n + 1) |i| {
+                const x = h * @as(T, @floatFromInt(i));
+                const f = self.pdf(x);
+
+                if (f <= 0.0) continue; // Skip zero or negative pdf (shouldn't happen in interior)
+
+                const contrib = -f * @log(f);
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+
+            return sum * h / 3.0;
+        }
+
+        /// Format for debug printing
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BetaRectangular(theta={d:.1}, alpha={d:.1}, beta={d:.1})", .{
+                self.theta,
+                self.alpha,
+                self.beta,
+            });
+        }
+
+        /// Assert that parameters are valid
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.theta < 0.0 or self.theta > 1.0 or !math.isFinite(self.theta)) {
+                return error.InvalidParameter;
+            }
+            if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) {
+                return error.InvalidParameter;
+            }
+            if (self.beta <= 0.0 or !math.isFinite(self.beta)) {
+                return error.InvalidParameter;
+            }
         }
     };
 }
@@ -112400,4 +112683,440 @@ test "FoldedLogistic: f32 sample() produces non-negative finite value" {
 test "FoldedLogistic: f32 validate() passes for valid parameters" {
     const dist = try FoldedLogistic(f32).init(2.0, 1.5);
     try dist.validate();
+}
+
+// ============================================================================
+// BetaRectangular Distribution
+// ============================================================================
+//
+// BetaRectangular(theta, alpha, beta) — mixture of Uniform(0,1) and Beta(alpha,beta)
+// PDF: f(x) = theta * 1 + (1-theta) * Beta_pdf(x; alpha, beta), x in [0,1]
+// CDF: F(x) = theta * x + (1-theta) * regularizedBetaI(alpha, beta, x)
+// Mean: theta * 0.5 + (1-theta) * alpha/(alpha+beta) [exact]
+// Variance: theta * (1/3) + (1-theta) * (var_beta + mean_beta^2) - mean^2 [exact]
+// Mode: identical to Beta(alpha,beta) mode [argmax is invariant under adding constant]
+// Entropy: -∫[0,1] f(x) log f(x) dx [no closed form, numeric Simpson's rule]
+// Quantile: bisection search on CDF
+// Sample: mixture sampling—draw u ~ Uniform(0,1); if u < theta return Uniform sample, else Beta sample
+
+test "BetaRectangular: init with valid parameters (theta=0.3, alpha=2, beta=5)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    try expectEqual(@as(f64, 0.3), dist.theta);
+    try expectEqual(@as(f64, 2.0), dist.alpha);
+    try expectEqual(@as(f64, 5.0), dist.beta);
+}
+
+test "BetaRectangular: init with theta=0 (reduces to Beta)" {
+    const dist = try BetaRectangular(f64).init(0.0, 2.0, 5.0);
+    try expectEqual(@as(f64, 0.0), dist.theta);
+}
+
+test "BetaRectangular: init with theta=1 (reduces to Uniform)" {
+    const dist = try BetaRectangular(f64).init(1.0, 2.0, 5.0);
+    try expectEqual(@as(f64, 1.0), dist.theta);
+}
+
+test "BetaRectangular: init with theta=0.5, alpha=1, beta=1 (full mixture of uniforms)" {
+    const dist = try BetaRectangular(f64).init(0.5, 1.0, 1.0);
+    try expectEqual(@as(f64, 0.5), dist.theta);
+    try expectEqual(@as(f64, 1.0), dist.alpha);
+    try expectEqual(@as(f64, 1.0), dist.beta);
+}
+
+test "BetaRectangular: init rejects theta < 0" {
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(-0.1, 2.0, 5.0));
+}
+
+test "BetaRectangular: init rejects theta > 1" {
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(1.1, 2.0, 5.0));
+}
+
+test "BetaRectangular: init rejects alpha <= 0" {
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, 0.0, 5.0));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, -1.0, 5.0));
+}
+
+test "BetaRectangular: init rejects beta <= 0" {
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, 2.0, 0.0));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, 2.0, -1.0));
+}
+
+test "BetaRectangular: init rejects non-finite theta" {
+    const inf = math.inf(f64);
+    const nan = math.nan(f64);
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(inf, 2.0, 5.0));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(-inf, 2.0, 5.0));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(nan, 2.0, 5.0));
+}
+
+test "BetaRectangular: init rejects non-finite alpha" {
+    const inf = math.inf(f64);
+    const nan = math.nan(f64);
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, inf, 5.0));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, -inf, 5.0));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, nan, 5.0));
+}
+
+test "BetaRectangular: init rejects non-finite beta" {
+    const inf = math.inf(f64);
+    const nan = math.nan(f64);
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, 2.0, inf));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, 2.0, -inf));
+    try expectError(error.InvalidParameter, BetaRectangular(f64).init(0.3, 2.0, nan));
+}
+
+// --- PDF Tests ---
+
+test "BetaRectangular: pdf at x=0.1 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const p = dist.pdf(0.1);
+    const expected = 1.67781;
+    try expectApproxEqRel(p, expected, 1e-5);
+}
+
+test "BetaRectangular: pdf at x=0.3 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const p = dist.pdf(0.3);
+    const expected = 1.81263;
+    try expectApproxEqRel(p, expected, 1e-5);
+}
+
+test "BetaRectangular: pdf at x=0.5 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const p = dist.pdf(0.5);
+    const expected = 0.95625;
+    try expectApproxEqRel(p, expected, 1e-5);
+}
+
+test "BetaRectangular: pdf at x=0.7 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const p = dist.pdf(0.7);
+    const expected = 0.41907;
+    try expectApproxEqRel(p, expected, 1e-5);
+}
+
+test "BetaRectangular: pdf at x=0.9 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const p = dist.pdf(0.9);
+    const expected = 0.30189;
+    try expectApproxEqRel(p, expected, 1e-5);
+}
+
+test "BetaRectangular: pdf is non-negative everywhere" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    var x: f64 = 0.0;
+    while (x <= 1.0) : (x += 0.1) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "BetaRectangular: pdf outside [0,1] is 0" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.1));
+    try expectEqual(@as(f64, 0.0), dist.pdf(1.1));
+}
+
+// --- CDF Tests ---
+
+test "BetaRectangular: cdf at x=0.1 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const c = dist.cdf(0.1);
+    const expected = 0.1099855;
+    try expectApproxEqRel(c, expected, 1e-5);
+}
+
+test "BetaRectangular: cdf at x=0.3 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const c = dist.cdf(0.3);
+    const expected = 0.4958775;
+    try expectApproxEqRel(c, expected, 1e-5);
+}
+
+test "BetaRectangular: cdf at x=0.5 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const c = dist.cdf(0.5);
+    const expected = 0.7734375;
+    try expectApproxEqRel(c, expected, 1e-5);
+}
+
+test "BetaRectangular: cdf at x=0.7 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const c = dist.cdf(0.7);
+    const expected = 0.9023455;
+    try expectApproxEqRel(c, expected, 1e-5);
+}
+
+test "BetaRectangular: cdf at x=0.9 with theta=0.3, alpha=2.0, beta=5.0 (verified vector)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const c = dist.cdf(0.9);
+    const expected = 0.9699615;
+    try expectApproxEqRel(c, expected, 1e-5);
+}
+
+test "BetaRectangular: cdf is monotonically non-decreasing" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 1.0) : (x += 0.1) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "BetaRectangular: cdf(0) equals 0" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "BetaRectangular: cdf(1) equals 1" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    try expectEqual(@as(f64, 1.0), dist.cdf(1.0));
+}
+
+test "BetaRectangular: cdf outside [0,1] bounded by [0,1]" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const c_below = dist.cdf(-0.1);
+    const c_above = dist.cdf(1.1);
+    try expect(c_below <= 0.0 or c_below == 0.0);
+    try expect(c_above >= 1.0 or c_above == 1.0);
+}
+
+// --- Reduction: theta=0 reduces to Beta ---
+
+test "BetaRectangular: cdf reduction test theta=0 vs Beta(alpha=2, beta=5) at x=0.4" {
+    const br_dist = try BetaRectangular(f64).init(0.0, 2.0, 5.0);
+    const beta_dist = try Beta(f64).init(2.0, 5.0);
+    const br_cdf = br_dist.cdf(0.4);
+    const beta_cdf = beta_dist.cdf(0.4);
+    const expected = 0.76672;
+    try expectApproxEqRel(br_cdf, expected, 1e-4);
+    try expectApproxEqRel(beta_cdf, expected, 1e-4);
+    try expectApproxEqRel(br_cdf, beta_cdf, 1e-10);
+}
+
+// --- Reduction: theta=1 reduces to Uniform(0,1) ---
+
+test "BetaRectangular: cdf reduction test theta=1 is Uniform at x=0.3" {
+    const dist = try BetaRectangular(f64).init(1.0, 2.0, 5.0);
+    const c = dist.cdf(0.3);
+    try expectApproxEqRel(c, 0.3, 1e-10);
+}
+
+test "BetaRectangular: cdf reduction test theta=1 is Uniform at x=0.7" {
+    const dist = try BetaRectangular(f64).init(1.0, 2.0, 5.0);
+    const c = dist.cdf(0.7);
+    try expectApproxEqRel(c, 0.7, 1e-10);
+}
+
+// --- Reduction: theta=0.5, alpha=1, beta=1 is full Uniform mixture ---
+
+test "BetaRectangular: cdf reduction test theta=0.5, alpha=1, beta=1 is Uniform at x=0.25" {
+    const dist = try BetaRectangular(f64).init(0.5, 1.0, 1.0);
+    const c = dist.cdf(0.25);
+    try expectApproxEqRel(c, 0.25, 1e-10);
+}
+
+test "BetaRectangular: cdf reduction test theta=0.5, alpha=1, beta=1 is Uniform at x=0.8" {
+    const dist = try BetaRectangular(f64).init(0.5, 1.0, 1.0);
+    const c = dist.cdf(0.8);
+    try expectApproxEqRel(c, 0.8, 1e-10);
+}
+
+// --- Mean Tests ---
+
+test "BetaRectangular: mean with theta=0.3, alpha=2.0, beta=5.0" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const m = dist.mean();
+    const expected = 0.35;
+    try expectApproxEqAbs(m, expected, 1e-15);
+}
+
+test "BetaRectangular: mean is finite and in (0, 1)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const m = dist.mean();
+    try expect(math.isFinite(m));
+    try expect(m > 0.0 and m < 1.0);
+}
+
+test "BetaRectangular: mean reduction theta=0 matches Beta mean" {
+    const br_dist = try BetaRectangular(f64).init(0.0, 2.0, 5.0);
+    const beta_dist = try Beta(f64).init(2.0, 5.0);
+    const br_mean = br_dist.mean();
+    const beta_mean = beta_dist.mean();
+    try expectApproxEqAbs(br_mean, beta_mean, 1e-15);
+}
+
+test "BetaRectangular: mean reduction theta=1 equals 0.5 (Uniform)" {
+    const dist = try BetaRectangular(f64).init(1.0, 2.0, 5.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(m, 0.5, 1e-15);
+}
+
+// --- Variance Tests ---
+
+test "BetaRectangular: variance with theta=0.3, alpha=2.0, beta=5.0" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const v = dist.variance();
+    const expected = 0.0525;
+    try expectApproxEqAbs(v, expected, 1e-15);
+}
+
+test "BetaRectangular: variance is non-negative and finite" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const v = dist.variance();
+    try expect(math.isFinite(v));
+    try expect(v >= 0.0);
+}
+
+test "BetaRectangular: variance reduction theta=1 is Uniform variance" {
+    const dist = try BetaRectangular(f64).init(1.0, 2.0, 5.0);
+    const v = dist.variance();
+    const expected_uniform_var = 1.0 / 12.0; // Uniform(0,1) variance
+    try expectApproxEqAbs(v, expected_uniform_var, 1e-15);
+}
+
+// --- Mode Tests ---
+
+test "BetaRectangular: mode with theta=0.3, alpha=2.0, beta=5.0" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const m = dist.mode();
+    const expected = 0.2; // Beta(2,5) mode = (2-1)/(2+5-2) = 1/5
+    try expectApproxEqAbs(m, expected, 1e-10);
+}
+
+test "BetaRectangular: mode matches Beta mode for theta > 0" {
+    const br_dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const beta_dist = try Beta(f64).init(2.0, 5.0);
+    const br_mode = br_dist.mode();
+    const beta_mode = beta_dist.mode();
+    try expectApproxEqAbs(br_mode, beta_mode, 1e-10);
+}
+
+test "BetaRectangular: mode is in [0, 1]" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const m = dist.mode();
+    try expect(m >= 0.0 and m <= 1.0);
+}
+
+// --- Entropy Tests ---
+// Note: Differential entropy for continuous distributions can be negative.
+// This is valid because pdf values can exceed 1. Do NOT treat negative entropy as a bug.
+
+test "BetaRectangular: entropy with theta=0.3, alpha=2.0, beta=5.0 (verified value)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const h = dist.entropy();
+    const expected = -0.206006897230703;
+    try expectApproxEqRel(h, expected, 1e-4);
+}
+
+test "BetaRectangular: entropy is finite" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const h = dist.entropy();
+    try expect(math.isFinite(h));
+}
+
+test "BetaRectangular: entropy can be negative (differential entropy, not Shannon)" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const h = dist.entropy();
+    // For this mixture with pdf exceeding 1, negative entropy is mathematically valid
+    try expect(h < 0.0);
+}
+
+// --- Quantile Tests ---
+
+test "BetaRectangular: quantile cdf roundtrip at p=0.5" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const q = try dist.quantile(0.5);
+    const c = dist.cdf(q);
+    try expectApproxEqAbs(0.5, c, 1e-8);
+}
+
+test "BetaRectangular: quantile cdf roundtrip multiple p values" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const p_vals = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (p_vals) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try expectApproxEqAbs(p, c, 1e-8);
+    }
+}
+
+test "BetaRectangular: quantile rejects p < 0 or p > 1" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "BetaRectangular: quantile(0) returns 0" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const q = try dist.quantile(0.0);
+    try expectEqual(@as(f64, 0.0), q);
+}
+
+test "BetaRectangular: quantile(1) returns 1" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const q = try dist.quantile(1.0);
+    try expectEqual(@as(f64, 1.0), q);
+}
+
+// --- Validate Tests ---
+
+test "BetaRectangular: validate() passes for valid parameters" {
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    try dist.validate();
+}
+
+test "BetaRectangular: validate() rejects theta < 0" {
+    var dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    dist.theta = -0.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaRectangular: validate() rejects alpha <= 0" {
+    var dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    dist.alpha = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BetaRectangular: validate() rejects non-finite beta" {
+    var dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    dist.beta = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- Sample Tests ---
+
+test "BetaRectangular: sample produces finite values in [0, 1]" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 0.0 and s <= 1.0);
+    }
+}
+
+test "BetaRectangular: sample with many iterations stays in bounds" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+
+    for (0..1000) |_| {
+        const s = dist.sample(rng);
+        try expect(s >= 0.0 and s <= 1.0);
+    }
+}
+
+// --- Format Tests ---
+// Expected format: "BetaRectangular(theta={d:.1}, alpha={d:.1}, beta={d:.1})"
+
+test "format - BetaRectangular" {
+    var buf: [256]u8 = undefined;
+    const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
+    const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
+    try expect(written.len > 0);
+    try expect(std.mem.indexOf(u8, written, "BetaRectangular") != null);
 }
