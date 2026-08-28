@@ -75347,6 +75347,775 @@ test "PearsonIII: validate fails when beta is corrupted zero" {
     try expectError(error.InvalidParameter, dist.validate());
 }
 
+pub fn LogPearsonIII(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        gamma: T,
+        alpha: T, // 4/gamma²; 0 if |gamma| < GAMMA_TOL
+        beta: T, // sigma*|gamma|/2; 0 if |gamma| < GAMMA_TOL
+        xi: T, // mu - 2*sigma/gamma; mu if |gamma| < GAMMA_TOL
+
+        const Self = @This();
+        const GAMMA_TOL: T = 1e-8;
+
+        /// Initialize Log-Pearson Type III distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, gamma: T) DistributionError!Self {
+            if (!math.isFinite(mu) or !math.isFinite(sigma) or !math.isFinite(gamma)) {
+                return error.InvalidParameter;
+            }
+            if (sigma <= 0.0) {
+                return error.InvalidParameter;
+            }
+
+            const abs_g = @abs(gamma);
+            var alpha: T = 0.0;
+            var beta: T = 0.0;
+            var xi: T = mu;
+
+            if (abs_g > GAMMA_TOL) {
+                alpha = 4.0 / (gamma * gamma);
+                beta = sigma * abs_g / 2.0;
+                xi = mu - 2.0 * sigma / gamma;
+            }
+
+            return Self{
+                .mu = mu,
+                .sigma = sigma,
+                .gamma = gamma,
+                .alpha = alpha,
+                .beta = beta,
+                .xi = xi,
+            };
+        }
+
+        /// Probability density function (PDF) at y
+        ///
+        /// For y <= 0: pdf = 0
+        /// For |γ| ≤ 1e-8: LogNormal N(μ, σ²)
+        /// For γ ≠ 0: f(y) = pearsonIII_pdf(ln y) / y
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, y: T) T {
+            if (y <= 0.0) {
+                return 0.0;
+            }
+
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal
+                const ln_y = @log(y);
+                const z = (ln_y - self.mu) / self.sigma;
+                const norm_factor = 1.0 / (self.sigma * @sqrt(2.0 * math.pi) * y);
+                return norm_factor * @exp(-0.5 * z * z);
+            }
+
+            // Gamma case: f(y) = pearsonIII_pdf(ln y) / y
+            const x = @log(y);
+            const t = if (self.gamma > 0.0) x - self.xi else self.xi - x;
+
+            if (t <= 0.0) {
+                return 0.0;
+            }
+
+            const log_pdf = (self.alpha - 1.0) * @log(t / self.beta) - t / self.beta - @log(self.beta) - logGamma(self.alpha);
+            return @exp(log_pdf) / y;
+        }
+
+        /// Log probability density function (log PDF) at y
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logPdf(self: Self, y: T) T {
+            if (y <= 0.0) {
+                return -math.inf(T);
+            }
+
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal
+                const ln_y = @log(y);
+                const z = (ln_y - self.mu) / self.sigma;
+                return -@log(self.sigma * @sqrt(2.0 * math.pi) * y) - 0.5 * z * z;
+            }
+
+            // Gamma case: logpdf(y) = pearsonIII_logpdf(ln y) - ln(y)
+            const x = @log(y);
+            const t = if (self.gamma > 0.0) x - self.xi else self.xi - x;
+
+            if (t <= 0.0) {
+                return -math.inf(T);
+            }
+
+            return (self.alpha - 1.0) * @log(t / self.beta) - t / self.beta - @log(self.beta) - logGamma(self.alpha) - @log(y);
+        }
+
+        /// Cumulative distribution function (CDF) at y
+        ///
+        /// For y <= 0: cdf = 0
+        /// For |γ| ≤ 1e-8: LogNormal CDF
+        /// For γ ≠ 0: F(y) = pearsonIII_cdf(ln y)
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, y: T) T {
+            if (y <= 0.0) {
+                return 0.0;
+            }
+
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal
+                const ln_y = @log(y);
+                const z = (ln_y - self.mu) / (self.sigma * @sqrt(2.0));
+                return 0.5 * (1.0 + erf(z));
+            }
+
+            // Gamma case: cdf(y) = pearsonIII_cdf(ln y)
+            const x = @log(y);
+
+            if (self.gamma > 0.0) {
+                if (x <= self.xi) return 0.0;
+                return regularizedGammaP(self.alpha, (x - self.xi) / self.beta);
+            } else {
+                if (x >= self.xi) return 1.0;
+                return 1.0 - regularizedGammaP(self.alpha, (self.xi - x) / self.beta);
+            }
+        }
+
+        /// Survival function (complementary CDF) S(y) = 1 − F(y)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, y: T) T {
+            return 1.0 - self.cdf(y);
+        }
+
+        /// Inverse regularized lower incomplete gamma P(α, x)
+        ///
+        /// Uses Wilson-Hilferty initial guess + Newton-Raphson refinement
+        ///
+        /// Time: O(30) iterations | Space: O(1)
+        fn inverseRegGammaP(alpha: T, p: T) T {
+            if (p <= 0.0) return 0.0;
+            if (p >= 1.0) return alpha * 10000.0;
+
+            if (p > 0.99999) {
+                const log_one_minus_p = @log(1.0 - p);
+                return -alpha * log_one_minus_p * 10.0;
+            }
+
+            // Wilson-Hilferty initial guess
+            const z = @sqrt(2.0) * erfInv(2.0 * p - 1.0);
+            const h = 1.0 / (9.0 * alpha);
+            var x = alpha * math.pow(T, @max(1.0 - h + z * @sqrt(h), 1e-12), 3.0);
+
+            if (x < 1e-10) x = 1e-10;
+
+            // Newton-Raphson refinement
+            const log_norm = -logGamma(alpha);
+            for (0..30) |_| {
+                const fx = regularizedGammaP(alpha, x) - p;
+                if (@abs(fx) < 1e-13) break;
+
+                const log_fpx = log_norm + (alpha - 1.0) * @log(x) - x;
+                const fpx = @exp(log_fpx);
+                if (fpx < 1e-150) break;
+
+                const step = fx / fpx;
+                x -= step;
+                if (x <= 0.0) x = 1e-10;
+                if (@abs(step) < 1e-10 * @abs(x)) break;
+            }
+
+            return x;
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Time: O(30) iterations | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal
+                if (p == 0.0) return 0.0;
+                if (p == 1.0) return math.inf(T);
+                const z = erfInv(2.0 * p - 1.0) * @sqrt(2.0);
+                const x = self.mu + self.sigma * z;
+                return @exp(x);
+            }
+
+            if (self.gamma > 0.0) {
+                if (p == 0.0) return @exp(self.xi);
+                if (p == 1.0) return math.inf(T);
+                const x = self.xi + self.beta * inverseRegGammaP(self.alpha, p);
+                return @exp(x);
+            } else {
+                if (p == 0.0) return 0.0;
+                if (p == 1.0) return @exp(self.xi);
+                const x = self.xi - self.beta * inverseRegGammaP(self.alpha, 1.0 - p);
+                return @exp(x);
+            }
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal mode = exp(mu - sigma²)
+                return @exp(self.mu - self.sigma * self.sigma);
+            }
+
+            if (self.alpha <= 1.0) {
+                // For alpha <= 1: mode is at the boundary
+                if (self.gamma > 0.0) {
+                    return @exp(self.xi);
+                } else {
+                    return 0.0;
+                }
+            }
+
+            // alpha > 1: interior mode
+            if (self.gamma > 0.0) {
+                // t = beta*(alpha-1)/(beta+1), return exp(xi + t)
+                const t = self.beta * (self.alpha - 1.0) / (self.beta + 1.0);
+                return @exp(self.xi + t);
+            } else {
+                // gamma < 0
+                if (self.beta >= 1.0) {
+                    return 0.0;
+                } else {
+                    // t = (alpha-1)*beta/(1-beta), return exp(xi - t)
+                    const t = (self.alpha - 1.0) * self.beta / (1.0 - self.beta);
+                    return @exp(self.xi - t);
+                }
+            }
+        }
+
+        /// Mean of the distribution
+        ///
+        /// For |γ| ≤ 1e-8: E[Y] = exp(μ + σ²/2)
+        /// For γ ≠ 0: E[Y] = exp(ξ) * (1 - s*β)^(-α) if 1 - s*β > 0, else NaN
+        /// where s = sign(γ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal mean = exp(mu + sigma²/2)
+                return @exp(self.mu + self.sigma * self.sigma / 2.0);
+            }
+
+            const s = if (self.gamma > 0.0) @as(T, 1.0) else @as(T, -1.0);
+            const bound_val = 1.0 - s * self.beta;
+
+            if (bound_val <= 0.0) {
+                return math.nan(T);
+            }
+
+            return @exp(self.xi) * math.pow(T, bound_val, -self.alpha);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// For |γ| ≤ 1e-8: Var[Y] = (exp(σ²) - 1) * exp(2μ + σ²)
+        /// For γ ≠ 0: Requires both 1 - s*β > 0 and 1 - 2*s*β > 0
+        /// Var[Y] = E[Y²] - E[Y]² where E[Y²] = exp(2ξ) * (1 - 2*s*β)^(-α)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal variance = (exp(σ²) - 1) * exp(2μ + σ²)
+                const exp_sig2 = @exp(self.sigma * self.sigma);
+                return (exp_sig2 - 1.0) * @exp(2.0 * self.mu + self.sigma * self.sigma);
+            }
+
+            const s = if (self.gamma > 0.0) @as(T, 1.0) else @as(T, -1.0);
+            const bound1 = 1.0 - s * self.beta;
+            const bound2 = 1.0 - 2.0 * s * self.beta;
+
+            if (bound1 <= 0.0 or bound2 <= 0.0) {
+                return math.nan(T);
+            }
+
+            const exp_xi = @exp(self.xi);
+            const ey = exp_xi * math.pow(T, bound1, -self.alpha);
+            const ey2 = @exp(2.0 * self.xi) * math.pow(T, bound2, -self.alpha);
+
+            return ey2 - ey * ey;
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// For all cases: H(Y) = H(X) + E[X], where X ~ PearsonIII(mu, sigma, gamma)
+        /// For |γ| ≤ 1e-8 (normal limit): H(Y) = 0.5(1 + log(2πσ²)) + μ
+        /// For γ ≠ 0: H(Y) = (α + log(β) + logΓ(α) + (1−α)ψ(α)) + μ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const abs_g = @abs(self.gamma);
+
+            if (abs_g <= GAMMA_TOL) {
+                // Normal limit: LogNormal entropy = pearsonIII_normal_entropy + mu
+                return 0.5 * (1.0 + @log(2.0 * math.pi * self.sigma * self.sigma)) + self.mu;
+            }
+
+            // Gamma entropy + mu
+            const gamma_entropy = self.alpha + @log(self.beta) + logGamma(self.alpha) + (1.0 - self.alpha) * digamma(T, self.alpha);
+            return gamma_entropy + self.mu;
+        }
+
+        /// Validate that parameters are in valid ranges
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!math.isFinite(self.mu) or !math.isFinite(self.sigma) or !math.isFinite(self.gamma)) {
+                return DistributionError.InvalidParameter;
+            }
+            if (self.sigma <= 0.0) {
+                return DistributionError.InvalidParameter;
+            }
+            if (@abs(self.gamma) > GAMMA_TOL) {
+                if (self.alpha <= 0.0 or !math.isFinite(self.alpha)) {
+                    return DistributionError.InvalidParameter;
+                }
+                if (self.beta <= 0.0 or !math.isFinite(self.beta)) {
+                    return DistributionError.InvalidParameter;
+                }
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Log-Pearson Type III Distribution (187th total, 157th continuous)
+// ============================================================================
+
+test "LogPearsonIII: init rejects sigma = 0" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(0.0, 0.0, 1.0));
+}
+
+test "LogPearsonIII: init rejects sigma < 0" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(0.0, -1.0, 1.0));
+}
+
+test "LogPearsonIII: init rejects sigma = inf" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(0.0, math.inf(f64), 1.0));
+}
+
+test "LogPearsonIII: init rejects sigma = nan" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(0.0, math.nan(f64), 1.0));
+}
+
+test "LogPearsonIII: init rejects mu = inf" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(math.inf(f64), 1.0, 1.0));
+}
+
+test "LogPearsonIII: init rejects mu = -inf" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(-math.inf(f64), 1.0, 1.0));
+}
+
+test "LogPearsonIII: init rejects mu = nan" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(math.nan(f64), 1.0, 1.0));
+}
+
+test "LogPearsonIII: init rejects gamma = inf" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(0.0, 1.0, math.inf(f64)));
+}
+
+test "LogPearsonIII: init rejects gamma = nan" {
+    try expectError(error.InvalidParameter, LogPearsonIII(f64).init(0.0, 1.0, math.nan(f64)));
+}
+
+test "LogPearsonIII: init accepts negative mu" {
+    const dist = try LogPearsonIII(f64).init(-5.0, 1.5, 0.8);
+    try expect(dist.mu == -5.0);
+}
+
+test "LogPearsonIII: init accepts gamma = 0 (normal limit)" {
+    const dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    try expect(dist.gamma == 0.0);
+}
+
+test "LogPearsonIII: init accepts gamma > 0" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    try expect(dist.gamma > 0.0);
+}
+
+test "LogPearsonIII: init accepts gamma < 0" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    try expect(dist.gamma < 0.0);
+}
+
+test "LogPearsonIII: init computes internal params correctly (gamma > 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    // alpha = 4/gamma² = 4; beta = sigma*|gamma|/2 = 0.5; xi = mu - 2*sigma/gamma = -2
+    try expectApproxEqAbs(dist.alpha, 4.0, 1e-10);
+    try expectApproxEqAbs(dist.beta, 0.5, 1e-10);
+    try expectApproxEqAbs(dist.xi, -2.0, 1e-10);
+}
+
+test "LogPearsonIII: init computes internal params correctly (gamma < 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    // alpha = 4/1 = 4; beta = 1*1/2 = 0.5; xi = 0 - 2*1/(-1) = 2
+    try expectApproxEqAbs(dist.alpha, 4.0, 1e-10);
+    try expectApproxEqAbs(dist.beta, 0.5, 1e-10);
+    try expectApproxEqAbs(dist.xi, 2.0, 1e-10);
+}
+
+test "LogPearsonIII: validate passes for valid distribution" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    try dist.validate();
+}
+
+test "LogPearsonIII: validate fails when alpha is corrupted negative" {
+    var dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    dist.alpha = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "LogPearsonIII: validate fails when beta is corrupted zero" {
+    var dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    dist.beta = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// ============================================================================
+// PDF EXACT VALUES (Case A: gamma=1, mu=0, sigma=1)
+// ============================================================================
+
+test "LogPearsonIII: PDF exact value Case A at y=1" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 0.3907336296263291795993177871624798338541;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-8);
+}
+
+test "LogPearsonIII: PDF exact value Case A at y=e" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 0.06565550151992516697622579807746834910611;
+    try expectApproxEqAbs(dist.pdf(math.e), expected, 1e-8);
+}
+
+test "LogPearsonIII: PDF equals zero Case A at y=0.1 (outside support)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    // y < exp(-2) ≈ 0.1353..., so outside support
+    try expectApproxEqAbs(dist.pdf(0.1), 0.0, 1e-15);
+}
+
+test "LogPearsonIII: PDF equals zero Case A at negative y" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    try expectApproxEqAbs(dist.pdf(-1.0), 0.0, 1e-15);
+}
+
+// ============================================================================
+// PDF EXACT VALUES (Case B: gamma=-1, mu=0, sigma=1, upper-bounded support)
+// ============================================================================
+
+test "LogPearsonIII: PDF exact value Case B at y=1" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const expected = 0.3907336296263291795993177871624798338541;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-8);
+}
+
+test "LogPearsonIII: PDF equals zero Case B at y=10 (outside support)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    // y > exp(2) ≈ 7.389..., so outside support for gamma<0 branch
+    try expectApproxEqAbs(dist.pdf(10.0), 0.0, 1e-15);
+}
+
+test "LogPearsonIII: PDF support boundary Case B (gamma < 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    // xi = 2 for gamma=-1, mu=0, sigma=1, so support is (0, exp(2))
+    const support_upper = math.exp(dist.xi);
+    const just_below = support_upper - 1e-6;
+    const just_above = support_upper + 1e-6;
+    try expect(dist.pdf(just_below) > 0.0);
+    try expectApproxEqAbs(dist.pdf(just_above), 0.0, 1e-15);
+}
+
+// ============================================================================
+// CDF EXACT VALUES (Case A and B)
+// ============================================================================
+
+test "LogPearsonIII: CDF exact value Case A at y=1" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 0.5665298796332910663820068298666239343181;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-8);
+}
+
+test "LogPearsonIII: CDF exact value Case A at y=e" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 0.8487961172233521361942447867201832586181;
+    try expectApproxEqAbs(dist.cdf(math.e), expected, 1e-8);
+}
+
+test "LogPearsonIII: CDF exact value Case B at y=1" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const expected = 0.4334701203667089336179931701333760656819;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-8);
+}
+
+// ============================================================================
+// NORMAL LIMIT (gamma = 0, should match LogNormal)
+// ============================================================================
+
+test "LogPearsonIII: Case C (gamma=0) matches LogNormal pdf at e" {
+    const lp3_dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    const lnorm_dist = try LogNormal(f64).init(1.0, 0.5);
+    const expected = 0.2935253263474797997886288580631092360156;
+    try expectApproxEqAbs(lp3_dist.pdf(math.e), expected, 1e-8);
+    try expectApproxEqAbs(lp3_dist.pdf(math.e), lnorm_dist.pdf(math.e), 1e-14);
+}
+
+test "LogPearsonIII: Case C (gamma=0) CDF at e equals 0.5" {
+    const dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    // ln(e) = 1 = mu, so CDF should be 0.5 for symmetric distribution
+    try expectApproxEqAbs(dist.cdf(math.e), 0.5, 1e-8);
+}
+
+test "LogPearsonIII: Case C (gamma=0) mean matches LogNormal" {
+    const lp3_dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    const lnorm_dist = try LogNormal(f64).init(1.0, 0.5);
+    const expected = 3.080216848918031245004667878777039577059;
+    try expectApproxEqAbs(lp3_dist.mean(), expected, 1e-8);
+    try expectApproxEqAbs(lp3_dist.mean(), lnorm_dist.mean(), 1e-14);
+}
+
+test "LogPearsonIII: Case C (gamma=0) variance matches LogNormal" {
+    const lp3_dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    const lnorm_dist = try LogNormal(f64).init(1.0, 0.5);
+    const expected = 2.694758124344947717519806906656227759413;
+    try expectApproxEqAbs(lp3_dist.variance(), expected, 1e-8);
+    try expectApproxEqAbs(lp3_dist.variance(), lnorm_dist.variance(), 1e-14);
+}
+
+test "LogPearsonIII: Case C (gamma=0) mode matches LogNormal" {
+    const lp3_dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    const lnorm_dist = try LogNormal(f64).init(1.0, 0.5);
+    const expected = 2.117000016612674668545369819837095610135;
+    try expectApproxEqAbs(lp3_dist.mode(), expected, 1e-8);
+    try expectApproxEqAbs(lp3_dist.mode(), lnorm_dist.mode(), 1e-14);
+}
+
+test "LogPearsonIII: Case C (gamma=0) entropy matches expected value" {
+    const lp3_dist = try LogPearsonIII(f64).init(1.0, 0.5, 0.0);
+    const expected = 1.725791352644727432363097614947441071786;
+    try expectApproxEqAbs(lp3_dist.entropy(), expected, 1e-8);
+}
+
+// ============================================================================
+// MEAN AND VARIANCE EXACT VALUES
+// ============================================================================
+
+test "LogPearsonIII: mean exact value Case A (gamma=1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 2.165364531785803070303991919559750454522;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mean exact value Case B (gamma=-1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const expected = 1.459566636825807452292430115669137345813;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mean exact value Case E (gamma=0.5, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 0.5);
+    const expected = 1.827434661805229884963516166873742025986;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-8);
+}
+
+test "LogPearsonIII: variance exact value Case A (gamma=1, beta=0.5 at boundary, should be NaN)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    // beta=0.5 exactly satisfies 1-2*beta=0, so variance is undefined
+    const var_result = dist.variance();
+    try expect(math.isNan(var_result));
+}
+
+test "LogPearsonIII: variance exact value Case B (gamma=-1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const expected = 1.28204960973651643544754795253250328897;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-8);
+}
+
+test "LogPearsonIII: variance exact value Case E (gamma=0.5, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 0.5);
+    const expected = 18.64536133905182094363941825197827790395;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mean returns NaN Case D (gamma=1.5, mu=0, sigma=3, beta=1.5 violates bound)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 3.0, 1.5);
+    // beta = sigma*|gamma|/2 = 3*1.5/2 = 2.25 >= 1, so mean is undefined
+    const mean_result = dist.mean();
+    try expect(math.isNan(mean_result));
+}
+
+// ============================================================================
+// MODE EXACT VALUES AND BOUNDARY CASES
+// ============================================================================
+
+test "LogPearsonIII: mode exact value Case A (gamma=1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 0.3678794411714423215955237701614608674458; // exp(-1) = 1/e
+    try expectApproxEqAbs(dist.mode(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mode exact value Case B (gamma=-1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const expected = 0.3678794411714423215955237701614608674458; // exp(-1) = 1/e
+    try expectApproxEqAbs(dist.mode(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mode exact value Case E (gamma=0.5, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 0.5);
+    const expected = 0.3678794411714423215955237701614608674458; // exp(-1) = 1/e
+    try expectApproxEqAbs(dist.mode(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mode boundary case alpha <= 1 (gamma=3, mu=0, sigma=1, gamma > 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 3.0);
+    // alpha = 4/9 ≈ 0.444 <= 1 for gamma > 0 branch
+    // mode should return exp(xi) = exp(-2/3)
+    const expected = 0.513417119032592; // exp(-2/3)
+    try expectApproxEqAbs(dist.mode(), expected, 1e-8);
+}
+
+test "LogPearsonIII: mode boundary case alpha <= 1 (gamma=-3, mu=0, sigma=1, gamma < 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -3.0);
+    // alpha = 4/9 ≈ 0.444 <= 1 for gamma < 0 branch
+    // mode should return 0.0
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-15);
+}
+
+// ============================================================================
+// ENTROPY EXACT VALUES
+// ============================================================================
+
+test "LogPearsonIII: entropy exact value Case A (gamma=1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const expected = 1.330259283372708273214781507169732997774;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-8);
+}
+
+test "LogPearsonIII: entropy exact value Case B (gamma=-1, mu=0, sigma=1)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const expected = 1.330259283372708273214781507169732997774;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-8);
+}
+
+test "LogPearsonIII: entropy positive for all valid distributions" {
+    const params = [_][3]f64{
+        [_]f64{ 0.0, 1.0, 0.0 },
+        [_]f64{ 5.0, 2.0, 1.0 },
+        [_]f64{ 5.0, 2.0, -1.0 },
+        [_]f64{ -10.0, 5.0, 3.0 },
+        [_]f64{ 100.0, 50.0, -0.5 },
+    };
+    for (params) |p| {
+        const dist = try LogPearsonIII(f64).init(p[0], p[1], p[2]);
+        const h = dist.entropy();
+        try expect(math.isFinite(h));
+    }
+}
+
+// ============================================================================
+// QUANTILE TESTS
+// ============================================================================
+
+test "LogPearsonIII: quantile at p=0 returns boundary (gamma > 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.0);
+    // p=0 should return exp(xi) = exp(-2)
+    try expectApproxEqAbs(q, math.exp(-2.0), 1e-8);
+}
+
+test "LogPearsonIII: quantile at p=0 returns 0 (gamma = 0, normal limit)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(q, 0.0, 1e-15);
+}
+
+test "LogPearsonIII: quantile at p=1 returns inf (gamma >= 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+}
+
+test "LogPearsonIII: quantile at p=0.5 is interior (gamma > 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q));
+    try expect(q > math.exp(-2.0)); // above lower bound xi
+}
+
+test "LogPearsonIII: quantile at p=0 returns 0 (gamma < 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqAbs(q, 0.0, 1e-15);
+}
+
+test "LogPearsonIII: quantile at p=1 returns exp(xi) (gamma < 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const q = try dist.quantile(1.0);
+    // xi = 2 for this case, so quantile(1) = exp(2)
+    try expectApproxEqAbs(q, math.exp(2.0), 1e-8);
+}
+
+// ============================================================================
+// SUPPORT AND BOUNDARY PROPERTIES
+// ============================================================================
+
+test "LogPearsonIII: support lower bound (gamma > 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, 1.0);
+    const lower_bound = math.exp(dist.xi);
+    // At values below lower bound, pdf should be 0
+    try expectApproxEqAbs(dist.pdf(lower_bound - 1e-6), 0.0, 1e-15);
+    // Just above should have positive pdf
+    try expect(dist.pdf(lower_bound + 1e-3) > 0.0);
+}
+
+test "LogPearsonIII: support upper bound (gamma < 0)" {
+    const dist = try LogPearsonIII(f64).init(0.0, 1.0, -1.0);
+    const upper_bound = math.exp(dist.xi);
+    // At values above upper bound, pdf should be 0
+    try expectApproxEqAbs(dist.pdf(upper_bound + 1e-6), 0.0, 1e-15);
+    // Just below should have positive pdf
+    try expect(dist.pdf(upper_bound - 1e-3) > 0.0);
+}
+
+// ============================================================================
+// F32 TYPE SUPPORT
+// ============================================================================
+
+test "LogPearsonIII: f32 type comprehensive support" {
+    const dist = try LogPearsonIII(f32).init(0.0, 1.0, 1.0);
+    try expect(dist.pdf(1.0) > 0.0);
+    try expect(dist.cdf(1.0) > 0.0 and dist.cdf(1.0) < 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(math.isFinite(q) and q > math.exp(-2.0));
+    const m = dist.mode();
+    try expect(math.isFinite(m));
+    const mn = dist.mean();
+    try expect(math.isFinite(mn));
+    const v = dist.variance();
+    try expect(math.isNan(v)); // variance is NaN for f32 with beta=0.5 too
+    const e = dist.entropy();
+    try expect(e > 0.0);
+    try dist.validate();
+}
+
 // ============================================================================
 // Generalized Inverse Gaussian Distribution (129th total, 105th continuous)
 // ============================================================================
