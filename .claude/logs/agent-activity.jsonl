@@ -731,3 +731,8 @@
 {"timestamp": "2026-08-27T11:45:06Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement format() for 18 distributions to pass batch 4 tests (format() coverage backlog)", "project": "zuda"}
 {"timestamp":"2026-08-27T15:36:14Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for BetaRectangular distribution (186th)","project":"zuda"}
 {"timestamp":"2026-08-27T15:39:03Z","action":"subagent","agent_type":"zig-developer","task":"Implement BetaRectangular distribution to pass 55 failing tests","project":"zuda"}
+{"timestamp":"2026-08-27T23:45:21Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for LogPearsonIII distribution (187th)","project":"zuda"}
+{"timestamp":"2026-08-27T23:48:11Z","action":"subagent","agent_type":"zig-developer","task":"Implement LogPearsonIII distribution to pass 58 failing tests","project":"zuda"}
+{"timestamp":"2026-08-28T03:57:40Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 incorrect test assertions in LogPearsonIII (mode literal typo, invalid entropy positivity assumption)","project":"zuda"}
+{"timestamp":"2026-08-28T03:58:39Z","action":"team_create","team_name":"format-batch-5","members":["test-writer","zig-developer"],"task":"format() coverage batch 5 (157->172/187)","project":"zuda"}
+{"timestamp":"2026-08-28T15:41:13Z","action":"team_delete","team_name":"format-batch-5","project":"zuda"}
