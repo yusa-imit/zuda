@@ -165,7 +165,7 @@ pub fn DecisionTree(comptime T: type) type {
             node.feature_idx = split.feature_idx;
             node.threshold = split.threshold;
             node.impurity = split.impurity;
-            node.value = self.calculateNodeValue(y, indices);
+            node.value = try self.calculateNodeValue(y, indices);
 
             // Recursively build subtrees
             node.left = try self.buildTree(X, y, split.left_indices, depth + 1, criterion);
@@ -199,7 +199,7 @@ pub fn DecisionTree(comptime T: type) type {
             var best_left = try std.ArrayList(usize).initCapacity(self.allocator, 0);
             var best_right = try std.ArrayList(usize).initCapacity(self.allocator, 0);
 
-            const parent_impurity = self.calculateImpurity(y, indices, criterion);
+            const parent_impurity = try self.calculateImpurity(y, indices, criterion);
 
             // Try each feature
             for (0..self.n_features) |feature_idx| {
@@ -237,8 +237,8 @@ pub fn DecisionTree(comptime T: type) type {
                         continue;
                     }
 
-                    const left_impurity = self.calculateImpurity(y, left.items, criterion);
-                    const right_impurity = self.calculateImpurity(y, right.items, criterion);
+                    const left_impurity = try self.calculateImpurity(y, left.items, criterion);
+                    const right_impurity = try self.calculateImpurity(y, right.items, criterion);
 
                     const n_total: T = @floatFromInt(indices.len);
                     const n_left: T = @floatFromInt(left.items.len);
@@ -280,7 +280,7 @@ pub fn DecisionTree(comptime T: type) type {
             y: []const T,
             indices: []const usize,
             criterion: SplitCriterion,
-        ) T {
+        ) !T {
             return switch (criterion) {
                 .gini => self.giniImpurity(y, indices),
                 .entropy => self.entropy(y, indices),
@@ -288,13 +288,13 @@ pub fn DecisionTree(comptime T: type) type {
             };
         }
 
-        fn giniImpurity(self: *Self, y: []const T, indices: []const usize) T {
+        fn giniImpurity(self: *Self, y: []const T, indices: []const usize) !T {
             var counts = std.AutoHashMap(i64, usize).init(self.allocator);
             defer counts.deinit();
 
             for (indices) |idx| {
                 const label: i64 = @intFromFloat(y[idx]);
-                const entry = counts.getOrPut(label) catch unreachable;
+                const entry = try counts.getOrPut(label);
                 if (entry.found_existing) {
                     entry.value_ptr.* += 1;
                 } else {
@@ -314,13 +314,13 @@ pub fn DecisionTree(comptime T: type) type {
             return impurity;
         }
 
-        fn entropy(self: *Self, y: []const T, indices: []const usize) T {
+        fn entropy(self: *Self, y: []const T, indices: []const usize) !T {
             var counts = std.AutoHashMap(i64, usize).init(self.allocator);
             defer counts.deinit();
 
             for (indices) |idx| {
                 const label: i64 = @intFromFloat(y[idx]);
-                const entry = counts.getOrPut(label) catch unreachable;
+                const entry = try counts.getOrPut(label);
                 if (entry.found_existing) {
                     entry.value_ptr.* += 1;
                 } else {
@@ -377,11 +377,11 @@ pub fn DecisionTree(comptime T: type) type {
             indices: []const usize,
             criterion: SplitCriterion,
         ) !void {
-            node.value = self.calculateNodeValue(y, indices);
-            node.impurity = self.calculateImpurity(y, indices, criterion);
+            node.value = try self.calculateNodeValue(y, indices);
+            node.impurity = try self.calculateImpurity(y, indices, criterion);
         }
 
-        fn calculateNodeValue(self: *Self, y: []const T, indices: []const usize) T {
+        fn calculateNodeValue(self: *Self, y: []const T, indices: []const usize) !T {
             return switch (self.tree_type) {
                 .classification => blk: {
                     // Majority class
@@ -390,7 +390,7 @@ pub fn DecisionTree(comptime T: type) type {
 
                     for (indices) |idx| {
                         const label: i64 = @intFromFloat(y[idx]);
-                        const entry = counts.getOrPut(label) catch unreachable;
+                        const entry = try counts.getOrPut(label);
                         if (entry.found_existing) {
                             entry.value_ptr.* += 1;
                         } else {

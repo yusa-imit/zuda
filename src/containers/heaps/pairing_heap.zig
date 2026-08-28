@@ -213,12 +213,16 @@ pub fn PairingHeap(comptime T: type, comptime Context: type, comptime lessThan: 
         /// Two-pass pairing algorithm for combining siblings.
         /// First pass: pair adjacent siblings left-to-right.
         /// Second pass: meld pairs right-to-left.
+        ///
+        /// Reuses `next_sibling` as a temporary singly-linked list of melded
+        /// pairs instead of an ArrayList — this operation must not allocate,
+        /// since it runs on every extractMin().
         fn combineSiblings(self: *Self, first_child: ?*Node) ?*Node {
             if (first_child == null) return null;
 
-            // First pass: pair adjacent siblings
-            var pairs: std.ArrayList(?*Node) = .{};
-            defer pairs.deinit(self.allocator);
+            // First pass: pair adjacent siblings, chaining results via next_sibling
+            var pairs_head: ?*Node = null;
+            var pairs_tail: ?*Node = null;
 
             var current = first_child;
             while (current) |c| {
@@ -227,28 +231,39 @@ pub fn PairingHeap(comptime T: type, comptime Context: type, comptime lessThan: 
                 c.prev_sibling = null;
                 c.next_sibling = null;
 
+                var melded: *Node = undefined;
                 if (next) |n| {
                     const next_next = n.next_sibling;
                     n.parent = null;
                     n.prev_sibling = null;
                     n.next_sibling = null;
 
-                    pairs.append(self.allocator, self.meld(c, n)) catch unreachable;
+                    melded = self.meld(c, n).?;
                     current = next_next;
                 } else {
-                    pairs.append(self.allocator, c) catch unreachable;
+                    melded = c;
                     current = null;
                 }
+
+                melded.next_sibling = null;
+                if (pairs_tail) |t| {
+                    t.next_sibling = melded;
+                } else {
+                    pairs_head = melded;
+                }
+                pairs_tail = melded;
             }
 
             // Second pass: meld pairs right-to-left
-            var result = pairs.pop() orelse null;
-            while (pairs.items.len > 0) {
-                const pair = pairs.pop() orelse continue;
-                result = self.meld(result, pair);
-            }
+            return self.meldPairsRightToLeft(pairs_head);
+        }
 
-            return result;
+        fn meldPairsRightToLeft(self: *Self, node: ?*Node) ?*Node {
+            const n = node orelse return null;
+            const rest = n.next_sibling;
+            n.next_sibling = null;
+            if (rest == null) return n;
+            return self.meld(n, self.meldPairsRightToLeft(rest));
         }
 
         // -- Debug --

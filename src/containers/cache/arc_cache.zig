@@ -166,13 +166,13 @@ pub fn ARCCache(
         /// Time: O(1) | Space: O(1)
         pub fn get(self: *Self, key: K) ?V {
             const entry = self.map.get(key) orelse return null;
-            const list_type = self.list_map.get(entry) orelse return null;
+            const list_type_ptr = self.list_map.getPtr(entry) orelse return null;
 
             // Only T1/T2 have values; B1/B2 are ghosts
             if (entry.value == null) return null;
 
             // Hit in T1 → move to T2 (promote to frequent)
-            if (list_type == .T1) {
+            if (list_type_ptr.* == .T1) {
                 self.t1.remove(entry);
                 entry.prev = null;
                 entry.next = self.t2.head;
@@ -183,10 +183,12 @@ pub fn ARCCache(
                 }
                 self.t2.head = entry;
                 self.t2.size += 1;
-                self.list_map.put(entry, .T2) catch unreachable;
+                // In-place update — entry is already a key in list_map, so this
+                // cannot fail with OOM (unlike put(), which may need to grow).
+                list_type_ptr.* = .T2;
             }
             // Hit in T2 → move to head (already frequent)
-            else if (list_type == .T2) {
+            else if (list_type_ptr.* == .T2) {
                 self.t2.moveToHead(entry);
             }
 
