@@ -1,3 +1,33 @@
+**Session 851 Update (2026-08-29) — FEATURE MODE [COMPLETED]:**
+
+✅ **Recovered interrupted PoissonLognormal (188th)** — commit ed61807
+- **Mode**: FEATURE MODE (counter: 851)
+- **CI/Issues**: CI green on main at session start, 0 open issues.
+- Found `src/stats/distributions.zig` uncommitted with 41 pre-written failing tests for
+  `PoissonLognormal` (agent log showed both test-writer and zig-developer had run) but **no
+  struct implementation existed anywhere in the file** — the Green step of the prior TDD cycle
+  never landed — plus a stray trailing `}` left by the interrupted edit (syntax error, file
+  would not compile). New variant of the "recovered uncommitted work" pattern: prior recoveries
+  always found a complete implementation to verify; this one required implementing from scratch
+  against the existing tests.
+- Implemented `PoissonLognormal(μ,σ)` (X|Λ~Poisson(Λ), ln(Λ)~Normal(μ,σ²)) — no closed-form PMF,
+  computed via 2000-panel composite Simpson integration over the latent normal Z=ln(Λ) in
+  log-space (avoids overflow at tails). First use of Simpson integration for a PMF itself in this
+  file — the ~25 prior uses were all entropy integrals on continuous distributions. mean()/
+  variance() have closed forms via the law of total expectation/variance, verified against all 3
+  test cases' ground-truth values.
+- Updated `src/root.zig`'s doc-comment distribution list. `zig build test` exits 0, all 41 new
+  tests pass. Distribution count 187 → **188** (verified via
+  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
+- Full detail in external auto-memory `session_851_poisson_lognormal.md` and `patterns.md`
+  (new "Recovering Interrupted TDD Cycles" and "Simpson Integration for a Discrete Mixture PMF"
+  sections).
+- **Next priority (feature)**: no standing candidate for a new distribution — grep root.zig
+  before picking one. Neyman Type B/C and skew-generalized-t variants beyond shipped SkewT/
+  SkewSlash/SkewGeneralizedNormal remain open candidates per auto-memory MEMORY.md. The
+  broader `catch unreachable` sweep (~68 remaining occurrences beyond the 3 fixed in session 850)
+  remains the standing stabilization candidate.
+
 **Session 842 Update (2026-08-27) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Fixed 3 real bugs in uncommitted MarshallOlkinLomax (184th)** — commit 85846bc
