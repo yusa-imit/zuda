@@ -736,3 +736,7 @@
 {"timestamp":"2026-08-28T03:57:40Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 incorrect test assertions in LogPearsonIII (mode literal typo, invalid entropy positivity assumption)","project":"zuda"}
 {"timestamp":"2026-08-28T03:58:39Z","action":"team_create","team_name":"format-batch-5","members":["test-writer","zig-developer"],"task":"format() coverage batch 5 (157->172/187)","project":"zuda"}
 {"timestamp":"2026-08-28T15:41:13Z","action":"team_delete","team_name":"format-batch-5","project":"zuda"}
+{"timestamp":"2026-08-28T23:45:35Z","action":"subagent","agent_type":"test-writer","task":"Add regression tests (FailingAllocator) for catch-unreachable fixes in decision_tree.zig, arc_cache.zig, pairing_heap.zig","project":"zuda"}
+{"timestamp": "2026-08-29T11:36:13.467266Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for PoissonLognormal distribution (188th)", "project": "zuda"}
+{"timestamp": "2026-08-29T11:38:15.553149Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement PoissonLognormal distribution to pass 41 failing tests", "project": "zuda"}
+{"timestamp":"2026-08-29T15:37:13Z","action":"subagent","agent_type":"zig-developer","task":"Recover interrupted PoissonLognormal (188th) - implement struct to satisfy 41 pre-written failing tests, fix stray brace syntax error","project":"zuda"}

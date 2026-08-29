@@ -114113,3 +114113,410 @@ test "format - BetaRectangular" {
     try expect(written.len > 0);
     try expect(std.mem.indexOf(u8, written, "BetaRectangular") != null);
 }
+
+// ============================================================================
+// PoissonLognormal Distribution (188th distribution)
+// Discrete mixture: X | Λ ~ Poisson(Λ), ln(Λ) ~ Normal(μ, σ²)
+// No closed-form PMF; computed via numeric integration (Simpson's rule, 2000+ panels)
+// Mean = exp(μ + σ²/2), Variance via law of total variance
+// ============================================================================
+
+/// PoissonLognormal(μ, σ) — a Poisson distribution whose rate Λ is itself
+/// lognormally distributed: X | Λ=λ ~ Poisson(λ), ln(Λ) ~ Normal(μ, σ²).
+///
+/// Unlike NegativeBinomial (Poisson-Gamma) or PoissonLindley (Poisson-Lindley),
+/// the lognormal mixing density has no conjugate relationship with the Poisson
+/// kernel, so the PMF has no closed form and is computed via composite
+/// Simpson's rule over the latent normal variable Z = ln(Λ):
+///
+/// P(X=k) = ∫_{-∞}^{∞} Poisson(k; e^z) · Normal(z; μ, σ) dz
+///
+/// Mean and variance DO have closed forms via the law of total expectation/variance:
+/// E[X] = E[Λ] = exp(μ + σ²/2)
+/// Var(X) = E[Λ] + Var(Λ) = exp(μ + σ²/2) + (exp(σ²) − 1)·exp(2μ + σ²)
+pub fn PoissonLognormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+
+        const Self = @This();
+        const INTEGRATION_PANELS: usize = 2000;
+        const INTEGRATION_SIGMA_RANGE: T = 12.0;
+
+        /// Create a PoissonLognormal(μ, σ) distribution.
+        ///
+        /// Parameters: mu ∈ ℝ (log-scale location), sigma > 0 (log-scale spread)
+        ///
+        /// Errors: either parameter non-finite, or sigma ≤ 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T) DistributionError!Self {
+            if (!math.isFinite(mu)) return error.InvalidParameter;
+            if (!math.isFinite(sigma)) return error.InvalidParameter;
+            if (!(sigma > 0.0)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma };
+        }
+
+        /// Log-density of the integrand at latent z: log[Poisson(k; e^z) · Normal(z; μ, σ)].
+        fn logIntegrand(self: Self, k: u64, z: T) T {
+            const kf: T = @floatFromInt(k);
+            const lambda = @exp(z);
+            const log_poisson = kf * z - lambda - logFactorial(T, k);
+            const dz = (z - self.mu) / self.sigma;
+            const log_normal = -0.5 * dz * dz - @log(self.sigma) - 0.5 * @log(2.0 * math.pi);
+            return log_poisson + log_normal;
+        }
+
+        /// PMF at k via composite Simpson's rule (2000 panels) over the latent
+        /// normal Z = ln(Λ), truncated to [μ − 12σ, μ + 12σ].
+        ///
+        /// Time: O(INTEGRATION_PANELS) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            const lower = self.mu - INTEGRATION_SIGMA_RANGE * self.sigma;
+            const upper = self.mu + INTEGRATION_SIGMA_RANGE * self.sigma;
+            const n = INTEGRATION_PANELS;
+            const h = (upper - lower) / @as(T, @floatFromInt(n));
+            var sum: T = @exp(self.logIntegrand(k, lower)) + @exp(self.logIntegrand(k, upper));
+            var i: usize = 1;
+            while (i < n) : (i += 1) {
+                const z = lower + @as(T, @floatFromInt(i)) * h;
+                const weight: T = if (i % 2 == 0) 2.0 else 4.0;
+                sum += weight * @exp(self.logIntegrand(k, z));
+            }
+            return @min((h / 3.0) * sum, 1.0);
+        }
+
+        /// Log-PMF at k.
+        ///
+        /// Time: O(INTEGRATION_PANELS) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            return @log(self.pmf(k));
+        }
+
+        /// CDF: P(X ≤ k) via partial sum of pmf.
+        ///
+        /// Time: O(k · INTEGRATION_PANELS) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            var sum: T = 0.0;
+            var j: u64 = 0;
+            while (j <= k) : (j += 1) {
+                sum += self.pmf(j);
+                if (sum >= 1.0 - 1e-15) break;
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Quantile: smallest k such that CDF(k) ≥ p.
+        ///
+        /// Errors: p outside [0,1] or NaN.
+        ///
+        /// Time: O(k* · INTEGRATION_PANELS) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0;
+            const MAX_K: u64 = 100000;
+            var cumsum: T = 0.0;
+            var k: u64 = 0;
+            while (k <= MAX_K) : (k += 1) {
+                const pk = self.pmf(k);
+                cumsum += pk;
+                if (cumsum >= p) return k;
+                if (k > 0 and pk == 0.0) return k;
+            }
+            return MAX_K;
+        }
+
+        /// Mean: E[Λ] = exp(μ + σ²/2), by the law of total expectation.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @exp(self.mu + 0.5 * self.sigma * self.sigma);
+        }
+
+        /// Variance: E[Λ] + Var(Λ), by the law of total variance.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const s2 = self.sigma * self.sigma;
+            const m = @exp(self.mu + 0.5 * s2);
+            return m + (@exp(s2) - 1.0) * @exp(2.0 * self.mu + s2);
+        }
+
+        /// Mode: numeric scan via PMF (no closed form).
+        ///
+        /// Time: O(search_limit · INTEGRATION_PANELS) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var best_k: u64 = 0;
+            var best_pmf: T = self.pmf(0);
+            var k: u64 = 1;
+            const search_limit: u64 = @intFromFloat(@ceil(self.mean() + 20.0 * @sqrt(self.variance()) + 50.0));
+            while (k <= search_limit) : (k += 1) {
+                const p = self.pmf(k);
+                if (p > best_pmf) {
+                    best_pmf = p;
+                    best_k = k;
+                }
+            }
+            return best_k;
+        }
+
+        /// Assert that parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.mu)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.sigma) or !(self.sigma > 0.0)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// PoissonLognormal Tests — (mu, sigma) Poisson-LogNormal mixture
+// pmf via Simpson integration; mean/variance closed-form via law of total expectation
+// ============================================================================
+
+test "PoissonLognormal: init with valid params (0.0, 1.0) succeeds" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqAbs(dist.mu, 0.0, 1e-15);
+    try expectApproxEqAbs(dist.sigma, 1.0, 1e-15);
+}
+
+test "PoissonLognormal: init with mu=NaN returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(math.nan(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonLognormal: init with mu=inf returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(math.inf(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonLognormal: init with mu=-inf returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(-math.inf(f64), 1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonLognormal: init with sigma=NaN returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(0.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonLognormal: init with sigma=inf returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(0.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonLognormal: init with sigma=0 returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(0.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonLognormal: init with sigma=-1 returns InvalidParameter" {
+    const result = PoissonLognormal(f64).init(0.0, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+// Case 1: mu=0.0, sigma=1.0 — ground truth via mpmath (40 dps), verified 2000-panel Simpson integration
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) pmf(0) matches ground truth 0.3817564647554833" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 0.3817564647554833), dist.pmf(0), 1e-7);
+}
+
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) pmf(1) matches ground truth 0.2588561227807770" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 0.2588561227807770), dist.pmf(1), 1e-7);
+}
+
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) pmf(2) matches ground truth 0.1448677159816685" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 0.1448677159816685), dist.pmf(2), 1e-7);
+}
+
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) pmf(3) matches ground truth 0.08073888335970446" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 0.08073888335970446), dist.pmf(3), 1e-7);
+}
+
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) pmf(4) matches ground truth 0.04668189679564741" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 0.04668189679564741), dist.pmf(4), 1e-7);
+}
+
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) mean matches ground truth 1.648721270700128" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 1.648721270700128), dist.mean(), 1e-9);
+}
+
+test "PoissonLognormal: Case 1 (mu=0, sigma=1) variance matches ground truth 6.319495541171733" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectApproxEqRel(@as(f64, 6.319495541171733), dist.variance(), 1e-9);
+}
+
+// Case 2: mu=1.0, sigma=0.5 — moderate mu, tight sigma
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) pmf(0) matches ground truth 0.09799904611137063" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 0.09799904611137063), dist.pmf(0), 1e-7);
+}
+
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) pmf(1) matches ground truth 0.1821522267422851" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 0.1821522267422851), dist.pmf(1), 1e-7);
+}
+
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) pmf(2) matches ground truth 0.1992891898532597" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 0.1992891898532597), dist.pmf(2), 1e-7);
+}
+
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) pmf(3) matches ground truth 0.1696127810978475" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 0.1696127810978475), dist.pmf(3), 1e-7);
+}
+
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) pmf(4) matches ground truth 0.1252395728251734" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 0.1252395728251734), dist.pmf(4), 1e-7);
+}
+
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) mean matches ground truth 3.080216848918031" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 3.080216848918031), dist.mean(), 1e-9);
+}
+
+test "PoissonLognormal: Case 2 (mu=1, sigma=0.5) variance matches ground truth 5.774974973262979" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(@as(f64, 5.774974973262979), dist.variance(), 1e-9);
+}
+
+// Case 3: mu=-0.5, sigma=1.5 — negative mu, large sigma (high variance)
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) pmf(0) matches ground truth 0.5018394183271276" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.5018394183271276), dist.pmf(0), 1e-7);
+}
+
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) pmf(1) matches ground truth 0.2084247129163973" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.2084247129163973), dist.pmf(1), 1e-7);
+}
+
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) pmf(2) matches ground truth 0.09962364294704549" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.09962364294704549), dist.pmf(2), 1e-7);
+}
+
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) pmf(3) matches ground truth 0.05512149636570707" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.05512149636570707), dist.pmf(3), 1e-7);
+}
+
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) pmf(4) matches ground truth 0.03385320973957677" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 0.03385320973957677), dist.pmf(4), 1e-7);
+}
+
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) mean matches ground truth 1.868245957432222" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 1.868245957432222), dist.mean(), 1e-9);
+}
+
+test "PoissonLognormal: Case 3 (mu=-0.5, sigma=1.5) variance matches ground truth 31.49335495866269" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    try expectApproxEqRel(@as(f64, 31.49335495866269), dist.variance(), 1e-9);
+}
+
+// CDF monotonicity
+test "PoissonLognormal: cdf is monotonically non-decreasing (Case 1)" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    var prev: f64 = 0.0;
+    var k: u64 = 0;
+    while (k < 30) : (k += 1) {
+        const c = dist.cdf(k);
+        try expect(c >= prev - 1e-12);
+        prev = c;
+    }
+    try expect(prev > 0.99);
+}
+
+test "PoissonLognormal: cdf(0) equals pmf(0)" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    const cdf0 = dist.cdf(0);
+    const pmf0 = dist.pmf(0);
+    try expectApproxEqAbs(cdf0, pmf0, 1e-9);
+}
+
+// Quantile tests
+test "PoissonLognormal: quantile with p=0 returns 0" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    const q = try dist.quantile(0.0);
+    try expect(q == 0);
+}
+
+test "PoissonLognormal: quantile is consistent with cdf" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    const p: f64 = 0.5;
+    const q = try dist.quantile(p);
+    try expect(dist.cdf(q) >= p);
+    if (q > 0) {
+        try expect(dist.cdf(q - 1) < p);
+    }
+}
+
+test "PoissonLognormal: quantile with invalid probability returns error" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.5));
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+// Mode test
+test "PoissonLognormal: mode is a local pmf maximum (Case 1)" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    const m = dist.mode();
+    const pmf_at_mode = dist.pmf(m);
+    try expect(pmf_at_mode >= dist.pmf(if (m > 0) m - 1 else m));
+    try expect(pmf_at_mode >= dist.pmf(m + 1));
+}
+
+// Validate tests
+test "PoissonLognormal: validate passes for valid params" {
+    const dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    try dist.validate();
+}
+
+test "PoissonLognormal: validate fails when sigma is corrupted to negative" {
+    var dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    dist.sigma = -0.5;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PoissonLognormal: validate fails when sigma is corrupted to zero" {
+    var dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    dist.sigma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "PoissonLognormal: validate fails when mu is corrupted to NaN" {
+    var dist = try PoissonLognormal(f64).init(1.0, 0.5);
+    dist.mu = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// PMF normalization
+test "PoissonLognormal: pmf sums to ~1 over wide range (Case 1)" {
+    const dist = try PoissonLognormal(f64).init(0.0, 1.0);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k < 500) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(@as(f64, 1.0), sum, 1e-4);
+}
+
+test "PoissonLognormal: pmf sums to ~1 over wide range (Case 3, high variance)" {
+    const dist = try PoissonLognormal(f64).init(-0.5, 1.5);
+    var sum: f64 = 0.0;
+    var k: u64 = 0;
+    while (k < 500) : (k += 1) {
+        sum += dist.pmf(k);
+    }
+    try expectApproxEqAbs(@as(f64, 1.0), sum, 1e-4);
+}
