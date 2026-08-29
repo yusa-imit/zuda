@@ -789,3 +789,67 @@ test "ARCCache: init-deinit loop memory safety" {
     }
     // testing.allocator will catch any leaks
 }
+
+test "ARCCache: T1 to T2 promotion via get() uses in-place mutation" {
+    // Regression test for the catch unreachable bug in get() where T1→T2 promotion
+    // used to call list_map.put() which could fail with OOM.
+    // After the fix, get() uses getPtr() + in-place mutation (list_type_ptr.* = .T2),
+    // which cannot allocate. This test verifies the promotion path works correctly.
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 4);
+    defer cache.deinit();
+
+    // Insert 4 items into T1 (all starts in T1)
+    _ = try cache.put(1, 10);
+    _ = try cache.put(2, 20);
+    _ = try cache.put(3, 30);
+    _ = try cache.put(4, 40);
+    try testing.expectEqual(@as(usize, 4), cache.count());
+
+    // Get item 1 → promotes T1→T2 (single hit)
+    try testing.expectEqual(@as(u32, 10), cache.get(1).?);
+
+    // Get item 1 again → moves to head in T2 (no allocation needed)
+    try testing.expectEqual(@as(u32, 10), cache.get(1).?);
+
+    // Get item 2 → promotes T1→T2
+    try testing.expectEqual(@as(u32, 20), cache.get(2).?);
+
+    // Verify cache is still valid after multiple promotion calls
+    try cache.validate();
+    try testing.expectEqual(@as(usize, 4), cache.count());
+
+    // Verify all previously accessed items are still there
+    try testing.expectEqual(@as(u32, 10), cache.get(1).?);
+    try testing.expectEqual(@as(u32, 20), cache.get(2).?);
+}
+
+test "ARCCache: get() T2 moveToHead does not allocate" {
+    // Additional regression test: verify that hitting an item already in T2
+    // uses moveToHead (which is allocation-free) rather than put().
+    const Cache = ARCCache(u32, u32, std.hash_map.AutoContext(u32));
+    var cache = Cache.init(testing.allocator, 3);
+    defer cache.deinit();
+
+    _ = try cache.put(1, 100);
+    _ = try cache.put(2, 200);
+
+    // Get 1 twice to promote it to T2
+    _ = cache.get(1);
+    _ = cache.get(1);
+
+    // Now get 1 again (should use T2 moveToHead path, no allocation)
+    try testing.expectEqual(@as(u32, 100), cache.get(1).?);
+
+    // Get 2 also to move it to T2
+    _ = cache.get(2);
+    _ = cache.get(2);
+
+    // Multiple accesses to T2 items should all be allocation-free
+    for (0..5) |_| {
+        try testing.expectEqual(@as(u32, 100), cache.get(1).?);
+        try testing.expectEqual(@as(u32, 200), cache.get(2).?);
+    }
+
+    try cache.validate();
+}

@@ -639,3 +639,63 @@ test "PairingHeap: power of two insertion" {
         try std.testing.expectEqual(@as(?i32, @intCast(i)), heap.extractMin());
     }
 }
+
+test "PairingHeap: combineSiblings with multiple children" {
+    // Regression test for the catch unreachable bug in combineSiblings.
+    // The fix changed combineSiblings from using a heap-allocated ArrayList
+    // to using next_sibling pointers for chaining pairs (allocation-free).
+    // This test verifies that extractMin() correctly pairs and merges siblings
+    // when there are many children to combine.
+    var heap = PairingHeap(i32, void, testLessThan).init(testing.allocator, {});
+    defer heap.deinit();
+
+    // Insert 20 elements to create a node with many siblings
+    var i: i32 = 19;
+    while (i >= 0) : (i -= 1) {
+        _ = try heap.insert(i);
+    }
+
+    try std.testing.expectEqual(@as(usize, 20), heap.count());
+    try heap.validate();
+
+    // Extract all elements in sorted order (exercises combineSiblings on each extractMin)
+    i = 0;
+    while (i < 20) : (i += 1) {
+        const min = heap.extractMin();
+        try std.testing.expectEqual(@as(?i32, i), min);
+        try heap.validate(); // Validate heap invariants after each extraction
+    }
+
+    try testing.expect(heap.isEmpty());
+}
+
+test "PairingHeap: extractMin with large sibling chain" {
+    // Additional regression test: create a specific scenario where extractMin
+    // must pair a long sibling chain (triggers combineSiblings two-pass algorithm).
+    var heap = PairingHeap(i32, void, testLessThan).init(testing.allocator, {});
+    defer heap.deinit();
+
+    // Insert 50 elements
+    var i: i32 = 0;
+    while (i < 50) : (i += 1) {
+        _ = try heap.insert(i);
+    }
+
+    try std.testing.expectEqual(@as(usize, 50), heap.count());
+
+    // Extract min (triggering combineSiblings with 49 siblings to pair)
+    try std.testing.expectEqual(@as(?i32, 0), heap.extractMin());
+    try std.testing.expectEqual(@as(usize, 49), heap.count());
+
+    // Verify heap structure is valid and remaining elements are properly ordered
+    try heap.validate();
+
+    // Continue extracting to verify no corruption occurred
+    i = 1;
+    while (i < 10) : (i += 1) {
+        const min = heap.extractMin();
+        try std.testing.expectEqual(@as(?i32, i), min);
+    }
+
+    try heap.validate();
+}

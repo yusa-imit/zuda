@@ -927,3 +927,81 @@ test "DecisionTree: large dataset" {
     try testing.expect(nodes > 1);
     try testing.expect(nodes < 100); // Should be much smaller than dataset
 }
+
+test "DecisionTree: gini OOM error propagation" {
+    // Regression test for catch unreachable bug in giniImpurity.
+    // Verify that allocation failures in giniImpurity's getOrPut() propagate cleanly
+    // instead of panicking.
+    var failing_alloc = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 5 });
+    const failing_allocator = failing_alloc.allocator();
+
+    const X = [_][]const f64{
+        &[_]f64{ 0, 0 },
+        &[_]f64{ 0, 1 },
+        &[_]f64{ 1, 0 },
+        &[_]f64{ 1, 1 },
+        &[_]f64{ 2, 2 },
+        &[_]f64{ 2, 3 },
+    };
+    const y = [_]f64{ 0, 0, 1, 1, 2, 2 };
+
+    var tree = DecisionTree(f64).init(failing_allocator, .{
+        .tree_type = .classification,
+        .max_depth = 3,
+    });
+    defer tree.deinit();
+
+    // fit() with gini criterion should return an error (not panic) when allocation fails
+    const result = tree.fit(&X, &y, .gini);
+    try testing.expect(result == error.OutOfMemory);
+}
+
+test "DecisionTree: entropy OOM error propagation" {
+    // Regression test for catch unreachable bug in entropy.
+    // Verify that allocation failures in entropy's getOrPut() propagate cleanly
+    // instead of panicking.
+    var failing_alloc = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 5 });
+    const failing_allocator = failing_alloc.allocator();
+
+    const X = [_][]const f64{
+        &[_]f64{ 0, 0 },
+        &[_]f64{ 0, 1 },
+        &[_]f64{ 1, 0 },
+        &[_]f64{ 1, 1 },
+    };
+    const y = [_]f64{ 0, 1, 1, 0 };
+
+    var tree = DecisionTree(f64).init(failing_allocator, .{
+        .tree_type = .classification,
+        .max_depth = 3,
+    });
+    defer tree.deinit();
+
+    // fit() with entropy criterion should return an error (not panic) when allocation fails
+    const result = tree.fit(&X, &y, .entropy);
+    try testing.expect(result == error.OutOfMemory);
+}
+
+test "DecisionTree: calculateNodeValue OOM error propagation" {
+    // Regression test for catch unreachable bug in calculateNodeValue.
+    // Verify that allocation failures in calculateNodeValue's getOrPut() propagate cleanly.
+    var failing_alloc = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 5 });
+    const failing_allocator = failing_alloc.allocator();
+
+    const X = [_][]const f64{
+        &[_]f64{ 0 },
+        &[_]f64{ 1 },
+        &[_]f64{ 2 },
+    };
+    const y = [_]f64{ 0, 1, 2 };
+
+    var tree = DecisionTree(f64).init(failing_allocator, .{
+        .tree_type = .classification,
+        .max_depth = 3,
+    });
+    defer tree.deinit();
+
+    // fit() should return an error (not panic) when calculateNodeValue fails on allocation
+    const result = tree.fit(&X, &y, .gini);
+    try testing.expect(result == error.OutOfMemory);
+}
