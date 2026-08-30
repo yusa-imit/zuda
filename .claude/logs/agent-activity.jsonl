@@ -740,3 +740,5 @@
 {"timestamp": "2026-08-29T11:36:13.467266Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for PoissonLognormal distribution (188th)", "project": "zuda"}
 {"timestamp": "2026-08-29T11:38:15.553149Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement PoissonLognormal distribution to pass 41 failing tests", "project": "zuda"}
 {"timestamp":"2026-08-29T15:37:13Z","action":"subagent","agent_type":"zig-developer","task":"Recover interrupted PoissonLognormal (188th) - implement struct to satisfy 41 pre-written failing tests, fix stray brace syntax error","project":"zuda"}
+{"timestamp":"2026-08-30T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for JonesFaddySkewT distribution (190th)","project":"zuda"}
+{"timestamp":"2026-08-30T00:10:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement JonesFaddySkewT distribution (190th) to pass failing tests","project":"zuda"}
