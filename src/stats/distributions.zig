@@ -114520,3 +114520,719 @@ test "PoissonLognormal: pmf sums to ~1 over wide range (Case 3, high variance)" 
     }
     try expectApproxEqAbs(@as(f64, 1.0), sum, 1e-4);
 }
+
+// ============================================================================
+// ExponentialLogarithmic Distribution
+// ============================================================================
+
+/// ExponentialLogarithmic(p, beta) distribution.
+///
+/// Arises as min(X_1..X_N) where N ~ Logarithmic(1-p) and X_i iid Exponential(beta).
+/// Has decreasing failure rate.
+///
+/// Parameters:
+///   - p: shape parameter (p ∈ (0,1) exclusive both ends)
+///   - beta: rate parameter (β > 0)
+///
+/// Support: [0, ∞)
+///
+/// PDF: f(x; p, β) = [-β·(1-p)·exp(-β·x)] / [ln(p) · (1-(1-p)·exp(-β·x))]
+/// CDF: F(x; p, β) = 1 - ln(1-(1-p)·exp(-β·x)) / ln(p)
+/// SF:  S(x; p, β) = ln(1-(1-p)·exp(-β·x)) / ln(p)
+/// Quantile: x(u) = -ln((1 - p^(1-u))/(1-p)) / β
+/// Mode: 0 (pdf strictly decreasing)
+pub fn ExponentialLogarithmic(comptime T: type) type {
+    return struct {
+        p: T,
+        beta: T,
+
+        const Self = @This();
+        const INTEGRATION_PANELS: usize = 2000;
+
+        /// Create an ExponentialLogarithmic(p, beta) distribution.
+        ///
+        /// Errors: p ≤ 0, p ≥ 1, beta ≤ 0, or any non-finite parameter.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(p: T, beta: T) DistributionError!Self {
+            if (p <= 0.0 or p >= 1.0 or !math.isFinite(p)) return error.InvalidParameter;
+            if (beta <= 0.0 or !math.isFinite(beta)) return error.InvalidParameter;
+            return Self{ .p = p, .beta = beta };
+        }
+
+        /// Survival function S(x) = ln(1-(1-p)·exp(-β·x)) / ln(p).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < 0.0) return 1.0;
+            const exp_term = @exp(-self.beta * x);
+            const arg = 1.0 - (1.0 - self.p) * exp_term;
+            return @log(arg) / @log(self.p);
+        }
+
+        /// Cumulative distribution function F(x) = 1 - S(x).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            return 1.0 - self.sf(x);
+        }
+
+        /// Probability density function f(x) = [-β·(1-p)·exp(-β·x)] / [ln(p)·(1-(1-p)·exp(-β·x))].
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < 0.0) return 0.0;
+            const exp_term = @exp(-self.beta * x);
+            const denom = 1.0 - (1.0 - self.p) * exp_term;
+            const numerator = -self.beta * (1.0 - self.p) * exp_term;
+            return numerator / (@log(self.p) * denom);
+        }
+
+        /// Quantile function via closed-form inversion: x(u) = -ln((1 - p^(1-u))/(1-p)) / β.
+        ///
+        /// Errors: !(0 ≤ u ≤ 1) → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, u: T) DistributionError!T {
+            if (!(u >= 0.0 and u <= 1.0)) return error.InvalidProbability;
+            if (u == 0.0) return 0.0;
+            if (u >= 1.0) return math.inf(T);
+
+            // x(u) = -ln((1 - p^(1-u))/(1-p)) / β
+            const one_minus_u = 1.0 - u;
+            const p_power = math.pow(T, self.p, one_minus_u);
+            const numerator_log = 1.0 - p_power;
+            const ratio = numerator_log / (1.0 - self.p);
+            return -@log(ratio) / self.beta;
+        }
+
+        /// Mode of the distribution: always 0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Mean via numeric integration of S(x) over [0, upperBound].
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            return self.simpsonSf(ub, INTEGRATION_PANELS);
+        }
+
+        /// Upper bound x such that S(x) < tol. Used for numerical integration.
+        fn upperBound(self: Self, tol: T) T {
+            var u: T = 1.0;
+            var i: usize = 0;
+            while (self.sf(u) > tol and i < 200) : (i += 1) {
+                u *= 2.0;
+            }
+            return u;
+        }
+
+        /// Variance via E[X²] = 2·∫₀^∞ x·S(x) dx, then Var = E[X²] − E[X]².
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const ex1 = self.mean();
+            const ex2 = 2.0 * self.simpsonXSf(ub, INTEGRATION_PANELS);
+            return ex2 - ex1 * ex1;
+        }
+
+        /// Standard deviation.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn stdDev(self: Self) T {
+            return @sqrt(self.variance());
+        }
+
+        /// Shannon entropy H = −∫₀^∞ f(x)·ln f(x) dx via numerical integration.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ub = self.upperBound(1e-14);
+            const n: usize = INTEGRATION_PANELS;
+            const h = ub / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const f = self.pdf(x);
+                const contrib: T = if (f > 0.0) -f * @log(f) else 0.0;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * contrib;
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Sample via inverse CDF.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            return self.quantile(rng.float(T)) catch unreachable;
+        }
+
+        /// Assert distribution parameters are valid.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.p <= 0.0 or self.p >= 1.0 or !math.isFinite(self.p)) return error.InvalidParameter;
+            if (self.beta <= 0.0 or !math.isFinite(self.beta)) return error.InvalidParameter;
+        }
+
+        /// Format for printing.
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ExponentialLogarithmic(p={d:.2}, beta={d:.2})", .{ self.p, self.beta });
+        }
+
+        /// Simpson's rule: ∫₀^upper S(x) dx with n (even) subintervals.
+        fn simpsonSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * self.sf(x);
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Simpson's rule: ∫₀^upper x·S(x) dx with n (even) subintervals.
+        fn simpsonXSf(self: Self, upper: T, n: usize) T {
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+            for (0..n + 1) |i| {
+                const x = @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * (x * self.sf(x));
+            }
+            return sum * h / 3.0;
+        }
+    };
+}
+
+// ============================================================================
+// ExponentialLogarithmic Distribution Tests
+// ============================================================================
+
+// --- Init Tests ---
+
+test "ExponentialLogarithmic: init succeeds with valid p=0.3, beta=2.0" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    try expect(dist.p == 0.3);
+    try expect(dist.beta == 2.0);
+}
+
+test "ExponentialLogarithmic: init succeeds with valid p=0.7, beta=1.0" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    try expect(dist.p == 0.7);
+    try expect(dist.beta == 1.0);
+}
+
+test "ExponentialLogarithmic: init succeeds with valid p=0.1, beta=0.5" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    try expect(dist.p == 0.1);
+    try expect(dist.beta == 0.5);
+}
+
+test "ExponentialLogarithmic: init fails when p is zero" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(0.0, 1.0));
+}
+
+test "ExponentialLogarithmic: init fails when p is negative" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(-0.1, 1.0));
+}
+
+test "ExponentialLogarithmic: init fails when p is one" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(1.0, 1.0));
+}
+
+test "ExponentialLogarithmic: init fails when p is greater than one" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(1.5, 1.0));
+}
+
+test "ExponentialLogarithmic: init fails when beta is zero" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(0.5, 0.0));
+}
+
+test "ExponentialLogarithmic: init fails when beta is negative" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(0.5, -1.0));
+}
+
+test "ExponentialLogarithmic: init fails when p is NaN" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(math.nan(f64), 1.0));
+}
+
+test "ExponentialLogarithmic: init fails when p is infinite" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(math.inf(f64), 1.0));
+}
+
+test "ExponentialLogarithmic: init fails when beta is NaN" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(0.5, math.nan(f64)));
+}
+
+test "ExponentialLogarithmic: init fails when beta is infinite" {
+    try expectError(error.InvalidParameter, ExponentialLogarithmic(f64).init(0.5, math.inf(f64)));
+}
+
+// --- PDF Tests (Case A: p=0.3, beta=2.0) ---
+
+test "ExponentialLogarithmic: pdf at x=0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 3.87605654371850772272750101992;
+    try expectApproxEqAbs(dist.pdf(0.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=0.5 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.576142016798199636327583313092;
+    try expectApproxEqAbs(dist.pdf(0.5), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=1.0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.173838721923926862357478868246;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=1.5 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.0599837377588788544621830161688;
+    try expectApproxEqAbs(dist.pdf(1.5), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=2.0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.0215743390524626033604348012496;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=5.0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.0000527934862264686323346986838206;
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-9);
+}
+
+// --- PDF Tests (Case B: p=0.7, beta=1.0) ---
+
+test "ExponentialLogarithmic: pdf at x=0 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 1.20157425088162673781738065263;
+    try expectApproxEqAbs(dist.pdf(0.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=0.5 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.623629206337435722296010588559;
+    try expectApproxEqAbs(dist.pdf(0.5), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=1.0 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.347809740667446438011640204029;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=2.0 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.118647950288334560528103672053;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=4.0 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.0154904352193163123999467245373;
+    try expectApproxEqAbs(dist.pdf(4.0), expected, 1e-9);
+}
+
+// --- PDF Tests (Case C: p=0.1, beta=0.5) ---
+
+test "ExponentialLogarithmic: pdf at x=0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 1.95432516856463322443008013512;
+    try expectApproxEqAbs(dist.pdf(0.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=1.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.261021723977087850793512862761;
+    try expectApproxEqAbs(dist.pdf(1.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=2.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.107481972155047152150335700959;
+    try expectApproxEqAbs(dist.pdf(2.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=5.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.0173217479696552776036593176747;
+    try expectApproxEqAbs(dist.pdf(5.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: pdf at x=10.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.00132484802064719468475236693013;
+    try expectApproxEqAbs(dist.pdf(10.0), expected, 1e-9);
+}
+
+// --- CDF Tests (Case A: p=0.3, beta=2.0) ---
+
+test "ExponentialLogarithmic: cdf at x=0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    try expectApproxEqAbs(dist.cdf(0.0), 0.0, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=0.5 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.75269090012979122996187819893;
+    try expectApproxEqAbs(dist.cdf(0.5), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=1.0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.917334322837454462703042274603;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=2.0 (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.989282278775051337079125886884;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-9);
+}
+
+// --- CDF Tests (Case B: p=0.7, beta=1.0) ---
+
+test "ExponentialLogarithmic: cdf at x=0.5 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.436901675501825125093398612647;
+    try expectApproxEqAbs(dist.cdf(0.5), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=1.0 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.67213087933485874996497487523;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=2.0 (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.883793912792112149856340515138;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-9);
+}
+
+// --- CDF Tests (Case C: p=0.1, beta=0.5) ---
+
+test "ExponentialLogarithmic: cdf at x=1.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.657172930384602347522142954615;
+    try expectApproxEqAbs(dist.cdf(1.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=2.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.825366716596866319642592022613;
+    try expectApproxEqAbs(dist.cdf(2.0), expected, 1e-9);
+}
+
+test "ExponentialLogarithmic: cdf at x=5.0 (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 0.96666890496484421706561536999;
+    try expectApproxEqAbs(dist.cdf(5.0), expected, 1e-9);
+}
+
+// --- CDF Properties ---
+
+test "ExponentialLogarithmic: cdf is monotonically non-decreasing" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    var prev = dist.cdf(0.0);
+    var x: f64 = 0.1;
+    while (x <= 5.0) : (x += 0.2) {
+        const c = dist.cdf(x);
+        try expect(c >= prev - 1e-9);
+        prev = c;
+    }
+}
+
+test "ExponentialLogarithmic: pdf is always non-negative for x >= 0" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    var x: f64 = 0.0;
+    while (x <= 10.0) : (x += 0.5) {
+        try expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+// --- Quantile Tests ---
+
+test "ExponentialLogarithmic: quantile at p=0 equals 0" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const result = try dist.quantile(0.0);
+    try expectApproxEqAbs(result, 0.0, 1e-9);
+}
+
+test "ExponentialLogarithmic: quantile at p=1 equals infinity" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const result = try dist.quantile(1.0);
+    try expect(math.isInf(result));
+}
+
+test "ExponentialLogarithmic: quantile rejects p<0" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ExponentialLogarithmic: quantile rejects p>1" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ExponentialLogarithmic: quantile inverts cdf (Case A, p=0.1)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected_q = 0.028197097260332799812267145992;
+    const q = try dist.quantile(0.1);
+    try expectApproxEqAbs(q, expected_q, 1e-9);
+    const recovered_p = dist.cdf(q);
+    try expectApproxEqAbs(recovered_p, 0.1, 1e-6);
+}
+
+test "ExponentialLogarithmic: quantile inverts cdf (Case A, p=0.5)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected_q = 0.218392266343355147869507975321;
+    const q = try dist.quantile(0.5);
+    try expectApproxEqAbs(q, expected_q, 1e-9);
+    const recovered_p = dist.cdf(q);
+    try expectApproxEqAbs(recovered_p, 0.5, 1e-6);
+}
+
+test "ExponentialLogarithmic: quantile inverts cdf (Case A, p=0.9)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected_q = 0.909939061985016090932668173456;
+    const q = try dist.quantile(0.9);
+    try expectApproxEqAbs(q, expected_q, 1e-9);
+    const recovered_p = dist.cdf(q);
+    try expectApproxEqAbs(recovered_p, 0.9, 1e-6);
+}
+
+test "ExponentialLogarithmic: cdf inverts quantile (Case B, x=0.5)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const x: f64 = 0.5;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-6);
+}
+
+test "ExponentialLogarithmic: cdf inverts quantile (Case C, x=2.0)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const x: f64 = 2.0;
+    const p = dist.cdf(x);
+    const x_recovered = try dist.quantile(p);
+    try expectApproxEqAbs(x_recovered, x, 1e-6);
+}
+
+// --- Mode Tests ---
+
+test "ExponentialLogarithmic: mode is zero (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "ExponentialLogarithmic: mode is zero (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+test "ExponentialLogarithmic: mode is zero (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    try expectApproxEqAbs(dist.mode(), 0.0, 1e-12);
+}
+
+// --- Mean Tests ---
+
+test "ExponentialLogarithmic: mean (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.36935121004829151940462004326;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "ExponentialLogarithmic: mean (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.914360584105108227995420413578;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+test "ExponentialLogarithmic: mean (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 1.12891786449893401790779418921;
+    try expectApproxEqAbs(dist.mean(), expected, 1e-5);
+}
+
+// --- Variance Tests ---
+
+test "ExponentialLogarithmic: variance (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = 0.187533817589242791525963681264;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "ExponentialLogarithmic: variance (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.915680767627349079805235550088;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+test "ExponentialLogarithmic: variance (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 2.37243317478581542493874793011;
+    try expectApproxEqAbs(dist.variance(), expected, 1e-5);
+}
+
+// --- Entropy Tests ---
+
+test "ExponentialLogarithmic: entropy (Case A)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    const expected = -0.0141294598252322442273100153465;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-5);
+}
+
+test "ExponentialLogarithmic: entropy (Case B)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.7, 1.0);
+    const expected = 0.909065483302954949057029073966;
+    try expectApproxEqAbs(dist.entropy(), expected, 1e-5);
+}
+
+test "ExponentialLogarithmic: entropy (Case C)" {
+    const dist = try ExponentialLogarithmic(f64).init(0.1, 0.5);
+    const expected = 1.04570652721817157739284751742;
+    try expectApproxEqAbs(dist.entropy(), expected, 2e-5);
+}
+
+// --- Validate Tests ---
+
+test "ExponentialLogarithmic: validate succeeds for valid distribution" {
+    const dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    try dist.validate();
+}
+
+test "ExponentialLogarithmic: validate fails when p is corrupted to zero" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.p = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when p is corrupted to negative" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.p = -0.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when p is corrupted to one" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.p = 1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when p is corrupted to greater than one" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.p = 1.5;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when p is corrupted to NaN" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.p = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when beta is corrupted to zero" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.beta = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when beta is corrupted to negative" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.beta = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ExponentialLogarithmic: validate fails when beta is corrupted to NaN" {
+    var dist = try ExponentialLogarithmic(f64).init(0.5, 1.5);
+    dist.beta = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+// --- Sample Tests ---
+
+test "ExponentialLogarithmic: sample produces finite non-negative values" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+        try expect(s >= 0.0);
+    }
+}
+
+test "ExponentialLogarithmic: sample produces values consistent with distribution" {
+    const dist = try ExponentialLogarithmic(f64).init(0.3, 2.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const num_samples: usize = 5000;
+    for (0..num_samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(num_samples));
+    const theoretical_mean = dist.mean();
+    const tolerance = 0.15;
+    try expect(@abs(empirical_mean - theoretical_mean) / theoretical_mean < tolerance);
+}
+
+test "ExponentialLogarithmic: f32 pdf does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    const p = dist.pdf(0.5);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ExponentialLogarithmic: f32 cdf does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    const c = dist.cdf(1.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ExponentialLogarithmic: f32 quantile does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ExponentialLogarithmic: f32 mean does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    const m = dist.mean();
+    try expect(!math.isNan(m) and !math.isInf(m));
+}
+
+test "ExponentialLogarithmic: f32 variance does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    const v = dist.variance();
+    try expect(!math.isNan(v) and !math.isInf(v));
+}
+
+test "ExponentialLogarithmic: f32 entropy does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    const h = dist.entropy();
+    try expect(!math.isNan(h) and !math.isInf(h));
+}
+
+test "ExponentialLogarithmic: f32 sample does not produce NaN/Inf" {
+    const dist = try ExponentialLogarithmic(f32).init(0.5, 1.5);
+    var prng = std.Random.DefaultPrng.init(7);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(!math.isNan(s) and !math.isInf(s));
+}
