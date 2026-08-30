@@ -115236,3 +115236,787 @@ test "ExponentialLogarithmic: f32 sample does not produce NaN/Inf" {
     const s = dist.sample(rng);
     try expect(!math.isNan(s) and !math.isInf(s));
 }
+
+// ============================================================================
+// Jones-Faddy Skew-t Distribution
+// ============================================================================
+
+/// Jones-Faddy Skew-t distribution
+///
+/// A skew generalization of the Student-t distribution with closed-form PDF and CDF.
+/// Jones, M.C. and Faddy, M.J. (2003), "A skew extension of the t distribution, with applications", JRSS-B
+///
+/// Parameters: a > 0, b > 0 (shape parameters)
+/// Support: all reals (-∞, +∞)
+///
+/// PDF: f(t) = C * (1 + t/s)^(a+0.5) * (1 - t/s)^(b+0.5), where s = sqrt(a+b+t^2)
+///      C = 1 / (2^(a+b-1) * sqrt(a+b) * B(a,b))
+///
+/// CDF has closed form via regularized incomplete beta function
+pub fn JonesFaddySkewT(comptime T: type) type {
+    return struct {
+        a: T,
+        b: T,
+
+        const Self = @This();
+
+        /// Initialize Jones-Faddy Skew-t distribution
+        ///
+        /// Returns error.InvalidParameter if a ≤ 0, b ≤ 0, or any parameter is NaN/Inf
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(a: T, b: T) DistributionError!Self {
+            if (a <= 0.0 or !math.isFinite(a)) return error.InvalidParameter;
+            if (b <= 0.0 or !math.isFinite(b)) return error.InvalidParameter;
+            return Self{ .a = a, .b = b };
+        }
+
+        /// Validate internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.a <= 0.0 or !math.isFinite(self.a)) return error.InvalidParameter;
+            if (self.b <= 0.0 or !math.isFinite(self.b)) return error.InvalidParameter;
+        }
+
+        /// Probability density function
+        ///
+        /// f(t) = C * (1 + t/s)^(a+0.5) * (1 - t/s)^(b+0.5)
+        /// where s = sqrt(a+b+t^2), C = 1 / (2^(a+b-1) * sqrt(a+b) * B(a,b))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, t: T) T {
+            const s = @sqrt(self.a + self.b + t * t);
+            const one_plus_ts = 1.0 + t / s;
+            const one_minus_ts = 1.0 - t / s;
+
+            if (one_plus_ts <= 0.0 or one_minus_ts <= 0.0) return 0.0;
+
+            // C = 1 / (2^(a+b-1) * sqrt(a+b) * B(a,b))
+            const log_c = -(self.a + self.b - 1.0) * @log(2.0) - 0.5 * @log(self.a + self.b) - logBeta(self.a, self.b);
+            const c = @exp(log_c);
+
+            // (1 + t/s)^(a+0.5) * (1 - t/s)^(b+0.5)
+            const power1 = @exp((self.a + 0.5) * @log(one_plus_ts));
+            const power2 = @exp((self.b + 0.5) * @log(one_minus_ts));
+
+            return c * power1 * power2;
+        }
+
+        /// Log probability density function
+        ///
+        /// More numerically stable than log(pdf(t)) for extreme values
+        ///
+        /// logpdf = logC + (a+0.5)*ln(1+t/s) + (b+0.5)*ln(1-t/s)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, t: T) T {
+            const s = @sqrt(self.a + self.b + t * t);
+            const one_plus_ts = 1.0 + t / s;
+            const one_minus_ts = 1.0 - t / s;
+
+            if (one_plus_ts <= 0.0 or one_minus_ts <= 0.0) return -math.inf(T);
+
+            const log_c = -(self.a + self.b - 1.0) * @log(2.0) - 0.5 * @log(self.a + self.b) - logBeta(self.a, self.b);
+            const log_power = (self.a + 0.5) * @log(one_plus_ts) + (self.b + 0.5) * @log(one_minus_ts);
+
+            return log_c + log_power;
+        }
+
+        /// Cumulative distribution function
+        ///
+        /// Uses regularized incomplete beta function:
+        /// w = t / sqrt(a+b+t^2)
+        /// u = (1+w)/2
+        /// cdf(t) = regularizedBetaI(a, b, u)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, t: T) T {
+            const s = @sqrt(self.a + self.b + t * t);
+            const w = t / s;
+            const u = (1.0 + w) / 2.0;
+            return regularizedBetaI(self.a, self.b, u);
+        }
+
+        /// Survival function: 1 - CDF(t)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, t: T) T {
+            return 1.0 - self.cdf(t);
+        }
+
+        /// Quantile function (inverse CDF)
+        ///
+        /// Returns error.InvalidParameter for p outside [0,1]
+        /// Returns -inf for p=0, +inf for p=1
+        ///
+        /// Uses bisection search
+        ///
+        /// Time: O(log(1/ε)) where ε is tolerance | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidParameter;
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+
+            // Bisection search for quantile
+            const scale = @sqrt(self.a + self.b);
+            var left: T = -10.0 * scale;
+            var right: T = 10.0 * scale;
+
+            // Expand search bounds if needed
+            while (self.cdf(left) > p) left -= 50.0 * scale;
+            while (self.cdf(right) < p) right += 50.0 * scale;
+
+            const tolerance = 1e-10;
+            var iterations: u32 = 0;
+            while (right - left > tolerance and iterations < 100) : (iterations += 1) {
+                const mid = (left + right) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (cdf_mid < p) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            }
+
+            return (left + right) / 2.0;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[T] = ((a-b)/2) * sqrt(a+b) * exp(logBeta(a-0.5, b-0.5) - logBeta(a,b)) / (a+b-1)
+        /// Defined only for a > 0.5 AND b > 0.5; returns NaN otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (self.a <= 0.5 or self.b <= 0.5) return math.nan(T);
+
+            const sqrt_sum = @sqrt(self.a + self.b);
+            const log_beta_diff = logBeta(self.a - 0.5, self.b - 0.5) - logBeta(self.a, self.b);
+            const factor = ((self.a - self.b) / 2.0) * sqrt_sum * @exp(log_beta_diff) / (self.a + self.b - 1.0);
+
+            return factor;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// E[T^2] = -(a+b) + (a+b)/4 * exp(logBeta(a-1, b-1) - logBeta(a,b))
+        /// Var(T) = E[T^2] - mean()^2
+        /// Defined only for a > 1 AND b > 1; returns NaN otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (self.a <= 1.0 or self.b <= 1.0) return math.nan(T);
+
+            const log_beta_diff = logBeta(self.a - 1.0, self.b - 1.0) - logBeta(self.a, self.b);
+            const e_t_sq = -(self.a + self.b) + (self.a + self.b) / 4.0 * @exp(log_beta_diff);
+
+            const m = self.mean();
+            return e_t_sq - m * m;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// No closed form — found via golden section search
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const scale = @sqrt(self.a + self.b);
+            const left = -20.0 * scale;
+            const right = 20.0 * scale;
+
+            var a_val = left;
+            var b_val = right;
+            const golden_ratio = (1.0 + @sqrt(5.0)) / 2.0;
+            const resphi = 2.0 - golden_ratio;
+
+            for (0..100) |_| {
+                if (@abs(b_val - a_val) < 1e-10) break;
+                const x1 = a_val + resphi * (b_val - a_val);
+                const x2 = b_val - resphi * (b_val - a_val);
+                if (self.pdf(x1) > self.pdf(x2)) {
+                    b_val = x2;
+                } else {
+                    a_val = x1;
+                }
+            }
+
+            return (a_val + b_val) / 2.0;
+        }
+
+        /// Differential entropy (in nats)
+        ///
+        /// No closed form — computed via numerical integration of -f(t)·log(f(t))
+        /// Uses midpoint rule quadrature over ±50*sqrt(a+b) with 200 panels
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const scale = @sqrt(self.a + self.b);
+            const left = -50.0 * scale;
+            const right = 50.0 * scale;
+
+            const n_panels: u32 = 200;
+            const dx = (right - left) / @as(T, @floatFromInt(n_panels));
+
+            var integral: T = 0.0;
+            for (0..n_panels) |i| {
+                const t_m = left + (@as(T, @floatFromInt(i)) + 0.5) * dx;
+                const f_t = self.pdf(t_m);
+                if (f_t > 0.0) {
+                    integral += f_t * @log(f_t);
+                }
+            }
+            integral *= dx;
+
+            return -integral;
+        }
+
+        /// Draw a random sample
+        ///
+        /// Exact sampler via Beta transform:
+        ///   U ~ Beta(a,b)
+        ///   W = 2*U - 1
+        ///   T = sqrt(a+b) * W / sqrt(1 - W*W)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const beta_dist = Beta(T){ .alpha = self.a, .beta = self.b };
+            const u = beta_dist.sample(rng);
+            const w = 2.0 * u - 1.0;
+            const w_sq = w * w;
+
+            if (w_sq >= 1.0) {
+                // Should be extremely rare (Beta gives open interval (0,1))
+                return 0.0;
+            }
+
+            return @sqrt(self.a + self.b) * w / @sqrt(1.0 - w_sq);
+        }
+
+        /// Format the distribution for printing
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("JonesFaddySkewT({d}, {d})", .{ self.a, self.b });
+        }
+    };
+}
+
+// --- JonesFaddySkewT Tests (Red Step - struct does not exist yet) ---
+
+test "JonesFaddySkewT: init with valid a=2, b=2 succeeds" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    try expect(dist.a == 2.0);
+    try expect(dist.b == 2.0);
+}
+
+test "JonesFaddySkewT: init with valid a=3, b=5 succeeds" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    try expect(dist.a == 3.0);
+    try expect(dist.b == 5.0);
+}
+
+test "JonesFaddySkewT: init with a=0 returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(0.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with a<0 returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(-1.0, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with b=0 returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(2.0, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with b<0 returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(2.0, -1.5);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with a=NaN returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(math.nan(f64), 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with b=NaN returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(2.0, math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with a=Inf returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(math.inf(f64), 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: init with b=Inf returns error.InvalidParameter" {
+    const result = JonesFaddySkewT(f64).init(2.0, math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: validate succeeds for valid distribution a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    try dist.validate();
+}
+
+test "JonesFaddySkewT: validate succeeds for valid distribution a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    try dist.validate();
+}
+
+test "JonesFaddySkewT: validate fails when a is corrupted to zero" {
+    var dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    dist.a = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "JonesFaddySkewT: validate fails when a is corrupted to negative" {
+    var dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    dist.a = -0.5;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "JonesFaddySkewT: validate fails when b is corrupted to zero" {
+    var dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    dist.b = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "JonesFaddySkewT: validate fails when b is corrupted to negative" {
+    var dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    dist.b = -0.5;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "JonesFaddySkewT: pdf(0) = 0.375 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.375), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf(1) ≈ 0.214662525839979810855 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.214662525839979810855), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf(-1) ≈ 0.214662525839979810855 for a=2, b=2 (symmetric)" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.214662525839979810855), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf(0) ≈ 0.290024265721044883 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.290024265721044883), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf(1) ≈ 0.0853528425544886450 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const p = dist.pdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.0853528425544886450), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf(-1) ≈ 0.341411370217954580 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const p = dist.pdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.341411370217954580), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf(0) ≈ 0.255155181539914385 for a=4, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    const p = dist.pdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.255155181539914385), p, 1e-9);
+}
+
+test "JonesFaddySkewT: pdf always positive for all a, b > 0" {
+    const dist = try JonesFaddySkewT(f64).init(1.5, 2.5);
+    try expect(dist.pdf(-5.0) > 0.0);
+    try expect(dist.pdf(0.0) > 0.0);
+    try expect(dist.pdf(5.0) > 0.0);
+}
+
+test "JonesFaddySkewT: logpdf = log(pdf) within tolerance at t=0 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const t = 0.0;
+    const p = dist.pdf(t);
+    const lp = dist.logpdf(t);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "JonesFaddySkewT: logpdf = log(pdf) within tolerance at t=1 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const t = 1.0;
+    const p = dist.pdf(t);
+    const lp = dist.logpdf(t);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "JonesFaddySkewT: logpdf = log(pdf) within tolerance at t=-1 for a=4, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    const t = -1.0;
+    const p = dist.pdf(t);
+    const lp = dist.logpdf(t);
+    try expectApproxEqAbs(@log(p), lp, 1e-8);
+}
+
+test "JonesFaddySkewT: cdf(-2) ≈ 0.0580582617584077972 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.0580582617584077972), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(-1) ≈ 0.186950483150029442 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.186950483150029442), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(0) = 0.5 for a=2, b=2 (symmetric)" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(0.5, c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(1) ≈ 0.813049516849970557 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.813049516849970557), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(2) ≈ 0.941941738241592202 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.941941738241592202), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(-2) ≈ 0.168052700973161200 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const c = dist.cdf(-2.0);
+    try expectApproxEqAbs(@as(f64, 0.168052700973161200), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(-1) ≈ 0.429355281207133058 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const c = dist.cdf(-1.0);
+    try expectApproxEqAbs(@as(f64, 0.429355281207133058), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(0) = 0.7734375 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const c = dist.cdf(0.0);
+    try expectApproxEqAbs(@as(f64, 0.7734375), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(1) ≈ 0.954732510288065843 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const c = dist.cdf(1.0);
+    try expectApproxEqAbs(@as(f64, 0.954732510288065843), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf(2) ≈ 0.99398433606387583 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const c = dist.cdf(2.0);
+    try expectApproxEqAbs(@as(f64, 0.99398433606387583), c, 1e-9);
+}
+
+test "JonesFaddySkewT: cdf is monotonically increasing" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c1 = dist.cdf(-5.0);
+    const c2 = dist.cdf(0.0);
+    const c3 = dist.cdf(5.0);
+    try expect(c1 < c2 and c2 < c3);
+}
+
+test "JonesFaddySkewT: cdf(-1000) approaches 0" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(-1000.0);
+    try expect(c < 0.001);
+}
+
+test "JonesFaddySkewT: cdf(1000) approaches 1" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const c = dist.cdf(1000.0);
+    try expect(c > 0.999);
+}
+
+test "JonesFaddySkewT: cdf is valid probability in [0,1]" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    for (0..11) |idx| {
+        const i = @as(i32, @intCast(idx)) - 5;
+        const t = @as(f64, @floatFromInt(i));
+        const c = dist.cdf(t);
+        try expect(c >= -1e-10);
+        try expect(c <= 1.0 + 1e-10);
+    }
+}
+
+test "JonesFaddySkewT: sf(t) = 1 - cdf(t)" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const t = 0.5;
+    const sf_val = dist.sf(t);
+    const cdf_val = dist.cdf(t);
+    try expectApproxEqAbs(sf_val + cdf_val, 1.0, 1e-9);
+}
+
+test "JonesFaddySkewT: sf(t) + cdf(t) = 1 for multiple values" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    for ([_]f64{ -2.0, -1.0, 0.0, 1.0, 2.0 }) |t| {
+        const sf_val = dist.sf(t);
+        const cdf_val = dist.cdf(t);
+        try expectApproxEqAbs(sf_val + cdf_val, 1.0, 1e-9);
+    }
+}
+
+test "JonesFaddySkewT: quantile(0) = -inf" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const q = try dist.quantile(0.0);
+    try expect(q == -math.inf(f64));
+}
+
+test "JonesFaddySkewT: quantile(1) = +inf" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try expect(q == math.inf(f64));
+}
+
+test "JonesFaddySkewT: quantile(0.25) ≈ -1.606383807548473440065 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const q = try dist.quantile(0.25);
+    try expectApproxEqAbs(@as(f64, -1.606383807548473440065), q, 1e-6);
+}
+
+test "JonesFaddySkewT: quantile(0.50) ≈ -0.798737707592217214133 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const q = try dist.quantile(0.50);
+    try expectApproxEqAbs(@as(f64, -0.798737707592217214133), q, 1e-6);
+}
+
+test "JonesFaddySkewT: quantile(0.75) ≈ -0.078677725835102879674 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const q = try dist.quantile(0.75);
+    try expectApproxEqAbs(@as(f64, -0.078677725835102879674), q, 1e-6);
+}
+
+test "JonesFaddySkewT: quantile(cdf(t)) round-trips to t for t=1" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const t = 1.0;
+    const cdf_val = dist.cdf(t);
+    const q = try dist.quantile(cdf_val);
+    try expectApproxEqAbs(t, q, 1e-6);
+}
+
+test "JonesFaddySkewT: quantile(cdf(t)) round-trips to t for t=-1" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const t = -1.0;
+    const cdf_val = dist.cdf(t);
+    const q = try dist.quantile(cdf_val);
+    try expectApproxEqAbs(t, q, 1e-6);
+}
+
+test "JonesFaddySkewT: quantile with p<0 returns error.InvalidParameter" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const result = dist.quantile(-0.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: quantile with p>1 returns error.InvalidParameter" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const result = dist.quantile(1.1);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "JonesFaddySkewT: mean = 0 for a=2, b=2 (symmetric)" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(0.0, m, 1e-9);
+}
+
+test "JonesFaddySkewT: mean = 0 for a=1.5, b=1.5 (symmetric)" {
+    const dist = try JonesFaddySkewT(f64).init(1.5, 1.5);
+    const m = dist.mean();
+    try expectApproxEqAbs(0.0, m, 1e-9);
+}
+
+test "JonesFaddySkewT: mean ≈ -0.911138102552008703001 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, -0.911138102552008703001), m, 1e-9);
+}
+
+test "JonesFaddySkewT: mean ≈ 1.202390465776747589572 for a=4, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, 1.202390465776747589572), m, 1e-9);
+}
+
+test "JonesFaddySkewT: mean ≈ 2.757375379559726477535 for a=10, b=3" {
+    const dist = try JonesFaddySkewT(f64).init(10.0, 3.0);
+    const m = dist.mean();
+    try expectApproxEqAbs(@as(f64, 2.757375379559726477535), m, 1e-9);
+}
+
+test "JonesFaddySkewT: mean is NaN when b<=0.5 (a=0.6, b=0.4)" {
+    const dist = try JonesFaddySkewT(f64).init(0.6, 0.4);
+    const m = dist.mean();
+    try expect(math.isNan(m));
+}
+
+test "JonesFaddySkewT: variance = 2.0 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(2.0, v, 1e-9);
+}
+
+test "JonesFaddySkewT: variance ≈ 2.99999999999999999781 for a=1.5, b=1.5" {
+    const dist = try JonesFaddySkewT(f64).init(1.5, 1.5);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 3.0), v, 1e-8);
+}
+
+test "JonesFaddySkewT: variance ≈ 1.669827358077925271815 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 1.669827358077925271815), v, 1e-9);
+}
+
+test "JonesFaddySkewT: variance ≈ 2.554257167809175983569 for a=4, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    const v = dist.variance();
+    try expectApproxEqAbs(@as(f64, 2.554257167809175983569), v, 1e-9);
+}
+
+test "JonesFaddySkewT: variance is NaN when a<=1 (a=0.6, b=0.7)" {
+    const dist = try JonesFaddySkewT(f64).init(0.6, 0.7);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "JonesFaddySkewT: variance is NaN when b<=1 (a=2.0, b=0.8)" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 0.8);
+    const v = dist.variance();
+    try expect(math.isNan(v));
+}
+
+test "JonesFaddySkewT: mode ≈ 0.0 for a=2, b=2 (symmetric)" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const mo = dist.mode();
+    try expectApproxEqAbs(0.0, mo, 1e-4);
+}
+
+test "JonesFaddySkewT: mode ≈ 0.0 for a=1.5, b=1.5 (symmetric)" {
+    const dist = try JonesFaddySkewT(f64).init(1.5, 1.5);
+    const mo = dist.mode();
+    try expectApproxEqAbs(0.0, mo, 1e-4);
+}
+
+test "JonesFaddySkewT: mode ≈ -0.6446583712197937 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const mo = dist.mode();
+    try expectApproxEqAbs(@as(f64, -0.6446583712197937), mo, 1e-4);
+}
+
+test "JonesFaddySkewT: mode ≈ 0.7302967433413327 for a=4, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    const mo = dist.mode();
+    try expectApproxEqAbs(@as(f64, 0.7302967433413327), mo, 1e-4);
+}
+
+test "JonesFaddySkewT: entropy ≈ 1.68176001687866635644 for a=2, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    const h = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 1.68176001687866635644), h, 1e-2);
+}
+
+test "JonesFaddySkewT: entropy ≈ 1.62684701194345635514 for a=3, b=5" {
+    const dist = try JonesFaddySkewT(f64).init(3.0, 5.0);
+    const h = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 1.62684701194345635514), h, 1e-2);
+}
+
+test "JonesFaddySkewT: entropy ≈ 1.74718643327347922147 for a=4, b=2" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    const h = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 1.74718643327347922147), h, 1e-2);
+}
+
+test "JonesFaddySkewT: entropy ≈ 1.77347757186329094809 for a=1.5, b=1.5" {
+    const dist = try JonesFaddySkewT(f64).init(1.5, 1.5);
+    const h = dist.entropy();
+    try expectApproxEqAbs(@as(f64, 1.77347757186329094809), h, 1e-2);
+}
+
+test "JonesFaddySkewT: sample produces finite values" {
+    const dist = try JonesFaddySkewT(f64).init(2.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..100) |_| {
+        const s = dist.sample(rng);
+        try expect(math.isFinite(s));
+    }
+}
+
+test "JonesFaddySkewT: sample produces values consistent with distribution (a=4, b=2)" {
+    const dist = try JonesFaddySkewT(f64).init(4.0, 2.0);
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    var sum: f64 = 0.0;
+    const num_samples: usize = 20000;
+    for (0..num_samples) |_| {
+        sum += dist.sample(rng);
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(num_samples));
+    const theoretical_mean = dist.mean();
+    const tolerance = 0.15;
+    try expect(@abs(empirical_mean - theoretical_mean) / @abs(theoretical_mean) < tolerance);
+}
+
+test "JonesFaddySkewT: f32 pdf does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(2.0, 2.0);
+    const p = dist.pdf(0.5);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "JonesFaddySkewT: f32 cdf does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(3.0, 5.0);
+    const c = dist.cdf(1.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "JonesFaddySkewT: f32 quantile does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(2.0, 2.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "JonesFaddySkewT: f32 mean does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(3.0, 5.0);
+    const m = dist.mean();
+    try expect(!math.isNan(m) or @as(f32, 3.0) <= 1.0); // mean can legitimately be NaN for certain params
+}
+
+test "JonesFaddySkewT: f32 variance does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(4.0, 2.0);
+    const v = dist.variance();
+    try expect(!math.isNan(v) or @as(f32, 4.0) <= 1.0); // variance can legitimately be NaN for certain params
+}
+
+test "JonesFaddySkewT: f32 entropy does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(2.0, 2.0);
+    const h = dist.entropy();
+    try expect(!math.isNan(h) and !math.isInf(h));
+}
+
+test "JonesFaddySkewT: f32 sample does not produce NaN/Inf" {
+    const dist = try JonesFaddySkewT(f32).init(3.0, 5.0);
+    var prng = std.Random.DefaultPrng.init(7);
+    const rng = prng.random();
+    const s = dist.sample(rng);
+    try expect(!math.isNan(s) and !math.isInf(s));
+}
