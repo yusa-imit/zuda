@@ -60067,6 +60067,13 @@ pub fn ZipfMandelbrot(comptime T: type) type {
             return @min(left + 1, self.n);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ZipfMandelbrot(n={d:.1}, s={d:.1}, q={d:.1})", .{ self.n, self.s, self.q });
+        }
+
         /// Validate internal invariants
         ///
         /// Time: O(1) | Space: O(1)
@@ -65298,6 +65305,13 @@ pub fn Triweight(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn entropy(self: Self) T {
             return @log(self.h / 70.0) + 319.0 / 70.0;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Triweight(mu={d:.1}, h={d:.1})", .{ self.mu, self.h });
         }
 
         /// Validate that distribution parameters are in range.
@@ -71702,6 +71716,13 @@ pub fn HalfStudentT(comptime T: type) type {
             return @abs(t_dist.sample(rng)) * self.sigma;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("HalfStudentT(nu={d:.1}, sigma={d:.1})", .{ self.nu, self.sigma });
+        }
+
         /// Validate distribution parameters.
         ///
         /// Returns error.InvalidParameter if ν ≤ 0, σ ≤ 0, or any parameter is non-finite.
@@ -74805,6 +74826,13 @@ pub fn PearsonIII(comptime T: type) type {
             return @max(result, 1e-15);
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("PearsonIII(mu={d:.1}, sigma={d:.1}, gamma={d:.1})", .{ self.mu, self.sigma, self.gamma });
+        }
+
         /// Validate that parameters are in valid ranges
         ///
         /// Time: O(1) | Space: O(1)
@@ -75898,6 +75926,13 @@ pub fn LogPearsonIII(comptime T: type) type {
             // Gamma entropy + mu
             const gamma_entropy = self.alpha + @log(self.beta) + logGamma(self.alpha) + (1.0 - self.alpha) * digamma(T, self.alpha);
             return gamma_entropy + self.mu;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("LogPearsonIII(mu={d:.1}, sigma={d:.1}, gamma={d:.1})", .{ self.mu, self.sigma, self.gamma });
         }
 
         /// Validate that parameters are in valid ranges
@@ -95480,6 +95515,13 @@ pub fn BetaGeometric(comptime T: type) type {
             return k;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BetaGeometric(a={d:.1}, b={d:.1})", .{ self.a, self.b });
+        }
+
         /// Validate internal invariants: a > 0, b > 0, and both finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -98343,6 +98385,13 @@ pub fn HyperPoisson(comptime T: type) type {
             return k;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("HyperPoisson(lambda={d:.1}, gamma={d:.1})", .{ self.lambda, self.gamma });
+        }
+
         /// Assert that parameters are valid.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -98505,6 +98554,13 @@ pub fn ConwayMaxwellBinomial(comptime T: type) type {
                 }
             }
             return mode_val;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ConwayMaxwellBinomial(n={d:.1}, p={d:.1}, nu={d:.1})", .{ self.n, self.p, self.nu });
         }
 
         /// Assert that parameters are valid.
@@ -99752,6 +99808,13 @@ pub fn NeymanTypeA(comptime T: type) type {
             return best_k;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NeymanTypeA(phi={d:.1}, lambda={d:.1})", .{ self.phi, self.lambda });
+        }
+
         /// Assert that parameters are valid.
         /// Time: O(1) | Space: O(1)
         pub fn validate(self: Self) !void {
@@ -100139,6 +100202,13 @@ pub fn Sichel(comptime T: type) type {
             const gig = GeneralizedInverseGaussian(T).init(self.lambda_gig, self.psi, self.chi) catch return 0;
             const lam = gig.sample(rng);
             return poissonKnuth(T, rng, lam);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Sichel(lambda_gig={d:.1}, psi={d:.1}, chi={d:.1})", .{ self.lambda_gig, self.psi, self.chi });
         }
 
         /// Assert that parameters are valid.
@@ -101215,6 +101285,13 @@ pub fn SkewT(comptime T: type) type {
             return Self{ .xi = xi, .omega = omega, .alpha = alpha, .nu = nu };
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("SkewT(xi={d:.1}, omega={d:.1}, alpha={d:.1}, nu={d:.1})", .{ self.xi, self.omega, self.alpha, self.nu });
+        }
+
         /// Validate internal invariants
         ///
         /// Time: O(1) | Space: O(1)
@@ -102232,6 +102309,13 @@ pub fn SkewSlash(comptime T: type) type {
             if (omega <= 0.0 or !math.isFinite(omega)) return error.InvalidParameter;
             if (!math.isFinite(alpha)) return error.InvalidParameter;
             return Self{ .xi = xi, .omega = omega, .alpha = alpha };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("SkewSlash(xi={d:.1}, omega={d:.1}, alpha={d:.1})", .{ self.xi, self.omega, self.alpha });
         }
 
         /// Assert all parameters are valid.
@@ -106348,6 +106432,13 @@ pub fn BetaNegativeBinomial(comptime T: type) type {
             return k;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BetaNegativeBinomial(r={d:.1}, alpha={d:.1}, beta={d:.1})", .{ self.r, self.alpha, self.beta });
+        }
+
         /// Validate internal invariants: r > 0, α > 0, β > 0, all finite.
         ///
         /// Time: O(1) | Space: O(1)
@@ -106784,6 +106875,13 @@ pub fn HalfGeneralizedNormal(comptime T: type) type {
             return self.alpha * g_power;
         }
 
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("HalfGeneralizedNormal(beta={d:.1}, alpha={d:.1})", .{ self.beta, self.alpha });
+        }
+
         /// Validate that parameters are valid: beta > 0, alpha > 0, both finite
         ///
         /// Time: O(1) | Space: O(1)
@@ -106824,6 +106922,13 @@ pub fn SkewGeneralizedNormal(comptime T: type) type {
             if (!math.isFinite(xi)) return error.InvalidParameter;
             if (!math.isFinite(alpha)) return error.InvalidParameter;
             return Self{ .xi = xi, .omega = omega, .alpha = alpha, .beta = beta };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("SkewGeneralizedNormal(xi={d:.1}, omega={d:.1}, alpha={d:.1}, beta={d:.1})", .{ self.xi, self.omega, self.alpha, self.beta });
         }
 
         /// Validate internal invariants: omega > 0, beta > 0, all parameters finite
@@ -110073,6 +110178,13 @@ pub fn DoublePoisson(comptime T: type) type {
                 if (cumulative >= u) return k;
             }
             return k;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("DoublePoisson(mu={d:.1}, phi={d:.1})", .{ self.mu, self.phi });
         }
 
         /// Assert that parameters are valid.
@@ -114258,6 +114370,13 @@ pub fn PoissonLognormal(comptime T: type) type {
                 }
             }
             return best_k;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("PoissonLognormal(mu={d:.1}, sigma={d:.1})", .{ self.mu, self.sigma });
         }
 
         /// Assert that parameters are valid.
