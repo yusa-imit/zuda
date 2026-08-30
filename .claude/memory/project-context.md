@@ -1,3 +1,60 @@
+**Session 855 Update (2026-08-31) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **catch-unreachable OOM fixes (2 sites) + format() coverage complete (190/190)** — commits
+550a382, c0c8d4c
+- **Mode**: STABILIZATION MODE (counter: 855)
+- **CI/Issues**: CI green on main at session start, 0 open issues. `zig build test` exit 0
+  throughout (some tests intentionally print diff noise to stderr for negative-path assertions —
+  exit code is the only reliable signal, not stderr content).
+- Continued the standing `catch unreachable` OOM-swallowing audit (session 850 fixed 3 sites;
+  ~68 remained). Audited 12 non-distributions/correlation files; most were false positives (test
+  comments referencing already-fixed bugs, or genuinely safe — bounds-checked `deque.zig`
+  Iterator.get(), `initCapacity(_, 0)` no-alloc case, `k`-always-valid `quick_select.zig`).
+  Found 2 real ones: `strandsort.zig`'s `strandSort()` convenience wrapper spun up a fresh
+  `GeneralPurposeAllocator` and did `catch unreachable` on the allocating call — same pattern as
+  session 850. Fixed via try-propagation through `strandSort`/`strandSortAsc`/`strandSortDesc`/
+  `strandSortBy` (all now return `Allocator.Error!void`); all callers were internal to the file's
+  own tests, so blast radius was contained. Also `silica_btree.zig`'s `iterator()` claimed
+  "In-memory tree should never fail" but wraps `btree.zig`'s `Iterator` which allocates a
+  traversal stack (`ArrayList(*const Node)`) via `try stack.append(root)` — genuinely can OOM.
+  Changed signature to `error{OutOfMemory}!Iterator` (breaks exact silica-API-parity but the
+  library's "no @panic" rule takes precedence; single internal test call site updated). 69 catch
+  unreachable sites remain (mostly in distributions.zig/correlation.zig, not yet audited).
+- Delegated the last format() backlog batch (17 distributions) to a zig-developer agent:
+  ZipfMandelbrot, Triweight, HalfStudentT, PearsonIII, LogPearsonIII, BetaGeometric,
+  HyperPoisson, ConwayMaxwellBinomial, NeymanTypeA, Sichel, SkewT, SkewSlash,
+  BetaNegativeBinomial, HalfGeneralizedNormal, SkewGeneralizedNormal, DoublePoisson,
+  PoissonLognormal. **format() coverage backlog is now CLOSED — 190/190 distributions**, no
+  standing filler task there anymore. Verified the diff before committing; found
+  `ZipfMandelbrot.format()` uses `{d:.1}` on its `u64 n` field — harmless (Zig silently ignores
+  precision specifiers on integers, confirmed via a standalone snippet), not a compile error, not
+  worth a follow-up fix.
+- Skipped cross-compile check this session: a `zig build test` process (PID 51405, parent 51403,
+  0% CPU, stuck) was present at check time, not started by this session's own commands — likely
+  a residual from the background zig-developer agent's shell. Per session 835 precedent, didn't
+  proceed with cross-compile and didn't kill a process this session didn't start.
+- Release check: 41 commits since v2.3.0 tag (mostly `feat:` catalog growth + a few `fix:`), no
+  `docs/milestones.md` phase-completion checkbox flipped — per protocol this does NOT trigger a
+  release (no explicit "current phase" checklist exists for the open-ended distribution-catalog
+  track). Continues to be deferred every session since ~session 840; not silently growing
+  unnoticed, just genuinely not release-shaped work under the stated protocol.
+- **Next priority (stabilization)**: resume the `catch unreachable` audit — 69 remaining, mostly
+  in `distributions.zig` (42) and `correlation.zig` (15), not yet individually reviewed (unlike
+  the 12 files checked this session). Cross-compile check still owed (skipped due to a stray
+  process, not a real blocker). This file (`project-context.md`) and `patterns.md` are both well
+  over the CLAUDE.md 200-line compression threshold (223 and 1155 lines respectively going into
+  this session) — worth a dedicated compression pass if a future stabilization cycle has no
+  higher-priority CI/bug work.
+
+**Session 854 Update (2026-08-30) — FEATURE MODE:** JonesFaddySkewT (190th, commit 325b059) —
+recovered uncommitted work (Jones & Faddy 2003 skew-t via two shape params a,b, closed-form
+pdf/cdf via regularized incomplete beta). See external auto-memory
+`session_854_jones_faddy_skewt.md` for full verification detail.
+
+**Session 852 Update (2026-08-30) — FEATURE MODE:** ExponentialLogarithmic (189th, commit
+7d78de4) — recovered uncommitted work (min-of-Exponential-with-Logarithmic-count, decreasing
+failure rate). See external auto-memory `session_852_exponential_logarithmic.md`.
+
 **Session 851 Update (2026-08-29) — FEATURE MODE [COMPLETED]:**
 
 ✅ **Recovered interrupted PoissonLognormal (188th)** — commit ed61807
@@ -28,126 +85,20 @@
   broader `catch unreachable` sweep (~68 remaining occurrences beyond the 3 fixed in session 850)
   remains the standing stabilization candidate.
 
-**Session 842 Update (2026-08-27) — FEATURE MODE [COMPLETED]:**
+## Older sessions (compressed 2026-08-31 per 200-line rule; superseded detail lives in external auto-memory)
 
-✅ **Fixed 3 real bugs in uncommitted MarshallOlkinLomax (184th)** — commit 85846bc
-- **Mode**: FEATURE MODE (counter: 842)
-- **CI/Issues**: CI green on main at session start, 0 open issues. But local `zig build test`
-  had 3 failures — commit `8a8633e` ("feat: add MarshallOlkinLomax distribution (184th)") was
-  local-only (never pushed, no CI run existed for that SHA), unlike the usual clean-recovery
-  pattern from prior sessions.
-- Root cause: `mean()`/`variance()`/`entropy()` used Simpson's rule with `u = x/(x+lambda)`
-  substitution. For slow-tail params (kappa=1.5), the required cutoff `upper` balloons to ~1.7e10,
-  pushing `u_max` within 5.8e-11 of 1 — and the substituted integrand has a genuine singularity
-  there for `1 < kappa < 2`. `mean()` returned `37.2` vs true `4.489` (verified via mpmath
-  `mp.quad` at 40 dps) — 8x wrong. Fast-tail case (kappa=3) passed fine, masking the bug.
-- Fix: switched to log substitution `y = ln(1+x/lambda)` — tail decays exponentially in y
-  regardless of kappa, so n=4000 uniform panels converge everywhere tested. Also found the
-  shared `upperBound` helper's `safe_tol = @max(tol, 10*eps)` floor (added for f32 in session
-  770) was capping f64's usable tolerance at ~2.22e-15 instead of the requested 1e-30 — now
-  only applies for `T == f32`.
-- Loosened one test's tolerance (`alpha=1 reduces to Lomax for variance`, 1e-9 → 1e-6): verified
-  via Python convergence testing that 1e-9 is unreachable by n=4000 Simpson's rule regardless of
-  cutoff tuning (floor ~2e-9), not a remaining implementation bug.
-- 13204/13211 tests pass (7 pre-existing skipped, unrelated). Distribution count unchanged at
-  184 (bug fix, not new addition). Full derivation and the general pattern (any Lomax/Pareto/
-  Burr-tailed distribution with numeric mean/variance/entropy) in external auto-memory
-  `session_842_marshall_olkin_lomax_fix.md` and its `patterns.md`.
-- **Next priority (feature)**: no standing candidate for a new distribution — grep root.zig
-  before picking one. The `catch unreachable` OOM-swallowing audit from session 840
-  (decision_tree.zig, arc_cache.zig, pairing_heap.zig) remains the standing stabilization
-  candidate, untouched this session (out of scope for a feature-mode bug fix).
-
-**Session 840 Update (2026-08-27) — STABILIZATION MODE [COMPLETED]:**
-
-✅ **format() coverage batch 3 (20 distributions)** — commit a7d139c
-- **Mode**: STABILIZATION MODE (counter: 840)
-- **CI/Issues**: CI green on main at session start, 0 open issues. `zig build test --summary
-  all`: 13091/13098 passed at start, 13111/13118 after (exactly 20 new tests, 0 failures).
-- Checklist was clean (no bugs, no issues), so continued the standing format() backlog:
-  Arcsine, Logistic, InverseGamma, Lindley, HalfLogistic, Benford, Muth, YuleSimon, Kolmogorov,
-  Bradford, ContinuousBernoulli, TukeyLambda, Zeta, LogGamma, WrappedCauchy, Epanechnikov,
-  Benini, MarchenkoPastur, DiscreteWeibull, BoundedPareto. Coverage now 136/183 (up from
-  116/183 — the 89/172 figure in older notes was stale, batch 2 plus feature-session inline
-  additions had already pushed it well past that).
-- Used a Python script (not manual Edit calls) to locate each distribution's `validate()`
-  insertion point and its own last test's closing brace via brace-counting — safer than
-  scanning for `// ====` section-header comments, which turned out to be unreliable here:
-  some distributions share a combined test section with a neighboring distribution (e.g.
-  DiscreteWeibull/BoundedPareto tests are both grouped after both structs, not one-per-struct),
-  so naive backward-search-for-nearest-bar picked the wrong boundary. Anchoring on
-  `test "<Name>: ` occurrences + brace-matching worked correctly for all 20.
-- Caught 2 compile errors before committing: `Benford(f64).init()` and `Kolmogorov(f64).init()`
-  return `Self` directly (no params to validate), not `DistributionError!Self` like the other
-  18 — the generated smoke tests incorrectly used `try` on these two. Fixed by dropping `try`
-  for those two only. Ran `zig fmt` afterward (267 insertions, cosmetic brace-spacing only,
-  verified via diff before trusting) and re-ran the full suite to confirm still green.
-- All 6 cross-compile targets (x86_64/aarch64 linux/macos, x86_64-windows, wasm32-wasi) verified
-  clean, sequentially, machine was idle (`pgrep -f "zig build"` empty before starting).
-- New item found but NOT fixed (out of scope for a format-only cycle, needs its own session):
-  a `catch unreachable` audit turned up real allocator-failure-swallowing sites in library code
-  (not test helpers) — `decision_tree.zig`'s 3x `counts.getOrPut(label) catch unreachable`,
-  `arc_cache.zig`'s `list_map.put(entry, .T2) catch unreachable` in the cache-hit path,
-  `pairing_heap.zig`'s 2x `pairs.append(...) catch unreachable` in `combineSiblings`. These
-  swallow real OOM errors into a panic, violating the "no `@panic` in library code" rule, but
-  fixing them requires changing return signatures (e.g. `giniImpurity`, `get()`) which ripples
-  into callers — a bigger refactor than fits a filler cycle. Contrast with confirmed-safe
-  `catch unreachable` sites also found: `deque.zig` Iterator.get() (bounds already checked),
-  `persistent_hashmap.zig` initCapacity(_, 0) (no allocation possible), `correlation.zig` matrix
-  `.get()` (indices provably in range) — don't re-flag these as bugs.
-- Release check: `git log v2.3.0..HEAD` shows commits since v2.3.0 are a mix of `feat:`/`fix:`/
-  `chore:` — no phase-completion checkbox flipped in `docs/milestones.md`, so per protocol this
-  does NOT trigger a release. Recheck next stabilization session so it doesn't silently grow.
-- **Next priority (stabilization)**: the `catch unreachable` OOM-swallowing audit above is the
-  new standing candidate for a dedicated fix session (3 files: decision_tree.zig, arc_cache.zig,
-  pairing_heap.zig). format() backlog continues otherwise — 47 distributions still lack it as
-  of this session; grep `pub fn format(` count vs total before resuming, don't trust this number
-  after future sessions add more distributions.
-
-**Session 839 Update (2026-08-27) — FEATURE MODE:** MarshallOlkinWeibull (183rd, commit e1f19d7)
-— recovered clean uncommitted work, completes the Marshall-Olkin family (Exponential+Weibull).
-See external auto-memory `session_839_marshall_olkin_weibull.md` for full detail (not duplicated
-here to save space — this file tracks repo-local context, that one has the verification trail).
-
-**Session 836 Update (2026-08-26) — FEATURE MODE:** DoublePoisson (181st, Efron's dispersion
-model, commit 502558c) — recovered clean uncommitted work, phi=1 reduces exactly to Poisson.
-See external auto-memory `session_836_double_poisson.md` for detail.
-
-**Session 835 Update (2026-08-26) — STABILIZATION MODE [COMPLETED]:**
-
-✅ **Fixed duplicate distribution: removed `ExponentialModifiedGaussian`** — commit 1285984
-- **Mode**: STABILIZATION MODE (counter: 835)
-- **CI/Issues**: CI green, 0 open issues. `zig build test --summary all`: 12906/12913 passed at
-  session start (12862/12869 after the fix — 44 fewer tests, exactly the removed distribution's
-  test count). 6/6 cross-compile check **skipped** this session — a stale/idle `zig build test`
-  process (PID 99101, 28+ min at 0% CPU, not started by this session) was running when the
-  concurrency check ran; per protocol, didn't proceed with cross-compile while another heavy zig
-  process was present, and didn't kill a process this session didn't start.
-- Resolved the duplicate flagged since session 831 (unconfirmed) and re-flagged at session 834
-  (`ExponentialModifiedGaussian` ~line 49724 vs `ExGaussian` ~line 79658). Confirmed mathematically
-  identical: EMG's `Φ(z)` term and ExGaussian's `erfc(u)` term are the same expression via
-  `erfc(u) = 2(1-Φ(u√2))` — verified algebraically before touching code, not just by eyeballing
-  similar field names. Removed `ExponentialModifiedGaussian` (kept `ExGaussian`, which has the
-  more numerically robust implementation: asymptotic `logErfc` for large arguments avoiding
-  underflow, `@max`/`@min`-clamped `cdf`/`sf`, precomputed `sigma_sq`/`lambda_sigma_sq_2`
-  constants). Deleted via precise `sed` line-range removal (implementation 49714-49952, its test
-  block 50108-50435) verified against clean section-header boundaries before applying, not a
-  freeform edit — zero stray fragments, confirmed via `grep -n "ExponentialModifiedGaussian"`
-  returning nothing repo-wide afterward (excluding historical memory notes).
-- Also fixed a related doc-only bug found while touching `src/root.zig`'s giant distribution-list
-  doc comment: `ConwayMaxwellBinomial` was listed twice in that comment (not a code duplicate —
-  only one `pub fn ConwayMaxwellBinomial` exists — just a stale doc-string typo). Deduplicated the
-  mention in the same commit.
-- Distribution count: 181 → **180** (verified via
-  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`). Updated
-  `docs/milestones.md`'s stale "178 distributions" line to 180 and refreshed its test-count line.
-- Release check: 10 commits since v2.3.0 (3 feat, 1 fix, rest chore) — SKIP, consistent with the
-  established "let the catalog grow" pattern (v2.3.0 itself wasn't cut until 32 commits had
-  accumulated). Not urgent yet, recheck next stabilization session.
-- **Next priority (stabilization)**: cross-compile check still owed — was skipped this session
-  only because of the stale concurrent process, not because of any real blocker; worth doing next
-  time if the machine is idle. format() backlog (89/172 as of session 820) remains the default
-  filler task otherwise.
+- **842**: MarshallOlkinLomax (184th) had 3 real bugs from `u=x/(x+lambda)` Simpson substitution
+  singularity at slow tails (kappa<2) — fixed via log substitution `y=ln(1+x/lambda)`; also fixed
+  an `upperBound` tolerance floor that was f32-only but applied to f64 too. Pattern: any
+  Lomax/Pareto/Burr-tailed numeric mean/variance/entropy needs this substitution, sanity-check the
+  slowest-tail param corner via mpmath. See `session_842_marshall_olkin_lomax_fix.md`.
+- **840**: format() batch 3 (20 dists, →136/183). First found the `catch unreachable` OOM-swallow
+  sites in decision_tree.zig/arc_cache.zig/pairing_heap.zig (fixed session 850) and confirmed-safe
+  sites in deque.zig/persistent_hashmap.zig/correlation.zig (don't re-flag).
+- **839/836**: MarshallOlkinWeibull (183rd), DoublePoisson (181st) — clean uncommitted-work
+  recoveries.
+- **835**: Removed duplicate `ExponentialModifiedGaussian` (kept `ExGaussian`, more numerically
+  robust) — 181→180 distributions. Also deduped a stale doc-comment double-listing.
 
 ## Older sessions (compressed 2026-08-27 per 200-line rule)
 
