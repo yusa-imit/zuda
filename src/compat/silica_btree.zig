@@ -156,14 +156,16 @@ pub const BTree = struct {
 
     /// Return an iterator over all key-value pairs in sorted order.
     ///
-    /// **silica API**: `pub fn iterator(self: *BTree) Iterator`
+    /// **silica API**: `pub fn iterator(self: *BTree) !Iterator` — differs from silica's
+    /// original non-error signature because the underlying iterator allocates a
+    /// traversal stack and can genuinely fail with OutOfMemory.
     ///
     /// The iterator traverses leaf nodes in sorted order (B+Tree semantics).
     ///
     /// Time: O(log n) to find first element | Space: O(h) for iterator stack
-    pub fn iterator(self: *Self) Iterator {
+    pub fn iterator(self: *Self) error{OutOfMemory}!Iterator {
         return Iterator{
-            .inner = self.inner.iterator() catch unreachable, // In-memory tree should never fail
+            .inner = try self.inner.iterator(),
         };
     }
 
@@ -230,7 +232,7 @@ test "silica BTree compatibility - iteration" {
     try tree.insert("bob", "2");
 
     // Iterate should return sorted order
-    var it = tree.iterator();
+    var it = try tree.iterator();
     var count: usize = 0;
 
     while (it.next()) |entry| {

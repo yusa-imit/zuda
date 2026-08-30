@@ -30,14 +30,14 @@ pub fn strandSort(
     comptime T: type,
     arr: []T,
     comptime compareFn: fn (T, T) bool,
-) void {
+) Allocator.Error!void {
     if (arr.len <= 1) return;
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    strandSortAlloc(T, arr, allocator, compareFn) catch unreachable;
+    try strandSortAlloc(T, arr, allocator, compareFn);
 }
 
 /// Strand Sort with custom allocator
@@ -99,8 +99,8 @@ pub fn strandSortAlloc(
 ///
 /// Time: O(n²) average, O(n log n) best case
 /// Space: O(n)
-pub fn strandSortAsc(comptime T: type, arr: []T) void {
-    strandSort(T, arr, struct {
+pub fn strandSortAsc(comptime T: type, arr: []T) Allocator.Error!void {
+    try strandSort(T, arr, struct {
         fn lessThan(a: T, b: T) bool {
             return a < b;
         }
@@ -111,8 +111,8 @@ pub fn strandSortAsc(comptime T: type, arr: []T) void {
 ///
 /// Time: O(n²) average, O(n log n) best case
 /// Space: O(n)
-pub fn strandSortDesc(comptime T: type, arr: []T) void {
-    strandSort(T, arr, struct {
+pub fn strandSortDesc(comptime T: type, arr: []T) Allocator.Error!void {
+    try strandSort(T, arr, struct {
         fn greaterThan(a: T, b: T) bool {
             return a > b;
         }
@@ -127,8 +127,8 @@ pub fn strandSortBy(
     comptime T: type,
     arr: []T,
     comptime compareFn: fn (void, T, T) Order,
-) void {
-    strandSort(T, arr, struct {
+) Allocator.Error!void {
+    try strandSort(T, arr, struct {
         fn lessThan(a: T, b: T) bool {
             return compareFn({}, a, b) == .lt;
         }
@@ -253,67 +253,67 @@ fn merge(
 
 test "strand sort - basic ascending" {
     var arr = [_]i32{ 5, 2, 8, 1, 9 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 5, 8, 9 }, &arr);
 }
 
 test "strand sort - basic descending" {
     var arr = [_]i32{ 5, 2, 8, 1, 9 };
-    strandSortDesc(i32, &arr);
+    try strandSortDesc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 9, 8, 5, 2, 1 }, &arr);
 }
 
 test "strand sort - already sorted" {
     var arr = [_]i32{ 1, 2, 3, 4, 5 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5 }, &arr);
 }
 
 test "strand sort - reverse sorted" {
     var arr = [_]i32{ 5, 4, 3, 2, 1 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5 }, &arr);
 }
 
 test "strand sort - duplicates" {
     var arr = [_]i32{ 3, 1, 4, 1, 5, 9, 2, 6, 5 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 1, 2, 3, 4, 5, 5, 6, 9 }, &arr);
 }
 
 test "strand sort - all equal" {
     var arr = [_]i32{ 7, 7, 7, 7, 7 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 7, 7, 7, 7, 7 }, &arr);
 }
 
 test "strand sort - single element" {
     var arr = [_]i32{42};
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{42}, &arr);
 }
 
 test "strand sort - two elements" {
     var arr = [_]i32{ 2, 1 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2 }, &arr);
 }
 
 test "strand sort - empty array" {
     var arr = [_]i32{};
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{}, &arr);
 }
 
 test "strand sort - negative numbers" {
     var arr = [_]i32{ -5, 3, -2, 8, -9, 1 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ -9, -5, -2, 1, 3, 8 }, &arr);
 }
 
 test "strand sort - f64 support" {
     var arr = [_]f64{ 3.14, 1.41, 2.71, 0.57 };
-    strandSortAsc(f64, &arr);
+    try strandSortAsc(f64, &arr);
     try testing.expect(arr[0] < arr[1]);
     try testing.expect(arr[1] < arr[2]);
     try testing.expect(arr[2] < arr[3]);
@@ -331,7 +331,7 @@ test "strand sort - custom comparison (struct)" {
         .{ .age = 35, .name = "Charlie" },
     };
 
-    strandSort(Person, &people, struct {
+    try strandSort(Person, &people, struct {
         fn byAge(a: Person, b: Person) bool {
             return a.age < b.age;
         }
@@ -344,7 +344,7 @@ test "strand sort - custom comparison (struct)" {
 
 test "strand sort - Order-based comparison" {
     var arr = [_]i32{ 5, 2, 8, 1, 9 };
-    strandSortBy(i32, &arr, struct {
+    try strandSortBy(i32, &arr, struct {
         fn compare(_: void, a: i32, b: i32) Order {
             return std.math.order(a, b);
         }
@@ -354,14 +354,14 @@ test "strand sort - Order-based comparison" {
 
 test "strand sort - u8 type" {
     var arr = [_]u8{ 5, 2, 8, 1, 9 };
-    strandSortAsc(u8, &arr);
+    try strandSortAsc(u8, &arr);
     try testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 5, 8, 9 }, &arr);
 }
 
 test "strand sort - partially sorted (best case)" {
     // Data with existing sorted runs should extract fewer strands
     var arr = [_]i32{ 1, 2, 3, 7, 4, 5, 6, 9, 8, 10 };
-    strandSortAsc(i32, &arr);
+    try strandSortAsc(i32, &arr);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, &arr);
 }
 
@@ -453,7 +453,7 @@ test "strand sort - stability test" {
         .{ .key = 3, .value = 5 },
     };
 
-    strandSort(Item, &arr, struct {
+    try strandSort(Item, &arr, struct {
         fn byKey(a: Item, b: Item) bool {
             return a.key < b.key;
         }
