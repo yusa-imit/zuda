@@ -1,3 +1,25 @@
+**Session 859 Update (2026-09-01) — FEATURE MODE [COMPLETED]:**
+
+✅ **ShiftedGamma (194th, recovered uncommitted, commit 1c2e120) + ShiftedRayleigh (195th, fresh
+TDD, commit a678775)**
+- **Mode**: FEATURE MODE (counter: 859). CI green on main at session start, 0 open issues.
+- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
+  `ShiftedGamma` (3-param Gamma, X=γ+Gamma(shape,rate)) — 59 tests, no `@panic`/`catch
+  unreachable`/`debug.print`. Independently re-derived mean/variance/mode formulas by hand and
+  confirmed all 3 numeric test vectors before trusting. Diff also tightened the shared
+  `regularizedGammaP` helper's convergence (200→300 iters, 1e-10→1e-12 tol) — full suite still
+  passed. `zig build test` exit 0, committed as 194th.
+- Implemented `ShiftedRayleigh` (X=γ+Rayleigh(σ)) as 195th via full TDD: derived formulas + 3
+  mpmath ground-truth vectors (30 dps) into the scratchpad first, test-writer wrote 60 failing
+  tests, zig-developer implemented correctly on the first pass **but caught a real bug in
+  test-writer's own format() test** (broken `std.io.FixedBufferStream` API instead of this file's
+  `std.Io.Writer.fixed(&buf)` idiom) and correctly refused to fix it itself — re-dispatched
+  test-writer per the TDD protocol to fix just that one test block. First session this rule
+  actually fired in practice, not just theoretical. `zig build test` exit 0 after the fix.
+- **Next priority (feature)**: location-shift variants remain the cheapest path. Already shipped:
+  ShiftedLogNormal/Weibull/Exponential/Gamma/Rayleigh. Untested candidates: ShiftedChi,
+  ShiftedNakagami, ShiftedLevy, ShiftedInverseGaussian — grep root.zig first before implementing.
+
 **Session 856 Update (2026-08-31) — FEATURE MODE [COMPLETED]:**
 
 ✅ **ShiftedLogNormal (191st, recovered uncommitted, commit 249ce4a) + ShiftedWeibull (192nd,
