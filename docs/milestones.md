@@ -5,7 +5,7 @@
 - **Latest release**: v2.3.0 (2026-08-25) — ongoing stats/distributions catalog expansion
 - **Current phase**: v2.0 Track — **ALL PHASES COMPLETE** ✅ (post-release maintenance ongoing)
 - **Tests**: 12862/12869 passing, 7 skipped (0 failures)
-- **Distributions**: 180 in `src/stats/distributions.zig`
+- **Distributions**: 195 in `src/stats/distributions.zig`
 - **Open issues**: None
 - **Blockers**: None
 - **v2.0 Status**: **RELEASED** — Scientific computing platform fully implemented
