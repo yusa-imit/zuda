@@ -1264,7 +1264,7 @@ pub fn StudentT(comptime T: type) type {
 
             // Generate chi-squared random variable V ~ χ²(ν)
             // χ²(ν) = Gamma(ν/2, 1/2)
-            const chi_squared_dist = ChiSquared(T).init(@intFromFloat(self.nu)) catch unreachable;
+            const chi_squared_dist = Gamma(T).init(self.nu / 2.0, 0.5) catch unreachable;
             const v = chi_squared_dist.sample(rng);
 
             // T = Z / √(V/ν)
@@ -1445,8 +1445,8 @@ pub fn FDistribution(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
-            const chi1 = ChiSquared(T).init(@intFromFloat(self.d1)) catch unreachable;
-            const chi2 = ChiSquared(T).init(@intFromFloat(self.d2)) catch unreachable;
+            const chi1 = Gamma(T).init(self.d1 / 2.0, 0.5) catch unreachable;
+            const chi2 = Gamma(T).init(self.d2 / 2.0, 0.5) catch unreachable;
 
             const v1 = chi1.sample(rng);
             const v2 = chi2.sample(rng);
@@ -3893,6 +3893,17 @@ test "StudentT distribution: CDF and PDF exact values for nu=1 (Cauchy)" {
     try expectApproxEqRel(1.0 / math.pi, dist.pdf(0.0), 1e-10);
 }
 
+test "StudentT distribution: sample with fractional nu (regression for catch unreachable panic)" {
+    var rng = std.Random.DefaultPrng.init(12345);
+    const dist = try StudentT(f64).init(0.5);
+
+    // Should sample ~20 times without panicking, all finite
+    for (0..20) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
 // ============================================================================
 // F Distribution Tests
 // ============================================================================
@@ -4154,6 +4165,28 @@ test "F distribution: CDF + 1 - CDF = 1 at interior points" {
     // Exact: F(1; 5, 10) ≈ 0.5348 (already tested), monotone check
     try testing.expect(dist.cdf(0.5) < dist.cdf(1.0));
     try testing.expect(dist.cdf(1.0) < dist.cdf(2.0));
+}
+
+test "F distribution: sample with fractional d1 (regression for catch unreachable panic)" {
+    var rng = std.Random.DefaultPrng.init(12345);
+    const dist = try FDistribution(f64).init(0.5, 5.0);
+
+    // Should sample ~20 times without panicking, all finite
+    for (0..20) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
+}
+
+test "F distribution: sample with fractional d2 (regression for catch unreachable panic)" {
+    var rng = std.Random.DefaultPrng.init(12345);
+    const dist = try FDistribution(f64).init(5.0, 0.5);
+
+    // Should sample ~20 times without panicking, all finite
+    for (0..20) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(math.isFinite(sample));
+    }
 }
 
 test "distributions: memory safety" {
@@ -9938,7 +9971,7 @@ pub fn Dirichlet(comptime T: type) type {
 
             var alpha0: T = 0.0;
             for (alphas) |a| {
-                if (a <= 0.0) return DistributionError.InvalidParameter;
+                if (a <= 0.0 or !math.isFinite(a)) return DistributionError.InvalidParameter;
                 alpha0 += a;
             }
 
@@ -10093,7 +10126,7 @@ pub fn Dirichlet(comptime T: type) type {
             if (self.alphas.len < 2) return DistributionError.InvalidParameter;
             var sum: T = 0.0;
             for (self.alphas) |ai| {
-                if (ai <= 0.0) return DistributionError.InvalidParameter;
+                if (ai <= 0.0 or !math.isFinite(ai)) return DistributionError.InvalidParameter;
                 sum += ai;
             }
             const eps: T = switch (T) {
@@ -10468,6 +10501,35 @@ test "Dirichlet: format" {
     try dist.format(&w);
     const result = w.buffered();
     try testing.expect(std.mem.eql(u8, result, "Dirichlet(k=3, alpha0=6.0)"));
+}
+
+test "Dirichlet: init rejects +Inf alpha (regression for NaN/Inf acceptance bug)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, math.inf(f64) };
+
+    // Should error, not silently accept +Inf
+    try testing.expectError(error.InvalidParameter, Dirichlet(f64).init(allocator, &alphas));
+}
+
+test "Dirichlet: init rejects NaN alpha (regression for NaN/Inf acceptance bug)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 1.0, math.nan(f64) };
+
+    // Should error, not silently accept NaN
+    try testing.expectError(error.InvalidParameter, Dirichlet(f64).init(allocator, &alphas));
+}
+
+test "Dirichlet: validate rejects NaN alpha after direct mutation (regression)" {
+    const allocator = testing.allocator;
+    const alphas = [_]f64{ 2.0, 3.0 };
+    var dist = try Dirichlet(f64).init(allocator, &alphas);
+    defer dist.deinit();
+
+    // Force mutate alpha to NaN (structs are plain data)
+    dist.alphas[0] = math.nan(f64);
+
+    // Validate should now reject it
+    try testing.expectError(error.InvalidParameter, dist.validate());
 }
 
 // ============================================================================
@@ -101548,7 +101610,7 @@ pub fn SkewT(comptime T: type) type {
             const z = delta * @abs(z1) + sqrt_1_minus_delta_sq * z2;
 
             // Chi-squared component
-            const chi_squared_dist = ChiSquared(T).init(@intFromFloat(self.nu)) catch unreachable;
+            const chi_squared_dist = Gamma(T).init(self.nu / 2.0, 0.5) catch unreachable;
             const v = chi_squared_dist.sample(rng);
 
             // SkewT = xi + omega * Z / sqrt(V/nu)
@@ -102046,6 +102108,17 @@ test "SkewT: f32 sample returns finite value" {
     const dist = try SkewT(f32).init(0.0, 1.0, 1.0, 5.0);
     const s = dist.sample(rng.random());
     try expect(math.isFinite(s));
+}
+
+test "SkewT: sample with fractional nu (regression for catch unreachable panic)" {
+    var rng = std.Random.DefaultPrng.init(12345);
+    const dist = try SkewT(f64).init(0, 1, 0, 0.3);
+
+    // Should sample ~20 times without panicking, all finite
+    for (0..20) |_| {
+        const sample = dist.sample(rng.random());
+        try expect(math.isFinite(sample));
+    }
 }
 
 // ============================================================================
