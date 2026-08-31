@@ -116766,3 +116766,662 @@ test "ShiftedLogNormal: f32 support - quantile" {
     const q = try dist.quantile(0.5);
     try expect(!math.isNan(q) and !math.isInf(q));
 }
+
+/// ShiftedWeibull (3-parameter Weibull) distribution
+///
+/// Probability density function (PDF):
+///   f(x) = (k/λ) × ((x-γ)/λ)^(k-1) × exp(-((x-γ)/λ)^k)  for x > γ
+///        = 0                                              for x ≤ γ
+///
+/// Cumulative distribution function (CDF):
+///   F(x) = 1 - exp(-((x-γ)/λ)^k)  for x > γ
+///        = 0                       for x ≤ γ
+///
+/// Parameters:
+///   - shape (k): Shape parameter (k > 0)
+///   - scale (λ): Scale parameter (λ > 0)
+///   - threshold (γ): Threshold/shift parameter (any finite real)
+///
+/// Time: O(1) for most operations
+pub fn ShiftedWeibull(comptime T: type) type {
+    return struct {
+        shape: T,
+        scale: T,
+        threshold: T,
+
+        const Self = @This();
+
+        /// Create a ShiftedWeibull distribution with given shape, scale, and threshold parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(shape: T, scale: T, threshold: T) DistributionError!Self {
+            if (shape <= 0.0) return error.InvalidParameter;
+            if (scale <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(shape) or !math.isFinite(scale) or !math.isFinite(threshold)) return error.InvalidParameter;
+            return Self{ .shape = shape, .scale = scale, .threshold = threshold };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (k/λ) × ((x-γ)/λ)^(k-1) × exp(-((x-γ)/λ)^k)  for x > γ
+        ///      = 0                                              for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= self.threshold) return 0.0;
+
+            const shifted = x - self.threshold;
+            if (shifted == 0.0) {
+                // At x = threshold: k < 1 → ∞, k = 1 → 1/λ, k > 1 → 0
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return 1.0 / self.scale;
+                return 0.0;
+            }
+
+            const shifted_scaled = shifted / self.scale;
+            const shifted_pow_k = math.pow(T, shifted_scaled, self.shape);
+            const shifted_pow_k_minus_1 = math.pow(T, shifted_scaled, self.shape - 1.0);
+
+            return (self.shape / self.scale) * shifted_pow_k_minus_1 * @exp(-shifted_pow_k);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 - exp(-((x-γ)/λ)^k)  for x > γ
+        ///      = 0                       for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.threshold) return 0.0;
+
+            const shifted = x - self.threshold;
+            const shifted_scaled = shifted / self.scale;
+            const shifted_pow_k = math.pow(T, shifted_scaled, self.shape);
+            return 1.0 - @exp(-shifted_pow_k);
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = exp(-((x-γ)/λ)^k)  for x > γ
+        ///      = 1                              for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= self.threshold) return 1.0;
+            const shifted = x - self.threshold;
+            const shifted_scaled = shifted / self.scale;
+            const shifted_pow_k = math.pow(T, shifted_scaled, self.shape);
+            return @exp(-shifted_pow_k);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = γ + λ × (-ln(1-p))^(1/k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.threshold;
+            if (p == 1.0) return math.inf(T);
+
+            return self.threshold + self.scale * math.pow(T, -@log(1.0 - p), 1.0 / self.shape);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = ln(k/λ) + (k-1)×ln((x-γ)/λ) - ((x-γ)/λ)^k
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.threshold) return -math.inf(T);
+
+            const shifted = x - self.threshold;
+            if (shifted == 0.0) {
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return -@log(self.scale);
+                return -math.inf(T);
+            }
+
+            const shifted_scaled = shifted / self.scale;
+            const log_shifted_scaled = @log(shifted_scaled);
+            const shifted_pow_k = math.pow(T, shifted_scaled, self.shape);
+
+            return @log(self.shape / self.scale) + (self.shape - 1.0) * log_shifted_scaled - shifted_pow_k;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = γ + λΓ(1 + 1/k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const gamma_val = @exp(logGamma(1.0 + 1.0 / self.shape));
+            return self.threshold + self.scale * gamma_val;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = λ²[Γ(1 + 2/k) - Γ²(1 + 1/k)]
+        ///
+        /// Independent of threshold γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const gamma_1_plus_1_over_k = @exp(logGamma(1.0 + 1.0 / self.shape));
+            const gamma_1_plus_2_over_k = @exp(logGamma(1.0 + 2.0 / self.shape));
+            return self.scale * self.scale * (gamma_1_plus_2_over_k - gamma_1_plus_1_over_k * gamma_1_plus_1_over_k);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = γ + λ((k-1)/k)^(1/k)  for k > 1
+        ///      = γ                      for k ≤ 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.shape <= 1.0) return self.threshold;
+            return self.threshold + self.scale * math.pow(T, (self.shape - 1.0) / self.shape, 1.0 / self.shape);
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = γ + λ(ln 2)^(1/k)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.threshold + self.scale * math.pow(T, @log(2.0), 1.0 / self.shape);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method via quantile function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable; // u is always valid probability
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedWeibull(shape={d:.1}, scale={d:.1}, threshold={d:.1})", .{ self.shape, self.scale, self.threshold });
+        }
+
+        /// Assert that parameters are valid: shape > 0, scale > 0, all finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.shape <= 0.0 or !math.isFinite(self.shape)) return DistributionError.InvalidParameter;
+            if (self.scale <= 0.0 or !math.isFinite(self.scale)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.threshold)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ShiftedWeibull Distribution Tests
+// ============================================================================
+
+test "ShiftedWeibull: init with valid parameters" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    try expectEqual(2.0, dist.shape);
+    try expectEqual(1.0, dist.scale);
+    try expectEqual(0.0, dist.threshold);
+}
+
+test "ShiftedWeibull: init with zero shape fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(0.0, 1.0, 0.0));
+}
+
+test "ShiftedWeibull: init with negative shape fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(-1.0, 1.0, 0.0));
+}
+
+test "ShiftedWeibull: init with zero scale fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(2.0, 0.0, 0.0));
+}
+
+test "ShiftedWeibull: init with negative scale fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(2.0, -1.0, 0.0));
+}
+
+test "ShiftedWeibull: init with infinite shape fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(math.inf(f64), 1.0, 0.0));
+}
+
+test "ShiftedWeibull: init with NaN shape fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(math.nan(f64), 1.0, 0.0));
+}
+
+test "ShiftedWeibull: init with infinite scale fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(2.0, math.inf(f64), 0.0));
+}
+
+test "ShiftedWeibull: init with NaN scale fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(2.0, math.nan(f64), 0.0));
+}
+
+test "ShiftedWeibull: init with infinite threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(2.0, 1.0, math.inf(f64)));
+}
+
+test "ShiftedWeibull: init with NaN threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedWeibull(f64).init(2.0, 1.0, math.nan(f64)));
+}
+
+test "ShiftedWeibull: init with negative threshold succeeds" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, -5.0);
+    try expectEqual(-5.0, dist.threshold);
+}
+
+test "ShiftedWeibull: init with positive threshold succeeds" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 3.5);
+    try expectEqual(3.5, dist.threshold);
+}
+
+test "ShiftedWeibull: pdf at x <= threshold is 0" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 1.0);
+    try expectEqual(0.0, dist.pdf(1.0));
+    try expectEqual(0.0, dist.pdf(0.5));
+    try expectEqual(0.0, dist.pdf(-1.0));
+}
+
+test "ShiftedWeibull: cdf at x <= threshold is 0" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 1.0);
+    try expectEqual(0.0, dist.cdf(1.0));
+    try expectEqual(0.0, dist.cdf(0.5));
+    try expectEqual(0.0, dist.cdf(-1.0));
+}
+
+test "ShiftedWeibull: sf at x <= threshold is 1" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 1.0);
+    try expectEqual(1.0, dist.sf(1.0));
+    try expectEqual(1.0, dist.sf(0.5));
+    try expectEqual(1.0, dist.sf(-1.0));
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - pdf(0.5)" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(0.5);
+    const expected = 0.778800783071404868245170266978;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - cdf(0.5)" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(0.5);
+    const expected = 0.221199216928595131754829733022;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - pdf(1.0)" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = 0.735758882342884643191047540323;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - cdf(1.0)" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(1.0);
+    const expected = 0.632120558828557678404476229839;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - pdf(2.0)" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(2.0);
+    const expected = 0.0732625555549367211748720850929;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - cdf(2.0)" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(2.0);
+    const expected = 0.981684361111265819706281978727;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - mean" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const mean_val = dist.mean();
+    const expected = 0.886226925452758013649083741671;
+    try expectApproxEqRel(mean_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - variance" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const var_val = dist.variance();
+    const expected = 0.21460183660255169038433915418;
+    try expectApproxEqRel(var_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - mode" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const mode_val = dist.mode();
+    const expected = 0.7071067811865476;
+    try expectApproxEqRel(mode_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 1 (k=2.0, lambda=1.0, gamma=0.0) - median" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const median_val = dist.median();
+    const expected = 0.832554611157697756353164644895;
+    try expectApproxEqRel(median_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - pdf(1.5)" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const pdf_val = dist.pdf(1.5);
+    const expected = 0.330936338469223276074334553711;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - cdf(1.5)" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const cdf_val = dist.cdf(1.5);
+    const expected = 0.117503097415404597135107856771;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - pdf(2.0)" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const pdf_val = dist.pdf(2.0);
+    const expected = 0.372391688219422020309969991003;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - cdf(2.0)" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const cdf_val = dist.cdf(2.0);
+    const expected = 0.297811498673440420732468029398;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - pdf(3.0)" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const pdf_val = dist.pdf(3.0);
+    const expected = 0.275909580878581741196642827621;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - cdf(3.0)" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const cdf_val = dist.cdf(3.0);
+    const expected = 0.632120558828557678404476229839;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - mean" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const mean_val = dist.mean();
+    const expected = 2.80549058590186717401390295697;
+    try expectApproxEqRel(mean_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - variance" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const var_val = dist.variance();
+    const expected = 1.50276113925572731281448050538;
+    try expectApproxEqRel(var_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - mode" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const mode_val = dist.mode();
+    const expected = 1.9614997135382723;
+    try expectApproxEqRel(mode_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 2 (k=1.5, lambda=2.0, gamma=1.0) - median" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const median_val = dist.median();
+    const expected = 2.56643953754930269998727015477;
+    try expectApproxEqRel(median_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - pdf(-0.5)" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const pdf_val = dist.pdf(-0.5);
+    const expected = 2.20727664702865392957314262097;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - cdf(-0.5)" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const cdf_val = dist.cdf(-0.5);
+    const expected = 0.632120558828557678404476229839;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - pdf(0.0)" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const pdf_val = dist.pdf(0.0);
+    const expected = 0.00805110306966028413171333901874;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - cdf(0.0)" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const cdf_val = dist.cdf(0.0);
+    const expected = 0.999664537372097488161178610874;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - pdf(1.0)" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = 1.53965845492669233885704355277e-26;
+    try expectApproxEqRel(pdf_val, expected, 1e-15);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - cdf(1.0)" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const cdf_val = dist.cdf(1.0);
+    const expected = 0.99999999999999999999999999984;
+    try expectApproxEqRel(cdf_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - mean" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const mean_val = dist.mean();
+    const expected = -0.553510244215375390027413296105;
+    try expectApproxEqRel(mean_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - variance" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const var_val = dist.variance();
+    const expected = 0.0263332212171196713888405027699;
+    try expectApproxEqRel(var_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - mode" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const mode_val = dist.mode();
+    const expected = -0.5632097676318506;
+    try expectApproxEqRel(mode_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: Case 3 (k=3.0, lambda=0.5, gamma=-1.0) - median" {
+    const dist = try ShiftedWeibull(f64).init(3.0, 0.5, -1.0);
+    const median_val = dist.median();
+    const expected = -0.557501477749741137626015312261;
+    try expectApproxEqRel(median_val, expected, 1e-9);
+}
+
+test "ShiftedWeibull: gamma=0 cross-check against Weibull - pdf" {
+    const shifted = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const plain = try Weibull(f64).init(2.0, 1.0);
+    const x = 1.5;
+    try expectApproxEqRel(shifted.pdf(x), plain.pdf(x), 1e-10);
+}
+
+test "ShiftedWeibull: gamma=0 cross-check against Weibull - cdf" {
+    const shifted = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const plain = try Weibull(f64).init(2.0, 1.0);
+    const x = 1.5;
+    try expectApproxEqRel(shifted.cdf(x), plain.cdf(x), 1e-10);
+}
+
+test "ShiftedWeibull: gamma=0 cross-check against Weibull - mean" {
+    const shifted = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const plain = try Weibull(f64).init(2.0, 1.0);
+    try expectApproxEqRel(shifted.mean(), plain.mean(), 1e-10);
+}
+
+test "ShiftedWeibull: gamma=0 cross-check against Weibull - variance" {
+    const shifted = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const plain = try Weibull(f64).init(2.0, 1.0);
+    try expectApproxEqRel(shifted.variance(), plain.variance(), 1e-10);
+}
+
+test "ShiftedWeibull: gamma=0 cross-check against Weibull - mode" {
+    const shifted = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const plain = try Weibull(f64).init(2.0, 1.0);
+    try expectApproxEqRel(shifted.mode(), plain.mode(), 1e-10);
+}
+
+test "ShiftedWeibull: quantile - p<0 fails" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ShiftedWeibull: quantile - p>1 fails" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ShiftedWeibull: quantile - p=0 returns gamma" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 1.5);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqRel(q, 1.5, 1e-10);
+}
+
+test "ShiftedWeibull: quantile - p=1 returns infinity" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedWeibull: quantile roundtrip with cdf" {
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, 1.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedWeibull: variance independent of gamma" {
+    const dist1 = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    const dist2 = try ShiftedWeibull(f64).init(2.0, 1.0, 5.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-10);
+}
+
+test "ShiftedWeibull: f32 support - init and pdf" {
+    const dist = try ShiftedWeibull(f32).init(2.0, 1.0, 0.0);
+    const p = dist.pdf(1.5);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedWeibull: f32 support - cdf" {
+    const dist = try ShiftedWeibull(f32).init(1.5, 2.0, 1.0);
+    const c = dist.cdf(2.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedWeibull: f32 support - quantile" {
+    const dist = try ShiftedWeibull(f32).init(2.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ShiftedWeibull: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedWeibull(f32).init(1.5, 2.0, 1.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try expect(!math.isNan(x) and !math.isInf(x));
+    }
+}
+
+test "ShiftedWeibull: sample produces values > gamma" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 2.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(x > 2.0);
+    }
+}
+
+test "ShiftedWeibull: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedWeibull(f64).init(1.5, 2.0, -1.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedWeibull: validate passes for valid parameters" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, -2.0);
+    try dist.validate();
+}
+
+test "ShiftedWeibull: validate fails for zero shape" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.shape = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: validate fails for negative shape" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.shape = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: validate fails for zero scale" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.scale = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: validate fails for negative scale" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.scale = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: validate fails for non-finite shape" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.shape = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: validate fails for non-finite scale" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.scale = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: validate fails for non-finite threshold" {
+    var dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    dist.threshold = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedWeibull: format produces a string" {
+    const dist = try ShiftedWeibull(f64).init(2.0, 1.0, 0.0);
+    var buf: [256]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+}
