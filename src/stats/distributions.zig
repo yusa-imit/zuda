@@ -116139,3 +116139,630 @@ test "JonesFaddySkewT: f32 sample does not produce NaN/Inf" {
     const s = dist.sample(rng);
     try expect(!math.isNan(s) and !math.isInf(s));
 }
+
+pub fn ShiftedLogNormal(comptime T: type) type {
+    return struct {
+        mu: T,
+        sigma: T,
+        gamma: T,
+
+        const Self = @This();
+
+        /// Create a shifted log-normal (3-parameter log-normal) distribution with given parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, sigma: T, gamma: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(sigma) or !math.isFinite(gamma)) return error.InvalidParameter;
+            return Self{ .mu = mu, .sigma = sigma, .gamma = gamma };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (1 / ((x-γ) σ √(2π))) × exp(-(ln(x-γ)-μ)²/(2σ²))  for x > γ
+        ///      = 0                                                     for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= self.gamma) return 0.0;
+
+            const shifted_x = x - self.gamma;
+            const log_x = @log(shifted_x);
+            const z = (log_x - self.mu) / self.sigma;
+            const norm_factor = 1.0 / (shifted_x * self.sigma * @sqrt(2.0 * math.pi));
+            return norm_factor * @exp(-0.5 * z * z);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = Φ((ln(x-γ) - μ) / σ)  for x > γ
+        ///      = 0                       for x ≤ γ
+        ///
+        /// where Φ is the standard normal CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.gamma) return 0.0;
+
+            const shifted_x = x - self.gamma;
+            const log_x = @log(shifted_x);
+            const z = (log_x - self.mu) / (self.sigma * @sqrt(2.0));
+            return 0.5 * (1.0 + erf(z));
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = γ + exp(μ + σ × Φ⁻¹(p))
+        ///
+        /// where Φ⁻¹ is the inverse standard normal CDF
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.gamma;
+            if (p == 1.0) return math.inf(T);
+
+            // Use inverse error function approximation for standard normal quantile
+            const z = erfInv(2.0 * p - 1.0) * @sqrt(2.0);
+            return self.gamma + @exp(self.mu + self.sigma * z);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses: if Z ~ N(μ, σ²), then X = γ + exp(Z) ~ ShiftedLogNormal(μ, σ, γ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Sample from Normal(μ, σ²), then exponentiate and shift
+            const uniform1 = rng.float(T);
+            const uniform2 = rng.float(T);
+
+            // Box-Muller transform for standard normal
+            const z = @sqrt(-2.0 * @log(uniform1)) * @cos(2.0 * math.pi * uniform2);
+
+            // Scale and shift, then exponentiate, then add gamma
+            return self.gamma + @exp(self.mu + self.sigma * z);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = -log(x-γ) - log(σ√(2π)) - (ln(x-γ)-μ)²/(2σ²)
+        ///
+        /// More numerically stable than log(pdf(x)) for extreme values
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.gamma) return -math.inf(T);
+
+            const shifted_x = x - self.gamma;
+            const log_x = @log(shifted_x);
+            const z = (log_x - self.mu) / self.sigma;
+            return -log_x - @log(self.sigma * @sqrt(2.0 * math.pi)) - 0.5 * z * z;
+        }
+
+        /// Survival function (complementary CDF) - P(X > x)
+        ///
+        /// S(x) = 1 - F(x) = 1 - Φ((ln(x-γ) - μ) / σ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= self.gamma) return 1.0;
+
+            const shifted_x = x - self.gamma;
+            const log_x = @log(shifted_x);
+            const z = (log_x - self.mu) / (self.sigma * @sqrt(2.0));
+            return 0.5 * (1.0 - erf(z));
+        }
+
+        /// Expected value (mean)
+        ///
+        /// E[X] = γ + exp(μ + σ²/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.gamma + @exp(self.mu + 0.5 * self.sigma * self.sigma);
+        }
+
+        /// Variance
+        ///
+        /// Var(X) = [exp(σ²) - 1] × exp(2μ + σ²)
+        ///
+        /// (Note: γ does not affect variance, as it only shifts the location)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const sigma_sq = self.sigma * self.sigma;
+            return (@exp(sigma_sq) - 1.0) * @exp(2.0 * self.mu + sigma_sq);
+        }
+
+        /// Mode (most probable value)
+        ///
+        /// mode = γ + exp(μ - σ²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.gamma + @exp(self.mu - self.sigma * self.sigma);
+        }
+
+        /// Median (50th percentile)
+        ///
+        /// median = γ + exp(μ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.gamma + @exp(self.mu);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedLogNormal(mu={d:.1}, sigma={d:.1}, gamma={d:.1})", .{ self.mu, self.sigma, self.gamma });
+        }
+
+        /// Assert that parameters are valid: sigma > 0, all finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.mu)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.gamma)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ShiftedLogNormal Distribution Tests
+// ============================================================================
+
+test "ShiftedLogNormal: init with valid parameters" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    try expectEqual(0.0, dist.mu);
+    try expectEqual(1.0, dist.sigma);
+    try expectEqual(0.0, dist.gamma);
+}
+
+test "ShiftedLogNormal: init with zero sigma fails" {
+    try expectError(error.InvalidParameter, ShiftedLogNormal(f64).init(0.0, 0.0, 0.0));
+}
+
+test "ShiftedLogNormal: init with negative sigma fails" {
+    try expectError(error.InvalidParameter, ShiftedLogNormal(f64).init(0.0, -1.0, 0.0));
+}
+
+test "ShiftedLogNormal: init with infinite mu fails" {
+    try expectError(error.InvalidParameter, ShiftedLogNormal(f64).init(math.inf(f64), 1.0, 0.0));
+}
+
+test "ShiftedLogNormal: init with NaN sigma fails" {
+    try expectError(error.InvalidParameter, ShiftedLogNormal(f64).init(0.0, math.nan(f64), 0.0));
+}
+
+test "ShiftedLogNormal: init with infinite gamma fails" {
+    try expectError(error.InvalidParameter, ShiftedLogNormal(f64).init(0.0, 1.0, math.inf(f64)));
+}
+
+test "ShiftedLogNormal: pdf at gamma and below is 0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 2.0);
+    try expectEqual(0.0, dist.pdf(2.0));
+    try expectEqual(0.0, dist.pdf(1.99));
+    try expectEqual(0.0, dist.pdf(-1.0));
+}
+
+test "ShiftedLogNormal: cdf at gamma and below is 0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 2.0);
+    try expectEqual(0.0, dist.cdf(2.0));
+    try expectEqual(0.0, dist.cdf(1.99));
+    try expectEqual(0.0, dist.cdf(-1.0));
+}
+
+test "ShiftedLogNormal: Case 1 - pdf at x=1.0, mu=0, sigma=1, gamma=0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = 0.398942280401432677939946059934;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 1 - cdf at x=1.0, mu=0, sigma=1, gamma=0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqRel(cdf_val, 0.5, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 1 - pdf at x=2.0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(2.0);
+    const expected = 0.156874019278981091344175406702;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 1 - cdf at x=2.0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(2.0);
+    const expected = 0.755891404214417265994960693521;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 1 - pdf at x=3.0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(3.0);
+    const expected = 0.072728256139994711307732764767;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 1 - cdf at x=3.0" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(3.0);
+    const expected = 0.864031392358575542257024864701;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 1 - pdf at x=0.5" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const pdf_val = dist.pdf(0.5);
+    const expected = 0.627496077115924365376701626809;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 1 - cdf at x=0.5" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const cdf_val = dist.cdf(0.5);
+    const expected = 0.244108595785582734005039306479;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 1 - mean = 1.64872127070012814684865078781" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const mean_val = dist.mean();
+    const expected = 1.64872127070012814684865078781;
+    try expectApproxEqRel(mean_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 1 - variance = 4.67077427047160499187013998922" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const var_val = dist.variance();
+    const expected = 4.67077427047160499187013998922;
+    try expectApproxEqRel(var_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 1 - mode = 0.367879441171442321595523770161" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const mode_val = dist.mode();
+    const expected = 0.367879441171442321595523770161;
+    try expectApproxEqRel(mode_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - pdf at x=3.0, mu=1, sigma=0.5, gamma=2" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const pdf_val = dist.pdf(3.0);
+    const expected = 0.107981933026376103901128400821;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - cdf at x=3.0" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const cdf_val = dist.cdf(3.0);
+    const expected = 0.0227501319481792072002826371666;
+    try expectApproxEqRel(cdf_val, expected, 5e-6);
+}
+
+test "ShiftedLogNormal: Case 2 - pdf at x=4.0" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const pdf_val = dist.pdf(4.0);
+    const expected = 0.330464565983483937989620908347;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - cdf at x=4.0" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const cdf_val = dist.cdf(4.0);
+    const expected = 0.269704930734909508498512840223;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 2 - pdf at x=5.0" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const pdf_val = dist.pdf(5.0);
+    const expected = 0.260838872701925940357319772855;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - cdf at x=5.0" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const cdf_val = dist.cdf(5.0);
+    const expected = 0.578174100802873176427986760962;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 2 - pdf at x=2.5" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const pdf_val = dist.pdf(2.5);
+    const expected = 0.00516350884349193653108782669292;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - cdf at x=2.5" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const cdf_val = dist.cdf(2.5);
+    const expected = 0.000354216744666189438300979390443;
+    try expectApproxEqRel(cdf_val, expected, 2e-4);
+}
+
+test "ShiftedLogNormal: Case 2 - mean = 5.08021684891803124500466787878" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const mean_val = dist.mean();
+    const expected = 5.08021684891803124500466787878;
+    try expectApproxEqRel(mean_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - variance = 2.69475812434494771751980690666" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const var_val = dist.variance();
+    const expected = 2.69475812434494771751980690666;
+    try expectApproxEqRel(var_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 2 - mode = 4.11700001661267466854536981984" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const mode_val = dist.mode();
+    const expected = 4.11700001661267466854536981984;
+    try expectApproxEqRel(mode_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 3 - pdf at x=0.0, mu=-0.5, sigma=0.8, gamma=-1" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const pdf_val = dist.pdf(0.0);
+    const expected = 0.410201210687968778702470414042;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 3 - cdf at x=0.0" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const cdf_val = dist.cdf(0.0);
+    const expected = 0.734014470951299456304288744943;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 3 - pdf at x=1.0" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const pdf_val = dist.pdf(1.0);
+    const expected = 0.0819923101817682066143735933393;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 3 - cdf at x=1.0" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const cdf_val = dist.cdf(1.0);
+    const expected = 0.932076203245010721909687905648;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 3 - pdf at x=2.0" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const pdf_val = dist.pdf(2.0);
+    const expected = 0.0225743833263289800319661541181;
+    try expectApproxEqRel(pdf_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 3 - cdf at x=2.0" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const cdf_val = dist.cdf(2.0);
+    const expected = 0.977156050608452833507409120392;
+    try expectApproxEqRel(cdf_val, expected, 1e-6);
+}
+
+test "ShiftedLogNormal: Case 3 - mean = -0.164729788588727949012855970227" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const mean_val = dist.mean();
+    const expected = -0.164729788588727949012855970227;
+    try expectApproxEqRel(mean_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 3 - variance = 0.62545348626640601688819329384" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const var_val = dist.variance();
+    const expected = 0.62545348626640601688819329384;
+    try expectApproxEqRel(var_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: Case 3 - mode = -0.680180978183696131544346843274" {
+    const dist = try ShiftedLogNormal(f64).init(-0.5, 0.8, -1.0);
+    const mode_val = dist.mode();
+    const expected = -0.680180978183696131544346843274;
+    try expectApproxEqRel(mode_val, expected, 1e-9);
+}
+
+test "ShiftedLogNormal: cdf is monotonic non-decreasing" {
+    const dist = try ShiftedLogNormal(f64).init(0.5, 1.5, 1.0);
+    const x_vals = [_]f64{ 1.1, 1.5, 2.0, 5.0, 10.0 };
+    var prev_cdf: f64 = 0.0;
+    for (x_vals) |x| {
+        const cdf_val = dist.cdf(x);
+        try expect(cdf_val >= prev_cdf);
+        prev_cdf = cdf_val;
+    }
+}
+
+test "ShiftedLogNormal: cdf at median is approximately 0.5" {
+    const dist = try ShiftedLogNormal(f64).init(1.5, 0.5, 2.0);
+    const median = dist.median();
+    const cdf_median = dist.cdf(median);
+    try expectApproxEqRel(cdf_median, 0.5, 1e-6);
+}
+
+test "ShiftedLogNormal: logpdf consistency with log(pdf)" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const test_points = [_]f64{ 2.1, 2.5, 3.0, 4.0, 5.0 };
+    for (test_points) |x| {
+        const logpdf_val = dist.logpdf(x);
+        const pdf_val = dist.pdf(x);
+        const log_pdf_val = @log(pdf_val);
+        try expectApproxEqRel(logpdf_val, log_pdf_val, 1e-9);
+    }
+}
+
+test "ShiftedLogNormal: logpdf at gamma and below is -inf" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 2.0);
+    const logpdf_neg = dist.logpdf(2.0);
+    try expect(math.isInf(logpdf_neg));
+    try expect(logpdf_neg < 0.0);
+}
+
+test "ShiftedLogNormal: sf consistency with 1 - cdf" {
+    const dist = try ShiftedLogNormal(f64).init(0.5, 0.8, -1.0);
+    const test_points = [_]f64{ -0.5, 0.0, 1.0, 2.0, 5.0 };
+    for (test_points) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-6);
+    }
+}
+
+test "ShiftedLogNormal: sf at gamma and below is 1" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 2.0);
+    try expectEqual(1.0, dist.sf(-1.0));
+    try expectEqual(1.0, dist.sf(2.0));
+}
+
+test "ShiftedLogNormal: quantile at p=0 returns gamma" {
+    const dist = try ShiftedLogNormal(f64).init(0.5, 1.5, 3.0);
+    const q = try dist.quantile(0.0);
+    try expectApproxEqRel(q, 3.0, 1e-10);
+}
+
+test "ShiftedLogNormal: quantile at p=1 returns infinity" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 2.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedLogNormal: quantile rejects invalid probabilities" {
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ShiftedLogNormal: quantile at p=0.5 equals median" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const q = try dist.quantile(0.5);
+    const median = dist.median();
+    try expectApproxEqRel(q, median, 1e-10);
+}
+
+test "ShiftedLogNormal: quantile roundtrip with cdf" {
+    const dist = try ShiftedLogNormal(f64).init(0.5, 1.5, 1.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedLogNormal: sample produces values > gamma" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedLogNormal(f64).init(0.0, 1.0, 2.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(x > 2.0);
+    }
+}
+
+test "ShiftedLogNormal: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, -1.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedLogNormal: validate passes for valid parameters" {
+    const dist = try ShiftedLogNormal(f64).init(0.5, 1.0, -2.0);
+    try dist.validate();
+}
+
+test "ShiftedLogNormal: validate fails for zero sigma" {
+    const dist = ShiftedLogNormal(f64){ .mu = 0.0, .sigma = 0.0, .gamma = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedLogNormal: validate fails for non-finite mu" {
+    const dist = ShiftedLogNormal(f64){ .mu = math.inf(f64), .sigma = 1.0, .gamma = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedLogNormal: format produces a string" {
+    const dist = try ShiftedLogNormal(f64).init(0.5, 1.0, 2.0);
+    var buf: [256]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+}
+
+test "ShiftedLogNormal: gamma=0 case matches LogNormal pdf" {
+    const shifted = try ShiftedLogNormal(f64).init(1.0, 0.5, 0.0);
+    const lognormal = try LogNormal(f64).init(1.0, 0.5);
+    const x = 2.0;
+    try expectApproxEqRel(shifted.pdf(x), lognormal.pdf(x), 1e-10);
+}
+
+test "ShiftedLogNormal: gamma=0 case matches LogNormal cdf" {
+    const shifted = try ShiftedLogNormal(f64).init(1.0, 0.5, 0.0);
+    const lognormal = try LogNormal(f64).init(1.0, 0.5);
+    const x = 2.0;
+    try expectApproxEqRel(shifted.cdf(x), lognormal.cdf(x), 1e-6);
+}
+
+test "ShiftedLogNormal: gamma=0 case matches LogNormal mean" {
+    const shifted = try ShiftedLogNormal(f64).init(1.0, 0.5, 0.0);
+    const lognormal = try LogNormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(shifted.mean(), lognormal.mean(), 1e-10);
+}
+
+test "ShiftedLogNormal: gamma=0 case matches LogNormal variance" {
+    const shifted = try ShiftedLogNormal(f64).init(1.0, 0.5, 0.0);
+    const lognormal = try LogNormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(shifted.variance(), lognormal.variance(), 1e-10);
+}
+
+test "ShiftedLogNormal: gamma=0 case matches LogNormal mode" {
+    const shifted = try ShiftedLogNormal(f64).init(1.0, 0.5, 0.0);
+    const lognormal = try LogNormal(f64).init(1.0, 0.5);
+    try expectApproxEqRel(shifted.mode(), lognormal.mode(), 1e-10);
+}
+
+test "ShiftedLogNormal: variance is independent of gamma" {
+    const dist1 = try ShiftedLogNormal(f64).init(0.0, 1.0, 0.0);
+    const dist2 = try ShiftedLogNormal(f64).init(0.0, 1.0, 5.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-10);
+}
+
+test "ShiftedLogNormal: pdf at mode is a local maximum" {
+    const dist = try ShiftedLogNormal(f64).init(1.0, 0.5, 2.0);
+    const mode = dist.mode();
+    const pdf_mode = dist.pdf(mode);
+    const pdf_lower = dist.pdf(mode * 0.99);
+    const pdf_upper = dist.pdf(mode * 1.01);
+    try expect(pdf_mode > pdf_lower);
+    try expect(pdf_mode > pdf_upper);
+}
+
+test "ShiftedLogNormal: f32 support - init and pdf" {
+    const dist = try ShiftedLogNormal(f32).init(0.0, 1.0, 0.0);
+    const p = dist.pdf(1.5);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedLogNormal: f32 support - cdf" {
+    const dist = try ShiftedLogNormal(f32).init(1.0, 0.5, 2.0);
+    const c = dist.cdf(3.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedLogNormal: f32 support - quantile" {
+    const dist = try ShiftedLogNormal(f32).init(0.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
