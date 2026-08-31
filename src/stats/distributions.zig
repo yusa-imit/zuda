@@ -118582,3 +118582,555 @@ test "ShiftedGamma: f32 support - sample" {
         try expect(!math.isNan(x) and !math.isInf(x));
     }
 }
+
+pub fn ShiftedRayleigh(comptime T: type) type {
+    return struct {
+        sigma: T,
+        threshold: T,
+
+        const Self = @This();
+        const euler_gamma: T = 0.5772156649015329;
+
+        /// Create a ShiftedRayleigh distribution with given scale and threshold parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(sigma: T, threshold: T) DistributionError!Self {
+            if (sigma <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(sigma) or !math.isFinite(threshold)) return error.InvalidParameter;
+            return Self{ .sigma = sigma, .threshold = threshold };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = ((x-γ)/σ²) · exp(-(x-γ)²/(2σ²))  for x ≥ γ
+        ///      = 0                                   for x < γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const shifted = x - self.threshold;
+            if (shifted == 0.0) return 0.0;
+            const sigma_sq = self.sigma * self.sigma;
+            const coeff = shifted / sigma_sq;
+            const exponent = -shifted * shifted / (2.0 * sigma_sq);
+            return coeff * @exp(exponent);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 0                              for x < γ
+        ///      = 1 - exp(-(x-γ)²/(2σ²))        for x ≥ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const shifted = x - self.threshold;
+            const sigma_sq = self.sigma * self.sigma;
+            return 1.0 - @exp(-shifted * shifted / (2.0 * sigma_sq));
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = 1                              for x < γ
+        ///      = exp(-(x-γ)²/(2σ²))             for x ≥ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < self.threshold) return 1.0;
+            const shifted = x - self.threshold;
+            const sigma_sq = self.sigma * self.sigma;
+            return @exp(-shifted * shifted / (2.0 * sigma_sq));
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; σ, γ) = γ + σ · √(-2 · ln(1-p))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.threshold;
+            if (p == 1.0) return math.inf(T);
+
+            const ln_1_minus_p = @log(1.0 - p);
+            return self.threshold + self.sigma * @sqrt(-2.0 * ln_1_minus_p);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = γ + σ · √(π/2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.threshold + self.sigma * @sqrt(math.pi / 2.0);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = σ² · (4-π)/2
+        ///
+        /// Independent of threshold γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const sigma_sq = self.sigma * self.sigma;
+            return (4.0 - math.pi) / 2.0 * sigma_sq;
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = γ + σ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.threshold + self.sigma;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = γ + σ · √(2·ln 2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            const ln_4 = 2.0 * @log(2.0);
+            return self.threshold + self.sigma * @sqrt(ln_4);
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// H[X] = 1 + γ/2 + ln(σ/√2)
+        /// where γ ≈ 0.5772156649 is Euler-Mascheroni constant
+        ///
+        /// Independent of threshold
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const ln_sigma_over_sqrt2 = @log(self.sigma) - 0.5 * @log(2.0);
+            return 1.0 + euler_gamma / 2.0 + ln_sigma_over_sqrt2;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method: γ + σ · √(-2 · ln(U)), U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            // Avoid ln(0) by replacing u=0 with floatMin(T)
+            if (u == 0.0) u = std.math.floatMin(T);
+            const ln_u = @log(u);
+            return self.threshold + self.sigma * @sqrt(-2.0 * ln_u);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedRayleigh(sigma={d:.1}, threshold={d:.1})", .{ self.sigma, self.threshold });
+        }
+
+        /// Assert that parameters are valid: sigma > 0, all finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.sigma <= 0.0 or !math.isFinite(self.sigma)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.threshold)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ShiftedRayleigh Distribution Tests
+// ============================================================================
+
+test "ShiftedRayleigh: init with valid parameters" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    try expectEqual(2.0, dist.sigma);
+    try expectEqual(0.0, dist.threshold);
+}
+
+test "ShiftedRayleigh: init with sigma <= 0 fails" {
+    try expectError(error.InvalidParameter, ShiftedRayleigh(f64).init(0.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedRayleigh(f64).init(-1.0, 0.0));
+}
+
+test "ShiftedRayleigh: init with infinite sigma fails" {
+    try expectError(error.InvalidParameter, ShiftedRayleigh(f64).init(math.inf(f64), 0.0));
+}
+
+test "ShiftedRayleigh: init with NaN sigma fails" {
+    try expectError(error.InvalidParameter, ShiftedRayleigh(f64).init(math.nan(f64), 0.0));
+}
+
+test "ShiftedRayleigh: init with infinite threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedRayleigh(f64).init(2.0, math.inf(f64)));
+}
+
+test "ShiftedRayleigh: init with NaN threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedRayleigh(f64).init(2.0, math.nan(f64)));
+}
+
+test "ShiftedRayleigh: init with negative threshold succeeds" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, -2.5);
+    try expectEqual(-2.5, dist.threshold);
+}
+
+test "ShiftedRayleigh: init with positive threshold succeeds" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, 5.5);
+    try expectEqual(5.5, dist.threshold);
+}
+
+test "ShiftedRayleigh: pdf at x < threshold is 0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 2.0);
+    try expectEqual(0.0, dist.pdf(1.9));
+    try expectEqual(0.0, dist.pdf(0.0));
+    try expectEqual(0.0, dist.pdf(-10.0));
+}
+
+test "ShiftedRayleigh: pdf case 1 - sigma=2.0, gamma=0.0, x=2.6" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 0.279212282836980446427962019935;
+    try expectApproxEqRel(dist.pdf(2.6), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: pdf case 2 - sigma=1.5, gamma=3.0, x=4.95" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 0.372283043782640595237282693247;
+    try expectApproxEqRel(dist.pdf(4.95), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: pdf case 3 - sigma=0.5, gamma=-2.0, x=-1.35" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = 1.11684913134792178571184807974;
+    try expectApproxEqRel(dist.pdf(-1.35), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: pdf gamma=0 cross-check against Rayleigh" {
+    const shifted = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const rayleigh = try Rayleigh(f64).init(2.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.6 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.pdf(x), rayleigh.pdf(x), 1e-12);
+    }
+}
+
+test "ShiftedRayleigh: cdf at x < threshold is 0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 2.0);
+    try expectEqual(0.0, dist.cdf(1.9));
+    try expectEqual(0.0, dist.cdf(0.0));
+    try expectEqual(0.0, dist.cdf(-10.0));
+}
+
+test "ShiftedRayleigh: cdf case 1 - sigma=2.0, gamma=0.0, x=2.6" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 0.570442641789260851649289200099;
+    try expectApproxEqRel(dist.cdf(2.6), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: cdf case 2 - sigma=1.5, gamma=3.0, x=4.95" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 0.570442641789260851649289200099;
+    try expectApproxEqRel(dist.cdf(4.95), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: cdf case 3 - sigma=0.5, gamma=-2.0, x=-1.35" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = 0.570442641789260851649289200099;
+    try expectApproxEqRel(dist.cdf(-1.35), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: cdf gamma=0 cross-check against Rayleigh" {
+    const shifted = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const rayleigh = try Rayleigh(f64).init(2.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.6 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.cdf(x), rayleigh.cdf(x), 1e-12);
+    }
+}
+
+test "ShiftedRayleigh: sf at x < threshold is 1" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 2.0);
+    try expectEqual(1.0, dist.sf(1.9));
+    try expectEqual(1.0, dist.sf(0.0));
+    try expectEqual(1.0, dist.sf(-10.0));
+}
+
+test "ShiftedRayleigh: sf case 1 - sigma=2.0, gamma=0.0, x=2.6" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 1.0 - 0.570442641789260851649289200099;
+    try expectApproxEqRel(dist.sf(2.6), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: sf equals 1 - cdf" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const test_points = [_]f64{ 3.5, 4.0, 4.5, 5.0 };
+    for (test_points) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-12);
+    }
+}
+
+test "ShiftedRayleigh: quantile with p < 0 fails" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ShiftedRayleigh: quantile with p > 1 fails" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ShiftedRayleigh: quantile at p=0 returns threshold" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 3.5);
+    const q = try dist.quantile(0.0);
+    try expectEqual(3.5, q);
+}
+
+test "ShiftedRayleigh: quantile at p=1 returns infinity" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedRayleigh: quantile roundtrip with cdf" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedRayleigh: quantile gamma=0 cross-check against Rayleigh" {
+    const shifted = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const rayleigh = try Rayleigh(f64).init(2.0);
+
+    const probabilities = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probabilities) |p| {
+        const q_shifted = try shifted.quantile(p);
+        const q_rayleigh = try rayleigh.quantile(p);
+        try expectApproxEqRel(q_shifted, q_rayleigh, 1e-12);
+    }
+}
+
+test "ShiftedRayleigh: mean case 1 - sigma=2.0, gamma=0.0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 2.50662827463100050241576528481;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: mean case 2 - sigma=1.5, gamma=3.0" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 4.87997120597325037681182396361;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: mean case 3 - sigma=0.5, gamma=-2.0" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = -1.3733429313422498743960586788;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: mean gamma=0 cross-check against Rayleigh" {
+    const shifted = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const rayleigh = try Rayleigh(f64).init(2.0);
+    try expectApproxEqRel(shifted.mean(), rayleigh.mean(), 1e-12);
+}
+
+test "ShiftedRayleigh: variance case 1 - sigma=2.0, gamma=0.0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 1.71681469282041352307471323344;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: variance case 2 - sigma=1.5, gamma=3.0" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 0.965708264711482606729526193811;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: variance case 3 - sigma=0.5, gamma=-2.0" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = 0.10730091830127584519216957709;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: variance independent of threshold" {
+    const dist1 = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const dist2 = try ShiftedRayleigh(f64).init(2.0, 10.0);
+    const dist3 = try ShiftedRayleigh(f64).init(2.0, -5.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-14);
+    try expectApproxEqRel(dist1.variance(), dist3.variance(), 1e-14);
+}
+
+test "ShiftedRayleigh: variance gamma=0 cross-check against Rayleigh" {
+    const shifted = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const rayleigh = try Rayleigh(f64).init(2.0);
+    try expectApproxEqRel(shifted.variance(), rayleigh.variance(), 1e-12);
+}
+
+test "ShiftedRayleigh: mode case 1 - sigma=2.0, gamma=0.0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 2.0;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedRayleigh: mode case 2 - sigma=1.5, gamma=3.0" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 4.5;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedRayleigh: mode case 3 - sigma=0.5, gamma=-2.0" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = -1.5;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedRayleigh: median case 1 - sigma=2.0, gamma=0.0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 2.35482004503094938202313865292;
+    try expectApproxEqRel(dist.median(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: median case 2 - sigma=1.5, gamma=3.0" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 4.76611503377321203651735398969;
+    try expectApproxEqRel(dist.median(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: median case 3 - sigma=0.5, gamma=-2.0" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = -1.41129498874226265449421533677;
+    try expectApproxEqRel(dist.median(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: entropy case 1 - sigma=2.0, gamma=0.0" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const expected = 1.63518142273073908501187210577;
+    try expectApproxEqRel(dist.entropy(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: entropy case 2 - sigma=1.5, gamma=3.0" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    const expected = 1.34749935027895815757265309978;
+    try expectApproxEqRel(dist.entropy(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: entropy case 3 - sigma=0.5, gamma=-2.0" {
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    const expected = 0.248887061610848466177407862854;
+    try expectApproxEqRel(dist.entropy(), expected, 1e-12);
+}
+
+test "ShiftedRayleigh: entropy independent of threshold" {
+    const dist1 = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const dist2 = try ShiftedRayleigh(f64).init(2.0, 10.0);
+    const dist3 = try ShiftedRayleigh(f64).init(2.0, -5.0);
+    try expectApproxEqRel(dist1.entropy(), dist2.entropy(), 1e-14);
+    try expectApproxEqRel(dist1.entropy(), dist3.entropy(), 1e-14);
+}
+
+test "ShiftedRayleigh: entropy gamma=0 cross-check against Rayleigh" {
+    const shifted = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    const rayleigh = try Rayleigh(f64).init(2.0);
+    try expectApproxEqRel(shifted.entropy(), rayleigh.entropy(), 1e-12);
+}
+
+test "ShiftedRayleigh: sample produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= 3.0 - 1e-10);
+    }
+}
+
+test "ShiftedRayleigh: sample with negative threshold produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedRayleigh(f64).init(0.5, -2.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= -2.0 - 1e-10);
+    }
+}
+
+test "ShiftedRayleigh: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(456);
+    const rng = prng.random();
+    const dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedRayleigh: validate passes for valid parameters" {
+    const dist = try ShiftedRayleigh(f64).init(1.5, 3.0);
+    try dist.validate();
+}
+
+test "ShiftedRayleigh: validate fails for zero sigma" {
+    var dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    dist.sigma = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedRayleigh: validate fails for negative sigma" {
+    var dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    dist.sigma = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedRayleigh: validate fails for non-finite sigma" {
+    var dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    dist.sigma = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedRayleigh: validate fails for non-finite threshold" {
+    var dist = try ShiftedRayleigh(f64).init(2.0, 0.0);
+    dist.threshold = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedRayleigh: format produces a string" {
+    const dist = try ShiftedRayleigh(f64).init(2.0, 3.0);
+    var buf: [256]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+}
+
+test "ShiftedRayleigh: f32 support - init and pdf" {
+    const dist = try ShiftedRayleigh(f32).init(2.0, 0.0);
+    const p = dist.pdf(1.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedRayleigh: f32 support - cdf" {
+    const dist = try ShiftedRayleigh(f32).init(1.5, 3.0);
+    const c = dist.cdf(4.95);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedRayleigh: f32 support - quantile" {
+    const dist = try ShiftedRayleigh(f32).init(2.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ShiftedRayleigh: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedRayleigh(f32).init(2.0, 0.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try expect(!math.isNan(x) and !math.isInf(x));
+    }
+}
