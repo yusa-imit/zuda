@@ -2158,8 +2158,8 @@ fn regularizedGammaP(a: anytype, x: anytype) @TypeOf(a) {
     if (x <= 0.0) return 0.0;
     if (x == math.inf(T)) return 1.0;
 
-    const max_iterations = 200;
-    const tolerance = 1e-10;
+    const max_iterations = 300;
+    const tolerance = 1e-12;
 
     if (x < a + 1.0) {
         // Use series expansion: P(a,x) = e^(-x) x^a Σ(Γ(a)/Γ(a+1+n) x^n)
@@ -118007,4 +118007,578 @@ test "ShiftedExponential: format produces a string" {
     var buf: [256]u8 = undefined;
     var stream = std.Io.Writer.fixed(&buf);
     try dist.format(&stream);
+}
+
+pub fn ShiftedGamma(comptime T: type) type {
+    return struct {
+        shape: T,
+        rate: T,
+        threshold: T,
+
+        const Self = @This();
+
+        /// Create a ShiftedGamma distribution with given shape, rate, and threshold parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(shape: T, rate: T, threshold: T) DistributionError!Self {
+            if (shape <= 0.0 or rate <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(shape) or !math.isFinite(rate) or !math.isFinite(threshold)) return error.InvalidParameter;
+            return Self{ .shape = shape, .rate = rate, .threshold = threshold };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = (β^α / Γ(α)) × (x-γ)^(α-1) × e^(-β(x-γ))  for x ≥ γ
+        ///      = 0                                           for x < γ
+        ///
+        /// Uses log-space computation for numerical stability
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const shifted = x - self.threshold;
+            if (shifted == 0.0) {
+                // shifted=0 edge: only Exponential (shape=1) has non-zero finite density at 0
+                if (self.shape > 1.0) return 0.0;
+                if (self.shape == 1.0) return @exp(self.shape * @log(self.rate) - logGamma(self.shape));
+                return math.inf(T);
+            }
+
+            // log f(x) = α×log(β) - log(Γ(α)) + (α-1)×log(shifted) - β×shifted
+            const log_pdf = self.shape * @log(self.rate) - logGamma(self.shape) + (self.shape - 1.0) * @log(shifted) - self.rate * shifted;
+            return @exp(log_pdf);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 0                            for x < γ
+        ///      = P(α, β(x-γ))                for x ≥ γ
+        ///
+        /// Uses regularized lower incomplete gamma function
+        ///
+        /// Time: O(1) with approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const shifted = x - self.threshold;
+            return regularizedGammaP(self.shape, self.rate * shifted);
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = 1                            for x < γ
+        ///      = 1 - P(α, β(x-γ))            for x ≥ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < self.threshold) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Uses bisection search on CDF
+        ///
+        /// Time: O(log(1/ε)) for tolerance ε | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.threshold;
+            if (p == 1.0) return math.inf(T);
+
+            // Use bisection on CDF
+            // Start with threshold and bracket above
+            var low: T = self.threshold;
+            var high: T = self.threshold + (self.shape / self.rate) * 10.0;
+
+            // Ensure high bracket is large enough
+            while (self.cdf(high) < p) {
+                high *= 2.0;
+            }
+
+            const tolerance = 1e-10;
+            const max_iter = 100;
+            var iter: usize = 0;
+
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (@abs(cdf_mid - p) < tolerance) {
+                    return mid;
+                }
+
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+
+                if (high - low < tolerance) {
+                    return (low + high) / 2.0;
+                }
+            }
+
+            return (low + high) / 2.0;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = α×log(β) - log(Γ(α)) + (α-1)×log(x-γ) - β(x-γ)  for x ≥ γ
+        ///          = -∞                                                 for x < γ
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.threshold) return -math.inf(T);
+            const shifted = x - self.threshold;
+            return self.shape * @log(self.rate) - logGamma(self.shape) + (self.shape - 1.0) * @log(shifted) - self.rate * shifted;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = γ + α / β
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.threshold + self.shape / self.rate;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = α / β²
+        ///
+        /// Independent of threshold γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.shape / (self.rate * self.rate);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = γ + (α-1)/β   if α ≥ 1
+        ///      = γ              if α < 1 (density → ∞ as x→γ+)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.shape >= 1.0) {
+                return self.threshold + (self.shape - 1.0) / self.rate;
+            } else {
+                return self.threshold;
+            }
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses the underlying Gamma(shape, rate) distribution and applies threshold shift
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Sample from Gamma(shape, rate) and add threshold
+            const gamma_dist = Gamma(T){ .shape = self.shape, .rate = self.rate };
+            const gamma_sample = gamma_dist.sample(rng);
+            return self.threshold + gamma_sample;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedGamma(shape={d:.1}, rate={d:.1}, threshold={d:.1})", .{ self.shape, self.rate, self.threshold });
+        }
+
+        /// Assert that parameters are valid: shape > 0, rate > 0, all finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.shape <= 0.0 or !math.isFinite(self.shape)) return DistributionError.InvalidParameter;
+            if (self.rate <= 0.0 or !math.isFinite(self.rate)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.threshold)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ShiftedGamma Distribution Tests
+// ============================================================================
+
+test "ShiftedGamma: init with valid parameters" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    try expectEqual(2.0, dist.shape);
+    try expectEqual(3.0, dist.rate);
+    try expectEqual(0.0, dist.threshold);
+}
+
+test "ShiftedGamma: init with shape <= 0 fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(0.0, 1.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(-1.0, 1.0, 0.0));
+}
+
+test "ShiftedGamma: init with rate <= 0 fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(2.0, 0.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(2.0, -1.0, 0.0));
+}
+
+test "ShiftedGamma: init with infinite shape fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(math.inf(f64), 1.0, 0.0));
+}
+
+test "ShiftedGamma: init with NaN shape fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(math.nan(f64), 1.0, 0.0));
+}
+
+test "ShiftedGamma: init with infinite rate fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(2.0, math.inf(f64), 0.0));
+}
+
+test "ShiftedGamma: init with NaN rate fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(2.0, math.nan(f64), 0.0));
+}
+
+test "ShiftedGamma: init with infinite threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(2.0, 1.0, math.inf(f64)));
+}
+
+test "ShiftedGamma: init with NaN threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedGamma(f64).init(2.0, 1.0, math.nan(f64)));
+}
+
+test "ShiftedGamma: init with negative threshold succeeds" {
+    const dist = try ShiftedGamma(f64).init(3.0, 1.0, -3.0);
+    try expectEqual(-3.0, dist.threshold);
+}
+
+test "ShiftedGamma: init with positive threshold succeeds" {
+    const dist = try ShiftedGamma(f64).init(2.0, 0.5, 5.5);
+    try expectEqual(5.5, dist.threshold);
+}
+
+test "ShiftedGamma: pdf at x < threshold is 0" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 2.0);
+    try expectEqual(0.0, dist.pdf(1.9));
+    try expectEqual(0.0, dist.pdf(0.0));
+    try expectEqual(0.0, dist.pdf(-10.0));
+}
+
+test "ShiftedGamma: pdf case 1 - shape=2, rate=3, gamma=0, x=1" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const expected = 0.44808361531077548681;
+    try expectApproxEqRel(dist.pdf(1.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: pdf case 2 - shape=2.5, rate=0.5, gamma=2, x=5" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 0.154180329803769291594879973038;
+    try expectApproxEqRel(dist.pdf(5.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: pdf case 3 - shape=3, rate=1, gamma=-3, x=-1" {
+    const dist = try ShiftedGamma(f64).init(3.0, 1.0, -3.0);
+    const expected = 0.270670566473225383787998989945;
+    try expectApproxEqRel(dist.pdf(-1.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: cdf at x < threshold is 0" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 2.0);
+    try expectEqual(0.0, dist.cdf(1.9));
+    try expectEqual(0.0, dist.cdf(0.0));
+    try expectEqual(0.0, dist.cdf(-10.0));
+}
+
+test "ShiftedGamma: cdf case 1 - shape=2, rate=3, gamma=0, x=1" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const expected = 0.80085172652854422808;
+    try expectApproxEqRel(dist.cdf(1.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: cdf case 2 - shape=2.5, rate=0.5, gamma=2, x=5" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 0.300014164121372490900198448375;
+    try expectApproxEqRel(dist.cdf(5.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: cdf case 3 - shape=3, rate=1, gamma=-3, x=-1" {
+    const dist = try ShiftedGamma(f64).init(3.0, 1.0, -3.0);
+    const expected = 0.323323583816936540530002525138;
+    try expectApproxEqRel(dist.cdf(-1.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: sf at x < threshold is 1" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 2.0);
+    try expectEqual(1.0, dist.sf(1.9));
+    try expectEqual(1.0, dist.sf(0.0));
+    try expectEqual(1.0, dist.sf(-10.0));
+}
+
+test "ShiftedGamma: sf case 1 - shape=2, rate=3, gamma=0, x=1" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const expected = 1.0 - 0.80085172652854422808;
+    try expectApproxEqRel(dist.sf(1.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: sf case 2 - shape=2.5, rate=0.5, gamma=2, x=5" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 1.0 - 0.300014164121372490900198448375;
+    try expectApproxEqRel(dist.sf(5.0), expected, 1e-12);
+}
+
+test "ShiftedGamma: logpdf at x < threshold is -inf" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 2.0);
+    const lp_low = dist.logpdf(1.9);
+    try expect(math.isNegativeInf(lp_low));
+}
+
+test "ShiftedGamma: logpdf case 1 - shape=2, rate=3, gamma=0, x=1" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const pdf_val = dist.pdf(1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    try expectApproxEqRel(logpdf_val, @log(pdf_val), 1e-12);
+}
+
+test "ShiftedGamma: logpdf case 2 - shape=2.5, rate=0.5, gamma=2, x=5" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const pdf_val = dist.pdf(5.0);
+    const logpdf_val = dist.logpdf(5.0);
+    try expectApproxEqRel(logpdf_val, @log(pdf_val), 1e-12);
+}
+
+test "ShiftedGamma: quantile with p < 0 fails" {
+    const dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ShiftedGamma: quantile with p > 1 fails" {
+    const dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ShiftedGamma: quantile at p=0 returns threshold" {
+    const dist = try ShiftedGamma(f64).init(2.5, 1.0, 3.5);
+    const q = try dist.quantile(0.0);
+    try expectEqual(3.5, q);
+}
+
+test "ShiftedGamma: quantile at p=1 returns infinity" {
+    const dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedGamma: quantile case 1 - shape=2.5, rate=0.5, gamma=2, p=0.3" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 4.99990813275990621004373901425;
+    const q = try dist.quantile(0.3);
+    try expectApproxEqRel(q, expected, 1e-6);
+}
+
+test "ShiftedGamma: quantile roundtrip with cdf" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedGamma: cross-check against Gamma at gamma=0" {
+    const shifted = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const gamma = try Gamma(f64).init(2.0, 3.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.pdf(x), gamma.pdf(x), 1e-12);
+        try expectApproxEqRel(shifted.cdf(x), gamma.cdf(x), 1e-12);
+    }
+
+    try expectApproxEqRel(shifted.mean(), gamma.mean(), 1e-12);
+    try expectApproxEqRel(shifted.variance(), gamma.variance(), 1e-12);
+}
+
+test "ShiftedGamma: mean case 1 - shape=2, rate=3, gamma=0" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const expected = 0.6666666666666666;
+    try expectApproxEqRel(dist.mean(), expected, 1e-14);
+}
+
+test "ShiftedGamma: mean case 2 - shape=2.5, rate=0.5, gamma=2" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 7.0;
+    try expectApproxEqRel(dist.mean(), expected, 1e-14);
+}
+
+test "ShiftedGamma: mean case 3 - shape=3, rate=1, gamma=-3" {
+    const dist = try ShiftedGamma(f64).init(3.0, 1.0, -3.0);
+    const expected = 0.0;
+    try expectApproxEqRel(dist.mean(), expected, 1e-14);
+}
+
+test "ShiftedGamma: variance case 1 - shape=2, rate=3, gamma=0" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const expected = 0.2222222222222222;
+    try expectApproxEqRel(dist.variance(), expected, 1e-14);
+}
+
+test "ShiftedGamma: variance case 2 - shape=2.5, rate=0.5, gamma=2" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 10.0;
+    try expectApproxEqRel(dist.variance(), expected, 1e-14);
+}
+
+test "ShiftedGamma: variance case 3 - shape=3, rate=1, gamma=-3" {
+    const dist = try ShiftedGamma(f64).init(3.0, 1.0, -3.0);
+    const expected = 3.0;
+    try expectApproxEqRel(dist.variance(), expected, 1e-14);
+}
+
+test "ShiftedGamma: variance independent of threshold" {
+    const dist1 = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const dist2 = try ShiftedGamma(f64).init(2.0, 3.0, 10.0);
+    const dist3 = try ShiftedGamma(f64).init(2.0, 3.0, -5.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-14);
+    try expectApproxEqRel(dist1.variance(), dist3.variance(), 1e-14);
+}
+
+test "ShiftedGamma: mode case 1 - shape=2, rate=3, gamma=0 (shape >= 1)" {
+    const dist = try ShiftedGamma(f64).init(2.0, 3.0, 0.0);
+    const expected = (2.0 - 1.0) / 3.0; // (shape-1)/rate + threshold
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedGamma: mode case 2 - shape=2.5, rate=0.5, gamma=2 (shape >= 1)" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    const expected = 5.0; // gamma + (shape-1)/rate = 2 + (2.5-1)/0.5 = 2 + 3 = 5
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedGamma: mode case 3 - shape=0.5, rate=1, gamma=0 (shape < 1)" {
+    const dist = try ShiftedGamma(f64).init(0.5, 1.0, 0.0);
+    const expected = 0.0; // mode = threshold when shape < 1
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedGamma: mode shape >= 1 formula" {
+    const shapes = [_]f64{ 1.0, 1.5, 2.0, 3.0, 5.0 };
+    const rates = [_]f64{ 0.5, 1.0, 2.0 };
+    const thresholds = [_]f64{ -2.0, 0.0, 1.0 };
+
+    for (shapes) |shape| {
+        for (rates) |rate| {
+            for (thresholds) |threshold| {
+                const dist = try ShiftedGamma(f64).init(shape, rate, threshold);
+                const expected = threshold + (shape - 1.0) / rate;
+                try expectApproxEqRel(dist.mode(), expected, 1e-12);
+            }
+        }
+    }
+}
+
+test "ShiftedGamma: mode shape < 1 equals threshold" {
+    const dist = try ShiftedGamma(f64).init(0.5, 2.0, 3.5);
+    try expectApproxEqRel(dist.mode(), 3.5, 1e-14);
+}
+
+test "ShiftedGamma: sample produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= 2.0 - 1e-10); // small tolerance for numerical error
+    }
+}
+
+test "ShiftedGamma: sample with negative threshold produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedGamma(f64).init(3.0, 1.0, -3.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= -3.0 - 1e-10);
+    }
+}
+
+test "ShiftedGamma: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(456);
+    const rng = prng.random();
+    const dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedGamma: validate passes for valid parameters" {
+    const dist = try ShiftedGamma(f64).init(2.5, 0.5, 2.0);
+    try dist.validate();
+}
+
+test "ShiftedGamma: validate fails for zero shape" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.shape = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: validate fails for negative shape" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.shape = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: validate fails for zero rate" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.rate = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: validate fails for negative rate" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.rate = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: validate fails for non-finite shape" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.shape = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: validate fails for non-finite rate" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.rate = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: validate fails for non-finite threshold" {
+    var dist = try ShiftedGamma(f64).init(2.0, 1.0, 0.0);
+    dist.threshold = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedGamma: f32 support - init and pdf" {
+    const dist = try ShiftedGamma(f32).init(2.0, 1.0, 0.0);
+    const p = dist.pdf(1.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedGamma: f32 support - cdf" {
+    const dist = try ShiftedGamma(f32).init(2.5, 0.5, 2.0);
+    const c = dist.cdf(5.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedGamma: f32 support - quantile" {
+    const dist = try ShiftedGamma(f32).init(2.0, 1.0, 0.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ShiftedGamma: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedGamma(f32).init(2.0, 1.0, 0.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try expect(!math.isNan(x) and !math.isInf(x));
+    }
 }
