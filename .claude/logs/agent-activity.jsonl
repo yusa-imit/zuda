@@ -750,3 +750,10 @@
 {"timestamp":"2026-08-31T03:35:13Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ShiftedWeibull (192nd distribution) per scratchpad ground-truth vectors","project":"zuda"}
 {"timestamp":"2026-08-31T03:37:27Z","action":"subagent","agent_type":"zig-developer","task":"Implement ShiftedWeibull struct to pass the 72 failing tests written by test-writer","project":"zuda"}
 {"timestamp":"2026-08-31T03:54:40Z","action":"team_delete","team_name":"shifted-weibull-tdd","project":"zuda"}
+{"timestamp":"2026-08-31T07:34:58Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ShiftedExponential distribution (193rd)","project":"zuda"}
+{"timestamp":"2026-08-31T07:38:10Z","action":"subagent","agent_type":"zig-developer","task":"Implement ShiftedExponential distribution (193rd) to pass test-writer's failing tests","project":"zuda"}
+{"timestamp":"2026-08-31T11:36:03Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ShiftedGamma distribution (194th) per scratchpad ground truth","project":"zuda"}
+{"timestamp":"2026-08-31T11:39:38Z","action":"subagent","agent_type":"zig-developer","task":"Implement ShiftedGamma distribution struct to pass 59 failing tests","project":"zuda"}
+{"timestamp": "2026-08-31T15:36:38Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for ShiftedRayleigh distribution (195th) per scratchpad ground truth", "project": "zuda"}
+{"timestamp": "2026-08-31T15:39:58Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement ShiftedRayleigh distribution struct to pass 60 failing tests", "project": "zuda"}
+{"timestamp": "2026-08-31T15:42:19Z", "action": "subagent", "agent_type": "test-writer", "task": "Fix incorrect std.Io.Writer API usage in ShiftedRayleigh format test", "project": "zuda"}
