@@ -117425,3 +117425,586 @@ test "ShiftedWeibull: format produces a string" {
     var stream = std.Io.Writer.fixed(&buf);
     try dist.format(&stream);
 }
+
+/// ShiftedExponential distribution: X = γ + Y where Y ~ Exponential(λ)
+///
+/// Parameters:
+///   - threshold (γ): location parameter, any finite real
+///   - rate (λ): rate parameter, must be > 0
+///
+/// Support: x ≥ γ
+///
+/// Time: O(1) for most operations
+pub fn ShiftedExponential(comptime T: type) type {
+    return struct {
+        threshold: T,
+        rate: T,
+
+        const Self = @This();
+
+        /// Create a ShiftedExponential distribution with given threshold and rate parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(threshold: T, rate: T) DistributionError!Self {
+            if (rate <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(rate) or !math.isFinite(threshold)) return error.InvalidParameter;
+            return Self{ .threshold = threshold, .rate = rate };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x) = λ × exp(-λ(x-γ))  for x ≥ γ
+        ///      = 0                  for x < γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const shifted = x - self.threshold;
+            return self.rate * @exp(-self.rate * shifted);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x) = 1 - exp(-λ(x-γ))  for x ≥ γ
+        ///      = 0                  for x < γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const shifted = x - self.threshold;
+            return 1.0 - @exp(-self.rate * shifted);
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = exp(-λ(x-γ))  for x ≥ γ
+        ///      = 1                         for x < γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < self.threshold) return 1.0;
+            const shifted = x - self.threshold;
+            return @exp(-self.rate * shifted);
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p) = γ - ln(1-p)/λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return self.threshold;
+            if (p == 1.0) return math.inf(T);
+
+            return self.threshold - @log(1.0 - p) / self.rate;
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = ln(λ) - λ(x-γ)  for x ≥ γ
+        ///          = -∞               for x < γ
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x < self.threshold) return -math.inf(T);
+            const shifted = x - self.threshold;
+            return @log(self.rate) - self.rate * shifted;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = γ + 1/λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return self.threshold + 1.0 / self.rate;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = 1/λ²
+        ///
+        /// Independent of threshold γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return 1.0 / (self.rate * self.rate);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = γ (density is strictly decreasing on the support)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return self.threshold;
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = γ + ln(2)/λ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return self.threshold + @log(2.0) / self.rate;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method via quantile function
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const u = rng.float(T);
+            return self.quantile(u) catch unreachable; // u is always valid probability
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedExponential(threshold={d:.1}, rate={d:.1})", .{ self.threshold, self.rate });
+        }
+
+        /// Assert that parameters are valid: rate > 0, all finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.rate <= 0.0 or !math.isFinite(self.rate)) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.threshold)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// ShiftedExponential Distribution Tests
+// ============================================================================
+
+test "ShiftedExponential: init with valid parameters" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    try expectEqual(0.0, dist.threshold);
+    try expectEqual(1.0, dist.rate);
+}
+
+test "ShiftedExponential: init with zero rate fails" {
+    try expectError(error.InvalidParameter, ShiftedExponential(f64).init(0.0, 0.0));
+}
+
+test "ShiftedExponential: init with negative rate fails" {
+    try expectError(error.InvalidParameter, ShiftedExponential(f64).init(0.0, -1.0));
+}
+
+test "ShiftedExponential: init with infinite rate fails" {
+    try expectError(error.InvalidParameter, ShiftedExponential(f64).init(0.0, math.inf(f64)));
+}
+
+test "ShiftedExponential: init with NaN rate fails" {
+    try expectError(error.InvalidParameter, ShiftedExponential(f64).init(0.0, math.nan(f64)));
+}
+
+test "ShiftedExponential: init with infinite threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedExponential(f64).init(math.inf(f64), 1.0));
+}
+
+test "ShiftedExponential: init with NaN threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedExponential(f64).init(math.nan(f64), 1.0));
+}
+
+test "ShiftedExponential: init with negative threshold succeeds" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    try expectEqual(-3.0, dist.threshold);
+}
+
+test "ShiftedExponential: init with positive threshold succeeds" {
+    const dist = try ShiftedExponential(f64).init(5.5, 0.5);
+    try expectEqual(5.5, dist.threshold);
+}
+
+test "ShiftedExponential: pdf at x < threshold is 0" {
+    const dist = try ShiftedExponential(f64).init(2.0, 1.0);
+    try expectEqual(0.0, dist.pdf(1.9));
+    try expectEqual(0.0, dist.pdf(0.0));
+    try expectEqual(0.0, dist.pdf(-10.0));
+}
+
+test "ShiftedExponential: pdf at x == threshold equals rate (case gamma=0, lambda=1)" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    try expectApproxEqRel(dist.pdf(0.0), 1.0, 1e-14);
+}
+
+test "ShiftedExponential: pdf at x == threshold equals rate (case gamma=2, lambda=0.5)" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    try expectApproxEqRel(dist.pdf(2.0), 0.5, 1e-14);
+}
+
+test "ShiftedExponential: pdf at x == threshold equals rate (case gamma=-3, lambda=2)" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    try expectApproxEqRel(dist.pdf(-3.0), 2.0, 1e-14);
+}
+
+test "ShiftedExponential: pdf case 1 - gamma=0, lambda=1, x=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 0.36787944117144233; // e^-1
+    try expectApproxEqRel(dist.pdf(1.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: pdf case 2 - gamma=2, lambda=0.5, x=4" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 0.18393972058572117; // 0.5 * e^-1
+    try expectApproxEqRel(dist.pdf(4.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: pdf case 3 - gamma=-3, lambda=2, x=-2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = 0.2706705664732254; // 2 * e^-2
+    try expectApproxEqRel(dist.pdf(-2.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: cdf at x < threshold is 0" {
+    const dist = try ShiftedExponential(f64).init(2.0, 1.0);
+    try expectEqual(0.0, dist.cdf(1.9));
+    try expectEqual(0.0, dist.cdf(0.0));
+    try expectEqual(0.0, dist.cdf(-10.0));
+}
+
+test "ShiftedExponential: cdf at x == threshold is 0" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    try expectEqual(0.0, dist.cdf(2.0));
+}
+
+test "ShiftedExponential: cdf case 1 - gamma=0, lambda=1, x=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 0.6321205588285577; // 1 - e^-1
+    try expectApproxEqRel(dist.cdf(1.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: cdf case 2 - gamma=2, lambda=0.5, x=4" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 0.6321205588285577; // 1 - e^-1
+    try expectApproxEqRel(dist.cdf(4.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: cdf case 3 - gamma=-3, lambda=2, x=-2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = 0.8646647167633873; // 1 - e^-2
+    try expectApproxEqRel(dist.cdf(-2.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: sf at x < threshold is 1" {
+    const dist = try ShiftedExponential(f64).init(2.0, 1.0);
+    try expectEqual(1.0, dist.sf(1.9));
+    try expectEqual(1.0, dist.sf(0.0));
+    try expectEqual(1.0, dist.sf(-10.0));
+}
+
+test "ShiftedExponential: sf at x == threshold is 1" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    try expectEqual(1.0, dist.sf(2.0));
+}
+
+test "ShiftedExponential: sf case 1 - gamma=0, lambda=1, x=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 0.36787944117144233; // e^-1
+    try expectApproxEqRel(dist.sf(1.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: sf case 2 - gamma=2, lambda=0.5, x=4" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 0.36787944117144233; // e^-1
+    try expectApproxEqRel(dist.sf(4.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: sf case 3 - gamma=-3, lambda=2, x=-2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = 0.1353352832366127; // e^-2
+    try expectApproxEqRel(dist.sf(-2.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: logpdf at x < threshold is -inf" {
+    const dist = try ShiftedExponential(f64).init(2.0, 1.0);
+    const lp_low = dist.logpdf(1.9);
+    try expect(math.isNegativeInf(lp_low));
+}
+
+test "ShiftedExponential: logpdf case 1 - gamma=0, lambda=1, x=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = -1.0; // ln(1) - 1 = -1
+    try expectApproxEqRel(dist.logpdf(1.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: logpdf case 2 - gamma=2, lambda=0.5, x=4" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = -1.6931471805599454; // ln(0.5) - 1
+    try expectApproxEqRel(dist.logpdf(4.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: logpdf case 3 - gamma=-3, lambda=2, x=-2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = -1.3068528194400547; // ln(2) - 2
+    try expectApproxEqRel(dist.logpdf(-2.0), expected, 1e-14);
+}
+
+test "ShiftedExponential: quantile with p < 0 fails" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "ShiftedExponential: quantile with p > 1 fails" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "ShiftedExponential: quantile at p=0 returns threshold" {
+    const dist = try ShiftedExponential(f64).init(2.5, 1.0);
+    const q = try dist.quantile(0.0);
+    try expectEqual(2.5, q);
+}
+
+test "ShiftedExponential: quantile at p=1 returns infinity" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const q = try dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedExponential: quantile case 1 - gamma=0, lambda=1, p=0.5" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 0.6931471805599453; // ln(2)
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(q, expected, 1e-14);
+}
+
+test "ShiftedExponential: quantile case 2 - gamma=2, lambda=0.5, p=0.9" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 6.605170185988092;
+    const q = try dist.quantile(0.9);
+    try expectApproxEqRel(q, expected, 1e-14);
+}
+
+test "ShiftedExponential: quantile case 3 - gamma=-3, lambda=2, p=0.1" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = -2.9473197421710868;
+    const q = try dist.quantile(0.1);
+    try expectApproxEqRel(q, expected, 1e-14);
+}
+
+test "ShiftedExponential: quantile roundtrip with cdf" {
+    const dist = try ShiftedExponential(f64).init(1.0, 2.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedExponential: mean case 1 - gamma=0, lambda=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 1.0;
+    try expectApproxEqRel(dist.mean(), expected, 1e-14);
+}
+
+test "ShiftedExponential: mean case 2 - gamma=2, lambda=0.5" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 4.0;
+    try expectApproxEqRel(dist.mean(), expected, 1e-14);
+}
+
+test "ShiftedExponential: mean case 3 - gamma=-3, lambda=2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = -2.5;
+    try expectApproxEqRel(dist.mean(), expected, 1e-14);
+}
+
+test "ShiftedExponential: variance case 1 - gamma=0, lambda=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 1.0;
+    try expectApproxEqRel(dist.variance(), expected, 1e-14);
+}
+
+test "ShiftedExponential: variance case 2 - gamma=2, lambda=0.5" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 4.0;
+    try expectApproxEqRel(dist.variance(), expected, 1e-14);
+}
+
+test "ShiftedExponential: variance case 3 - gamma=-3, lambda=2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = 0.25;
+    try expectApproxEqRel(dist.variance(), expected, 1e-14);
+}
+
+test "ShiftedExponential: variance independent of gamma" {
+    const dist1 = try ShiftedExponential(f64).init(0.0, 1.0);
+    const dist2 = try ShiftedExponential(f64).init(10.0, 1.0);
+    const dist3 = try ShiftedExponential(f64).init(-5.0, 1.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-14);
+    try expectApproxEqRel(dist1.variance(), dist3.variance(), 1e-14);
+}
+
+test "ShiftedExponential: mode case 1 - gamma=0, lambda=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 0.0;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedExponential: mode case 2 - gamma=2, lambda=0.5" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 2.0;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedExponential: mode case 3 - gamma=-3, lambda=2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = -3.0;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedExponential: mode always equals threshold" {
+    const gammas = [_]f64{ -5.0, -1.0, 0.0, 1.0, 10.0 };
+    const rates = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0 };
+    for (gammas) |gamma| {
+        for (rates) |rate| {
+            const dist = try ShiftedExponential(f64).init(gamma, rate);
+            try expectApproxEqRel(dist.mode(), gamma, 1e-14);
+        }
+    }
+}
+
+test "ShiftedExponential: median case 1 - gamma=0, lambda=1" {
+    const dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    const expected = 0.6931471805599453; // ln(2)
+    try expectApproxEqRel(dist.median(), expected, 1e-14);
+}
+
+test "ShiftedExponential: median case 2 - gamma=2, lambda=0.5" {
+    const dist = try ShiftedExponential(f64).init(2.0, 0.5);
+    const expected = 3.3862943611198906;
+    try expectApproxEqRel(dist.median(), expected, 1e-14);
+}
+
+test "ShiftedExponential: median case 3 - gamma=-3, lambda=2" {
+    const dist = try ShiftedExponential(f64).init(-3.0, 2.0);
+    const expected = -2.6534264097200274;
+    try expectApproxEqRel(dist.median(), expected, 1e-14);
+}
+
+test "ShiftedExponential: median equals quantile(0.5)" {
+    const dist = try ShiftedExponential(f64).init(1.5, 0.75);
+    const median = dist.median();
+    const q = try dist.quantile(0.5);
+    try expectApproxEqRel(median, q, 1e-14);
+}
+
+test "ShiftedExponential: cross-check against Exponential at gamma=0, lambda=1" {
+    const shifted = try ShiftedExponential(f64).init(0.0, 1.0);
+    const exponential = try Exponential(f64).init(1.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 5.0 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.pdf(x), exponential.pdf(x), 1e-14);
+        try expectApproxEqRel(shifted.cdf(x), exponential.cdf(x), 1e-14);
+        try expectApproxEqRel(shifted.sf(x), exponential.sf(x), 1e-14);
+    }
+
+    try expectApproxEqRel(shifted.mean(), exponential.mean(), 1e-14);
+    try expectApproxEqRel(shifted.variance(), exponential.variance(), 1e-14);
+}
+
+test "ShiftedExponential: cross-check against Exponential at gamma=0, lambda=0.5" {
+    const shifted = try ShiftedExponential(f64).init(0.0, 0.5);
+    const exponential = try Exponential(f64).init(0.5);
+
+    const test_points = [_]f64{ 1.0, 2.0, 3.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.pdf(x), exponential.pdf(x), 1e-14);
+        try expectApproxEqRel(shifted.cdf(x), exponential.cdf(x), 1e-14);
+        try expectApproxEqRel(shifted.sf(x), exponential.sf(x), 1e-14);
+    }
+}
+
+test "ShiftedExponential: sample produces values >= gamma" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedExponential(f64).init(-2.0, 1.5);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= -2.0);
+    }
+}
+
+test "ShiftedExponential: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedExponential(f64).init(0.0, 2.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedExponential: validate passes for valid parameters" {
+    const dist = try ShiftedExponential(f64).init(-1.0, 1.0);
+    try dist.validate();
+}
+
+test "ShiftedExponential: validate fails for zero rate" {
+    var dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    dist.rate = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedExponential: validate fails for negative rate" {
+    var dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    dist.rate = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedExponential: validate fails for non-finite rate" {
+    var dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    dist.rate = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedExponential: validate fails for non-finite threshold" {
+    var dist = try ShiftedExponential(f64).init(0.0, 1.0);
+    dist.threshold = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedExponential: f32 support - init and pdf" {
+    const dist = try ShiftedExponential(f32).init(0.0, 1.0);
+    const p = dist.pdf(0.5);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedExponential: f32 support - cdf" {
+    const dist = try ShiftedExponential(f32).init(1.0, 0.5);
+    const c = dist.cdf(2.0);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedExponential: f32 support - quantile" {
+    const dist = try ShiftedExponential(f32).init(0.0, 1.0);
+    const q = try dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ShiftedExponential: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedExponential(f32).init(0.0, 1.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try expect(!math.isNan(x) and !math.isInf(x));
+    }
+}
+
+test "ShiftedExponential: format produces a string" {
+    const dist = try ShiftedExponential(f64).init(1.0, 2.0);
+    var buf: [256]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+}
