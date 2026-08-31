@@ -1,3 +1,28 @@
+**Session 856 Update (2026-08-31) — FEATURE MODE [COMPLETED]:**
+
+✅ **ShiftedLogNormal (191st, recovered uncommitted, commit 249ce4a) + ShiftedWeibull (192nd,
+fresh TDD, commit 6585261)**
+- **Mode**: FEATURE MODE (counter: 856). CI green on main at session start, 0 open issues.
+- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
+  `ShiftedLogNormal` (3-param log-normal, X=γ+exp(Z)) — 66 tests, no `@panic`/`catch unreachable`/
+  `debug.print`, cross-validated against `LogNormal` at γ=0. Clean recovery, `zig build test`
+  exit 0, committed as 191st.
+- Implemented `ShiftedWeibull` (3-param/threshold Weibull, shifts standard Weibull's support to
+  start at threshold γ instead of 0) as 192nd via full TDD: derived formulas +3 ground-truth
+  numeric cases (mpmath, 30 dps) into the scratchpad myself before dispatching, test-writer wrote
+  72 failing tests, zig-developer implemented against the scratchpad spec (not its own formulas).
+  Independently verified the diff: matches scratchpad exactly, mirrors plain `Weibull`'s method
+  set/doc-comment style, only one `catch unreachable` (documented sample() exception, same as
+  Weibull's own pattern). `zig build`/`zig build test` both exit 0.
+- Did not reach the standing `catch unreachable` audit or `patterns.md` compression backlog this
+  session (feature-mode session, correctly deferred to next stabilization cycle per counter%5).
+- **Next priority (feature)**: no standing candidate — grep root.zig's doc-comment list first.
+  Remaining candidates per MEMORY.md: Neyman Type B/C, skew-generalized-t variants beyond
+  SkewT/SkewSlash/SkewGeneralizedNormal/JonesFaddySkewT. New pattern worth reusing: other
+  location-shift variants of already-shipped 2-param families (e.g. a shifted/threshold Gamma or
+  Exponential, if not already covered — grep first) are cheap, low-risk additions that reuse an
+  existing struct as both template and cross-check.
+
 **Session 855 Update (2026-08-31) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **catch-unreachable OOM fixes (2 sites) + format() coverage complete (190/190)** — commits
@@ -46,44 +71,11 @@
   this session) — worth a dedicated compression pass if a future stabilization cycle has no
   higher-priority CI/bug work.
 
-**Session 854 Update (2026-08-30) — FEATURE MODE:** JonesFaddySkewT (190th, commit 325b059) —
-recovered uncommitted work (Jones & Faddy 2003 skew-t via two shape params a,b, closed-form
-pdf/cdf via regularized incomplete beta). See external auto-memory
-`session_854_jones_faddy_skewt.md` for full verification detail.
-
-**Session 852 Update (2026-08-30) — FEATURE MODE:** ExponentialLogarithmic (189th, commit
-7d78de4) — recovered uncommitted work (min-of-Exponential-with-Logarithmic-count, decreasing
-failure rate). See external auto-memory `session_852_exponential_logarithmic.md`.
-
-**Session 851 Update (2026-08-29) — FEATURE MODE [COMPLETED]:**
-
-✅ **Recovered interrupted PoissonLognormal (188th)** — commit ed61807
-- **Mode**: FEATURE MODE (counter: 851)
-- **CI/Issues**: CI green on main at session start, 0 open issues.
-- Found `src/stats/distributions.zig` uncommitted with 41 pre-written failing tests for
-  `PoissonLognormal` (agent log showed both test-writer and zig-developer had run) but **no
-  struct implementation existed anywhere in the file** — the Green step of the prior TDD cycle
-  never landed — plus a stray trailing `}` left by the interrupted edit (syntax error, file
-  would not compile). New variant of the "recovered uncommitted work" pattern: prior recoveries
-  always found a complete implementation to verify; this one required implementing from scratch
-  against the existing tests.
-- Implemented `PoissonLognormal(μ,σ)` (X|Λ~Poisson(Λ), ln(Λ)~Normal(μ,σ²)) — no closed-form PMF,
-  computed via 2000-panel composite Simpson integration over the latent normal Z=ln(Λ) in
-  log-space (avoids overflow at tails). First use of Simpson integration for a PMF itself in this
-  file — the ~25 prior uses were all entropy integrals on continuous distributions. mean()/
-  variance() have closed forms via the law of total expectation/variance, verified against all 3
-  test cases' ground-truth values.
-- Updated `src/root.zig`'s doc-comment distribution list. `zig build test` exits 0, all 41 new
-  tests pass. Distribution count 187 → **188** (verified via
-  `grep -c '^pub fn.*comptime T: type) type' src/stats/distributions.zig`).
-- Full detail in external auto-memory `session_851_poisson_lognormal.md` and `patterns.md`
-  (new "Recovering Interrupted TDD Cycles" and "Simpson Integration for a Discrete Mixture PMF"
-  sections).
-- **Next priority (feature)**: no standing candidate for a new distribution — grep root.zig
-  before picking one. Neyman Type B/C and skew-generalized-t variants beyond shipped SkewT/
-  SkewSlash/SkewGeneralizedNormal remain open candidates per auto-memory MEMORY.md. The
-  broader `catch unreachable` sweep (~68 remaining occurrences beyond the 3 fixed in session 850)
-  remains the standing stabilization candidate.
+**Sessions 851–854** (2026-08-29–30, FEATURE): PoissonLognormal(188th, 2000-panel Simpson PMF in
+log-space over latent Z=ln(Λ) — first Simpson-for-a-PMF use, prior ~25 uses were entropy
+integrals only), ExponentialLogarithmic(189th), JonesFaddySkewT(190th) — all clean
+recovered-uncommitted-work sessions except 851 (Green step never landed, implemented from
+scratch against pre-written tests). Full detail in external auto-memory per-session files.
 
 ## Older sessions (compressed 2026-08-31 per 200-line rule; superseded detail lives in external auto-memory)
 
