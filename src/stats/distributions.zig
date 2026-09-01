@@ -120376,3 +120376,621 @@ test "ShiftedNakagami: f32 support - sample" {
         try expect(!math.isNan(x) and !math.isInf(x));
     }
 }
+
+pub fn ShiftedInverseGaussian(comptime T: type) type {
+    return struct {
+        mu: T,
+        lambda: T,
+        threshold: T,
+
+        const Self = @This();
+
+        /// Create a ShiftedInverseGaussian distribution with mean mu (μ > 0), shape lambda (λ > 0),
+        /// and location threshold (any finite real)
+        ///
+        /// Errors: mu ≤ 0, mu is NaN/infinite, lambda ≤ 0, lambda is NaN/infinite,
+        ///         or threshold is NaN/infinite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(mu: T, lambda: T, threshold: T) DistributionError!Self {
+            if (mu <= 0.0) return error.InvalidParameter;
+            if (lambda <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(mu) or !math.isFinite(lambda) or !math.isFinite(threshold)) return error.InvalidParameter;
+            return Self{ .mu = mu, .lambda = lambda, .threshold = threshold };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; μ, λ, γ) = InverseGaussian(μ, λ).pdf(x - γ)  for x > γ
+        ///               = 0                                   for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return inverse_gaussian.pdf(x - self.threshold);
+        }
+
+        /// Log probability density function at x
+        ///
+        /// log f(x; μ, λ, γ) = InverseGaussian(μ, λ).logpdf(x - γ)  for x > γ
+        ///                   = -∞                                     for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.threshold) return -math.inf(T);
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return inverse_gaussian.logpdf(x - self.threshold);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; μ, λ, γ) = InverseGaussian(μ, λ).cdf(x - γ)  for x > γ
+        ///               = 0                                   for x ≤ γ
+        ///
+        /// Time: O(1) with series/approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return inverse_gaussian.cdf(x - self.threshold);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; μ, λ, γ) = 1                  for x ≤ γ
+        ///               = 1 - F(x)           for x > γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < self.threshold) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; μ, λ, γ) = γ + InverseGaussian(μ, λ).quantile(p)
+        ///
+        /// Returns NaN for p < 0 or p > 1 (InverseGaussian.quantile behavior).
+        ///
+        /// Time: O(100 × O(cdf)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            const q = inverse_gaussian.quantile(p);
+            return self.threshold + q;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = γ + E[InverseGaussian(μ, λ)]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return self.threshold + inverse_gaussian.mean();
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = Var(InverseGaussian(μ, λ))  (shift-invariant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return inverse_gaussian.variance();
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = γ + Mode(InverseGaussian(μ, λ))
+        ///
+        /// Mode(InverseGaussian) = μ(√(1 + 9μ²/(4λ²)) - 3μ/(2λ))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return self.threshold + inverse_gaussian.mode();
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = H(InverseGaussian(μ, λ))  (shift-invariant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return inverse_gaussian.entropy();
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses InverseGaussian(μ, λ).sample(rng), then adds threshold: γ + InverseGaussian.sample(rng)
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const inverse_gaussian = InverseGaussian(T){ .mu = self.mu, .lambda = self.lambda };
+            return self.threshold + inverse_gaussian.sample(rng);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedInverseGaussian(mu={d:.1}, lambda={d:.1}, threshold={d:.1})", .{ self.mu, self.lambda, self.threshold });
+        }
+
+        /// Assert that parameters are valid: mu > 0, lambda > 0, all finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.mu <= 0.0 or !math.isFinite(self.mu)) return error.InvalidParameter;
+            if (self.lambda <= 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+            if (!math.isFinite(self.threshold)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support [γ, ∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            if (x < self.threshold or !math.isFinite(x)) return error.OutOfDomain;
+        }
+    };
+}
+
+test "ShiftedInverseGaussian: init with valid parameters" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(1.5, dist.mu);
+    try expectEqual(2.0, dist.lambda);
+    try expectEqual(1.0, dist.threshold);
+}
+
+test "ShiftedInverseGaussian: init with mu <= 0 fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(0.0, 1.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(-1.0, 1.0, 0.0));
+}
+
+test "ShiftedInverseGaussian: init with lambda <= 0 fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, 0.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, -1.0, 0.0));
+}
+
+test "ShiftedInverseGaussian: init with NaN mu fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(math.nan(f64), 1.0, 0.0));
+}
+
+test "ShiftedInverseGaussian: init with infinite mu fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(math.inf(f64), 1.0, 0.0));
+}
+
+test "ShiftedInverseGaussian: init with NaN lambda fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, math.nan(f64), 0.0));
+}
+
+test "ShiftedInverseGaussian: init with infinite lambda fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, math.inf(f64), 0.0));
+}
+
+test "ShiftedInverseGaussian: init with NaN threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, 1.0, math.nan(f64)));
+}
+
+test "ShiftedInverseGaussian: init with infinite threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, 1.0, math.inf(f64)));
+    try expectError(error.InvalidParameter, ShiftedInverseGaussian(f64).init(1.5, 1.0, -math.inf(f64)));
+}
+
+test "ShiftedInverseGaussian: init with negative threshold succeeds" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, -2.0);
+    try expectEqual(-2.0, dist.threshold);
+}
+
+test "ShiftedInverseGaussian: init with zero threshold succeeds" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 0.0);
+    try expectEqual(0.0, dist.threshold);
+}
+
+test "ShiftedInverseGaussian: init with positive threshold succeeds" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 5.5);
+    try expectEqual(5.5, dist.threshold);
+}
+
+test "ShiftedInverseGaussian: pdf at x <= threshold is 0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(0.0, dist.pdf(0.9));
+    try expectEqual(0.0, dist.pdf(1.0 - 1e-10));
+    try expectEqual(0.0, dist.pdf(-10.0));
+}
+
+test "ShiftedInverseGaussian: pdf case 1 - mu=1.5, lambda=2.0, threshold=1.0, x=2.3" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = 0.375466302068179317490271647732;
+    try expectApproxEqRel(dist.pdf(2.3), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: pdf case 2 - mu=0.5, lambda=1.0, threshold=-2.0, x=-1.2" {
+    const dist = try ShiftedInverseGaussian(f64).init(0.5, 1.0, -2.0);
+    const expected = 0.445203763446164418656464371007;
+    try expectApproxEqRel(dist.pdf(-1.2), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: pdf case 3 - mu=3.0, lambda=4.0, threshold=0.0, x=1.8" {
+    const dist = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const expected = 0.276581670871829276623083931005;
+    try expectApproxEqRel(dist.pdf(1.8), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: pdf threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.5 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.pdf(x), naked.pdf(x), 1e-12);
+    }
+}
+
+test "ShiftedInverseGaussian: logpdf at x <= threshold is -inf" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(-math.inf(f64), dist.logpdf(1.0));
+    try expectEqual(-math.inf(f64), dist.logpdf(0.9));
+    try expectEqual(-math.inf(f64), dist.logpdf(-10.0));
+}
+
+test "ShiftedInverseGaussian: logpdf case 1 - mu=1.5, lambda=2.0, threshold=1.0, x=2.3" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = -0.979586553301150177032205255511;
+    try expectApproxEqRel(dist.logpdf(2.3), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: logpdf case 2 - mu=0.5, lambda=1.0, threshold=-2.0, x=-1.2" {
+    const dist = try ShiftedInverseGaussian(f64).init(0.5, 1.0, -2.0);
+    const expected = -0.809223206233358288021711559736;
+    try expectApproxEqRel(dist.logpdf(-1.2), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: logpdf case 3 - mu=3.0, lambda=4.0, threshold=0.0, x=1.8" {
+    const dist = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const expected = -1.28524912777568379256445893371;
+    try expectApproxEqRel(dist.logpdf(1.8), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: logpdf matches log(pdf) for valid x" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const pdf_val = dist.pdf(2.3);
+    const logpdf_val = dist.logpdf(2.3);
+    const expected_logpdf = @log(pdf_val);
+    try expectApproxEqRel(logpdf_val, expected_logpdf, 1e-12);
+}
+
+test "ShiftedInverseGaussian: logpdf threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.logpdf(x), naked.logpdf(x), 1e-12);
+    }
+}
+
+test "ShiftedInverseGaussian: cdf at x < threshold is 0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(0.0, dist.cdf(0.9));
+    try expectEqual(0.0, dist.cdf(1.0 - 1e-10));
+    try expectEqual(0.0, dist.cdf(-10.0));
+}
+
+test "ShiftedInverseGaussian: cdf case 1 - mu=1.5, lambda=2.0, threshold=1.0, x=2.3" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = 0.582528357779032237075416015997;
+    try expectApproxEqRel(dist.cdf(2.3), expected, 1e-5);
+}
+
+test "ShiftedInverseGaussian: cdf case 2 - mu=0.5, lambda=1.0, threshold=-2.0, x=-1.2" {
+    const dist = try ShiftedInverseGaussian(f64).init(0.5, 1.0, -2.0);
+    const expected = 0.848486005469683503292510302091;
+    try expectApproxEqRel(dist.cdf(-1.2), expected, 1e-5);
+}
+
+test "ShiftedInverseGaussian: cdf case 3 - mu=3.0, lambda=4.0, threshold=0.0, x=1.8" {
+    const dist = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const expected = 0.398346646783913009609080474931;
+    try expectApproxEqRel(dist.cdf(1.8), expected, 1e-5);
+}
+
+test "ShiftedInverseGaussian: cdf threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.5 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.cdf(x), naked.cdf(x), 1e-12);
+    }
+}
+
+test "ShiftedInverseGaussian: sf at x < threshold is 1" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(1.0, dist.sf(0.9));
+    try expectEqual(1.0, dist.sf(1.0 - 1e-10));
+    try expectEqual(1.0, dist.sf(-10.0));
+}
+
+test "ShiftedInverseGaussian: sf equals 1 - cdf" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const test_points = [_]f64{ 1.5, 2.0, 2.3, 3.0 };
+    for (test_points) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-12);
+    }
+}
+
+test "ShiftedInverseGaussian: quantile with p < 0 returns NaN" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try expect(math.isNan(q));
+}
+
+test "ShiftedInverseGaussian: quantile with p > 1 returns NaN" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(1.1);
+    try expect(math.isNan(q));
+}
+
+test "ShiftedInverseGaussian: quantile at p=0 returns threshold" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(0.0);
+    try expectEqual(1.0, q);
+}
+
+test "ShiftedInverseGaussian: quantile at p=1 returns infinity" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedInverseGaussian: quantile(0.5) for mu=1.5, lambda=2.0, threshold=1.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = 2.1013488264498322685;
+    try expectApproxEqRel(dist.quantile(0.5), expected, 1e-6);
+}
+
+test "ShiftedInverseGaussian: quantile roundtrip with cdf" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedInverseGaussian: quantile threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+
+    const probabilities = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probabilities) |p| {
+        const q_shifted = shifted.quantile(p);
+        const q_naked = naked.quantile(p);
+        try expectApproxEqRel(q_shifted, q_naked, 1e-12);
+    }
+}
+
+test "ShiftedInverseGaussian: mean for mu=1.5, lambda=2.0, threshold=1.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = 2.5;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: mean for mu=0.5, lambda=1.0, threshold=-2.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(0.5, 1.0, -2.0);
+    const expected = -1.5;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: mean threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.mean(), naked.mean(), 1e-12);
+}
+
+test "ShiftedInverseGaussian: variance for mu=1.5, lambda=2.0, threshold=1.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = 1.6875;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: variance for mu=0.5, lambda=1.0, threshold=-2.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(0.5, 1.0, -2.0);
+    const expected = 0.125;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedInverseGaussian: variance independent of threshold" {
+    const dist1 = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const dist2 = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 10.0);
+    const dist3 = try ShiftedInverseGaussian(f64).init(3.0, 4.0, -5.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-14);
+    try expectApproxEqRel(dist1.variance(), dist3.variance(), 1e-14);
+}
+
+test "ShiftedInverseGaussian: variance threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.variance(), naked.variance(), 1e-12);
+}
+
+test "ShiftedInverseGaussian: mode for mu=1.5, lambda=2.0, threshold=1.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const expected = 1.5702989835235554025;
+    try expectApproxEqRel(dist.mode(), expected, 1e-6);
+}
+
+test "ShiftedInverseGaussian: mode threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.mode(), naked.mode(), 1e-12);
+}
+
+test "ShiftedInverseGaussian: entropy for mu=1.5, lambda=2.0, threshold=1.0" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    const naked = try InverseGaussian(f64).init(1.5, 2.0);
+    try expectApproxEqRel(dist.entropy(), naked.entropy(), 1e-12);
+}
+
+test "ShiftedInverseGaussian: entropy independent of threshold" {
+    const dist1 = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const dist2 = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 10.0);
+    const dist3 = try ShiftedInverseGaussian(f64).init(3.0, 4.0, -5.0);
+    try expectApproxEqRel(dist1.entropy(), dist2.entropy(), 1e-14);
+    try expectApproxEqRel(dist1.entropy(), dist3.entropy(), 1e-14);
+}
+
+test "ShiftedInverseGaussian: entropy threshold=0 cross-check against InverseGaussian" {
+    const shifted = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    const naked = try InverseGaussian(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.entropy(), naked.entropy(), 1e-12);
+}
+
+test "ShiftedInverseGaussian: sample produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= 1.0 - 1e-10);
+    }
+}
+
+test "ShiftedInverseGaussian: sample with negative threshold produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedInverseGaussian(f64).init(0.5, 1.0, -2.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= -2.0 - 1e-10);
+    }
+}
+
+test "ShiftedInverseGaussian: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(456);
+    const rng = prng.random();
+    const dist = try ShiftedInverseGaussian(f64).init(3.0, 4.0, 0.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedInverseGaussian: validate passes for valid parameters" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try dist.validate();
+}
+
+test "ShiftedInverseGaussian: validate fails for mu <= 0" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.mu = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for mu < 0 explicitly" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.mu = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for non-finite mu" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.mu = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for non-finite mu (NaN)" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.mu = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for lambda <= 0" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.lambda = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for lambda < 0 explicitly" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.lambda = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for non-finite lambda" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.lambda = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validate fails for non-finite threshold" {
+    var dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    dist.threshold = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedInverseGaussian: validateValue fails for x < threshold" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(0.9));
+    try expectError(error.OutOfDomain, dist.validateValue(0.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-10.0));
+}
+
+test "ShiftedInverseGaussian: validateValue passes for x >= threshold" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try dist.validateValue(1.0);
+    try dist.validateValue(1.1);
+    try dist.validateValue(10.0);
+}
+
+test "ShiftedInverseGaussian: validateValue fails for NaN x" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+}
+
+test "ShiftedInverseGaussian: validateValue fails for infinite x" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+    try expectError(error.OutOfDomain, dist.validateValue(-math.inf(f64)));
+}
+
+test "ShiftedInverseGaussian: format produces a string" {
+    const dist = try ShiftedInverseGaussian(f64).init(1.5, 2.0, 1.0);
+    var buf: [256]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+}
+
+test "ShiftedInverseGaussian: f32 support - init and pdf" {
+    const dist = try ShiftedInverseGaussian(f32).init(1.5, 2.0, 0.0);
+    const p = dist.pdf(1.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedInverseGaussian: f32 support - cdf" {
+    const dist = try ShiftedInverseGaussian(f32).init(1.5, 2.0, 1.0);
+    const c = dist.cdf(1.5);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedInverseGaussian: f32 support - quantile" {
+    const dist = try ShiftedInverseGaussian(f32).init(1.5, 2.0, 0.0);
+    const q = dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ShiftedInverseGaussian: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedInverseGaussian(f32).init(1.5, 2.0, 0.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try expect(!math.isNan(x) and !math.isInf(x));
+    }
+}
