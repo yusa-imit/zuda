@@ -820,7 +820,7 @@ pub fn covarianceMatrix(
     for (0..n_features) |j| {
         var sum: T = 0;
         for (0..n_samples) |i| {
-            sum += X.get(&[_]isize{ @intCast(i), @intCast(j) }) catch unreachable;
+            sum += try X.get(&[_]isize{ @intCast(i), @intCast(j) });
         }
         col_means[j] = sum / @as(T, @floatFromInt(n_samples));
     }
@@ -832,8 +832,8 @@ pub fn covarianceMatrix(
         for (0..n_features) |j| {
             var cov_sum: T = 0;
             for (0..n_samples) |k| {
-                const x_ki = X.get(&[_]isize{ @intCast(k), @intCast(i) }) catch unreachable;
-                const x_kj = X.get(&[_]isize{ @intCast(k), @intCast(j) }) catch unreachable;
+                const x_ki = try X.get(&[_]isize{ @intCast(k), @intCast(i) });
+                const x_kj = try X.get(&[_]isize{ @intCast(k), @intCast(j) });
                 cov_sum += (x_ki - col_means[i]) * (x_kj - col_means[j]);
             }
             const cov_val = cov_sum / n_minus_1;

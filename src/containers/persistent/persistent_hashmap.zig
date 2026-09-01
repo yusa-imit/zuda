@@ -131,9 +131,9 @@ pub fn PersistentHashMap(comptime K: type, comptime V: type, comptime Context: t
             entries: std.ArrayList(Entry),
             allocator: Allocator,
 
-            fn init(allocator: Allocator) Leaf {
+            fn init(allocator: Allocator) Allocator.Error!Leaf {
                 return .{
-                    .entries = std.ArrayList(Entry).initCapacity(allocator, 0) catch unreachable,
+                    .entries = try std.ArrayList(Entry).initCapacity(allocator, 0),
                     .allocator = allocator,
                 };
             }
@@ -201,7 +201,7 @@ pub fn PersistentHashMap(comptime K: type, comptime V: type, comptime Context: t
                 const root_node = try self.allocator.create(Node);
                 root_node.* = Node{
                     .type = .leaf,
-                    .data = .{ .leaf = Leaf.init(self.allocator) },
+                    .data = .{ .leaf = try Leaf.init(self.allocator) },
                 };
                 try root_node.data.leaf.entries.append(self.allocator, Entry{ .key = key, .value = value });
                 new_map.root = root_node;
@@ -239,7 +239,7 @@ pub fn PersistentHashMap(comptime K: type, comptime V: type, comptime Context: t
                         const leaf_node = try self.allocator.create(Node);
                         leaf_node.* = Node{
                             .type = .leaf,
-                            .data = .{ .leaf = Leaf.init(self.allocator) },
+                            .data = .{ .leaf = try Leaf.init(self.allocator) },
                         };
                         try leaf_node.data.leaf.entries.append(leaf_node.data.leaf.allocator, Entry{ .key = key, .value = value });
                         new_node.data.branch.setChild(index, leaf_node);
@@ -284,7 +284,7 @@ pub fn PersistentHashMap(comptime K: type, comptime V: type, comptime Context: t
                             const leaf = try self.allocator.create(Node);
                             leaf.* = Node{
                                 .type = .leaf,
-                                .data = .{ .leaf = Leaf.init(self.allocator) },
+                                .data = .{ .leaf = try Leaf.init(self.allocator) },
                             };
                             branch_node.data.branch.setChild(entry_index, leaf);
                         }
@@ -298,7 +298,7 @@ pub fn PersistentHashMap(comptime K: type, comptime V: type, comptime Context: t
                         const leaf = try self.allocator.create(Node);
                         leaf.* = Node{
                             .type = .leaf,
-                            .data = .{ .leaf = Leaf.init(self.allocator) },
+                            .data = .{ .leaf = try Leaf.init(self.allocator) },
                         };
                         branch_node.data.branch.setChild(new_index, leaf);
                     }

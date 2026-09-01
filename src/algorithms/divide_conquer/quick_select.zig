@@ -139,10 +139,10 @@ fn partition(
 ///
 /// Time: O(n) average
 /// Space: O(log n) average
-pub fn median(comptime T: type, arr: []T) error{EmptyArray}!T {
+pub fn median(comptime T: type, arr: []T) (error{EmptyArray} || error{InvalidIndex})!T {
     if (arr.len == 0) return error.EmptyArray;
     const k = (arr.len - 1) / 2; // Lower median for even-length arrays
-    return quickSelect(T, arr, k) catch unreachable; // k is always valid
+    return try quickSelect(T, arr, k);
 }
 
 /// Find the top K smallest elements in an array.
@@ -152,9 +152,9 @@ pub fn median(comptime T: type, arr: []T) error{EmptyArray}!T {
 ///
 /// Time: O(n) average
 /// Space: O(log n) average
-pub fn topK(comptime T: type, arr: []T, k: usize) error{InvalidK}!T {
+pub fn topK(comptime T: type, arr: []T, k: usize) (error{InvalidK} || error{InvalidIndex})!T {
     if (k == 0 or k > arr.len) return error.InvalidK;
-    return quickSelect(T, arr, k - 1) catch unreachable; // k-1 is always valid
+    return try quickSelect(T, arr, k - 1);
 }
 
 // ============================================================================
