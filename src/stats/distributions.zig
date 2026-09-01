@@ -119763,3 +119763,616 @@ test "ShiftedChi: f32 support - sample" {
         try expect(!math.isNan(x) and !math.isInf(x));
     }
 }
+
+pub fn ShiftedNakagami(comptime T: type) type {
+    return struct {
+        m: T,
+        omega: T,
+        threshold: T,
+
+        const Self = @This();
+
+        /// Create a ShiftedNakagami distribution with shape m (m ≥ 0.5), spread omega (Ω > 0),
+        /// and location threshold (any finite real)
+        ///
+        /// Errors: m < 0.5, m is NaN/infinite, omega ≤ 0, omega is NaN/infinite,
+        ///         or threshold is NaN/infinite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(m: T, omega: T, threshold: T) DistributionError!Self {
+            if (m < 0.5) return error.InvalidParameter;
+            if (omega <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(m) or !math.isFinite(omega) or !math.isFinite(threshold)) return error.InvalidParameter;
+            return Self{ .m = m, .omega = omega, .threshold = threshold };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; m, Ω, γ) = Nakagami(m, Ω).pdf(x - γ)  for x > γ
+        ///               = 0                            for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return nakagami.pdf(x - self.threshold);
+        }
+
+        /// Log probability density function at x
+        ///
+        /// log f(x; m, Ω, γ) = Nakagami(m, Ω).logpdf(x - γ)  for x > γ
+        ///                   = -∞                              for x ≤ γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= self.threshold) return -math.inf(T);
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return nakagami.logpdf(x - self.threshold);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; m, Ω, γ) = Nakagami(m, Ω).cdf(x - γ)  for x > γ
+        ///               = 0                            for x ≤ γ
+        ///
+        /// Time: O(1) with series/approximation | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < self.threshold) return 0.0;
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return nakagami.cdf(x - self.threshold);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; m, Ω, γ) = 1                  for x ≤ γ
+        ///               = 1 - F(x)           for x > γ
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x < self.threshold) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; m, Ω, γ) = γ + Nakagami(m, Ω).quantile(p)
+        ///
+        /// Returns NaN for p < 0 or p > 1 (Nakagami.quantile behavior).
+        ///
+        /// Time: O(100 × O(cdf)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            const q = nakagami.quantile(p);
+            return self.threshold + q;
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = γ + E[Nakagami(m, Ω)]
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return self.threshold + nakagami.mean();
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = Var(Nakagami(m, Ω))  (shift-invariant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return nakagami.variance();
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = γ + Mode(Nakagami(m, Ω))
+        ///
+        /// For m = 0.5: mode = γ
+        /// For m > 0.5: mode = γ + √((2m-1)·Ω/(2m))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return self.threshold + nakagami.mode();
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = H(Nakagami(m, Ω))  (shift-invariant)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return nakagami.entropy();
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses Nakagami(m, Ω).sample(rng), then adds threshold: γ + Nakagami.sample(rng)
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const nakagami = Nakagami(T){ .m = self.m, .omega = self.omega };
+            return self.threshold + nakagami.sample(rng);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("ShiftedNakagami(m={d:.1}, omega={d:.1}, threshold={d:.1})", .{ self.m, self.omega, self.threshold });
+        }
+
+        /// Assert that parameters are valid: m ≥ 0.5, omega > 0, all finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.m < 0.5 or !math.isFinite(self.m)) return error.InvalidParameter;
+            if (self.omega <= 0.0 or !math.isFinite(self.omega)) return error.InvalidParameter;
+            if (!math.isFinite(self.threshold)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (γ, ∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            if (x < self.threshold or !math.isFinite(x)) return error.OutOfDomain;
+        }
+    };
+}
+
+test "ShiftedNakagami: init with valid parameters" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(1.5, dist.m);
+    try expectEqual(2.0, dist.omega);
+    try expectEqual(1.0, dist.threshold);
+}
+
+test "ShiftedNakagami: init with m = 0.5 (minimum valid)" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, 0.0);
+    try expectEqual(0.5, dist.m);
+    try expectEqual(1.0, dist.omega);
+}
+
+test "ShiftedNakagami: init with m < 0.5 fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(0.4, 1.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(0.25, 1.0, 0.0));
+}
+
+test "ShiftedNakagami: init with NaN m fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(math.nan(f64), 1.0, 0.0));
+}
+
+test "ShiftedNakagami: init with infinite m fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(math.inf(f64), 1.0, 0.0));
+}
+
+test "ShiftedNakagami: init with omega <= 0 fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, 0.0, 0.0));
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, -1.0, 0.0));
+}
+
+test "ShiftedNakagami: init with NaN omega fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, math.nan(f64), 0.0));
+}
+
+test "ShiftedNakagami: init with infinite omega fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, math.inf(f64), 0.0));
+}
+
+test "ShiftedNakagami: init with NaN threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, 1.0, math.nan(f64)));
+}
+
+test "ShiftedNakagami: init with infinite threshold fails" {
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, 1.0, math.inf(f64)));
+    try expectError(error.InvalidParameter, ShiftedNakagami(f64).init(1.5, 1.0, -math.inf(f64)));
+}
+
+test "ShiftedNakagami: init with negative threshold succeeds" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    try expectEqual(-2.0, dist.threshold);
+}
+
+test "ShiftedNakagami: init with zero threshold succeeds" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 0.0);
+    try expectEqual(0.0, dist.threshold);
+}
+
+test "ShiftedNakagami: init with positive threshold succeeds" {
+    const dist = try ShiftedNakagami(f64).init(3.0, 4.0, 5.5);
+    try expectEqual(5.5, dist.threshold);
+}
+
+test "ShiftedNakagami: pdf at x < threshold is 0" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(0.0, dist.pdf(0.9));
+    try expectEqual(0.0, dist.pdf(1.0 - 1e-10));
+    try expectEqual(0.0, dist.pdf(-10.0));
+}
+
+test "ShiftedNakagami: pdf case 1 - m=1.5, omega=2.0, gamma=1.0, x=2.3" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const expected = 0.697421608013600131852912410065;
+    try expectApproxEqRel(dist.pdf(2.3), expected, 1e-12);
+}
+
+test "ShiftedNakagami: pdf case 2 - m=0.5, omega=1.0, gamma=-2.0, x=-1.2" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    const expected = 0.579383105522965476225972502909;
+    try expectApproxEqRel(dist.pdf(-1.2), expected, 1e-12);
+}
+
+test "ShiftedNakagami: pdf case 3 - m=3.0, omega=4.0, gamma=0.0, x=1.8" {
+    const dist = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const expected = 0.701795735166129829054034286445;
+    try expectApproxEqRel(dist.pdf(1.8), expected, 1e-12);
+}
+
+test "ShiftedNakagami: pdf gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.5 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.pdf(x), naked.pdf(x), 1e-12);
+    }
+}
+
+test "ShiftedNakagami: logpdf at x <= threshold is -inf" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(-math.inf(f64), dist.logpdf(1.0));
+    try expectEqual(-math.inf(f64), dist.logpdf(0.9));
+    try expectEqual(-math.inf(f64), dist.logpdf(-10.0));
+}
+
+test "ShiftedNakagami: logpdf case 1 - m=1.5, omega=2.0, gamma=1.0, x=2.3" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const pdf_val = dist.pdf(2.3);
+    const logpdf_val = dist.logpdf(2.3);
+    const expected_logpdf = @log(pdf_val);
+    try expectApproxEqRel(logpdf_val, expected_logpdf, 1e-12);
+}
+
+test "ShiftedNakagami: logpdf gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.logpdf(x), naked.logpdf(x), 1e-12);
+    }
+}
+
+test "ShiftedNakagami: cdf at x < threshold is 0" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(0.0, dist.cdf(0.9));
+    try expectEqual(0.0, dist.cdf(1.0 - 1e-10));
+    try expectEqual(0.0, dist.cdf(-10.0));
+}
+
+test "ShiftedNakagami: cdf case 1 - m=1.5, omega=2.0, gamma=1.0, x=2.3" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const expected = 0.531001006793218475575201224984;
+    try expectApproxEqRel(dist.cdf(2.3), expected, 1e-12);
+}
+
+test "ShiftedNakagami: cdf case 2 - m=0.5, omega=1.0, gamma=-2.0, x=-1.2" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    const expected = 0.576289202833206628848936456457;
+    try expectApproxEqRel(dist.cdf(-1.2), expected, 1e-12);
+}
+
+test "ShiftedNakagami: cdf case 3 - m=3.0, omega=4.0, gamma=0.0, x=1.8" {
+    const dist = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const expected = 0.438109317884636259096065084487;
+    try expectApproxEqRel(dist.cdf(1.8), expected, 1e-12);
+}
+
+test "ShiftedNakagami: cdf gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+
+    const test_points = [_]f64{ 0.5, 1.0, 1.5, 2.0, 2.5 };
+    for (test_points) |x| {
+        try expectApproxEqRel(shifted.cdf(x), naked.cdf(x), 1e-12);
+    }
+}
+
+test "ShiftedNakagami: sf at x < threshold is 1" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectEqual(1.0, dist.sf(0.9));
+    try expectEqual(1.0, dist.sf(1.0 - 1e-10));
+    try expectEqual(1.0, dist.sf(-10.0));
+}
+
+test "ShiftedNakagami: sf equals 1 - cdf" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const test_points = [_]f64{ 1.5, 2.0, 2.3, 3.0 };
+    for (test_points) |x| {
+        const sf_val = dist.sf(x);
+        const cdf_val = dist.cdf(x);
+        try expectApproxEqRel(sf_val, 1.0 - cdf_val, 1e-12);
+    }
+}
+
+test "ShiftedNakagami: quantile with p < 0 returns NaN" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try expect(math.isNan(q));
+}
+
+test "ShiftedNakagami: quantile with p > 1 returns NaN" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(1.1);
+    try expect(math.isNan(q));
+}
+
+test "ShiftedNakagami: quantile at p=0 returns threshold" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(0.0);
+    try expectEqual(1.0, q);
+}
+
+test "ShiftedNakagami: quantile at p=1 returns infinity" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const q = dist.quantile(1.0);
+    try expect(math.isInf(q));
+    try expect(q > 0.0);
+}
+
+test "ShiftedNakagami: quantile roundtrip with cdf" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const probabilities = [_]f64{ 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99 };
+    for (probabilities) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(cdf_q, p, 1e-6);
+    }
+}
+
+test "ShiftedNakagami: quantile gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+
+    const probabilities = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probabilities) |p| {
+        const q_shifted = shifted.quantile(p);
+        const q_naked = naked.quantile(p);
+        try expectApproxEqRel(q_shifted, q_naked, 1e-12);
+    }
+}
+
+test "ShiftedNakagami: mean case 1 - m=1.5, omega=2.0, gamma=1.0" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const expected = 2.3029400317411197908970256609;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedNakagami: mean case 2 - m=0.5, omega=1.0, gamma=-2.0" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    const expected = -1.20211543919713464412010788013;
+    try expectApproxEqRel(dist.mean(), expected, 1e-12);
+}
+
+test "ShiftedNakagami: mean case 3 - m=3.0, omega=4.0, gamma=0.0" {
+    const dist = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+    try expectApproxEqRel(dist.mean(), naked.mean(), 1e-12);
+}
+
+test "ShiftedNakagami: mean gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.mean(), naked.mean(), 1e-12);
+}
+
+test "ShiftedNakagami: variance case 1 - m=1.5, omega=2.0, gamma=1.0" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const expected = 0.302347273686449751798573190693;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedNakagami: variance case 2 - m=0.5, omega=1.0, gamma=-2.0" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    const expected = 0.36338022763241865692446494651;
+    try expectApproxEqRel(dist.variance(), expected, 1e-12);
+}
+
+test "ShiftedNakagami: variance independent of threshold" {
+    const dist1 = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const dist2 = try ShiftedNakagami(f64).init(3.0, 4.0, 10.0);
+    const dist3 = try ShiftedNakagami(f64).init(3.0, 4.0, -5.0);
+    try expectApproxEqRel(dist1.variance(), dist2.variance(), 1e-14);
+    try expectApproxEqRel(dist1.variance(), dist3.variance(), 1e-14);
+}
+
+test "ShiftedNakagami: variance gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.variance(), naked.variance(), 1e-12);
+}
+
+test "ShiftedNakagami: mode case 1 - m=1.5, omega=2.0, gamma=1.0" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const expected = 2.15470053837925152901829756100;
+    try expectApproxEqRel(dist.mode(), expected, 1e-12);
+}
+
+test "ShiftedNakagami: mode case 2 - m=0.5, omega=1.0, gamma=-2.0 (boundary case m=0.5)" {
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    const expected = -2.0;
+    try expectApproxEqRel(dist.mode(), expected, 1e-14);
+}
+
+test "ShiftedNakagami: mode gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.mode(), naked.mode(), 1e-12);
+}
+
+test "ShiftedNakagami: entropy case 1 - m=1.5, omega=2.0, gamma=1.0" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    const naked = try Nakagami(f64).init(1.5, 2.0);
+    try expectApproxEqRel(dist.entropy(), naked.entropy(), 1e-12);
+}
+
+test "ShiftedNakagami: entropy independent of threshold" {
+    const dist1 = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const dist2 = try ShiftedNakagami(f64).init(3.0, 4.0, 10.0);
+    const dist3 = try ShiftedNakagami(f64).init(3.0, 4.0, -5.0);
+    try expectApproxEqRel(dist1.entropy(), dist2.entropy(), 1e-14);
+    try expectApproxEqRel(dist1.entropy(), dist3.entropy(), 1e-14);
+}
+
+test "ShiftedNakagami: entropy gamma=0 cross-check against Nakagami" {
+    const shifted = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    const naked = try Nakagami(f64).init(3.0, 4.0);
+    try expectApproxEqRel(shifted.entropy(), naked.entropy(), 1e-12);
+}
+
+test "ShiftedNakagami: sample produces values > threshold" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= 1.0 - 1e-10);
+    }
+}
+
+test "ShiftedNakagami: sample with negative threshold produces values >= threshold" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try ShiftedNakagami(f64).init(0.5, 1.0, -2.0);
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        try expect(x >= -2.0 - 1e-10);
+    }
+}
+
+test "ShiftedNakagami: sample produces finite values" {
+    var prng = std.Random.DefaultPrng.init(456);
+    const rng = prng.random();
+    const dist = try ShiftedNakagami(f64).init(3.0, 4.0, 0.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try expect(math.isFinite(x));
+    }
+}
+
+test "ShiftedNakagami: validate passes for valid parameters" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try dist.validate();
+}
+
+test "ShiftedNakagami: validate fails for m < 0.5" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.m = 0.4;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for m < 0.5 explicitly" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.m = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for non-finite m" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.m = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for non-finite m (NaN)" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.m = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for omega <= 0" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.omega = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for omega <= 0 explicitly" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.omega = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for non-finite omega" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.omega = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validate fails for non-finite threshold" {
+    var dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    dist.threshold = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "ShiftedNakagami: validateValue fails for x < threshold" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(0.9));
+    try expectError(error.OutOfDomain, dist.validateValue(0.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-10.0));
+}
+
+test "ShiftedNakagami: validateValue passes for x >= threshold" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try dist.validateValue(1.0);
+    try dist.validateValue(1.1);
+    try dist.validateValue(10.0);
+}
+
+test "ShiftedNakagami: validateValue fails for NaN x" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+}
+
+test "ShiftedNakagami: validateValue fails for infinite x" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+    try expectError(error.OutOfDomain, dist.validateValue(-math.inf(f64)));
+}
+
+test "ShiftedNakagami: format produces a string" {
+    const dist = try ShiftedNakagami(f64).init(1.5, 2.0, 1.0);
+    var buf: [256]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buf);
+    try dist.format(&stream);
+}
+
+test "ShiftedNakagami: f32 support - init and pdf" {
+    const dist = try ShiftedNakagami(f32).init(1.5, 2.0, 0.0);
+    const p = dist.pdf(1.0);
+    try expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "ShiftedNakagami: f32 support - cdf" {
+    const dist = try ShiftedNakagami(f32).init(1.5, 2.0, 1.0);
+    const c = dist.cdf(1.5);
+    try expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "ShiftedNakagami: f32 support - quantile" {
+    const dist = try ShiftedNakagami(f32).init(1.5, 2.0, 0.0);
+    const q = dist.quantile(0.5);
+    try expect(!math.isNan(q) and !math.isInf(q));
+}
+
+test "ShiftedNakagami: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try ShiftedNakagami(f32).init(1.5, 2.0, 0.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try expect(!math.isNan(x) and !math.isInf(x));
+    }
+}
