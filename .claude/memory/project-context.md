@@ -1,3 +1,15 @@
+**Session 862 Update (2026-09-01) — FEATURE MODE [COMPLETED]:**
+
+✅ **ShiftedChi (196th, recovered uncommitted, commit 335bb5b)**
+- **Mode**: FEATURE MODE (counter: 862). CI green on main at session start, 0 open issues.
+- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
+  `ShiftedChi` (X=threshold+Chi(k)) — full pdf/cdf/sf/quantile/mean/variance/mode/median/entropy/
+  sample/format/validate/validateValue suite, f32 support, γ=0 cross-checks vs `Chi`. No
+  `@panic`/`debug.print` found. Independently re-derived pdf case 1 and mean case 3 by hand from
+  the Chi formulas — both matched. `zig build test` exit 0 (196 distributions confirmed via grep).
+- **Next priority (feature)**: ShiftedNakagami, ShiftedLevy, ShiftedInverseGaussian remain
+  unchecked against root.zig — grep first, same derive-formulas-first recipe.
+
 **Session 859 Update (2026-09-01) — FEATURE MODE [COMPLETED]:**
 
 ✅ **ShiftedGamma (194th, recovered uncommitted, commit 1c2e120) + ShiftedRayleigh (195th, fresh
