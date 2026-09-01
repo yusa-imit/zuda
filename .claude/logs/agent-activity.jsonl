@@ -760,3 +760,5 @@
 {"timestamp":"2026-08-31T23:31:27Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ShiftedChi distribution (196th, location-shift of Chi)","project":"zuda"}
 {"timestamp":"2026-08-31T23:34:59Z","action":"subagent","agent_type":"zig-developer","task":"Implement ShiftedChi distribution struct to pass test-writer's tests","project":"zuda"}
 {"timestamp":"2026-08-31T23:50:02Z","action":"subagent","agent_type":"test-writer","task":"Loosen 3 over-tight ShiftedChi test tolerances (digamma/bisection precision limits)","project":"zuda"}
+{"timestamp": "2026-09-01T07:31:41Z", "action": "subagent", "agent_type": "test-writer", "task": "Write failing tests for ShiftedNakagami (197th distribution)", "project": "zuda"}
+{"timestamp": "2026-09-01T07:35:01Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement ShiftedNakagami struct to pass failing tests (197th distribution)", "project": "zuda"}
