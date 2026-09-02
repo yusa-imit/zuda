@@ -120994,3 +120994,828 @@ test "ShiftedInverseGaussian: f32 support - sample" {
         try expect(!math.isNan(x) and !math.isInf(x));
     }
 }
+
+// ============================================================================
+// DoubleGamma Distribution
+// ============================================================================
+
+pub fn DoubleGamma(comptime T: type) type {
+    return struct {
+        shape: T,
+        rate: T,
+
+        const Self = @This();
+
+        /// Initialize DoubleGamma(shape, rate)
+        /// Time: O(1) | Space: O(1)
+        pub fn init(shape: T, rate: T) error{InvalidParameter}!Self {
+            if (shape <= 0.0 or rate <= 0.0 or !math.isFinite(shape) or !math.isFinite(rate)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .shape = shape, .rate = rate };
+        }
+
+        /// Probability density function at x
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x == 0.0) {
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return 0.5 * self.rate;
+                return 0.0;
+            }
+
+            const abs_x = @abs(x);
+            // log f(x) = ln(0.5) + α·ln(β) - ln(Γ(α)) + (α-1)·ln(|x|) - β·|x|
+            const log_pdf = @log(0.5) + self.shape * @log(self.rate) - logGamma(self.shape) +
+                           (self.shape - 1.0) * @log(abs_x) - self.rate * abs_x;
+            return @exp(log_pdf);
+        }
+
+        /// Log probability density at x
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x == 0.0) {
+                if (self.shape < 1.0) return math.inf(T);
+                if (self.shape == 1.0) return @log(0.5 * self.rate);
+                return -math.inf(T);
+            }
+
+            const abs_x = @abs(x);
+            return @log(0.5) + self.shape * @log(self.rate) - logGamma(self.shape) +
+                   (self.shape - 1.0) * @log(abs_x) - self.rate * abs_x;
+        }
+
+        /// Cumulative distribution function at x
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x < 0.0) {
+                const abs_x = @abs(x);
+                return 0.5 * (1.0 - regularizedGammaP(self.shape, self.rate * abs_x));
+            }
+            // x >= 0
+            return 0.5 + 0.5 * regularizedGammaP(self.shape, self.rate * x);
+        }
+
+        /// Quantile function (inverse CDF) at probability p
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn quantile(self: Self, p: T) T {
+            if (!(p >= 0.0 and p <= 1.0)) return math.nan(T);
+            if (p == 0.0) return -math.inf(T);
+            if (p == 1.0) return math.inf(T);
+            if (p == 0.5) return 0.0;
+
+            // Use bisection on CDF
+            const tolerance = 1e-10;
+            const max_iter = 200;
+            var iter: usize = 0;
+
+            var low: T = undefined;
+            var high: T = undefined;
+
+            if (p < 0.5) {
+                // Bracketing for negative side
+                low = -100.0;
+                high = 0.0;
+                while (self.cdf(low) > p) {
+                    low *= 2.0;
+                }
+            } else {
+                // Bracketing for positive side
+                low = 0.0;
+                high = 100.0;
+                while (self.cdf(high) < p) {
+                    high *= 2.0;
+                }
+            }
+
+            while (iter < max_iter) : (iter += 1) {
+                const mid = (low + high) / 2.0;
+                const cdf_mid = self.cdf(mid);
+
+                if (@abs(cdf_mid - p) < tolerance) {
+                    return mid;
+                }
+
+                if (cdf_mid < p) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+
+                if (high - low < tolerance) {
+                    return (low + high) / 2.0;
+                }
+            }
+
+            return (low + high) / 2.0;
+        }
+
+        /// Mean of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            _ = self;
+            return 0.0;
+        }
+
+        /// Variance of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            return self.shape * (self.shape + 1.0) / (self.rate * self.rate);
+        }
+
+        /// Mode of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            if (self.shape <= 1.0) return 0.0;
+            return (self.shape - 1.0) / self.rate;
+        }
+
+        /// Entropy of the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            // [α − ln(β) + logGamma(α) + (1−α)·digamma(α)] + ln(2)
+            return self.shape - @log(self.rate) + logGamma(self.shape) +
+                   (1.0 - self.shape) * digamma(T, self.shape) + @log(2.0);
+        }
+
+        /// Sample from the distribution
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            // Draw Y from Gamma(shape, rate), then negate with prob 0.5
+            const gamma_dist = Gamma(T){ .shape = self.shape, .rate = self.rate };
+            const y = gamma_dist.sample(rng);
+
+            const u = rng.float(T);
+            if (u < 0.5) {
+                return -y;
+            } else {
+                return y;
+            }
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("DoubleGamma(shape={d:.2}, rate={d:.2})", .{ self.shape, self.rate });
+        }
+
+        /// Validate internal invariants
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.shape <= 0.0 or !math.isFinite(self.shape)) return DistributionError.InvalidParameter;
+            if (self.rate <= 0.0 or !math.isFinite(self.rate)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+test "DoubleGamma: init valid params shape=2 rate=1" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    try testing.expect(dist.shape == 2.0);
+    try testing.expect(dist.rate == 1.0);
+}
+
+test "DoubleGamma: init valid params shape=3 rate=2" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    try testing.expect(dist.shape == 3.0);
+    try testing.expect(dist.rate == 2.0);
+}
+
+test "DoubleGamma: init valid params shape=0.5 rate=1.5" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    try testing.expect(dist.shape == 0.5);
+    try testing.expect(dist.rate == 1.5);
+}
+
+test "DoubleGamma: init shape=0 returns error" {
+    const result = DoubleGamma(f64).init(0.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleGamma: init shape<0 returns error" {
+    const result = DoubleGamma(f64).init(-1.0, 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleGamma: init rate=0 returns error" {
+    const result = DoubleGamma(f64).init(1.0, 0.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleGamma: init rate<0 returns error" {
+    const result = DoubleGamma(f64).init(1.0, -1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleGamma: init non-finite shape returns error" {
+    const result = DoubleGamma(f64).init(math.inf(f64), 1.0);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleGamma: init non-finite rate returns error" {
+    const result = DoubleGamma(f64).init(1.0, math.nan(f64));
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+test "DoubleGamma: pdf at x=0 shape=2 rate=1 (alpha>1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try expectApproxEqAbs(0.0, pdf_val, 1e-10);
+}
+
+test "DoubleGamma: pdf at x=0 shape=1 rate=1 (alpha==1)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(0.0);
+    try expectApproxEqAbs(0.5, pdf_val, 1e-10);
+}
+
+test "DoubleGamma: pdf at x=0 shape=0.5 rate=1.5 (alpha<1)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const pdf_val = dist.pdf(0.0);
+    try testing.expect(math.isInf(pdf_val));
+}
+
+test "DoubleGamma: pdf at x=-2 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(-2.0);
+    try expectApproxEqAbs(0.135335283236613, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=-0.5 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(-0.5);
+    try expectApproxEqAbs(0.151632664928158, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=0.5 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(0.5);
+    try expectApproxEqAbs(0.151632664928158, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=1.0 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try expectApproxEqAbs(0.183939720585721, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=2.0 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const pdf_val = dist.pdf(2.0);
+    try expectApproxEqAbs(0.135335283236613, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=-2 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const pdf_val = dist.pdf(-2.0);
+    try expectApproxEqAbs(0.146525111109873, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=0.5 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const pdf_val = dist.pdf(0.5);
+    try expectApproxEqAbs(0.183939720585721, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=1.0 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const pdf_val = dist.pdf(1.0);
+    try expectApproxEqAbs(0.270670566473225, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=2.0 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const pdf_val = dist.pdf(2.0);
+    try expectApproxEqAbs(0.146525111109873, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=-2 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const pdf_val = dist.pdf(-2.0);
+    try expectApproxEqAbs(0.0121630433324104, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=-0.5 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const pdf_val = dist.pdf(-0.5);
+    try expectApproxEqAbs(0.230799484208183, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=0.5 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const pdf_val = dist.pdf(0.5);
+    try expectApproxEqAbs(0.230799484208183, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=1.0 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const pdf_val = dist.pdf(1.0);
+    try expectApproxEqAbs(0.0770901649018846, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=2.0 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const pdf_val = dist.pdf(2.0);
+    try expectApproxEqAbs(0.0121630433324104, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=-2 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(-2.0);
+    try expectApproxEqAbs(0.0676676416183063, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=-0.5 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(-0.5);
+    try expectApproxEqAbs(0.303265329856317, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=0.5 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(0.5);
+    try expectApproxEqAbs(0.303265329856317, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=1.0 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(1.0);
+    try expectApproxEqAbs(0.183939720585721, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf at x=2.0 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const pdf_val = dist.pdf(2.0);
+    try expectApproxEqAbs(0.0676676416183063, pdf_val, 1e-9);
+}
+
+test "DoubleGamma: pdf symmetry pdf(x)==pdf(-x)" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (xs) |x| {
+        const pdf_pos = dist.pdf(x);
+        const pdf_neg = dist.pdf(-x);
+        try expectApproxEqRel(pdf_pos, pdf_neg, 1e-10);
+    }
+}
+
+test "DoubleGamma: pdf non-negative" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    var x: f64 = -5.0;
+    while (x <= 5.0) : (x += 0.5) {
+        const pdf_val = dist.pdf(x);
+        try testing.expect(pdf_val >= 0.0 or math.isInf(pdf_val));
+    }
+}
+
+test "DoubleGamma: logpdf at x=-2 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const logpdf_val = dist.logpdf(-2.0);
+    const expected = @log(0.135335283236613);
+    try expectApproxEqAbs(expected, logpdf_val, 1e-9);
+}
+
+test "DoubleGamma: logpdf at x=1.0 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const logpdf_val = dist.logpdf(1.0);
+    const expected = @log(0.183939720585721);
+    try expectApproxEqAbs(expected, logpdf_val, 1e-9);
+}
+
+test "DoubleGamma: logpdf at x=0 shape=1 rate=1 (alpha==1)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try expectApproxEqAbs(-@log(2.0), logpdf_val, 1e-10);
+}
+
+test "DoubleGamma: logpdf at x=0 shape=2 rate=1 (alpha>1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const logpdf_val = dist.logpdf(0.0);
+    try testing.expect(math.isInf(logpdf_val) and logpdf_val < 0.0);
+}
+
+test "DoubleGamma: cdf at x=0 is always 0.5" {
+    const test_cases = [_][2]f64{ [_]f64{ 2.0, 1.0 }, [_]f64{ 3.0, 2.0 }, [_]f64{ 0.5, 1.5 }, [_]f64{ 1.0, 1.0 } };
+    for (test_cases) |case| {
+        const dist = try DoubleGamma(f64).init(case[0], case[1]);
+        try expectApproxEqAbs(0.5, dist.cdf(0.0), 1e-10);
+    }
+}
+
+test "DoubleGamma: cdf at x=-2 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(-2.0);
+    try expectApproxEqAbs(0.203002924854919, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-0.5 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(-0.5);
+    try expectApproxEqAbs(0.454897994784475, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=0.5 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(0.5);
+    try expectApproxEqAbs(0.545102005215525, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=1.0 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqAbs(0.632120558828558, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=2.0 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const cdf_val = dist.cdf(2.0);
+    try expectApproxEqAbs(0.796997075145081, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-2 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const cdf_val = dist.cdf(-2.0);
+    try expectApproxEqAbs(0.119051652776772, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-0.5 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const cdf_val = dist.cdf(-0.5);
+    try expectApproxEqAbs(0.459849301464303, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=0.5 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const cdf_val = dist.cdf(0.5);
+    try expectApproxEqAbs(0.540150698535697, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=1.0 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqAbs(0.661661791908468, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=2.0 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const cdf_val = dist.cdf(2.0);
+    try expectApproxEqAbs(0.880948347223228, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-2 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const cdf_val = dist.cdf(-2.0);
+    try expectApproxEqAbs(0.00715293921771482, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-0.5 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const cdf_val = dist.cdf(-0.5);
+    try expectApproxEqAbs(0.110335680959923, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=0.5 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const cdf_val = dist.cdf(0.5);
+    try expectApproxEqAbs(0.889664319040077, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=1.0 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqAbs(0.958367741668225, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=2.0 shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const cdf_val = dist.cdf(2.0);
+    try expectApproxEqAbs(0.992847060782285, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-2 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(-2.0);
+    try expectApproxEqAbs(0.0676676416183063, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=-0.5 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(-0.5);
+    try expectApproxEqAbs(0.303265329856317, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=0.5 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(0.5);
+    try expectApproxEqAbs(0.696734670143683, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=1.0 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(1.0);
+    try expectApproxEqAbs(0.816060279414279, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf at x=2.0 shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const cdf_val = dist.cdf(2.0);
+    try expectApproxEqAbs(0.932332358381694, cdf_val, 1e-9);
+}
+
+test "DoubleGamma: cdf symmetry cdf(x) + cdf(-x) == 1" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const xs = [_]f64{ 0.5, 1.0, 2.0, 3.0 };
+    for (xs) |x| {
+        const cdf_pos = dist.cdf(x);
+        const cdf_neg = dist.cdf(-x);
+        try expectApproxEqAbs(1.0, cdf_pos + cdf_neg, 1e-10);
+    }
+}
+
+test "DoubleGamma: cdf monotone increasing" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const xs = [_]f64{ -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0 };
+    for (0..xs.len - 1) |i| {
+        const cdf1 = dist.cdf(xs[i]);
+        const cdf2 = dist.cdf(xs[i + 1]);
+        try testing.expect(cdf1 <= cdf2);
+    }
+}
+
+test "DoubleGamma: cdf approaches 0 for large negative" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const cdf_val = dist.cdf(-50.0);
+    try testing.expect(cdf_val < 1e-10);
+}
+
+test "DoubleGamma: cdf approaches 1 for large positive" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const cdf_val = dist.cdf(50.0);
+    try testing.expect(cdf_val > 1.0 - 1e-10);
+}
+
+test "DoubleGamma: quantile at p=0.5 is 0" {
+    const test_cases = [_][2]f64{ [_]f64{ 2.0, 1.0 }, [_]f64{ 3.0, 2.0 }, [_]f64{ 0.5, 1.5 }, [_]f64{ 1.0, 1.0 } };
+    for (test_cases) |case| {
+        const dist = try DoubleGamma(f64).init(case[0], case[1]);
+        try expectApproxEqAbs(0.0, dist.quantile(0.5), 1e-10);
+    }
+}
+
+test "DoubleGamma: quantile at p=0.1 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const q = dist.quantile(0.1);
+    try expectApproxEqAbs(-2.99430834700212, q, 1e-6);
+}
+
+test "DoubleGamma: quantile at p=0.25 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const q = dist.quantile(0.25);
+    try expectApproxEqAbs(-1.67834699001666, q, 1e-6);
+}
+
+test "DoubleGamma: quantile at p=0.75 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const q = dist.quantile(0.75);
+    try expectApproxEqAbs(1.67834699001666, q, 1e-6);
+}
+
+test "DoubleGamma: quantile at p=0.9 shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const q = dist.quantile(0.9);
+    try expectApproxEqAbs(2.99430834700212, q, 1e-6);
+}
+
+test "DoubleGamma: quantile at p=0.1 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const q = dist.quantile(0.1);
+    try expectApproxEqAbs(-2.13951493006267, q, 1e-6);
+}
+
+test "DoubleGamma: quantile at p=0.9 shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const q = dist.quantile(0.9);
+    try expectApproxEqAbs(2.13951493006267, q, 1e-6);
+}
+
+test "DoubleGamma: quantile p<0.5 returns negative" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const q = dist.quantile(0.25);
+    try testing.expect(q < 0.0);
+}
+
+test "DoubleGamma: quantile p>0.5 returns positive" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const q = dist.quantile(0.75);
+    try testing.expect(q > 0.0);
+}
+
+test "DoubleGamma: quantile at p=0 returns -inf" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const q = dist.quantile(0.0);
+    try testing.expect(math.isInf(q) and q < 0.0);
+}
+
+test "DoubleGamma: quantile at p=1 returns +inf" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.0);
+    try testing.expect(math.isInf(q) and q > 0.0);
+}
+
+test "DoubleGamma: quantile invalid p<0 returns nan" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const q = dist.quantile(-0.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "DoubleGamma: quantile invalid p>1 returns nan" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const q = dist.quantile(1.1);
+    try testing.expect(math.isNan(q));
+}
+
+test "DoubleGamma: quantile-cdf roundtrip" {
+    const dist = try DoubleGamma(f64).init(1.5, 1.0);
+    const ps = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (ps) |p| {
+        const q = dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqAbs(p, cdf_q, 1e-8);
+    }
+}
+
+test "DoubleGamma: mean is 0" {
+    const test_cases = [_][2]f64{ [_]f64{ 2.0, 1.0 }, [_]f64{ 3.0, 2.0 }, [_]f64{ 0.5, 1.5 }, [_]f64{ 1.0, 1.0 } };
+    for (test_cases) |case| {
+        const dist = try DoubleGamma(f64).init(case[0], case[1]);
+        try expectApproxEqAbs(0.0, dist.mean(), 1e-10);
+    }
+}
+
+test "DoubleGamma: variance shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(6.0, var_val, 1e-6);
+}
+
+test "DoubleGamma: variance shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(3.0, var_val, 1e-6);
+}
+
+test "DoubleGamma: variance shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(0.333333333333333, var_val, 1e-9);
+}
+
+test "DoubleGamma: variance shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const var_val = dist.variance();
+    try expectApproxEqAbs(2.0, var_val, 1e-6);
+}
+
+test "DoubleGamma: mode shape=2 rate=1 (alpha>1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const mode_val = dist.mode();
+    try expectApproxEqAbs(1.0, mode_val, 1e-10);
+}
+
+test "DoubleGamma: mode shape=3 rate=2 (alpha>1)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const mode_val = dist.mode();
+    try expectApproxEqAbs(1.0, mode_val, 1e-10);
+}
+
+test "DoubleGamma: mode shape=0.5 rate=1.5 (alpha<1)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const mode_val = dist.mode();
+    try expectApproxEqAbs(0.0, mode_val, 1e-10);
+}
+
+test "DoubleGamma: mode shape=1 rate=1 (alpha==1)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const mode_val = dist.mode();
+    try expectApproxEqAbs(0.0, mode_val, 1e-10);
+}
+
+test "DoubleGamma: entropy shape=2 rate=1 (vector 1)" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    const entropy_val = dist.entropy();
+    try expectApproxEqAbs(2.27036284546148, entropy_val, 1e-6);
+}
+
+test "DoubleGamma: entropy shape=3 rate=2 (vector 2)" {
+    const dist = try DoubleGamma(f64).init(3.0, 2.0);
+    const entropy_val = dist.entropy();
+    try expectApproxEqAbs(1.84757851036301, entropy_val, 1e-6);
+}
+
+test "DoubleGamma: entropy shape=0.5 rate=1.5 (vector 3)" {
+    const dist = try DoubleGamma(f64).init(0.5, 1.5);
+    const entropy_val = dist.entropy();
+    try expectApproxEqAbs(0.378292002365769, entropy_val, 1e-6);
+}
+
+test "DoubleGamma: entropy shape=1 rate=1 (vector 4)" {
+    const dist = try DoubleGamma(f64).init(1.0, 1.0);
+    const entropy_val = dist.entropy();
+    try expectApproxEqAbs(1.69314718055995, entropy_val, 1e-6);
+}
+
+test "DoubleGamma: sample returns finite values" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    for (0..100) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(!math.isNan(x) and math.isFinite(x));
+    }
+}
+
+test "DoubleGamma: sample produces symmetric distribution" {
+    var prng = std.Random.DefaultPrng.init(123);
+    const rng = prng.random();
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    var sum: f64 = 0.0;
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        sum += x;
+    }
+    const mean = sum / 1000.0;
+    // Mean should be very close to 0 for symmetric distribution
+    try testing.expect(@abs(mean) < 0.5);
+}
+
+test "DoubleGamma: sample produces both positive and negative values" {
+    var prng = std.Random.DefaultPrng.init(456);
+    const rng = prng.random();
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    var pos_count: i32 = 0;
+    var neg_count: i32 = 0;
+    for (0..1000) |_| {
+        const x = dist.sample(rng);
+        if (x > 0.0) pos_count += 1 else neg_count += 1;
+    }
+    // Should have roughly equal number of positive and negative samples
+    try testing.expect(pos_count > 400 and pos_count < 600);
+    try testing.expect(neg_count > 400 and neg_count < 600);
+}
+
+test "DoubleGamma: validate passes for valid params" {
+    const dist = try DoubleGamma(f64).init(2.0, 1.0);
+    try dist.validate();
+}
+
+test "DoubleGamma: validate fails for shape <= 0" {
+    var dist = try DoubleGamma(f64).init(2.0, 1.0);
+    dist.shape = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DoubleGamma: validate fails for rate <= 0" {
+    var dist = try DoubleGamma(f64).init(2.0, 1.0);
+    dist.rate = 0.0;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DoubleGamma: validate fails for non-finite shape" {
+    var dist = try DoubleGamma(f64).init(2.0, 1.0);
+    dist.shape = math.inf(f64);
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DoubleGamma: validate fails for non-finite rate" {
+    var dist = try DoubleGamma(f64).init(2.0, 1.0);
+    dist.rate = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "DoubleGamma: f32 support - init and pdf" {
+    const dist = try DoubleGamma(f32).init(2.0, 1.0);
+    const p = dist.pdf(1.0);
+    try testing.expect(!math.isNan(p) and !math.isInf(p));
+}
+
+test "DoubleGamma: f32 support - cdf" {
+    const dist = try DoubleGamma(f32).init(2.0, 1.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(!math.isNan(c) and !math.isInf(c));
+}
+
+test "DoubleGamma: f32 support - quantile" {
+    const dist = try DoubleGamma(f32).init(2.0, 1.0);
+    const q = dist.quantile(0.5);
+    try testing.expect(!math.isNan(q) and math.isFinite(q));
+}
+
+test "DoubleGamma: f32 support - sample" {
+    var prng = std.Random.DefaultPrng.init(789);
+    const rng = prng.random();
+    const dist = try DoubleGamma(f32).init(2.0, 1.0);
+    for (0..10) |_| {
+        const x = dist.sample(rng);
+        try testing.expect(!math.isNan(x) and math.isFinite(x));
+    }
+}
