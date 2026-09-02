@@ -1,3 +1,25 @@
+**Session 870 Update (2026-09-03) — STABILIZATION MODE [COMPLETED]:**
+
+✅ **FisherNoncentralHypergeometric (201st, recovered uncommitted, bug fixed, commit d2ad179) +
+patterns.md compression (commit 365f20b)**
+- **Mode**: STABILIZATION MODE (counter: 870). CI green on main at session start, 0 open issues.
+- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
+  `FisherNoncentralHypergeometric(N,K,n,ω)` (odds-ratio extension of Hypergeometric) — 54 tests.
+  Caught a real bug before committing: `init()` used a fixed `[1024]T` stack array to stage
+  logsumexp weights, indexed by support-range size with no bounds check — overflows for large
+  N/K/n (e.g. N=100000, K=n=50000). Fixed with a two-pass streaming logsumexp (no buffer needed).
+  `zig build test` exit 0, all 6 cross-compile targets clean (allowed this session).
+- Compressed `.claude/memory/patterns.md` from 1155→132 lines per the project's own 200-line
+  memory rule (was flagged as standing filler task since session 865). Kept reusable lessons,
+  condensed domain-specific write-ups to source-file pointers.
+- **Next priority (feature)**: vector-parameterized-distribution vein from session 868 still not
+  exhausted; Fisher's Noncentral Hypergeometric (this session) closes out that specific candidate
+  from the standing list. Remaining: Neyman Type B/C (needs HyperPoisson-style numeric arch).
+- **Next priority (stabilization)**: `.claude/memory/MEMORY.md` (repo-tracked) is 894 lines and
+  stale — last real entry is session 722 (2026-06-28); appears superseded by the separate
+  auto-memory session-index system. Needs a decision (compress vs. retire) next stabilization
+  session with spare capacity, not urgent. `debugging.md` also slightly over cap at 243 lines.
+
 **Session 862 Update (2026-09-01) — FEATURE MODE [COMPLETED]:**
 
 ✅ **ShiftedChi (196th, recovered uncommitted, commit 335bb5b)**
@@ -167,25 +189,16 @@ scratch against pre-written tests). Full detail in external auto-memory per-sess
   a `std.debug.print` library violation in `src/utils/perf.zig` (commit 798bd90) and confirmed
   100% validate() coverage (58/58 containers). Session 776 added Meixner (148th) — first
   distribution needing a complex-argument special function (complex Lanczos log-Gamma).
-- **767–775** (2026-07-13–07-14): PolyaAeppli(142nd)→Champernowne(147th) added, plus a
-  STABILIZATION test-quality audit (775) confirming 100% validate() coverage and removing 6
-  tautological sentinels. Session 770 fixed the f32-underflow-to-zero convergence-check bug class
-  across 18 `1e-300` sites (4 genuine bugs found) — origin of the standing convention below.
-  Session 767 discovered the O(MAX_K²) hang bug from the same root cause. All recovered
-  uncommitted work from prior interrupted sessions except 770/775 (pure stabilization).
-- **717–759** (2026-06-27–07-11): grew the library from 96th→140th distribution. Notable:
-  GeneralizedRayleigh, ARGUS, FlorySchulz, CrystalBall, Trapezoidal, Borel, DiscreteLaplace,
-  Landau, Davis, PearsonIII, GeneralizedInverseGaussian, NormalInverseGaussian, VarianceGamma,
-  GeneralizedHyperbolic, WrappedNormal/Laplace, QExponential, ExGaussian, GB2, Chen, SkewCauchy,
-  GeneralizedPoisson. STABILIZATION sessions (720/725/735/750) always found all 6 cross-compile
-  targets green; focus was test-quality audits (removing tautological/copied-expected tests,
-  adding validate()/boundary/exact-value tests).
-- **596–696**: distributions 26–91 added (Hypergeometric→SinhArcsinh). 100-distribution
-  milestone hit at session 697 (DiscreteWeibull 99th, BoundedPareto 100th).
-- **644–696**: CRITICAL BUG (session 680, fixed): Gamma sampler for shape<1 (Ahrens-Dieter) used
-  wrong variable — must be `G·U^(1/alpha)`, not `xi·U^(1/alpha)`.
-- **Session 762 (2026-07-12)**: Xgamma added (141st) — fixed an entropy-clamping bug
-  (differential entropy can be legitimately negative; don't `@max(0.0, sum)`).
+- **717–775** (2026-06-27–07-14): grew the library 96th→147th distribution (PolyaAeppli,
+  Champernowne, GeneralizedRayleigh, ARGUS, FlorySchulz, CrystalBall, Landau, Davis, PearsonIII,
+  GeneralizedInverseGaussian, VarianceGamma, GeneralizedHyperbolic, ExGaussian, GB2, Chen,
+  SkewCauchy, GeneralizedPoisson, Xgamma, others). Key bugs found: session 770 fixed f32-underflow
+  convergence-check bug class across 18 `1e-300` sites (origin of the standing convention below);
+  session 762 fixed an entropy-clamping bug (differential entropy can be legitimately negative,
+  don't `@max(0.0, sum)`); session 775 stabilization confirmed 100% validate() coverage.
+- **596–696**: distributions 26–100 added (Hypergeometric→BoundedPareto, milestone at 697).
+  Session 680: CRITICAL BUG fixed — Gamma sampler for shape<1 (Ahrens-Dieter) used wrong variable,
+  must be `G·U^(1/alpha)` not `xi·U^(1/alpha)`.
 
 ### Standing conventions (see also MEMORY.md's copy — keep both in sync)
 - Verify obscure-distribution formulas via WebSearch before implementing — memory-recalled
