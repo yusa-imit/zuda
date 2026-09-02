@@ -122750,3 +122750,660 @@ test "PoissonBinomial: numTrials() returns correct n" {
     defer dist.deinit();
     try testing.expectEqual(@as(u64, 7), dist.numTrials());
 }
+
+/// Fisher's Noncentral Hypergeometric distribution
+///
+/// Extends the Hypergeometric distribution with an odds-ratio parameter ω.
+/// When ω = 1, reduces to standard Hypergeometric(N, K, n).
+///
+/// Parameters:
+///   - N: Population size (≥ 1)
+///   - K: Number of success states in population (0 ≤ K ≤ N)
+///   - n: Number of draws (0 ≤ n ≤ N)
+///   - ω: Odds ratio (ω > 0, finite)
+///
+/// Support: [max(0, n+K-N), min(n, K)]
+///
+/// PMF: p(k) = C(K,k) * C(N-K, n-k) * ω^k / Z
+/// where Z = Σ_{j=min}^{max} C(K,j) * C(N-K, n-j) * ω^j
+///
+/// Time: O(support range) for init and moments; O(1) for pmf/logpmf
+pub fn FisherNoncentralHypergeometric(comptime T: type) type {
+    return struct {
+        N: u64,
+        K: u64,
+        n: u64,
+        omega: T,
+        log_z: T,
+
+        const Self = @This();
+
+        /// Initialize FisherNoncentralHypergeometric(N, K, n, ω)
+        /// Computes log_z via finite logsumexp over [support_min, support_max]
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn init(N: u64, K: u64, n: u64, omega: T) error{InvalidParameter}!Self {
+            if (N < 1) return error.InvalidParameter;
+            if (K > N) return error.InvalidParameter;
+            if (n > N) return error.InvalidParameter;
+            if (omega <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(omega)) return error.InvalidParameter;
+
+            // Compute support bounds (same as Hypergeometric)
+            const s_min = Self.computeSupportMin(N, K, n);
+            const s_max = Self.computeSupportMax(K, n);
+
+            // Compute log_z via logsumexp: Z = Σ w(j) where w(j) = C(K,j)*C(N-K,n-j)*ω^j
+            // Streaming two-pass logsumexp (no per-term buffer, so the support
+            // range is unbounded): pass 1 finds max_log_w, pass 2 sums exp(log_w - max_log_w).
+            var max_log_w: T = -std.math.inf(T);
+            var j = s_min;
+            while (j <= s_max) : (j += 1) {
+                const log_w = Self.logWeight(N, K, n, omega, j);
+                if (log_w > max_log_w) max_log_w = log_w;
+            }
+
+            var sum_exp: T = 0.0;
+            j = s_min;
+            while (j <= s_max) : (j += 1) {
+                const log_w = Self.logWeight(N, K, n, omega, j);
+                sum_exp += @exp(log_w - max_log_w);
+            }
+            const log_z = max_log_w + @log(sum_exp);
+
+            return Self{ .N = N, .K = K, .n = n, .omega = omega, .log_z = log_z };
+        }
+
+        /// Unnormalized log-weight w(j) = logBinom(K,j) + logBinom(N-K, n-j) + j*ln(ω)
+        fn logWeight(N: u64, K: u64, n: u64, omega: T, j: u64) T {
+            const K_f = @as(T, @floatFromInt(K));
+            const j_f = @as(T, @floatFromInt(j));
+            const NK_f = @as(T, @floatFromInt(N - K));
+            const nj: u64 = n - j; // safe because j <= min(n, K) <= n
+            const nj_f = @as(T, @floatFromInt(nj));
+
+            const log_binom_K_j = logGamma(K_f + 1.0) - logGamma(j_f + 1.0) - logGamma(K_f - j_f + 1.0);
+            const log_binom_NK_nj = logGamma(NK_f + 1.0) - logGamma(nj_f + 1.0) - logGamma(NK_f - nj_f + 1.0);
+            return log_binom_K_j + log_binom_NK_nj + j_f * @log(omega);
+        }
+
+        /// Compute support minimum (same as Hypergeometric)
+        fn computeSupportMin(N: u64, K: u64, n: u64) u64 {
+            const nK = n + K;
+            if (nK <= N) return 0;
+            return nK - N;
+        }
+
+        /// Compute support maximum (same as Hypergeometric)
+        fn computeSupportMax(K: u64, n: u64) u64 {
+            return @min(n, K);
+        }
+
+        /// Minimum value in support: max(0, n + K - N)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn supportMin(self: Self) u64 {
+            return Self.computeSupportMin(self.N, self.K, self.n);
+        }
+
+        /// Maximum value in support: min(n, K)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn supportMax(self: Self) u64 {
+            return Self.computeSupportMax(self.K, self.n);
+        }
+
+        /// Log probability mass function at k
+        /// logpmf(k) = logBinom(K,k) + logBinom(N-K, n-k) + k*ln(ω) - log_z
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            if (k < s_min or k > s_max) return @as(T, -std.math.inf(T));
+
+            const K_f = @as(T, @floatFromInt(self.K));
+            const k_f = @as(T, @floatFromInt(k));
+            const NK_f = @as(T, @floatFromInt(self.N - self.K));
+            const nk: u64 = self.n - k;
+            const nk_f = @as(T, @floatFromInt(nk));
+
+            const log_binom_K_k = logGamma(K_f + 1.0) - logGamma(k_f + 1.0) - logGamma(K_f - k_f + 1.0);
+            const log_binom_NK_nk = logGamma(NK_f + 1.0) - logGamma(nk_f + 1.0) - logGamma(NK_f - nk_f + 1.0);
+
+            return log_binom_K_k + log_binom_NK_nk + k_f * @log(self.omega) - self.log_z;
+        }
+
+        /// Probability mass function at k
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            const lp = self.logpmf(k);
+            if (lp == @as(T, -std.math.inf(T))) return 0.0;
+            return @exp(lp);
+        }
+
+        /// Cumulative distribution function P(X <= k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: i64) T {
+            const s_max = self.supportMax();
+            if (k < 0) return 0.0;
+            const k_u: u64 = @intCast(k);
+            if (k_u >= s_max) return 1.0;
+
+            const s_min = self.supportMin();
+            var sum: T = 0.0;
+            var j = s_min;
+            while (j <= k_u) : (j += 1) {
+                sum += self.pmf(j);
+            }
+            return @min(sum, 1.0);
+        }
+
+        /// Survival function P(X > k) = 1 - CDF(k)
+        ///
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: i64) T {
+            if (k < 0) return 1.0;
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function — smallest k such that CDF(k) >= prob
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn quantile(self: Self, prob: T) error{OutOfDomain}!u64 {
+            if (prob < 0.0 or prob > 1.0) return error.OutOfDomain;
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            if (prob == 0.0) return s_min;
+            if (prob >= 1.0) return s_max;
+            var cumulative: T = 0.0;
+            var k = s_min;
+            while (k <= s_max) : (k += 1) {
+                cumulative += self.pmf(k);
+                if (cumulative >= prob) return k;
+            }
+            return s_max;
+        }
+
+        /// Mean: exact finite sum over support
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn mean(self: Self) T {
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            var result: T = 0.0;
+            var k = s_min;
+            while (k <= s_max) : (k += 1) {
+                const k_f = @as(T, @floatFromInt(k));
+                result += k_f * self.pmf(k);
+            }
+            return result;
+        }
+
+        /// Variance: exact finite sum over support
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn variance(self: Self) T {
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            var sum_k: T = 0.0;
+            var sum_k2: T = 0.0;
+            var k = s_min;
+            while (k <= s_max) : (k += 1) {
+                const k_f = @as(T, @floatFromInt(k));
+                const p_k = self.pmf(k);
+                sum_k += k_f * p_k;
+                sum_k2 += k_f * k_f * p_k;
+            }
+            return sum_k2 - sum_k * sum_k;
+        }
+
+        /// Mode: value with highest PMF (scan support)
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            var max_pmf: T = 0.0;
+            var mode_val = s_min;
+            var k = s_min;
+            while (k <= s_max) : (k += 1) {
+                const p_k = self.pmf(k);
+                if (p_k >= max_pmf) {
+                    max_pmf = p_k;
+                    mode_val = k;
+                }
+            }
+            return mode_val;
+        }
+
+        /// Entropy: -Σ p(k) * ln(p(k)) over support
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const s_min = self.supportMin();
+            const s_max = self.supportMax();
+            var result: T = 0.0;
+            var k = s_min;
+            while (k <= s_max) : (k += 1) {
+                const p_k = self.pmf(k);
+                if (p_k > 0.0) {
+                    result -= p_k * @log(p_k);
+                }
+            }
+            return result;
+        }
+
+        /// Sample using inverse-transform method (quantile of uniform)
+        ///
+        /// Time: O(support range) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            return self.quantile(u) catch self.supportMin();
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("FisherNoncentralHypergeometric(N={d:.1}, K={d:.1}, n={d:.1}, ω={d:.6})", .{ self.N, self.K, self.n, self.omega });
+        }
+
+        /// Assert internal invariants
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.N < 1) return error.InvalidParameter;
+            if (self.K > self.N) return error.InvalidParameter;
+            if (self.n > self.N) return error.InvalidParameter;
+            if (self.omega <= 0.0) return error.InvalidParameter;
+        }
+    };
+}
+
+// Tests for FisherNoncentralHypergeometric Distribution
+
+test "FisherNoncentralHypergeometric: init valid parameters" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    try expectEqual(fnh.N, 10);
+    try expectEqual(fnh.K, 4);
+    try expectEqual(fnh.n, 3);
+    try expectApproxEqRel(fnh.omega, 2.0, 1e-10);
+}
+
+test "FisherNoncentralHypergeometric: init N < 1 returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(0, 4, 3, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: init K > N returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(10, 15, 3, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: init n > N returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(10, 4, 20, 2.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: init omega <= 0 returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(10, 4, 3, 0.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: init omega negative returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(10, 4, 3, -1.0);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: init omega = infinity returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(10, 4, 3, std.math.inf(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: init omega = nan returns error" {
+    const result = FisherNoncentralHypergeometric(f64).init(10, 4, 3, std.math.nan(f64));
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 N=10 K=4 n=3 omega=2.0 pmf(0)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 0.0632911392405063291139240506329
+    const expected = 0.0632911392405063291139240506329;
+    try expectApproxEqRel(expected, fnh.pmf(0), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 N=10 K=4 n=3 omega=2.0 pmf(1)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 0.379746835443037974683544303797
+    const expected = 0.379746835443037974683544303797;
+    try expectApproxEqRel(expected, fnh.pmf(1), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 N=10 K=4 n=3 omega=2.0 pmf(2)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 0.455696202531645569620253164557
+    const expected = 0.455696202531645569620253164557;
+    try expectApproxEqRel(expected, fnh.pmf(2), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 N=10 K=4 n=3 omega=2.0 pmf(3)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 0.101265822784810126582278481013
+    const expected = 0.101265822784810126582278481013;
+    try expectApproxEqRel(expected, fnh.pmf(3), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 2 omega=1 matches Hypergeometric N=10 K=4 n=3 pmf(0)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 1.0);
+    // omega=1 should reduce to standard Hypergeometric: 1/6
+    const expected = 1.0 / 6.0;
+    try expectApproxEqRel(expected, fnh.pmf(0), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 2 omega=1 matches Hypergeometric N=10 K=4 n=3 pmf(1)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 1.0);
+    // omega=1 should reduce to standard Hypergeometric: 0.5
+    const expected = 0.5;
+    try expectApproxEqRel(expected, fnh.pmf(1), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 2 omega=1 matches Hypergeometric N=10 K=4 n=3 pmf(2)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 1.0);
+    // omega=1 should reduce to standard Hypergeometric: 0.3
+    const expected = 0.3;
+    try expectApproxEqRel(expected, fnh.pmf(2), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 2 omega=1 matches Hypergeometric N=10 K=4 n=3 pmf(3)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 1.0);
+    // omega=1 should reduce to standard Hypergeometric: 1/30
+    const expected = 1.0 / 30.0;
+    try expectApproxEqRel(expected, fnh.pmf(3), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 N=20 K=7 n=5 omega=0.5 pmf(0)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.227331187935726390046532680514
+    const expected = 0.227331187935726390046532680514;
+    try expectApproxEqRel(expected, fnh.pmf(0), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 N=20 K=7 n=5 omega=0.5 pmf(1)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.442032865430579091757146878778
+    const expected = 0.442032865430579091757146878778;
+    try expectApproxEqRel(expected, fnh.pmf(1), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 N=20 K=7 n=5 omega=0.5 pmf(2)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.265219719258347455054288127267
+    const expected = 0.265219719258347455054288127267;
+    try expectApproxEqRel(expected, fnh.pmf(2), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 N=20 K=7 n=5 omega=0.5 pmf(3)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.0602772089223516943305200289242
+    const expected = 0.0602772089223516943305200289242;
+    try expectApproxEqRel(expected, fnh.pmf(3), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 N=20 K=7 n=5 omega=0.5 pmf(4)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.00502310074352930786087666907702
+    const expected = 0.00502310074352930786087666907702;
+    try expectApproxEqRel(expected, fnh.pmf(4), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 N=20 K=7 n=5 omega=0.5 pmf(5)" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.000115917709466060950635615440239
+    const expected = 0.000115917709466060950635615440239;
+    try expectApproxEqRel(expected, fnh.pmf(5), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: logpmf matches log of pmf" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    const s_min = fnh.supportMin();
+    const s_max = fnh.supportMax();
+    var k = s_min;
+    while (k <= s_max) : (k += 1) {
+        const pmf_val = fnh.pmf(k);
+        if (pmf_val > 0.0) {
+            const expected = @log(pmf_val);
+            const actual = fnh.logpmf(k);
+            try expectApproxEqRel(expected, actual, 1e-9);
+        }
+    }
+}
+
+test "FisherNoncentralHypergeometric: pmf out of support returns 0" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // support: [0, 3], so 4 and higher should be 0
+    try expectApproxEqRel(0.0, fnh.pmf(4), 1e-10);
+    try expectApproxEqRel(0.0, fnh.pmf(10), 1e-10);
+}
+
+test "FisherNoncentralHypergeometric: cdf is monotone non-decreasing" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    var prev: f64 = 0.0;
+    for (0..5) |k| {
+        const cdf_val = fnh.cdf(@intCast(k));
+        try testing.expect(prev <= cdf_val);
+        prev = cdf_val;
+    }
+}
+
+test "FisherNoncentralHypergeometric: cdf k < support_min returns 0" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    try expectEqual(0.0, fnh.cdf(-1));
+}
+
+test "FisherNoncentralHypergeometric: cdf k >= support_max returns 1" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // support_max = 3
+    try expectApproxEqRel(1.0, fnh.cdf(@intCast(3)), 1e-10);
+    try expectApproxEqRel(1.0, fnh.cdf(@intCast(10)), 1e-10);
+}
+
+test "FisherNoncentralHypergeometric: sf equals 1 - cdf" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    for (0..5) |k| {
+        const cdf_val = fnh.cdf(@intCast(k));
+        const sf_val = fnh.sf(@intCast(k));
+        try expectApproxEqRel(1.0 - cdf_val, sf_val, 1e-9);
+    }
+}
+
+test "FisherNoncentralHypergeometric: quantile p=0 returns support_min" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    const q = try fnh.quantile(0.0);
+    try expectEqual(0, q);
+}
+
+test "FisherNoncentralHypergeometric: quantile p=1.0 returns support_max" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    const q = try fnh.quantile(1.0);
+    try expectEqual(3, q);
+}
+
+test "FisherNoncentralHypergeometric: quantile p < 0 returns error" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    const result = fnh.quantile(-0.01);
+    try expectError(error.OutOfDomain, result);
+}
+
+test "FisherNoncentralHypergeometric: quantile p > 1 returns error" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    const result = fnh.quantile(1.01);
+    try expectError(error.OutOfDomain, result);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 mean N=10 K=4 n=3 omega=2.0" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 1.59493670886075949367088607595
+    const expected = 1.59493670886075949367088607595;
+    try expectApproxEqRel(expected, fnh.mean(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 variance N=10 K=4 n=3 omega=2.0" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 0.570100945361320301233776638359
+    const expected = 0.570100945361320301233776638359;
+    try expectApproxEqRel(expected, fnh.variance(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 1 mode N=10 K=4 n=3 omega=2.0" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 2
+    try expectEqual(@as(u64, 2), fnh.mode());
+}
+
+test "FisherNoncentralHypergeometric: Case 1 entropy N=10 K=4 n=3 omega=2.0" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // Ground truth: 1.13241842044304920784493493221 (nats)
+    const expected = 1.13241842044304920784493493221;
+    try expectApproxEqRel(expected, fnh.entropy(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 2 omega=1.0 mean matches Hypergeometric" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 1.0);
+    // omega=1: mean should be 1.2
+    try expectApproxEqRel(1.2, fnh.mean(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 2 omega=1.0 variance matches Hypergeometric" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 1.0);
+    // omega=1: variance should be 0.56
+    try expectApproxEqRel(0.56, fnh.variance(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 mean N=20 K=7 n=5 omega=0.5" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 1.17397592223577662105396797359
+    const expected = 1.17397592223577662105396797359;
+    try expectApproxEqRel(expected, fnh.mean(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 variance N=20 K=7 n=5 omega=0.5" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 0.75045471140891237425755279725
+    const expected = 0.75045471140891237425755279725;
+    try expectApproxEqRel(expected, fnh.variance(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: Case 3 mode N=20 K=7 n=5 omega=0.5" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 1
+    try expectEqual(@as(u64, 1), fnh.mode());
+}
+
+test "FisherNoncentralHypergeometric: Case 3 entropy N=20 K=7 n=5 omega=0.5" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(20, 7, 5, 0.5);
+    // Ground truth: 1.24656605569534597464903205824
+    const expected = 1.24656605569534597464903205824;
+    try expectApproxEqRel(expected, fnh.entropy(), 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: validate passes on valid instance" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    try fnh.validate();
+}
+
+test "FisherNoncentralHypergeometric: validate fails on corrupted K > N" {
+    var fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    fnh.K = 15; // Manually corrupt
+    const result = fnh.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: validate fails on corrupted n > N" {
+    var fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    fnh.n = 20; // Manually corrupt
+    const result = fnh.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: validate fails on corrupted N < 1" {
+    var fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    fnh.N = 0; // Manually corrupt
+    const result = fnh.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: validate fails on corrupted omega <= 0" {
+    var fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    fnh.omega = 0.0; // Manually corrupt
+    const result = fnh.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "FisherNoncentralHypergeometric: sample within support range" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    // support = [0, 3]
+    for (0..20) |_| {
+        const sample_val = fnh.sample(rng);
+        try testing.expect(sample_val >= 0 and sample_val <= 3);
+    }
+}
+
+test "FisherNoncentralHypergeometric: sample with offset support_min > 0" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const fnh = try FisherNoncentralHypergeometric(f64).init(6, 4, 4, 2.0);
+    // support_min = max(0, 4+4-6) = 2, support_max = min(4,4) = 4
+    for (0..20) |_| {
+        const sample_val = fnh.sample(rng);
+        try testing.expect(sample_val >= 2 and sample_val <= 4);
+    }
+}
+
+test "FisherNoncentralHypergeometric: single-point support N=5 K=5 n=5" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(5, 5, 5, 2.0);
+    // support: [5, 5] — only one value
+    try expectApproxEqRel(1.0, fnh.pmf(5), 1e-10);
+    try expectApproxEqRel(0.0, fnh.pmf(4), 1e-10);
+    try expectEqual(@as(u64, 5), fnh.mode());
+    try expectApproxEqRel(5.0, fnh.mean(), 1e-10);
+}
+
+test "FisherNoncentralHypergeometric: single-point support is omega-independent" {
+    const fnh1 = try FisherNoncentralHypergeometric(f64).init(5, 5, 5, 0.5);
+    const fnh2 = try FisherNoncentralHypergeometric(f64).init(5, 5, 5, 3.0);
+    try expectApproxEqRel(fnh1.pmf(5), fnh2.pmf(5), 1e-10);
+    try expectApproxEqRel(1.0, fnh1.pmf(5), 1e-10);
+}
+
+test "FisherNoncentralHypergeometric: pmf probabilities sum to 1" {
+    const fnh = try FisherNoncentralHypergeometric(f64).init(10, 4, 3, 2.0);
+    var sum: f64 = 0.0;
+    const s_min = fnh.supportMin();
+    const s_max = fnh.supportMax();
+    var k = s_min;
+    while (k <= s_max) : (k += 1) {
+        sum += fnh.pmf(k);
+    }
+    try expectApproxEqRel(1.0, sum, 1e-9);
+}
+
+test "FisherNoncentralHypergeometric: f32 type support init" {
+    const fnh = try FisherNoncentralHypergeometric(f32).init(10, 4, 3, 2.0);
+    try expectEqual(fnh.N, 10);
+    try expectEqual(fnh.K, 4);
+    try expectEqual(fnh.n, 3);
+}
+
+test "FisherNoncentralHypergeometric: f32 type support pmf" {
+    const fnh = try FisherNoncentralHypergeometric(f32).init(10, 4, 3, 2.0);
+    // Just verify it runs and produces a positive value in [0, 1]
+    const pmf_val = fnh.pmf(2);
+    try testing.expect(pmf_val >= 0.0 and pmf_val <= 1.0);
+}
