@@ -123407,3 +123407,585 @@ test "FisherNoncentralHypergeometric: f32 type support pmf" {
     const pmf_val = fnh.pmf(2);
     try testing.expect(pmf_val >= 0.0 and pmf_val <= 1.0);
 }
+
+// ============================================================================
+// MultivariateHypergeometric Distribution
+// ============================================================================
+
+pub fn MultivariateHypergeometric(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        category_sizes: []u64,  // owned copy of category sizes
+        n: u64,                  // number of draws
+        N: u64,                  // total population size (cached sum)
+        allocator: std.mem.Allocator,
+
+        /// Initialize MultivariateHypergeometric distribution.
+        /// Requires k ≥ 2 categories, n ≥ 1, n ≤ N (sum of category_sizes).
+        /// Time: O(k) | Space: O(k)
+        pub fn init(allocator: std.mem.Allocator, n_draws: u64, category_sizes: []const u64) !Self {
+            // Validation
+            if (category_sizes.len < 2) return DistributionError.InvalidParameter;
+            if (n_draws == 0) return DistributionError.InvalidParameter;
+
+            // Calculate total population
+            var N: u64 = 0;
+            for (category_sizes) |size| {
+                N +|= size;
+            }
+
+            if (n_draws > N) return DistributionError.InvalidParameter;
+
+            // Copy category_sizes into owned allocation
+            const sizes_copy = try allocator.alloc(u64, category_sizes.len);
+            errdefer allocator.free(sizes_copy);
+
+            @memcpy(sizes_copy, category_sizes);
+
+            return Self{
+                .category_sizes = sizes_copy,
+                .n = n_draws,
+                .N = N,
+                .allocator = allocator,
+            };
+        }
+
+        /// Free allocated memory
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.category_sizes);
+        }
+
+        /// Number of categories
+        /// Time: O(1) | Space: O(1)
+        pub fn numCategories(self: Self) usize {
+            return self.category_sizes.len;
+        }
+
+        /// PMF: probability of outcome counts
+        /// Returns 0 if counts.len != k, sum(counts) != n, or x_i > K_i for any i
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.category_sizes.len) return 0.0;
+
+            var sum: u64 = 0;
+            for (counts) |c| {
+                sum +|= c;
+            }
+            if (sum != self.n) return 0.0;
+
+            // Check support: x_i <= K_i for all i
+            for (counts, self.category_sizes) |xi, Ki| {
+                if (xi > Ki) return 0.0;
+            }
+
+            const logpmf_val = self.logpmf(counts);
+            if (math.isNegativeInf(logpmf_val)) return 0.0;
+            return @exp(logpmf_val);
+        }
+
+        /// Log PMF: log probability of outcome counts
+        /// Returns -inf if counts don't sum to n, length mismatch, or out of support
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.category_sizes.len) return -math.inf(T);
+
+            var sum: u64 = 0;
+            for (counts) |c| {
+                sum +|= c;
+            }
+            if (sum != self.n) return -math.inf(T);
+
+            // Check support: x_i <= K_i for all i
+            for (counts, self.category_sizes) |xi, Ki| {
+                if (xi > Ki) return -math.inf(T);
+            }
+
+            // PMF: P(X=x) = prod_i C(K_i, x_i) / C(N, n)
+            // logPMF = sum_i logBinom(K_i, x_i) - logBinom(N, n)
+
+            var log_numerator: T = 0.0;
+            for (counts, self.category_sizes) |xi, Ki| {
+                const xi_f = @as(T, @floatFromInt(xi));
+                const Ki_f = @as(T, @floatFromInt(Ki));
+                // logBinom(Ki, xi) = lgamma(Ki+1) - lgamma(xi+1) - lgamma(Ki-xi+1)
+                const log_binom = logGamma(Ki_f + 1.0) - logGamma(xi_f + 1.0) - logGamma(Ki_f - xi_f + 1.0);
+                log_numerator += log_binom;
+            }
+
+            const N_f = @as(T, @floatFromInt(self.N));
+            const n_f = @as(T, @floatFromInt(self.n));
+            const log_denominator = logGamma(N_f + 1.0) - logGamma(n_f + 1.0) - logGamma(N_f - n_f + 1.0);
+
+            return log_numerator - log_denominator;
+        }
+
+        /// Marginal mean of category i: E[X_i] = n * K_i / N
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self, i: usize) T {
+            const n_f = @as(T, @floatFromInt(self.n));
+            const Ki_f = @as(T, @floatFromInt(self.category_sizes[i]));
+            const N_f = @as(T, @floatFromInt(self.N));
+            return n_f * Ki_f / N_f;
+        }
+
+        /// Marginal variance of category i: Var[X_i] = n*(K_i/N)*(1-K_i/N)*(N-n)/(N-1)
+        /// Returns 0 when N == 1
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self, i: usize) T {
+            if (self.N == 1) return 0.0;
+
+            const n_f = @as(T, @floatFromInt(self.n));
+            const Ki_f = @as(T, @floatFromInt(self.category_sizes[i]));
+            const N_f = @as(T, @floatFromInt(self.N));
+            const Nn_f = @as(T, @floatFromInt(self.N - self.n));
+
+            // n * (K_i/N) * (1 - K_i/N) * (N-n) / (N-1)
+            return n_f * (Ki_f / N_f) * (1.0 - Ki_f / N_f) * Nn_f / (N_f - 1.0);
+        }
+
+        /// Covariance(i, j): -n*(K_i*K_j)/(N^2) * (N-n)/(N-1) for i != j
+        /// When i == j, equals variance(i)
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self, i: usize, j: usize) T {
+            if (i == j) return self.variance(i);
+
+            if (self.N == 1) return 0.0;
+
+            const n_f = @as(T, @floatFromInt(self.n));
+            const Ki_f = @as(T, @floatFromInt(self.category_sizes[i]));
+            const Kj_f = @as(T, @floatFromInt(self.category_sizes[j]));
+            const N_f = @as(T, @floatFromInt(self.N));
+            const Nn_f = @as(T, @floatFromInt(self.N - self.n));
+
+            // -n * (K_i * K_j) / N^2 * (N-n) / (N-1)
+            return -n_f * Ki_f * Kj_f / (N_f * N_f) * Nn_f / (N_f - 1.0);
+        }
+
+        /// Sample using sequential conditional-hypergeometric method.
+        /// Allocates []u64 counts (caller owns).
+        /// Time: O(k*n) | Space: O(k)
+        pub fn sample(self: Self, rng: std.Random, allocator: std.mem.Allocator) ![]u64 {
+            const counts = try allocator.alloc(u64, self.category_sizes.len);
+            errdefer allocator.free(counts);
+
+            var N_rem = self.N;
+            var n_rem = self.n;
+
+            // For each category 0..k-2, sample from Hypergeometric
+            for (0..self.category_sizes.len - 1) |i| {
+                const hyp = try Hypergeometric(T).init(N_rem, self.category_sizes[i], n_rem);
+                const xi = hyp.sample(rng);
+                counts[i] = xi;
+                N_rem -= self.category_sizes[i];
+                n_rem -= xi;
+            }
+
+            // Last category gets remainder
+            counts[self.category_sizes.len - 1] = n_rem;
+
+            return counts;
+        }
+
+        /// Format for debug printing.
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("MultivariateHypergeometric(n={}, k={})", .{ self.n, self.category_sizes.len });
+        }
+
+        /// Check invariants: category_sizes.len >= 2, n >= 1, n <= N
+        /// Time: O(k) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.category_sizes.len < 2) return DistributionError.InvalidParameter;
+            if (self.n == 0) return DistributionError.InvalidParameter;
+            if (self.n > self.N) return DistributionError.InvalidParameter;
+
+            // Verify N is still correct
+            var sum: u64 = 0;
+            for (self.category_sizes) |size| {
+                sum +|= size;
+            }
+            if (sum != self.N) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// MultivariateHypergeometric Distribution Tests
+// ============================================================================
+
+test "MultivariateHypergeometric: init with valid parameters succeeds" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    try expectEqual(@as(u64, 4), dist.n);
+    try expectEqual(@as(u64, 10), dist.N);
+}
+
+test "MultivariateHypergeometric: init with single category returns error" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{5};
+    const result = MultivariateHypergeometric(f64).init(allocator, 3, &category_sizes);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "MultivariateHypergeometric: init with zero categories returns error" {
+    const allocator = testing.allocator;
+    const category_sizes: [0]u64 = undefined;
+    const result = MultivariateHypergeometric(f64).init(allocator, 3, &category_sizes);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "MultivariateHypergeometric: init with n=0 returns error" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const result = MultivariateHypergeometric(f64).init(allocator, 0, &category_sizes);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "MultivariateHypergeometric: init with n > N returns error" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const result = MultivariateHypergeometric(f64).init(allocator, 15, &category_sizes);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "MultivariateHypergeometric: numCategories returns k" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    try expectEqual(@as(usize, 3), dist.numCategories());
+}
+
+test "MultivariateHypergeometric: numCategories k=2" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    try expectEqual(@as(usize, 2), dist.numCategories());
+}
+
+test "MultivariateHypergeometric: 2-category case matches Hypergeometric N=10 K=[3,7] n=4 counts=[2,2]" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 2, 2 };
+    const pmf_val = dist.pmf(&counts);
+
+    // Expected: C(3,2)*C(7,2)/C(10,4) = 3*21/210 = 63/210 = 0.3
+    try expectApproxEqRel(@as(f64, 0.3), pmf_val, 1e-10);
+
+    // Cross-check against Hypergeometric
+    const hyp = try Hypergeometric(f64).init(10, 3, 4);
+    const hyp_pmf = hyp.pmf(2);
+    try expectApproxEqRel(hyp_pmf, pmf_val, 1e-10);
+}
+
+test "MultivariateHypergeometric: 3-category pmf N=12 K=[5,4,3] n=6 counts=[2,2,2]" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 2, 2, 2 };
+    const pmf_val = dist.pmf(&counts);
+
+    // Expected: C(5,2)*C(4,2)*C(3,2)/C(12,6) = 10*6*3/924 = 180/924 ≈ 0.19480519480519481
+    try expectApproxEqRel(@as(f64, 0.19480519480519481), pmf_val, 1e-10);
+}
+
+test "MultivariateHypergeometric: pmf with mismatched counts.len returns 0" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 2, 2, 1 }; // len=3, but k=2
+    const pmf_val = dist.pmf(&counts);
+    try expectEqual(@as(f64, 0.0), pmf_val);
+}
+
+test "MultivariateHypergeometric: pmf with sum(counts) != n returns 0" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 2 }; // sum=3, but n=4
+    const pmf_val = dist.pmf(&counts);
+    try expectEqual(@as(f64, 0.0), pmf_val);
+}
+
+test "MultivariateHypergeometric: pmf with x_i > K_i returns 0" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 4, 0 }; // counts[0]=4 > K_0=3
+    const pmf_val = dist.pmf(&counts);
+    try expectEqual(@as(f64, 0.0), pmf_val);
+}
+
+test "MultivariateHypergeometric: logpmf out-of-support returns -inf" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 4, 0 }; // out of support
+    const logpmf_val = dist.logpmf(&counts);
+    try testing.expect(math.isNegativeInf(logpmf_val));
+}
+
+test "MultivariateHypergeometric: logpmf matches log(pmf) for valid counts" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 2, 2, 2 };
+    const pmf_val = dist.pmf(&counts);
+    const logpmf_val = dist.logpmf(&counts);
+
+    if (pmf_val > 0.0) {
+        try expectApproxEqRel(@log(pmf_val), logpmf_val, 1e-10);
+    }
+}
+
+test "MultivariateHypergeometric: pmf sums to 1 over full support K=[2,2] n=2" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 2, 2 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 2, &category_sizes);
+    defer dist.deinit();
+
+    var sum: f64 = 0.0;
+    // Enumerate all outcomes: [0,2], [1,1], [2,0]
+    const outcomes = [_][2]u64{
+        [_]u64{ 0, 2 },
+        [_]u64{ 1, 1 },
+        [_]u64{ 2, 0 },
+    };
+
+    for (outcomes) |counts| {
+        const p = dist.pmf(&counts);
+        sum += p;
+    }
+
+    try expectApproxEqRel(@as(f64, 1.0), sum, 1e-10);
+}
+
+test "MultivariateHypergeometric: individual outcome pmf in support sum K=[2,2] n=2" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 2, 2 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 2, &category_sizes);
+    defer dist.deinit();
+
+    const p_0_2 = dist.pmf(&[_]u64{ 0, 2 });
+    const p_1_1 = dist.pmf(&[_]u64{ 1, 1 });
+    const p_2_0 = dist.pmf(&[_]u64{ 2, 0 });
+
+    try expectApproxEqRel(@as(f64, 0.16666666666666666), p_0_2, 1e-10);
+    try expectApproxEqRel(@as(f64, 0.6666666666666666), p_1_1, 1e-10);
+    try expectApproxEqRel(@as(f64, 0.16666666666666666), p_2_0, 1e-10);
+}
+
+test "MultivariateHypergeometric: mean marginal N=12 K=[5,4,3] n=6" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    try expectApproxEqRel(@as(f64, 2.5), dist.mean(0), 1e-10); // 6 * 5 / 12
+    try expectApproxEqRel(@as(f64, 2.0), dist.mean(1), 1e-10); // 6 * 4 / 12
+    try expectApproxEqRel(@as(f64, 1.5), dist.mean(2), 1e-10); // 6 * 3 / 12
+}
+
+test "MultivariateHypergeometric: mean marginals sum to n" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    var sum_means: f64 = 0.0;
+    for (0..dist.numCategories()) |i| {
+        sum_means += dist.mean(i);
+    }
+
+    try expectApproxEqRel(@as(f64, 6.0), sum_means, 1e-10);
+}
+
+test "MultivariateHypergeometric: variance marginal N=12 K=[5,4,3] n=6" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    try expectApproxEqRel(@as(f64, 0.7954545454545453), dist.variance(0), 1e-10);
+    try expectApproxEqRel(@as(f64, 0.7272727272727273), dist.variance(1), 1e-10);
+    try expectApproxEqRel(@as(f64, 0.6136363636363636), dist.variance(2), 1e-10);
+}
+
+test "MultivariateHypergeometric: covariance off-diagonal N=12 K=[5,4,3] n=6" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    try expectApproxEqRel(@as(f64, -0.45454545454545453), dist.covariance(0, 1), 1e-10);
+}
+
+test "MultivariateHypergeometric: covariance diagonal equals variance" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    try expectApproxEqRel(dist.variance(0), dist.covariance(0, 0), 1e-10);
+    try expectApproxEqRel(dist.variance(1), dist.covariance(1, 1), 1e-10);
+    try expectApproxEqRel(dist.variance(2), dist.covariance(2, 2), 1e-10);
+}
+
+test "MultivariateHypergeometric: sample returns k-length counts" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const counts = try dist.sample(rng, allocator);
+    defer allocator.free(counts);
+
+    try expectEqual(@as(usize, 3), counts.len);
+}
+
+test "MultivariateHypergeometric: sample counts sum to n" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    for (0..10) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        var sum: u64 = 0;
+        for (counts) |c| {
+            sum +|= c;
+        }
+        try expectEqual(@as(u64, 6), sum);
+    }
+}
+
+test "MultivariateHypergeometric: sample all counts within support bounds" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    for (0..20) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        for (0..dist.numCategories()) |i| {
+            try testing.expect(counts[i] <= dist.category_sizes[i]);
+        }
+    }
+}
+
+test "MultivariateHypergeometric: sample deterministic K=[5,0] always has counts=[6,0]" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 0 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 5, &category_sizes);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+
+    for (0..5) |_| {
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        try expectEqual(@as(u64, 5), counts[0]);
+        try expectEqual(@as(u64, 0), counts[1]);
+    }
+}
+
+test "MultivariateHypergeometric: memory no leaks with testing allocator" {
+    const allocator = testing.allocator;
+
+    for (0..5) |_| {
+        const category_sizes = [_]u64{ 3, 4, 2 };
+        const dist = try MultivariateHypergeometric(f64).init(allocator, 5, &category_sizes);
+        defer dist.deinit();
+
+        var prng = std.Random.DefaultPrng.init(77777);
+        const rng = prng.random();
+
+        const counts = try dist.sample(rng, allocator);
+        defer allocator.free(counts);
+
+        _ = dist.pmf(counts);
+        _ = dist.mean(0);
+        _ = dist.variance(1);
+    }
+}
+
+test "MultivariateHypergeometric: validate passes on valid instance" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    const dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    try dist.validate();
+}
+
+test "MultivariateHypergeometric: validate fails on corrupted n > N" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    var dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    dist.n = 20; // Manually corrupt
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "MultivariateHypergeometric: validate fails on corrupted N mismatch" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 5, 4, 3 };
+    var dist = try MultivariateHypergeometric(f64).init(allocator, 6, &category_sizes);
+    defer dist.deinit();
+
+    dist.N = 50; // Manually corrupt
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "MultivariateHypergeometric: f32 type support init and pmf" {
+    const allocator = testing.allocator;
+    const category_sizes = [_]u64{ 3, 7 };
+    const dist = try MultivariateHypergeometric(f32).init(allocator, 4, &category_sizes);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 2, 2 };
+    const pmf_val = dist.pmf(&counts);
+    try testing.expect(pmf_val >= 0.0 and pmf_val <= 1.0);
+    try expectApproxEqRel(@as(f32, 0.3), pmf_val, 1e-5);
+}
