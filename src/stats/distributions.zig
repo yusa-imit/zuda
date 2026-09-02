@@ -121819,3 +121819,934 @@ test "DoubleGamma: f32 support - sample" {
         try testing.expect(!math.isNan(x) and math.isFinite(x));
     }
 }
+
+// =================================================================
+// PoissonBinomial(comptime T: type) — sum of n independent,
+// non-identical Bernoulli(p_i) trials. Support: {0, 1, ..., n}.
+// =================================================================
+
+pub fn PoissonBinomial(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        probs: []T, // Original probability vector
+        pmf_table: []T, // Precomputed pmf for k=0..n
+        allocator: std.mem.Allocator,
+
+        /// Initialize PoissonBinomial distribution from a probability vector.
+        /// probs must be non-empty and each element must be in [0, 1] and finite.
+        /// Allocates storage for a copy of probs and the pmf table.
+        /// Time: O(n²) | Space: O(n)
+        pub fn init(allocator: std.mem.Allocator, probs: []const T) !Self {
+            if (probs.len == 0) return DistributionError.InvalidParameter;
+
+            // Validate each probability
+            for (probs) |p| {
+                if (p < 0.0 or p > 1.0 or !math.isFinite(p)) {
+                    return DistributionError.InvalidParameter;
+                }
+            }
+
+            // Allocate and copy probs
+            const probs_copy = try allocator.alloc(T, probs.len);
+            errdefer allocator.free(probs_copy);
+            @memcpy(probs_copy, probs);
+
+            // Allocate pmf table: length n+1, indices 0..n
+            const n = probs.len;
+            const pmf_table = try allocator.alloc(T, n + 1);
+            errdefer allocator.free(pmf_table);
+
+            // Initialize table: dp[0] = 1.0, rest = 0.0
+            for (pmf_table) |*val| {
+                val.* = 0.0;
+            }
+            pmf_table[0] = 1.0;
+
+            // Reverse-order in-place DP algorithm
+            for (probs_copy, 0..) |p, i| {
+                // Iterate k from (i+1) down to 1
+                var k: usize = i + 1;
+                while (k > 0) : (k -= 1) {
+                    pmf_table[k] = pmf_table[k] * (1.0 - p) + pmf_table[k - 1] * p;
+                }
+                // Update dp[0]
+                pmf_table[0] = pmf_table[0] * (1.0 - p);
+            }
+
+            return Self{
+                .probs = probs_copy,
+                .pmf_table = pmf_table,
+                .allocator = allocator,
+            };
+        }
+
+        /// Free allocated memory.
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.probs);
+            self.allocator.free(self.pmf_table);
+        }
+
+        /// Get number of trials (n).
+        /// Time: O(1) | Space: O(1)
+        pub fn numTrials(self: Self) u64 {
+            return @intCast(self.probs.len);
+        }
+
+        /// Probability mass function: pmf(k) for k ∈ {0, 1, ..., n}.
+        /// Returns 0 if k > n.
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k >= self.pmf_table.len) return 0.0;
+            return self.pmf_table[k];
+        }
+
+        /// Log probability mass function.
+        /// Returns -∞ if pmf(k) = 0.
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            const pmf_val = self.pmf(k);
+            if (pmf_val <= 0.0) return -math.inf(T);
+            return @log(pmf_val);
+        }
+
+        /// Cumulative distribution function: P(X ≤ k).
+        /// Time: O(k) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            const max_k = @min(k + 1, self.pmf_table.len);
+            var sum: T = 0.0;
+            for (0..max_k) |i| {
+                sum += self.pmf_table[i];
+            }
+            return @min(sum, 1.0); // Clamp to 1.0
+        }
+
+        /// Survival function: P(X > k) = 1 - P(X ≤ k).
+        /// Time: O(k) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            return 1.0 - self.cdf(k);
+        }
+
+        /// Quantile function: smallest k with cdf(k) ≥ p.
+        /// Returns error.InvalidProbability if p is not in [0, 1].
+        /// Time: O(n) | Space: O(1)
+        pub fn quantile(self: Self, p: T) !u64 {
+            if (p < 0.0 or p > 1.0) return DistributionError.InvalidProbability;
+
+            for (0..self.pmf_table.len) |k| {
+                if (self.cdf(@intCast(k)) >= p) {
+                    return @intCast(k);
+                }
+            }
+            return @intCast(self.probs.len);
+        }
+
+        /// Sample from the distribution using inverse-CDF method.
+        /// Time: O(n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            for (0..self.pmf_table.len) |k| {
+                if (u <= self.cdf(@intCast(k))) {
+                    return @intCast(k);
+                }
+            }
+            return @intCast(self.probs.len);
+        }
+
+        /// Mean of the distribution: Σ probs[i].
+        /// Time: O(n) | Space: O(1)
+        pub fn mean(self: Self) T {
+            var sum: T = 0.0;
+            for (self.probs) |p| {
+                sum += p;
+            }
+            return sum;
+        }
+
+        /// Variance of the distribution: Σ probs[i] * (1 - probs[i]).
+        /// Time: O(n) | Space: O(1)
+        pub fn variance(self: Self) T {
+            var sum: T = 0.0;
+            for (self.probs) |p| {
+                sum += p * (1.0 - p);
+            }
+            return sum;
+        }
+
+        /// Mode of the distribution: argmax k with pmf(k).
+        /// Ties are broken toward larger k (>= convention).
+        /// Time: O(n) | Space: O(1)
+        pub fn mode(self: Self) u64 {
+            var max_pmf: T = self.pmf_table[0];
+            var mode_k: u64 = 0;
+
+            for (self.pmf_table, 0..) |p, k| {
+                if (p >= max_pmf) { // >= for larger k on ties
+                    max_pmf = p;
+                    mode_k = @intCast(k);
+                }
+            }
+
+            return mode_k;
+        }
+
+        /// Entropy of the distribution: -Σ pmf(k) * log(pmf(k)).
+        /// Skips terms where pmf(k) = 0.
+        /// Time: O(n) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            var sum: T = 0.0;
+            for (self.pmf_table) |p| {
+                if (p > 0.0) {
+                    sum -= p * @log(p);
+                }
+            }
+            return sum;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("PoissonBinomial(n={})", .{self.probs.len});
+        }
+
+        /// Validate internal invariants:
+        /// - probs.len >= 1
+        /// - each p_i in [0, 1] and finite
+        /// - pmf_table.len == probs.len + 1
+        /// - pmf_table sums to ~1.0 (within tolerance)
+        /// Time: O(n) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.probs.len == 0) return DistributionError.InvalidParameter;
+            if (self.pmf_table.len != self.probs.len + 1) return DistributionError.InvalidParameter;
+
+            // Validate each probability
+            for (self.probs) |p| {
+                if (p < 0.0 or p > 1.0 or !math.isFinite(p)) {
+                    return DistributionError.InvalidParameter;
+                }
+            }
+
+            // Validate pmf table sums to ~1.0
+            var sum: T = 0.0;
+            for (self.pmf_table) |p| {
+                sum += p;
+            }
+
+            const eps: T = switch (T) {
+                f32 => 1e-3,
+                else => 1e-6,
+            };
+            if (@abs(sum - 1.0) > eps) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// =================================================================
+// PoissonBinomial Tests
+// =================================================================
+
+test "PoissonBinomial: init valid params probs=[0.5, 0.5]" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: init valid params probs=[0.2, 0.5, 0.8]" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: init valid params probs=[0.3]" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.3};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: init degenerate probs=[0.0]" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: init degenerate probs=[1.0]" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{1.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: init boundary probs=[0.0, 1.0]" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.0, 1.0 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: init fails for empty probs slice" {
+    const allocator = std.testing.allocator;
+    const probs: [0]f64 = [_]f64{};
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonBinomial: init fails for p_i = -0.1" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, -0.1 };
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonBinomial: init fails for p_i = 1.1" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 1.1 };
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonBinomial: init fails for p_i = NaN" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, math.nan(f64) };
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonBinomial: init fails for p_i = +inf" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, math.inf(f64) };
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "PoissonBinomial: init fails for p_i = -inf" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, -math.inf(f64) };
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try expectError(error.InvalidParameter, result);
+}
+
+// --- Ground truth vector 1: probs=[0.5, 0.5] ---
+
+test "PoissonBinomial: vector 1 pmf(0) = 0.25" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.25;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-9);
+}
+
+test "PoissonBinomial: vector 1 pmf(1) = 0.5" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.5;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "PoissonBinomial: vector 1 pmf(2) = 0.25" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.25;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "PoissonBinomial: vector 1 mean = 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "PoissonBinomial: vector 1 variance = 0.5" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.5;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+// --- Ground truth vector 2: probs=[0.2, 0.5, 0.8] (PRIMARY anchor) ---
+
+test "PoissonBinomial: vector 2 pmf(0) = 0.08" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.08;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 pmf(1) = 0.42" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.42;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 pmf(2) = 0.42" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.42;
+    try expectApproxEqAbs(expected, dist.pmf(2), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 pmf(3) = 0.08" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.08;
+    try expectApproxEqAbs(expected, dist.pmf(3), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 pmf sums to 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    var sum: f64 = 0.0;
+    for (0..4) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-9);
+}
+
+test "PoissonBinomial: vector 2 mean = 1.5" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.5;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 variance = 0.57" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.57;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 cdf(0) = 0.08" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.08;
+    try expectApproxEqAbs(expected, dist.cdf(0), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 cdf(1) = 0.5" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.5;
+    try expectApproxEqAbs(expected, dist.cdf(1), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 cdf(2) = 0.92" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.92;
+    try expectApproxEqAbs(expected, dist.cdf(2), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 cdf(3) = 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.cdf(3), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 sf(1) = 0.5" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.5;
+    try expectApproxEqAbs(expected, dist.sf(1), 1e-9);
+}
+
+test "PoissonBinomial: vector 2 mode = 2 (tie-breaking toward larger k)" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: u64 = 2;
+    try testing.expectEqual(expected, dist.mode());
+}
+
+test "PoissonBinomial: vector 2 entropy ≈ 1.132817" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.132817;
+    try expectApproxEqAbs(expected, dist.entropy(), 1e-5);
+}
+
+// --- Ground truth vector 3: degenerate cases n=1 ---
+
+test "PoissonBinomial: vector 3a probs=[1.0] pmf(0) = 0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{1.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-15);
+}
+
+test "PoissonBinomial: vector 3a probs=[1.0] pmf(1) = 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{1.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-15);
+}
+
+test "PoissonBinomial: vector 3a probs=[1.0] mean = 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{1.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-15);
+}
+
+test "PoissonBinomial: vector 3a probs=[1.0] variance = 0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{1.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-15);
+}
+
+test "PoissonBinomial: vector 3b probs=[0.0] pmf(0) = 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-15);
+}
+
+test "PoissonBinomial: vector 3b probs=[0.0] pmf(1) = 0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-15);
+}
+
+test "PoissonBinomial: vector 3b probs=[0.0] mean = 0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-15);
+}
+
+test "PoissonBinomial: vector 3b probs=[0.0] variance = 0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.0};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-15);
+}
+
+test "PoissonBinomial: vector 3c probs=[0.3] pmf(0) = 0.7" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.3};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.7;
+    try expectApproxEqAbs(expected, dist.pmf(0), 1e-9);
+}
+
+test "PoissonBinomial: vector 3c probs=[0.3] pmf(1) = 0.3" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.3};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.3;
+    try expectApproxEqAbs(expected, dist.pmf(1), 1e-9);
+}
+
+test "PoissonBinomial: vector 3c probs=[0.3] mean = 0.3" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.3};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.3;
+    try expectApproxEqAbs(expected, dist.mean(), 1e-9);
+}
+
+test "PoissonBinomial: vector 3c probs=[0.3] variance = 0.21" {
+    const allocator = std.testing.allocator;
+    const probs: [1]f64 = [_]f64{0.3};
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const expected: f64 = 0.21;
+    try expectApproxEqAbs(expected, dist.variance(), 1e-9);
+}
+
+// --- Ground truth vector 4: Binomial equivalence cross-check ---
+
+test "PoissonBinomial: vector 4a Binomial equivalence [0.4,0.4,0.4,0.4,0.4] vs Binomial(5,0.4) at pmf(0)" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.4, 0.4, 0.4, 0.4, 0.4 };
+    const pb_dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer pb_dist.deinit();
+    const b_dist = try Binomial(f64).init(5, 0.4);
+    try expectApproxEqAbs(b_dist.pmf(0), pb_dist.pmf(0), 1e-9);
+}
+
+test "PoissonBinomial: vector 4b Binomial equivalence [0.4,0.4,0.4,0.4,0.4] vs Binomial(5,0.4) at pmf(2)" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.4, 0.4, 0.4, 0.4, 0.4 };
+    const pb_dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer pb_dist.deinit();
+    const b_dist = try Binomial(f64).init(5, 0.4);
+    try expectApproxEqAbs(b_dist.pmf(2), pb_dist.pmf(2), 1e-9);
+}
+
+test "PoissonBinomial: vector 4c Binomial equivalence [0.4,0.4,0.4,0.4,0.4] vs Binomial(5,0.4) at pmf(5)" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.4, 0.4, 0.4, 0.4, 0.4 };
+    const pb_dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer pb_dist.deinit();
+    const b_dist = try Binomial(f64).init(5, 0.4);
+    try expectApproxEqAbs(b_dist.pmf(5), pb_dist.pmf(5), 1e-9);
+}
+
+test "PoissonBinomial: vector 4d Binomial equivalence mean matches Binomial" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.4, 0.4, 0.4, 0.4, 0.4 };
+    const pb_dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer pb_dist.deinit();
+    const b_dist = try Binomial(f64).init(5, 0.4);
+    try expectApproxEqAbs(b_dist.mean(), pb_dist.mean(), 1e-9);
+}
+
+test "PoissonBinomial: vector 4e Binomial equivalence variance matches Binomial" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.4, 0.4, 0.4, 0.4, 0.4 };
+    const pb_dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer pb_dist.deinit();
+    const b_dist = try Binomial(f64).init(5, 0.4);
+    try expectApproxEqAbs(b_dist.variance(), pb_dist.variance(), 1e-9);
+}
+
+// --- Out-of-range tests ---
+
+test "PoissonBinomial: pmf(n+5) returns 0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const n = dist.numTrials();
+    const k_out_of_range = n + 5;
+    const expected: f64 = 0.0;
+    try expectApproxEqAbs(expected, dist.pmf(k_out_of_range), 1e-15);
+}
+
+test "PoissonBinomial: cdf(n+5) returns 1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const n = dist.numTrials();
+    const k_out_of_range = n + 5;
+    const expected: f64 = 1.0;
+    try expectApproxEqAbs(expected, dist.cdf(k_out_of_range), 1e-15);
+}
+
+// --- logpmf tests ---
+
+test "PoissonBinomial: logpmf = ln(pmf) for vector 2" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    for ([_]u64{ 0, 1, 2, 3 }) |k| {
+        const pmf_k = dist.pmf(k);
+        const expected_log = @log(pmf_k);
+        try expectApproxEqAbs(expected_log, dist.logpmf(k), 1e-9);
+    }
+}
+
+test "PoissonBinomial: logpmf(-inf) for pmf=0.0" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 1.0, 1.0 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const lp = dist.logpmf(0);
+    try testing.expect(math.isNegativeInf(lp));
+}
+
+// --- Memory leak test ---
+
+test "PoissonBinomial: no memory leaks with std.testing.allocator" {
+    const allocator = std.testing.allocator;
+    for ([_][3]f64{
+        [_]f64{ 0.5, 0.5, 0.5 },
+        [_]f64{ 0.2, 0.5, 0.8 },
+        [_]f64{ 0.1, 0.2, 0.3 },
+    }) |probs| {
+        const dist = try PoissonBinomial(f64).init(allocator, &probs);
+        defer dist.deinit();
+        _ = dist.pmf(1);
+        _ = dist.mean();
+    }
+}
+
+test "PoissonBinomial: memory freed on error path (empty probs)" {
+    const allocator = std.testing.allocator;
+    const probs: [0]f64 = [_]f64{};
+    const result = PoissonBinomial(f64).init(allocator, &probs);
+    try testing.expectError(error.InvalidParameter, result);
+}
+
+// --- validate() tests ---
+
+test "PoissonBinomial: validate() passes after init with valid params" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: validate() passes for degenerate n=1 cases" {
+    const allocator = std.testing.allocator;
+    for ([_][1]f64{
+        [_]f64{0.0},
+        [_]f64{0.5},
+        [_]f64{1.0},
+    }) |probs| {
+        const dist = try PoissonBinomial(f64).init(allocator, &probs);
+        defer dist.deinit();
+        try dist.validate();
+    }
+}
+
+test "PoissonBinomial: validate() confirms pmf table sums to ~1.0" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+    // Verify sum of all pmf values
+    var sum: f64 = 0.0;
+    const n = dist.numTrials();
+    for (0..n + 1) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+// --- Stress test: larger n ≈ 50 ---
+
+test "PoissonBinomial: stress test n=50 random probs, pmf sums to 1.0" {
+    const allocator = std.testing.allocator;
+    // Create a reproducible 50-element probability vector
+    var probs_array: [50]f64 = undefined;
+    for (0..50) |i| {
+        // Use a simple pattern: p_i = (i+1) / 100 (range from 0.01 to 0.50)
+        probs_array[i] = @as(f64, @floatFromInt(i + 1)) / 100.0;
+    }
+    const dist = try PoissonBinomial(f64).init(allocator, &probs_array);
+    defer dist.deinit();
+
+    var sum: f64 = 0.0;
+    const n = dist.numTrials();
+    for (0..n + 1) |k| {
+        sum += dist.pmf(@intCast(k));
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-5);
+}
+
+test "PoissonBinomial: stress test n=50 validate passes" {
+    const allocator = std.testing.allocator;
+    var probs_array: [50]f64 = undefined;
+    for (0..50) |i| {
+        probs_array[i] = @as(f64, @floatFromInt(i + 1)) / 100.0;
+    }
+    const dist = try PoissonBinomial(f64).init(allocator, &probs_array);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+// --- quantile() boundary tests ---
+
+test "PoissonBinomial: quantile(0.0) returns 0" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(@as(u64, 0), q);
+}
+
+test "PoissonBinomial: quantile(1.0) returns n" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const q = try dist.quantile(1.0);
+    try testing.expectEqual(dist.numTrials(), q);
+}
+
+test "PoissonBinomial: quantile(0.5) is valid" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const q = try dist.quantile(0.5);
+    try testing.expect(q >= 0 and q <= dist.numTrials());
+}
+
+test "PoissonBinomial: quantile fails for p < 0" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const result = dist.quantile(-0.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+test "PoissonBinomial: quantile fails for p > 1" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const result = dist.quantile(1.1);
+    try testing.expectError(error.InvalidProbability, result);
+}
+
+// --- sample() sanity tests ---
+
+test "PoissonBinomial: sample() returns value in valid range" {
+    const allocator = std.testing.allocator;
+    const probs: [5]f64 = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    for (0..10) |_| {
+        const sample_val = dist.sample(rng);
+        try testing.expect(sample_val >= 0 and sample_val <= dist.numTrials());
+    }
+}
+
+// --- f32 type support tests ---
+
+test "PoissonBinomial: f32 type support init" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f32 = [_]f32{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f32).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: f32 type support pmf" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f32 = [_]f32{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f32).init(allocator, &probs);
+    defer dist.deinit();
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqAbs(@as(f32, 0.5), pmf_val, 1e-5);
+}
+
+test "PoissonBinomial: f32 type support mean" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f32 = [_]f32{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f32).init(allocator, &probs);
+    defer dist.deinit();
+    const mean_val = dist.mean();
+    try expectApproxEqAbs(@as(f32, 1.0), mean_val, 1e-5);
+}
+
+test "PoissonBinomial: f64 type support init" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try dist.validate();
+}
+
+test "PoissonBinomial: f64 type support pmf" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    const pmf_val = dist.pmf(1);
+    try expectApproxEqAbs(@as(f64, 0.5), pmf_val, 1e-9);
+}
+
+// --- Additional pmf/cdf correctness ---
+
+test "PoissonBinomial: pmf is symmetric for uniform probs=[0.5, 0.5]" {
+    const allocator = std.testing.allocator;
+    const probs: [2]f64 = [_]f64{ 0.5, 0.5 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try expectApproxEqAbs(dist.pmf(0), dist.pmf(2), 1e-9);
+}
+
+test "PoissonBinomial: cdf is monotone increasing" {
+    const allocator = std.testing.allocator;
+    const probs: [3]f64 = [_]f64{ 0.2, 0.5, 0.8 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    var prev_cdf: f64 = 0.0;
+    for (0..dist.numTrials() + 1) |k| {
+        const curr_cdf = dist.cdf(@intCast(k));
+        try testing.expect(curr_cdf >= prev_cdf);
+        prev_cdf = curr_cdf;
+    }
+}
+
+test "PoissonBinomial: numTrials() returns correct n" {
+    const allocator = std.testing.allocator;
+    const probs: [7]f64 = [_]f64{ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7 };
+    const dist = try PoissonBinomial(f64).init(allocator, &probs);
+    defer dist.deinit();
+    try testing.expectEqual(@as(u64, 7), dist.numTrials());
+}
