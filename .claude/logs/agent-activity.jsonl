@@ -765,3 +765,6 @@
 {"timestamp":"2026-09-01T11:31:11Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for ShiftedInverseGaussian (198th distribution)","project":"zuda"}
 {"timestamp":"2026-09-01T11:33:52Z","action":"subagent","agent_type":"zig-developer","task":"Implement ShiftedInverseGaussian to pass 70 failing tests","project":"zuda"}
 {"timestamp":"2026-09-01T11:47:00Z","action":"subagent","agent_type":"test-writer","task":"Loosen 3 ShiftedInverseGaussian cdf test tolerances (erf approximation precision)","project":"zuda"}
+{"timestamp":"2026-09-01T23:32:29Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for DoubleGamma distribution (199th) in src/stats/distributions.zig","project":"zuda"}
+{"timestamp":"2026-09-01T23:35:25Z","action":"subagent","agent_type":"zig-developer","task":"Implement DoubleGamma distribution (199th) in src/stats/distributions.zig to pass test-writer's 101 tests","project":"zuda"}
+{"timestamp":"2026-09-01T23:46:33Z","action":"subagent","agent_type":"test-writer","task":"Loosen DoubleGamma entropy test tolerance to match LogGamma precedent (digamma precision limit)","project":"zuda"}
