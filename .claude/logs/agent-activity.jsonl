@@ -770,3 +770,5 @@
 {"timestamp":"2026-09-01T23:46:33Z","action":"subagent","agent_type":"test-writer","task":"Loosen DoubleGamma entropy test tolerance to match LogGamma precedent (digamma precision limit)","project":"zuda"}
 {"timestamp":"2026-09-02T07:32:32Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for PoissonBinomial distribution (200th)","project":"zuda"}
 {"timestamp":"2026-09-02T07:37:00Z","action":"subagent","agent_type":"zig-developer","task":"Implement PoissonBinomial distribution to pass failing tests","project":"zuda"}
+{"timestamp":"2026-09-02T11:37:05Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for FisherNoncentralHypergeometric (201st distribution)","project":"zuda"}
+{"timestamp":"2026-09-02T11:40:49Z","action":"subagent","agent_type":"zig-developer","task":"Implement FisherNoncentralHypergeometric to pass failing tests (201st distribution)","project":"zuda"}
