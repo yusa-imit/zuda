@@ -9619,6 +9619,220 @@ pub fn NegativeMultinomial(comptime T: type) type {
     };
 }
 
+// ============================================================================
+// BivariatePoisson Distribution
+// ============================================================================
+
+/// BivariatePoisson distribution (Holgate 1964)
+///
+/// Models the joint distribution of two dependent Poisson counts via trivariate reduction:
+/// Y0 ~ Poisson(theta0), Y1 ~ Poisson(theta1), Y2 ~ Poisson(theta2), all independent.
+/// X1 = Y0 + Y1, X2 = Y0 + Y2.
+///
+/// This creates positive dependence (covariance = theta0) between X1 and X2.
+///
+/// Parameters:
+///   - theta0: Shared/covariance component (≥ 0, may be 0 for independence)
+///   - theta1: Rate for X1 marginal (> 0)
+///   - theta2: Rate for X2 marginal (> 0)
+///
+/// Moments:
+///   - E[X1] = theta0 + theta1
+///   - E[X2] = theta0 + theta2
+///   - Var[X1] = theta0 + theta1
+///   - Var[X2] = theta0 + theta2
+///   - Cov(X1,X2) = theta0
+///   - Corr(X1,X2) = theta0 / sqrt((theta0+theta1)*(theta0+theta2))
+///
+/// Time: O(min(x1,x2)) for pmf via summation over k=0..min(x1,x2)
+pub fn BivariatePoisson(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        theta0: T,
+        theta1: T,
+        theta2: T,
+
+        /// Initialize BivariatePoisson with given theta parameters.
+        /// theta0 >= 0 (may be 0 for independence), theta1 > 0, theta2 > 0.
+        /// All must be finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta0: T, theta1: T, theta2: T) DistributionError!Self {
+            // Validate theta0 >= 0
+            if (theta0 < 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(theta0)) return DistributionError.InvalidParameter;
+
+            // Validate theta1 > 0
+            if (theta1 <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(theta1)) return DistributionError.InvalidParameter;
+
+            // Validate theta2 > 0
+            if (theta2 <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(theta2)) return DistributionError.InvalidParameter;
+
+            return Self{ .theta0 = theta0, .theta1 = theta1, .theta2 = theta2 };
+        }
+
+        /// PMF: P(X1=x1, X2=x2)
+        /// Computes via sum over k=0..min(x1,x2) in log space for numerical stability.
+        ///
+        /// Time: O(min(x1,x2)) | Space: O(1)
+        pub fn pmf(self: Self, x1: u64, x2: u64) T {
+            // Compute base factor: exp(-(theta0+theta1+theta2)) * theta1^x1/x1! * theta2^x2/x2!
+            const x1_f = @as(T, @floatFromInt(x1));
+            const x2_f = @as(T, @floatFromInt(x2));
+
+            const log_base = -(self.theta0 + self.theta1 + self.theta2) +
+                             x1_f * @log(self.theta1) - logFactorial(T, x1) +
+                             x2_f * @log(self.theta2) - logFactorial(T, x2);
+            const base_factor = @exp(log_base);
+
+            // Compute the sum: k=0..min(x1,x2)
+            const max_k = @min(x1, x2);
+
+            // k=0 term is always 1.0
+            var sum: T = 1.0;
+
+            // If theta0 == 0, skip k>=1 terms (they would be 0 anyway)
+            if (self.theta0 > 0.0 and max_k > 0) {
+                const ratio = self.theta0 / (self.theta1 * self.theta2);
+                const log_ratio = @log(ratio);
+
+                for (1..max_k + 1) |k| {
+                    const k_f = @as(T, @floatFromInt(k));
+
+                    // Each term: exp(logBinomialCoeff(x1,k) + logBinomialCoeff(x2,k) + logFactorial(k) + k*log_ratio)
+                    const log_term = logBinomialCoeff(T, x1, k) + logBinomialCoeff(T, x2, k) +
+                                     logFactorial(T, k) + k_f * log_ratio;
+                    sum += @exp(log_term);
+                }
+            }
+
+            return base_factor * sum;
+        }
+
+        /// Mean of X1: E[X1] = theta0 + theta1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean1(self: Self) T {
+            return self.theta0 + self.theta1;
+        }
+
+        /// Mean of X2: E[X2] = theta0 + theta2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean2(self: Self) T {
+            return self.theta0 + self.theta2;
+        }
+
+        /// Variance of X1: Var[X1] = theta0 + theta1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance1(self: Self) T {
+            return self.theta0 + self.theta1;
+        }
+
+        /// Variance of X2: Var[X2] = theta0 + theta2
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance2(self: Self) T {
+            return self.theta0 + self.theta2;
+        }
+
+        /// Covariance: Cov(X1,X2) = theta0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self) T {
+            return self.theta0;
+        }
+
+        /// Correlation: Corr(X1,X2) = theta0 / sqrt((theta0+theta1)*(theta0+theta2))
+        /// Returns 0 if denominator is zero or theta0=0.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn correlation(self: Self) T {
+            if (self.theta0 == 0.0) return 0.0;
+
+            const denom = (self.theta0 + self.theta1) * (self.theta0 + self.theta2);
+            if (denom == 0.0) return 0.0;
+
+            return self.theta0 / @sqrt(denom);
+        }
+
+        /// Sample result: pair of counts (x1, x2)
+        pub const Sample = struct {
+            x1: u64,
+            x2: u64,
+        };
+
+        /// Generate a random sample from this distribution.
+        /// Uses trivariate reduction: Y0~Pois(theta0), Y1~Pois(theta1), Y2~Pois(theta2),
+        /// return (Y0+Y1, Y0+Y2).
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) Sample {
+            // Helper: sample a Poisson(rate) using Knuth's algorithm or normal approx
+            const poissonSample = struct {
+                fn sampleFromRate(rate: T, rng_inner: std.Random) u64 {
+                    if (rate < 30.0) {
+                        // Knuth's algorithm
+                        const L = @exp(-rate);
+                        var k: u64 = 0;
+                        var p: T = 1.0;
+                        while (true) {
+                            k += 1;
+                            const u = rng_inner.float(T);
+                            p *= u;
+                            if (p <= L) break;
+                        }
+                        return k - 1;
+                    } else {
+                        // Normal approximation N(rate, rate)
+                        const normal = Normal(T){ .mean = rate, .std = @sqrt(rate) };
+                        const sample_f = normal.sample(rng_inner);
+                        if (sample_f < 0.0) return 0;
+                        return @intFromFloat(@floor(sample_f + 0.5));
+                    }
+                }
+            };
+
+            // Sample Y0 (only if theta0 > 0)
+            const y0: u64 = if (self.theta0 > 0.0) poissonSample.sampleFromRate(self.theta0, rng) else 0;
+
+            // Sample Y1 and Y2
+            const y1 = poissonSample.sampleFromRate(self.theta1, rng);
+            const y2 = poissonSample.sampleFromRate(self.theta2, rng);
+
+            return Sample{
+                .x1 = y0 + y1,
+                .x2 = y0 + y2,
+            };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BivariatePoisson(theta0={d:.1}, theta1={d:.1}, theta2={d:.1})", .{ self.theta0, self.theta1, self.theta2 });
+        }
+
+        /// Validate internal invariants: theta0>=0, theta1>0, theta2>0, all finite
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.theta0 < 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.theta0)) return DistributionError.InvalidParameter;
+
+            if (self.theta1 <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.theta1)) return DistributionError.InvalidParameter;
+
+            if (self.theta2 <= 0.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.theta2)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
 test "Multinomial: init with n=0 returns error" {
     const allocator = testing.allocator;
     const weights = [_]f64{ 0.5, 0.5 };
@@ -124551,4 +124765,346 @@ test "NegativeMultinomial: f32 type support init and pmf" {
     const counts = [_]u64{ 0, 0 };
     const pmf_val = dist.pmf(&counts);
     try expectApproxEqAbs(@as(f32, 0.25), pmf_val, 1e-5);
+}
+
+// ============================================================================
+// BivariatePoisson Tests
+// ============================================================================
+
+test "BivariatePoisson: init with valid params" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    try expectEqual(0.5, dist.theta0);
+    try expectEqual(1.0, dist.theta1);
+    try expectEqual(1.5, dist.theta2);
+}
+
+test "BivariatePoisson: init with theta0=0 (independence case)" {
+    const dist = try BivariatePoisson(f64).init(0.0, 1.0, 1.5);
+    try expectEqual(0.0, dist.theta0);
+    try expectEqual(1.0, dist.theta1);
+    try expectEqual(1.5, dist.theta2);
+}
+
+test "BivariatePoisson: init with theta0<0 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(-0.1, 1.0, 1.5));
+}
+
+test "BivariatePoisson: init with theta1<=0 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, 0.0, 1.5));
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, -1.0, 1.5));
+}
+
+test "BivariatePoisson: init with theta2<=0 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, 1.0, 0.0));
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, 1.0, -1.0));
+}
+
+test "BivariatePoisson: init with NaN theta0 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(math.nan(f64), 1.0, 1.5));
+}
+
+test "BivariatePoisson: init with Inf theta0 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(math.inf(f64), 1.0, 1.5));
+}
+
+test "BivariatePoisson: init with NaN theta1 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, math.nan(f64), 1.5));
+}
+
+test "BivariatePoisson: init with Inf theta1 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, math.inf(f64), 1.5));
+}
+
+test "BivariatePoisson: init with NaN theta2 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, 1.0, math.nan(f64)));
+}
+
+test "BivariatePoisson: init with Inf theta2 returns error" {
+    try expectError(error.InvalidParameter, BivariatePoisson(f64).init(0.5, 1.0, math.inf(f64)));
+}
+
+test "BivariatePoisson: pmf(0,0) ground truth (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(0, 0);
+    try expectApproxEqAbs(0.0497870683678639429793424156501, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(1,0) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(1, 0);
+    try expectApproxEqAbs(0.0497870683678639429793424156501, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(0,1) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(0, 1);
+    try expectApproxEqAbs(0.0746806025517959144690136234751, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(1,1) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(1, 1);
+    try expectApproxEqAbs(0.0995741367357278859586848313001, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(2,1) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(2, 1);
+    try expectApproxEqAbs(0.0622338354598299287241780195626, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(1,2) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(1, 2);
+    try expectApproxEqAbs(0.0933507531897448930862670293438, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(2,2) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(2, 2);
+    try expectApproxEqAbs(0.0715689107788044180328047224969, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(3,2) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(3, 2);
+    try expectApproxEqAbs(0.0342286095029064607982979107594, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(0,3) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(0, 3);
+    try expectApproxEqAbs(0.0280052259569234679258801088032, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf(4,4) ground truth" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(4, 4);
+    try expectApproxEqAbs(0.00795750344030637890718005406386, pmf_val, 1e-9);
+}
+
+test "BivariatePoisson: pmf sums to ~1.0 over 40x40 grid" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    var sum: f64 = 0.0;
+    for (0..40) |x1| {
+        for (0..40) |x2| {
+            sum += dist.pmf(x1, x2);
+        }
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "BivariatePoisson: mean1 formula (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const mean_val = dist.mean1();
+    // E[X1] = theta0 + theta1 = 0.5 + 1.0 = 1.5
+    try expectApproxEqAbs(1.5, mean_val, 1e-9);
+}
+
+test "BivariatePoisson: mean2 formula (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const mean_val = dist.mean2();
+    // E[X2] = theta0 + theta2 = 0.5 + 1.5 = 2.0
+    try expectApproxEqAbs(2.0, mean_val, 1e-9);
+}
+
+test "BivariatePoisson: variance1 formula (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const var_val = dist.variance1();
+    // Var[X1] = theta0 + theta1 = 0.5 + 1.0 = 1.5
+    try expectApproxEqAbs(1.5, var_val, 1e-9);
+}
+
+test "BivariatePoisson: variance2 formula (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const var_val = dist.variance2();
+    // Var[X2] = theta0 + theta2 = 0.5 + 1.5 = 2.0
+    try expectApproxEqAbs(2.0, var_val, 1e-9);
+}
+
+test "BivariatePoisson: covariance formula (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const cov_val = dist.covariance();
+    // Cov(X1,X2) = theta0 = 0.5
+    try expectApproxEqAbs(0.5, cov_val, 1e-9);
+}
+
+test "BivariatePoisson: correlation formula (theta0=0.5, theta1=1.0, theta2=1.5)" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const corr_val = dist.correlation();
+    // Corr(X1,X2) = theta0 / sqrt((theta0+theta1)*(theta0+theta2))
+    //             = 0.5 / sqrt(1.5 * 2.0)
+    //             = 0.5 / sqrt(3.0)
+    //             ≈ 0.28867513459481287
+    try expectApproxEqAbs(0.28867513459481287, corr_val, 1e-9);
+}
+
+test "BivariatePoisson: independence case theta0=0 gives pmf product" {
+    const dist = try BivariatePoisson(f64).init(0.0, 1.0, 1.5);
+
+    // When theta0=0, should reduce to product of independent Poisson pmfs
+    const poisson1 = try Poisson(f64).init(1.0);
+    const poisson2 = try Poisson(f64).init(1.5);
+
+    // Check several (x1, x2) pairs
+    for ([_]u64{ 0, 1, 2, 3 }) |x1| {
+        for ([_]u64{ 0, 1, 2, 3 }) |x2| {
+            const bivar_pmf = dist.pmf(x1, x2);
+            const product = poisson1.pmf(x1) * poisson2.pmf(x2);
+            try expectApproxEqAbs(product, bivar_pmf, 1e-9);
+        }
+    }
+}
+
+test "BivariatePoisson: covariance=0 when theta0=0 (independence)" {
+    const dist = try BivariatePoisson(f64).init(0.0, 1.0, 1.5);
+    const cov_val = dist.covariance();
+    // Cov(X1,X2) = theta0 = 0 when theta0=0
+    try expectApproxEqAbs(0.0, cov_val, 1e-9);
+}
+
+test "BivariatePoisson: correlation=0 when theta0=0 (independence)" {
+    const dist = try BivariatePoisson(f64).init(0.0, 1.0, 1.5);
+    const corr_val = dist.correlation();
+    // Corr(X1,X2) = theta0 / sqrt(...) = 0 when theta0=0
+    try expectApproxEqAbs(0.0, corr_val, 1e-9);
+}
+
+test "BivariatePoisson: sample returns Sample struct with x1, x2 as u64" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const sample = dist.sample(rng);
+
+    // Sample must return a struct with x1 and x2 fields; both u64
+    try expect(true); // Just verify it compiles and runs
+    _ = sample; // Discard result to avoid unused variable warning
+}
+
+test "BivariatePoisson: sample empirical mean1 roughly matches theoretical (2000 samples)" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const n_samples = 2000;
+    var sum_x1: u64 = 0;
+
+    for (0..n_samples) |_| {
+        const sample = dist.sample(rng);
+        sum_x1 += sample.x1;
+    }
+
+    const empirical_mean = @as(f64, @floatFromInt(sum_x1)) / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean1();
+    // Allow 15% tolerance for statistical variation
+    const tolerance = theoretical_mean * 0.15;
+    try expectApproxEqAbs(theoretical_mean, empirical_mean, tolerance);
+}
+
+test "BivariatePoisson: sample empirical mean2 roughly matches theoretical (2000 samples)" {
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const n_samples = 2000;
+    var sum_x2: u64 = 0;
+
+    for (0..n_samples) |_| {
+        const sample = dist.sample(rng);
+        sum_x2 += sample.x2;
+    }
+
+    const empirical_mean = @as(f64, @floatFromInt(sum_x2)) / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean2();
+    // Allow 15% tolerance for statistical variation
+    const tolerance = theoretical_mean * 0.15;
+    try expectApproxEqAbs(theoretical_mean, empirical_mean, tolerance);
+}
+
+test "BivariatePoisson: sample empirical covariance roughly matches theoretical" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    const n_samples = 2000;
+    var sum_x1: i64 = 0;
+    var sum_x2: i64 = 0;
+    var sum_prod: i64 = 0;
+
+    for (0..n_samples) |_| {
+        const sample = dist.sample(rng);
+        sum_x1 += @intCast(sample.x1);
+        sum_x2 += @intCast(sample.x2);
+        sum_prod += @intCast(@as(i64, @intCast(sample.x1)) * @as(i64, @intCast(sample.x2)));
+    }
+
+    const mean_x1 = @as(f64, @floatFromInt(sum_x1)) / @as(f64, @floatFromInt(n_samples));
+    const mean_x2 = @as(f64, @floatFromInt(sum_x2)) / @as(f64, @floatFromInt(n_samples));
+    const mean_prod = @as(f64, @floatFromInt(sum_prod)) / @as(f64, @floatFromInt(n_samples));
+    const empirical_cov = mean_prod - mean_x1 * mean_x2;
+    const theoretical_cov = dist.covariance();
+
+    // Allow 20% tolerance for statistical variation in covariance
+    const tolerance = theoretical_cov * 0.2 + 0.05; // Add small absolute buffer
+    try expectApproxEqAbs(theoretical_cov, empirical_cov, tolerance);
+}
+
+test "BivariatePoisson: validate passes for valid params" {
+    const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
+    try dist.validate();
+}
+
+test "BivariatePoisson: validate passes for theta0=0" {
+    const dist = try BivariatePoisson(f64).init(0.0, 1.0, 1.5);
+    try dist.validate();
+}
+
+test "BivariatePoisson: validate fails when theta0<0" {
+    const dist = BivariatePoisson(f64){ .theta0 = -0.1, .theta1 = 1.0, .theta2 = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: validate fails when theta1<=0" {
+    const dist = BivariatePoisson(f64){ .theta0 = 0.5, .theta1 = 0.0, .theta2 = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: validate fails when theta2<=0" {
+    const dist = BivariatePoisson(f64){ .theta0 = 0.5, .theta1 = 1.0, .theta2 = 0.0 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: validate fails when theta0 is NaN" {
+    const dist = BivariatePoisson(f64){ .theta0 = math.nan(f64), .theta1 = 1.0, .theta2 = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: validate fails when theta0 is Inf" {
+    const dist = BivariatePoisson(f64){ .theta0 = math.inf(f64), .theta1 = 1.0, .theta2 = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: validate fails when theta1 is NaN" {
+    const dist = BivariatePoisson(f64){ .theta0 = 0.5, .theta1 = math.nan(f64), .theta2 = 1.5 };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: validate fails when theta2 is Inf" {
+    const dist = BivariatePoisson(f64){ .theta0 = 0.5, .theta1 = 1.0, .theta2 = math.inf(f64) };
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariatePoisson: f32 type support init" {
+    const dist = try BivariatePoisson(f32).init(0.5, 1.0, 1.5);
+    try expectEqual(@as(f32, 0.5), dist.theta0);
+    try expectEqual(@as(f32, 1.0), dist.theta1);
+    try expectEqual(@as(f32, 1.5), dist.theta2);
+}
+
+test "BivariatePoisson: f32 type support pmf with looser tolerance" {
+    const dist = try BivariatePoisson(f32).init(0.5, 1.0, 1.5);
+    const pmf_val = dist.pmf(0, 0);
+    // f32 has lower precision, use 1e-6 tolerance instead of 1e-9
+    try expectApproxEqAbs(@as(f32, 0.0497870683678639429793424156501), pmf_val, 1e-6);
 }
