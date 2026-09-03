@@ -1,3 +1,16 @@
+**Session 873 Update (2026-09-03) — FEATURE MODE [COMPLETED]:**
+
+✅ **NegativeMultinomial (203rd, recovered uncommitted, commit 62aac23)**
+- **Mode**: FEATURE MODE (counter: 873). CI green on main at session start, 0 open issues.
+- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
+  `NegativeMultinomial(r, p_1..p_k)` (generalizes NegativeBinomial to k failure categories,
+  positive inter-category covariance unlike ordinary Multinomial) — 30 tests. Verified via k=1
+  cross-check against `NegativeBinomial(r,p)` pmf/mean/variance directly, plus a sum-of-marginals
+  variance identity. No `@panic`/`catch unreachable`/`debug.print` found. `zig build test` exit 0,
+  203 distributions confirmed via grep.
+- **Next priority (feature)**: vector-`[]const T`-parameterized vein still not exhausted —
+  Multivariate NegativeBinomial variants or Multivariate Polya are candidates.
+
 **Session 870 Update (2026-09-03) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **FisherNoncentralHypergeometric (201st, recovered uncommitted, bug fixed, commit d2ad179) +
@@ -20,39 +33,9 @@ patterns.md compression (commit 365f20b)**
   auto-memory session-index system. Needs a decision (compress vs. retire) next stabilization
   session with spare capacity, not urgent. `debugging.md` also slightly over cap at 243 lines.
 
-**Session 862 Update (2026-09-01) — FEATURE MODE [COMPLETED]:**
-
-✅ **ShiftedChi (196th, recovered uncommitted, commit 335bb5b)**
-- **Mode**: FEATURE MODE (counter: 862). CI green on main at session start, 0 open issues.
-- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
-  `ShiftedChi` (X=threshold+Chi(k)) — full pdf/cdf/sf/quantile/mean/variance/mode/median/entropy/
-  sample/format/validate/validateValue suite, f32 support, γ=0 cross-checks vs `Chi`. No
-  `@panic`/`debug.print` found. Independently re-derived pdf case 1 and mean case 3 by hand from
-  the Chi formulas — both matched. `zig build test` exit 0 (196 distributions confirmed via grep).
-- **Next priority (feature)**: ShiftedNakagami, ShiftedLevy, ShiftedInverseGaussian remain
-  unchecked against root.zig — grep first, same derive-formulas-first recipe.
-
-**Session 859 Update (2026-09-01) — FEATURE MODE [COMPLETED]:**
-
-✅ **ShiftedGamma (194th, recovered uncommitted, commit 1c2e120) + ShiftedRayleigh (195th, fresh
-TDD, commit a678775)**
-- **Mode**: FEATURE MODE (counter: 859). CI green on main at session start, 0 open issues.
-- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
-  `ShiftedGamma` (3-param Gamma, X=γ+Gamma(shape,rate)) — 59 tests, no `@panic`/`catch
-  unreachable`/`debug.print`. Independently re-derived mean/variance/mode formulas by hand and
-  confirmed all 3 numeric test vectors before trusting. Diff also tightened the shared
-  `regularizedGammaP` helper's convergence (200→300 iters, 1e-10→1e-12 tol) — full suite still
-  passed. `zig build test` exit 0, committed as 194th.
-- Implemented `ShiftedRayleigh` (X=γ+Rayleigh(σ)) as 195th via full TDD: derived formulas + 3
-  mpmath ground-truth vectors (30 dps) into the scratchpad first, test-writer wrote 60 failing
-  tests, zig-developer implemented correctly on the first pass **but caught a real bug in
-  test-writer's own format() test** (broken `std.io.FixedBufferStream` API instead of this file's
-  `std.Io.Writer.fixed(&buf)` idiom) and correctly refused to fix it itself — re-dispatched
-  test-writer per the TDD protocol to fix just that one test block. First session this rule
-  actually fired in practice, not just theoretical. `zig build test` exit 0 after the fix.
-- **Next priority (feature)**: location-shift variants remain the cheapest path. Already shipped:
-  ShiftedLogNormal/Weibull/Exponential/Gamma/Rayleigh. Untested candidates: ShiftedChi,
-  ShiftedNakagami, ShiftedLevy, ShiftedInverseGaussian — grep root.zig first before implementing.
+**Sessions 859–862** (2026-09-01, FEATURE): ShiftedGamma (194th, recovered, commit 1c2e120),
+ShiftedRayleigh (195th, fresh TDD, commit a678775), ShiftedChi (196th, recovered, commit 335bb5b,
+f32 support + γ=0 cross-checks vs `Chi`). Full detail in external auto-memory per-session files.
 
 **Session 856 Update (2026-08-31) — FEATURE MODE [COMPLETED]:**
 
