@@ -780,3 +780,7 @@
 {"timestamp": "2026-09-03T07:42:57.933202Z", "action": "subagent", "agent_type": "zig-developer", "task": "Implement BivariatePoisson distribution to pass failing tests (204th)", "project": "zuda"}
 {"timestamp":"2026-09-03T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Fix tautological BivariatePoisson sample() test (expect(true) with discarded result) found during stabilization test-quality audit","project":"zuda"}
 {"timestamp":"2026-09-03T15:32:18Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for BivariateBinomial distribution (common-shock trinomial reduction)","project":"zuda"}
+{"timestamp":"2026-09-03T19:36:46Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for NoncentralChi (206th distribution)","project":"zuda"}
+{"timestamp":"2026-09-03T19:38:53Z","action":"subagent","agent_type":"zig-developer","task":"Implement NoncentralChi (206th distribution) to pass failing tests","project":"zuda"}
+{"timestamp":"2026-09-03T19:45:21Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 wrong NoncentralChi tests (tolerance + false entropy monotonicity claim)","project":"zuda"}
+{"timestamp":"2026-09-03T23:38:50Z","action":"subagent","agent_type":"code-reviewer","task":"Verify recovered NoncentralChi distribution implementation correctness and safety","project":"zuda"}

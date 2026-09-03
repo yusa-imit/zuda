@@ -36005,6 +36005,198 @@ pub fn NoncentralChiSquared(comptime T: type) type {
     };
 }
 
+pub fn NoncentralChi(comptime T: type) type {
+    return struct {
+        k: T, // degrees of freedom, k > 0
+        lambda: T, // noncentrality parameter, lambda >= 0
+        ncx2: NoncentralChiSquared(T), // internal chi-squared, X = sqrt(ncx2)
+
+        const Self = @This();
+
+        /// Create a noncentral chi distribution with k degrees of freedom and noncentrality lambda.
+        ///
+        /// Errors: k ≤ 0, lambda < 0, NaN, or infinite values.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(k: T, lambda: T) DistributionError!Self {
+            if (k <= 0.0 or !math.isFinite(k)) return error.InvalidParameter;
+            if (lambda < 0.0 or !math.isFinite(lambda)) return error.InvalidParameter;
+            return Self{
+                .k = k,
+                .lambda = lambda,
+                .ncx2 = try NoncentralChiSquared(T).init(k, lambda),
+            };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; k, λ) = 2·x·f_{χ²(k,λ)}(x²)
+        /// where f_{χ²} is the noncentral chi-squared PDF (change of variable X = √Y).
+        ///
+        /// Time: O(1) for λ=0, O(series_terms) for λ>0 | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return 2.0 * x * self.ncx2.pdf(x * x);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x) = ln(2) + ln(x) + log f_{χ²}(x²); -∞ for x ≤ 0
+        ///
+        /// Time: O(1) for λ=0, O(series_terms) for λ>0 | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return @log(2.0) + @log(x) + self.ncx2.logpdf(x * x);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; k, λ) = F_{χ²(k,λ)}(x²)
+        /// where F_{χ²} is the noncentral chi-squared CDF (monotonic increasing transform).
+        ///
+        /// Time: O(1) for λ=0, O(series_terms) for λ>0 | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return self.ncx2.cdf(x * x);
+        }
+
+        /// Survival function (SF) at x: P(X > x)
+        ///
+        /// S(x; k, λ) = 1 - F(x; k, λ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Quantile function (inverse CDF): returns x such that P(X ≤ x) = p
+        ///
+        /// Uses sqrt of NoncentralChiSquared's quantile: x = √(F⁻¹_{χ²}(p))
+        ///
+        /// Errors: p < 0 or p > 1
+        ///
+        /// Time: O(log(1/ε)) for tolerance ε | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+            const y = try self.ncx2.quantile(p);
+            return @sqrt(y);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Approximate mode = √(max(0, k + λ - 1))
+        /// (reduces to √(k-1) for λ=0, matching Chi(k)'s mode)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return @sqrt(@max(0.0, self.k + self.lambda - 1.0));
+        }
+
+        /// Mean (expected value) of the distribution
+        ///
+        /// E[X] = ∫₀^∞ x·f(x) dx (numeric Simpson's rule, no closed form in general).
+        /// At λ=0 this numerically matches Chi(k)'s closed-form mean.
+        ///
+        /// Time: O(n) where n is number of Simpson panels | Space: O(1)
+        pub fn mean(self: Self) T {
+            // Bounds: integrate from eps to upper = mean_Y + 20*sqrt(var_Y)
+            // where mean_Y = k+lambda, var_Y = 2*(k+2*lambda)
+            const eps: T = 1e-10;
+            const mean_y = self.k + self.lambda;
+            const var_y = 2.0 * (self.k + 2.0 * self.lambda);
+            const upper = @sqrt(mean_y + 20.0 * @sqrt(var_y));
+
+            // Simpson's rule with n=2000 panels
+            const n: usize = 2000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const x = eps + @as(T, @floatFromInt(i)) * h;
+                const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                sum += w * x * self.pdf(x);
+            }
+            return sum * h / 3.0;
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var[X] = E[X²] - E[X]² = (k + λ) - E[X]²
+        /// (since X² = Y exactly, and E[Y] = k + λ for NoncentralChiSquared)
+        ///
+        /// Time: O(n) where n is Simpson panel count in mean() | Space: O(1)
+        pub fn variance(self: Self) T {
+            const mu = self.mean();
+            const e_x2 = self.k + self.lambda;
+            return e_x2 - mu * mu;
+        }
+
+        /// Differential entropy
+        ///
+        /// H(X) = -∫ f(x) ln(f(x)) dx (numeric Simpson's rule over same bounds as mean)
+        ///
+        /// Time: O(n) where n is number of Simpson panels | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const eps: T = 1e-10;
+            const mean_y = self.k + self.lambda;
+            const var_y = 2.0 * (self.k + 2.0 * self.lambda);
+            const upper = @sqrt(mean_y + 20.0 * @sqrt(var_y));
+
+            const n: usize = 2000;
+            const h = upper / @as(T, @floatFromInt(n));
+            var sum: T = 0.0;
+
+            var i: usize = 0;
+            while (i <= n) : (i += 1) {
+                const x = eps + @as(T, @floatFromInt(i)) * h;
+                const f_x = self.pdf(x);
+                if (f_x > 0.0) {
+                    const w: T = if (i == 0 or i == n) 1.0 else if (i % 2 == 1) 4.0 else 2.0;
+                    sum += w * f_x * @log(f_x);
+                }
+            }
+            return -sum * h / 3.0;
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses X = √Y where Y ~ NoncentralChiSquared(k, λ).
+        ///
+        /// Time: O(1) expected | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            const y = self.ncx2.sample(rng);
+            return @sqrt(y);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NoncentralChi(k={d:.1}, lambda={d:.1})", .{ self.k, self.lambda });
+        }
+
+        /// Validate distribution parameters
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (self.k <= 0.0 or !math.isFinite(self.k)) return error.InvalidParameter;
+            if (self.lambda < 0.0 or !math.isFinite(self.lambda)) return error.InvalidParameter;
+        }
+
+        /// Validate that x is in the support (0, ∞)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validateValue(self: Self, x: T) DistributionError!void {
+            _ = self;
+            if (x <= 0.0 or !math.isFinite(x)) return error.OutOfDomain;
+        }
+    };
+}
+
 test "NoncentralChiSquared: init valid parameters" {
     _ = try NoncentralChiSquared(f64).init(1.0, 0.0);
     _ = try NoncentralChiSquared(f64).init(2.0, 3.0);
@@ -125767,4 +125959,377 @@ test "BivariateBinomial: f32 type support pmf with looser tolerance" {
     const pmf_val = dist.pmf(0, 0);
     // f32 has lower precision, use 1e-6 tolerance instead of 1e-9
     try expectApproxEqAbs(@as(f32, 0.01024), pmf_val, 1e-6);
+}
+
+test "NoncentralChi: init valid parameters" {
+    _ = try NoncentralChi(f64).init(1.0, 0.0);
+    _ = try NoncentralChi(f64).init(2.0, 3.0);
+    _ = try NoncentralChi(f64).init(0.5, 0.0);
+    _ = try NoncentralChi(f64).init(10.0, 10.0);
+}
+
+test "NoncentralChi: init invalid k zero" {
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(0.0, 1.0));
+}
+
+test "NoncentralChi: init invalid k negative" {
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(-1.0, 1.0));
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(-0.5, 0.0));
+}
+
+test "NoncentralChi: init invalid k NaN" {
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(math.nan(f64), 0.0));
+}
+
+test "NoncentralChi: init invalid k infinity" {
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(math.inf(f64), 1.0));
+}
+
+test "NoncentralChi: init invalid lambda negative" {
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(2.0, -0.1));
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(3.0, -1.0));
+}
+
+test "NoncentralChi: init invalid lambda infinity" {
+    try expectError(error.InvalidParameter, NoncentralChi(f64).init(2.0, math.inf(f64)));
+}
+
+test "NoncentralChi: validate passes for valid params" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    try dist.validate();
+}
+
+test "NoncentralChi: validateValue rejects non-positive x" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(0.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-1.0));
+    try expectError(error.OutOfDomain, dist.validateValue(-0.01));
+}
+
+test "NoncentralChi: validateValue rejects NaN and infinity" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    try expectError(error.OutOfDomain, dist.validateValue(math.nan(f64)));
+    try expectError(error.OutOfDomain, dist.validateValue(math.inf(f64)));
+}
+
+test "NoncentralChi: validateValue accepts positive finite x" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e6 };
+    for (x_vals) |x| {
+        try dist.validateValue(x);
+    }
+}
+
+test "NoncentralChi: pdf positive on support" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0 };
+    for (x_vals) |x| {
+        try testing.expect(dist.pdf(x) > 0.0);
+    }
+}
+
+test "NoncentralChi: pdf zero for non-positive x" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    try testing.expect(dist.pdf(0.0) == 0.0);
+    try testing.expect(dist.pdf(-1.0) == 0.0);
+    try testing.expect(dist.pdf(-0.01) == 0.0);
+}
+
+test "NoncentralChi: pdf ground truth table k=3 lambda=2" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    // From mpmath ground truth: k=3, lambda=2, x=1.0 -> pdf=0.243601135064302308
+    try expectApproxEqAbs(0.243601135064302308, dist.pdf(1.0), 1e-7);
+    // k=3, lambda=2, x=2.5 -> pdf=0.390808670599772330
+    try expectApproxEqAbs(0.390808670599772330, dist.pdf(2.5), 1e-7);
+}
+
+test "NoncentralChi: pdf ground truth table k=4 lambda=5" {
+    const dist = try NoncentralChi(f64).init(4.0, 5.0);
+    // k=4, lambda=5, x=3.0 -> pdf=0.435763222529207358
+    try expectApproxEqAbs(0.435763222529207358, dist.pdf(3.0), 1e-7);
+}
+
+test "NoncentralChi: pdf ground truth table k=1 lambda=0" {
+    const dist = try NoncentralChi(f64).init(1.0, 0.0);
+    // k=1, lambda=0, x=0.5 -> pdf=0.704130653528598907
+    try expectApproxEqAbs(0.704130653528598907, dist.pdf(0.5), 1e-7);
+}
+
+test "NoncentralChi: pdf ground truth table k=5 lambda=0" {
+    const dist = try NoncentralChi(f64).init(5.0, 0.0);
+    // k=5, lambda=0, x=2.0 -> pdf=0.575903642807339181
+    try expectApproxEqAbs(0.575903642807339181, dist.pdf(2.0), 1e-7);
+}
+
+test "NoncentralChi: logpdf equals log of pdf" {
+    const dist = try NoncentralChi(f64).init(4.0, 1.0);
+    const x_vals = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(@log(dist.pdf(x)), dist.logpdf(x), 1e-10);
+    }
+}
+
+test "NoncentralChi: logpdf negative infinity for non-positive x" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "NoncentralChi: cdf zero at origin" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    try testing.expect(dist.cdf(0.0) == 0.0);
+}
+
+test "NoncentralChi: cdf approaches one" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    try testing.expect(dist.cdf(1e6) > 0.9999);
+}
+
+test "NoncentralChi: cdf is monotonically increasing" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0 };
+    var prev = dist.cdf(x_vals[0]);
+    for (x_vals[1..]) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= prev);
+        prev = c;
+    }
+}
+
+test "NoncentralChi: cdf in [0, 1]" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    const x_vals = [_]f64{ 1e-6, 0.01, 0.1, 1.0, 10.0, 1e3 };
+    for (x_vals) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0 and c <= 1.0);
+    }
+}
+
+test "NoncentralChi: cdf ground truth table k=3 lambda=2" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    // k=3, lambda=2, x=1.0 -> cdf=0.087873111807345423
+    try expectApproxEqAbs(0.087873111807345423, dist.cdf(1.0), 1e-7);
+    // k=3, lambda=2, x=2.5 -> cdf=0.704844438062888536
+    try expectApproxEqAbs(0.704844438062888536, dist.cdf(2.5), 1e-7);
+}
+
+test "NoncentralChi: cdf ground truth table k=4 lambda=5" {
+    const dist = try NoncentralChi(f64).init(4.0, 5.0);
+    // k=4, lambda=5, x=3.0 -> cdf=0.569236721753974765
+    try expectApproxEqAbs(0.569236721753974765, dist.cdf(3.0), 1e-7);
+}
+
+test "NoncentralChi: cdf ground truth table k=1 lambda=0" {
+    const dist = try NoncentralChi(f64).init(1.0, 0.0);
+    // k=1, lambda=0, x=0.5 -> cdf=0.382924922548026181
+    try expectApproxEqAbs(0.382924922548026181, dist.cdf(0.5), 1e-7);
+}
+
+test "NoncentralChi: cdf ground truth table k=5 lambda=0" {
+    const dist = try NoncentralChi(f64).init(5.0, 0.0);
+    // k=5, lambda=0, x=2.0 -> cdf=0.450584048647219737
+    try expectApproxEqAbs(0.450584048647219737, dist.cdf(2.0), 1e-7);
+}
+
+test "NoncentralChi: sf equals 1 minus cdf" {
+    const dist = try NoncentralChi(f64).init(4.0, 1.0);
+    const x_vals = [_]f64{ 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    for (x_vals) |x| {
+        try expectApproxEqAbs(1.0, dist.cdf(x) + dist.sf(x), 1e-12);
+    }
+}
+
+test "NoncentralChi: quantile roundtrip cdf(quantile(p)) = p" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    const probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-7);
+    }
+}
+
+test "NoncentralChi: quantile boundary cases" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    try testing.expect((try dist.quantile(0.0)) == 0.0);
+    try testing.expect(math.isInf(try dist.quantile(1.0)));
+}
+
+test "NoncentralChi: quantile rejects invalid probabilities" {
+    const dist = try NoncentralChi(f64).init(3.0, 1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+    try expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "NoncentralChi: mode formula sqrt(max(0, k+lambda-1))" {
+    const dist1 = try NoncentralChi(f64).init(4.0, 2.0);
+    const expected1 = @sqrt(@max(0.0, 4.0 + 2.0 - 1.0)); // = sqrt(5)
+    try expectApproxEqAbs(expected1, dist1.mode(), 1e-6);
+
+    const dist2 = try NoncentralChi(f64).init(1.0, 0.0);
+    const expected2 = @sqrt(@max(0.0, 1.0 + 0.0 - 1.0)); // = sqrt(0) = 0
+    try expectApproxEqAbs(expected2, dist2.mode(), 1e-6);
+
+    const dist3 = try NoncentralChi(f64).init(3.0, 2.0);
+    const expected3 = @sqrt(@max(0.0, 3.0 + 2.0 - 1.0)); // = sqrt(4) = 2
+    try expectApproxEqAbs(expected3, dist3.mode(), 1e-6);
+}
+
+test "NoncentralChi: mean table k=3 lambda=2" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    // From mpmath ground truth: k=3, lambda=2 -> mean=2.081163661965552026
+    try expectApproxEqAbs(2.081163661965552026, dist.mean(), 1e-3);
+}
+
+test "NoncentralChi: mean table k=4 lambda=5" {
+    const dist = try NoncentralChi(f64).init(4.0, 5.0);
+    // k=4, lambda=5 -> mean=2.868234275948600725
+    try expectApproxEqAbs(2.868234275948600725, dist.mean(), 1e-3);
+}
+
+test "NoncentralChi: mean table k=2 lambda=4" {
+    const dist = try NoncentralChi(f64).init(2.0, 4.0);
+    // k=2, lambda=4 -> mean=2.272383428068742523
+    try expectApproxEqAbs(2.272383428068742523, dist.mean(), 1e-3);
+}
+
+test "NoncentralChi: mean table k=1 lambda=0" {
+    const dist = try NoncentralChi(f64).init(1.0, 0.0);
+    // k=1, lambda=0 -> mean=0.797884560802865301
+    try expectApproxEqAbs(0.797884560802865301, dist.mean(), 1e-3);
+}
+
+test "NoncentralChi: cross-check mean matches Chi(3.0) when lambda=0" {
+    const ncc = try NoncentralChi(f64).init(3.0, 0.0);
+    const chi = try Chi(f64).init(3.0);
+    try expectApproxEqAbs(chi.mean(), ncc.mean(), 1e-6);
+}
+
+test "NoncentralChi: variance table k=3 lambda=2" {
+    const dist = try NoncentralChi(f64).init(3.0, 2.0);
+    // From mpmath ground truth: k=3, lambda=2 -> variance=0.668757812114133499
+    try expectApproxEqAbs(0.668757812114133499, dist.variance(), 1e-3);
+}
+
+test "NoncentralChi: variance table k=4 lambda=5" {
+    const dist = try NoncentralChi(f64).init(4.0, 5.0);
+    // k=4, lambda=5 -> variance=0.773232138273606147
+    try expectApproxEqAbs(0.773232138273606147, dist.variance(), 1e-3);
+}
+
+test "NoncentralChi: variance table k=2 lambda=4" {
+    const dist = try NoncentralChi(f64).init(2.0, 4.0);
+    // k=2, lambda=4 -> variance=0.836273555838550077
+    try expectApproxEqAbs(0.836273555838550077, dist.variance(), 1e-3);
+}
+
+test "NoncentralChi: variance table k=1 lambda=0" {
+    const dist = try NoncentralChi(f64).init(1.0, 0.0);
+    // k=1, lambda=0 -> variance=0.363380227632418744
+    try expectApproxEqAbs(0.363380227632418744, dist.variance(), 1e-3);
+}
+
+test "NoncentralChi: cross-check pdf matches Rice(2.0, 1.0) when k=2 lambda=4" {
+    const ncc = try NoncentralChi(f64).init(2.0, 4.0);
+    // NoncentralChi(2, 4) with x=1.5 should match Rice(nu=2, sigma=1)
+    // where nu = sqrt(lambda) = sqrt(4) = 2
+    const rice = try Rice(f64).init(2.0, 1.0);
+    const ncc_pdf = ncc.pdf(1.5);
+    const rice_pdf = rice.pdf(1.5);
+    try expectApproxEqAbs(rice_pdf, ncc_pdf, 1e-6);
+}
+
+test "NoncentralChi: entropy is finite and positive" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    const h = dist.entropy();
+    try testing.expect(h > 0.0);
+    try testing.expect(math.isFinite(h));
+}
+
+test "NoncentralChi: sample is positive and finite" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralChi: empirical sample mean converges to theoretical" {
+    const dist = try NoncentralChi(f64).init(4.0, 2.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    const expected = dist.mean();
+    try expectApproxEqAbs(expected, empirical, 0.05);
+}
+
+test "NoncentralChi: sample works with lambda=0" {
+    const dist = try NoncentralChi(f64).init(3.0, 0.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralChi: f32 support basic operations" {
+    const dist = try NoncentralChi(f32).init(3.0, 1.0);
+    try testing.expect(dist.mean() > 0.0);
+    try testing.expect(dist.variance() > 0.0);
+    try testing.expect(dist.pdf(1.0) > 0.0);
+    const c = dist.cdf(1.0);
+    try testing.expect(c > 0.0 and c < 1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
+test "NoncentralChi: f32 quantile roundtrip" {
+    const dist = try NoncentralChi(f32).init(4.0, 1.0);
+    const probs = [_]f32{ 0.1, 0.5, 0.9 };
+    for (probs) |p| {
+        const q = try dist.quantile(p);
+        try expectApproxEqAbs(p, dist.cdf(q), 1e-3);
+    }
+}
+
+test "NoncentralChi: sample works with small k" {
+    const dist = try NoncentralChi(f64).init(0.5, 0.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        const s = dist.sample(rng.random());
+        try testing.expect(s > 0.0);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "NoncentralChi: sample lambda=0 empirical mean converges to chi(k)" {
+    const k = 5.0;
+    const dist = try NoncentralChi(f64).init(k, 0.0);
+    var rng = std.Random.DefaultPrng.init(99);
+    var sum: f64 = 0.0;
+    const n = 50000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical = sum / @as(f64, @floatFromInt(n));
+    // For lambda=0 this is chi(k)
+    const chi_k = try Chi(f64).init(k);
+    try expectApproxEqAbs(chi_k.mean(), empirical, 0.05);
+}
+
+test "NoncentralChi: format" {
+    const dist = try NoncentralChi(f64).init(5.0, 2.0);
+
+    var buffer: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buffer);
+    try dist.format(&w);
+    const result = w.buffered();
+    try testing.expect(std.mem.eql(u8, result, "NoncentralChi(k=5.0, lambda=2.0)"));
 }
