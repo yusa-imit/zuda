@@ -9833,6 +9833,215 @@ pub fn BivariatePoisson(comptime T: type) type {
     };
 }
 
+// ============================================================================
+// BivariateBinomial Distribution
+// ============================================================================
+
+/// BivariateBinomial distribution (Aitken 1936 common-shock trinomial reduction)
+///
+/// Models the joint distribution of two dependent Binomial counts obtained by repeating
+/// n independent trials, each with 4 possible outcomes:
+///   - "shared success" (counts toward both X1 and X2) w.p. p0
+///   - "X1-only success" w.p. p1
+///   - "X2-only success" w.p. p2
+///   - "neither" w.p. p3 = 1 - p0 - p1 - p2
+///
+/// X1 = (# trials with shared or X1-only outcome), X2 = (# trials with shared or X2-only outcome).
+///
+/// Parameters:
+///   - n: number of trials (>= 0)
+///   - p0: shared-success probability (>= 0)
+///   - p1: X1-only success probability (>= 0)
+///   - p2: X2-only success probability (>= 0)
+///   - p0 + p1 + p2 <= 1
+///
+/// Moments:
+///   - E[X1] = n*(p0+p1), E[X2] = n*(p0+p2)
+///   - Var[X1] = n*(p0+p1)*(1-p0-p1), Var[X2] = n*(p0+p2)*(1-p0-p2)
+///   - Cov(X1,X2) = n*(p0*p3 - p1*p2)
+///   - Corr(X1,X2) = Cov(X1,X2) / sqrt(Var[X1]*Var[X2])
+///
+/// Time: O(n) for pmf via summation over shared-success count j
+pub fn BivariateBinomial(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        n: u64,
+        p0: T,
+        p1: T,
+        p2: T,
+
+        /// Initialize BivariateBinomial with given trial count and category probabilities.
+        /// p0, p1, p2 must each be in [0,1] and finite, with p0+p1+p2 <= 1 (p3 = 1-sum >= 0).
+        /// n = 0 is a valid degenerate case (X1 = X2 = 0 always).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(n: u64, p0: T, p1: T, p2: T) DistributionError!Self {
+            if (!math.isFinite(p0) or p0 < 0.0 or p0 > 1.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(p1) or p1 < 0.0 or p1 > 1.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(p2) or p2 < 0.0 or p2 > 1.0) return DistributionError.InvalidParameter;
+
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-12,
+            };
+            if (p0 + p1 + p2 > 1.0 + eps) return DistributionError.InvalidParameter;
+
+            return Self{ .n = n, .p0 = p0, .p1 = p1, .p2 = p2 };
+        }
+
+        /// Shared/neither probability p3 = 1 - p0 - p1 - p2 (clamped to [0,1] to absorb float error).
+        ///
+        /// Time: O(1) | Space: O(1)
+        fn p3(self: Self) T {
+            return @max(0.0, 1.0 - self.p0 - self.p1 - self.p2);
+        }
+
+        /// Returns exponent*log(base) treating 0^0 = 1 (contributes 0 to a log-sum), or null if
+        /// base == 0 and exponent > 0 (the whole term is exactly zero).
+        fn logPow(base: T, exponent: u64) ?T {
+            if (exponent == 0) return 0.0;
+            if (base == 0.0) return null;
+            return @as(T, @floatFromInt(exponent)) * @log(base);
+        }
+
+        /// PMF: P(X1=x1, X2=x2)
+        /// Computes via sum over j=max(0,x1+x2-n)..min(x1,x2) (shared-success count) in log space.
+        ///
+        /// Time: O(min(x1,x2)) | Space: O(1)
+        pub fn pmf(self: Self, x1: u64, x2: u64) T {
+            if (x1 > self.n or x2 > self.n) return 0.0;
+
+            const p3_val = self.p3();
+            const lo: u64 = if (x1 + x2 > self.n) x1 + x2 - self.n else 0;
+            const hi: u64 = @min(x1, x2);
+
+            var sum: T = 0.0;
+            var j = lo;
+            while (j <= hi) : (j += 1) {
+                const rest = (self.n + j) - (x1 + x2);
+                const log_coef = logFactorial(T, self.n) - logFactorial(T, j) -
+                    logFactorial(T, x1 - j) - logFactorial(T, x2 - j) - logFactorial(T, rest);
+
+                const t0 = logPow(self.p0, j) orelse continue;
+                const t1 = logPow(self.p1, x1 - j) orelse continue;
+                const t2 = logPow(self.p2, x2 - j) orelse continue;
+                const t3 = logPow(p3_val, rest) orelse continue;
+
+                sum += @exp(log_coef + t0 + t1 + t2 + t3);
+            }
+
+            return sum;
+        }
+
+        /// Mean of X1: E[X1] = n*(p0+p1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean1(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) * (self.p0 + self.p1);
+        }
+
+        /// Mean of X2: E[X2] = n*(p0+p2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean2(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) * (self.p0 + self.p2);
+        }
+
+        /// Variance of X1: Var[X1] = n*(p0+p1)*(1-p0-p1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance1(self: Self) T {
+            const q1 = self.p0 + self.p1;
+            return @as(T, @floatFromInt(self.n)) * q1 * (1.0 - q1);
+        }
+
+        /// Variance of X2: Var[X2] = n*(p0+p2)*(1-p0-p2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance2(self: Self) T {
+            const q2 = self.p0 + self.p2;
+            return @as(T, @floatFromInt(self.n)) * q2 * (1.0 - q2);
+        }
+
+        /// Covariance: Cov(X1,X2) = n*(p0*p3 - p1*p2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self) T {
+            return @as(T, @floatFromInt(self.n)) * (self.p0 * self.p3() - self.p1 * self.p2);
+        }
+
+        /// Correlation: Corr(X1,X2) = Cov(X1,X2) / sqrt(Var[X1]*Var[X2])
+        /// Returns 0 if either variance is zero.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn correlation(self: Self) T {
+            const v1 = self.variance1();
+            const v2 = self.variance2();
+            const denom = v1 * v2;
+            if (denom <= 0.0) return 0.0;
+
+            return self.covariance() / @sqrt(denom);
+        }
+
+        /// Sample result: pair of counts (x1, x2)
+        pub const Sample = struct {
+            x1: u64,
+            x2: u64,
+        };
+
+        /// Generate a random sample from this distribution.
+        /// Simulates n independent trinomial trials: each trial lands in "shared" (both counts),
+        /// "X1-only", "X2-only", or "neither" according to p0, p1, p2, p3.
+        ///
+        /// Time: O(n) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) Sample {
+            var x1: u64 = 0;
+            var x2: u64 = 0;
+
+            const c0 = self.p0;
+            const c1 = c0 + self.p1;
+            const c2 = c1 + self.p2;
+
+            for (0..self.n) |_| {
+                const u = rng.float(T);
+                if (u < c0) {
+                    x1 += 1;
+                    x2 += 1;
+                } else if (u < c1) {
+                    x1 += 1;
+                } else if (u < c2) {
+                    x2 += 1;
+                }
+            }
+
+            return Sample{ .x1 = x1, .x2 = x2 };
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("BivariateBinomial(n={}, p0={d:.3}, p1={d:.3}, p2={d:.3})", .{ self.n, self.p0, self.p1, self.p2 });
+        }
+
+        /// Validate internal invariants: p0,p1,p2 in [0,1], finite, sum <= 1
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!math.isFinite(self.p0) or self.p0 < 0.0 or self.p0 > 1.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.p1) or self.p1 < 0.0 or self.p1 > 1.0) return DistributionError.InvalidParameter;
+            if (!math.isFinite(self.p2) or self.p2 < 0.0 or self.p2 > 1.0) return DistributionError.InvalidParameter;
+
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-12,
+            };
+            if (self.p0 + self.p1 + self.p2 > 1.0 + eps) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
 test "Multinomial: init with n=0 returns error" {
     const allocator = testing.allocator;
     const weights = [_]f64{ 0.5, 0.5 };
@@ -125131,4 +125340,431 @@ test "BivariatePoisson: f32 type support pmf with looser tolerance" {
     const pmf_val = dist.pmf(0, 0);
     // f32 has lower precision, use 1e-6 tolerance instead of 1e-9
     try expectApproxEqAbs(@as(f32, 0.0497870683678639429793424156501), pmf_val, 1e-6);
+}
+
+// BivariateBinomial Tests
+// ============================================================================
+
+test "BivariateBinomial: init with valid params (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    try expectEqual(5, dist.n);
+    try expectApproxEqAbs(0.2, dist.p0, 1e-12);
+    try expectApproxEqAbs(0.3, dist.p1, 1e-12);
+    try expectApproxEqAbs(0.1, dist.p2, 1e-12);
+}
+
+test "BivariateBinomial: init with n=0 is valid (degenerate case)" {
+    const dist = try BivariateBinomial(f64).init(0, 1.0, 0.0, 0.0);
+    try expectEqual(0, dist.n);
+    try expectApproxEqAbs(1.0, dist.p0, 1e-12);
+}
+
+test "BivariateBinomial: init with p0<0 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, -0.1, 0.3, 0.1));
+}
+
+test "BivariateBinomial: init with p1<0 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, -0.1, 0.1));
+}
+
+test "BivariateBinomial: init with p2<0 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, 0.3, -0.1));
+}
+
+test "BivariateBinomial: init with p0>1 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 1.1, 0.3, 0.1));
+}
+
+test "BivariateBinomial: init with p1>1 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, 1.1, 0.1));
+}
+
+test "BivariateBinomial: init with p2>1 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, 0.3, 1.1));
+}
+
+test "BivariateBinomial: init with sum p0+p1+p2 > 1 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.4, 0.4, 0.3));
+}
+
+test "BivariateBinomial: init with sum exactly 1.0 succeeds" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.5);
+    try expectApproxEqAbs(1.0, dist.p0 + dist.p1 + dist.p2, 1e-12);
+}
+
+test "BivariateBinomial: init with NaN p0 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, math.nan(f64), 0.3, 0.1));
+}
+
+test "BivariateBinomial: init with Inf p0 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, math.inf(f64), 0.3, 0.1));
+}
+
+test "BivariateBinomial: init with NaN p1 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, math.nan(f64), 0.1));
+}
+
+test "BivariateBinomial: init with Inf p1 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, math.inf(f64), 0.1));
+}
+
+test "BivariateBinomial: init with NaN p2 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, 0.3, math.nan(f64)));
+}
+
+test "BivariateBinomial: init with Inf p2 returns error" {
+    try expectError(error.InvalidParameter, BivariateBinomial(f64).init(5, 0.2, 0.3, math.inf(f64)));
+}
+
+test "BivariateBinomial: init with p0=p1=p2=0 succeeds" {
+    const dist = try BivariateBinomial(f64).init(5, 0.0, 0.0, 0.0);
+    try expectApproxEqAbs(0.0, dist.p0, 1e-12);
+    try expectApproxEqAbs(0.0, dist.p1, 1e-12);
+    try expectApproxEqAbs(0.0, dist.p2, 1e-12);
+}
+
+test "BivariateBinomial: pmf(0,0) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(0, 0);
+    // Ground truth via mpmath: 0.01024
+    try expectApproxEqAbs(0.01024, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(1,1) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(1, 1);
+    // Ground truth via mpmath: 0.064
+    try expectApproxEqAbs(0.064, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(2,2) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(2, 2);
+    // Ground truth via mpmath: 0.094
+    try expectApproxEqAbs(0.094, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(3,1) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(3, 1);
+    // Ground truth via mpmath: 0.108
+    try expectApproxEqAbs(0.108, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(5,5) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(5, 5);
+    // Ground truth via mpmath: 0.00032
+    try expectApproxEqAbs(0.00032, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(0,5) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(0, 5);
+    // Ground truth via mpmath: 0.00001
+    try expectApproxEqAbs(0.00001, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(5,0) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(5, 0);
+    // Ground truth via mpmath: 0.00243
+    try expectApproxEqAbs(0.00243, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf(2,3) ground truth (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(2, 3);
+    // Ground truth via mpmath: 0.0345
+    try expectApproxEqAbs(0.0345, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: pmf returns 0 when x1 > n" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(6, 2);
+    try expectApproxEqAbs(0.0, pmf_val, 1e-12);
+}
+
+test "BivariateBinomial: pmf returns 0 when x2 > n" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(2, 6);
+    try expectApproxEqAbs(0.0, pmf_val, 1e-12);
+}
+
+test "BivariateBinomial: pmf sum over full grid ~1.0 (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    var sum: f64 = 0.0;
+    for (0..6) |x1| {
+        for (0..6) |x2| {
+            sum += dist.pmf(x1, x2);
+        }
+    }
+    try expectApproxEqAbs(1.0, sum, 1e-6);
+}
+
+test "BivariateBinomial: fully correlated case p0=1, p1=0, p2=0 gives pmf(n,n)=1" {
+    const dist = try BivariateBinomial(f64).init(5, 1.0, 0.0, 0.0);
+    const pmf_nn = dist.pmf(5, 5);
+    try expectApproxEqAbs(1.0, pmf_nn, 1e-9);
+}
+
+test "BivariateBinomial: fully correlated case pmf(x1, x2) = 0 when x1 != 5 or x2 != 5" {
+    const dist = try BivariateBinomial(f64).init(5, 1.0, 0.0, 0.0);
+    const pmf_val = dist.pmf(3, 3);
+    try expectApproxEqAbs(0.0, pmf_val, 1e-12);
+}
+
+test "BivariateBinomial: degenerate case n=0, p0=1 gives pmf(0,0)=1" {
+    const dist = try BivariateBinomial(f64).init(0, 1.0, 0.0, 0.0);
+    const pmf_val = dist.pmf(0, 0);
+    try expectApproxEqAbs(1.0, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: degenerate case n=0, p0=0 gives pmf(0,0)=1" {
+    const dist = try BivariateBinomial(f64).init(0, 0.0, 0.0, 0.0);
+    const pmf_val = dist.pmf(0, 0);
+    try expectApproxEqAbs(1.0, pmf_val, 1e-9);
+}
+
+test "BivariateBinomial: independence case p0=0 marginal X1 follows Binomial(n, p1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.0, 0.5, 0.3);
+    // Marginal pmf(x1, :) should follow Binomial(5, 0.5)
+    // Binomial(5, 0.5) pmf = [1/32, 5/32, 10/32, 10/32, 5/32, 1/32]
+    const pmf_00 = dist.pmf(0, 0) + dist.pmf(0, 1) + dist.pmf(0, 2) + dist.pmf(0, 3) + dist.pmf(0, 4) + dist.pmf(0, 5);
+    try expectApproxEqAbs(1.0 / 32.0, pmf_00, 1e-6);
+}
+
+test "BivariateBinomial: mean1 formula (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const mean_val = dist.mean1();
+    // E[X1] = n*(p0+p1) = 5*(0.2+0.3) = 2.5
+    try expectApproxEqAbs(2.5, mean_val, 1e-9);
+}
+
+test "BivariateBinomial: mean2 formula (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const mean_val = dist.mean2();
+    // E[X2] = n*(p0+p2) = 5*(0.2+0.1) = 1.5
+    try expectApproxEqAbs(1.5, mean_val, 1e-9);
+}
+
+test "BivariateBinomial: variance1 formula (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const var_val = dist.variance1();
+    // Var[X1] = n*(p0+p1)*(1-p0-p1) = 5*0.5*0.5 = 1.25
+    try expectApproxEqAbs(1.25, var_val, 1e-9);
+}
+
+test "BivariateBinomial: variance2 formula (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const var_val = dist.variance2();
+    // Var[X2] = n*(p0+p2)*(1-p0-p2) = 5*0.3*0.7 = 1.05
+    try expectApproxEqAbs(1.05, var_val, 1e-9);
+}
+
+test "BivariateBinomial: covariance formula (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const cov_val = dist.covariance();
+    // Cov = n*(p0*p3 - p1*p2) = 5*(0.2*0.4 - 0.3*0.1) = 5*(0.08 - 0.03) = 0.25
+    try expectApproxEqAbs(0.25, cov_val, 1e-9);
+}
+
+test "BivariateBinomial: correlation formula (n=5, p0=0.2, p1=0.3, p2=0.1)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const corr_val = dist.correlation();
+    // Corr = 0.25 / sqrt(1.25 * 1.05) ≈ 0.218217890235992
+    try expectApproxEqAbs(0.218217890235992, corr_val, 1e-9);
+}
+
+test "BivariateBinomial: covariance negative when p0=0 (independence case)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.0, 0.5, 0.5);
+    const cov_val = dist.covariance();
+    // Cov = n*(0*1 - 0.5*0.5) = 5*(-0.25) = -1.25
+    try expectApproxEqAbs(-1.25, cov_val, 1e-9);
+}
+
+test "BivariateBinomial: correlation=0 when both variances are 0 (p0=p1=p2=0)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.0, 0.0, 0.0);
+    const corr_val = dist.correlation();
+    // Both variances are 0, correlation should be 0 (not NaN)
+    try expectApproxEqAbs(0.0, corr_val, 1e-12);
+}
+
+test "BivariateBinomial: variance1=0 when p0+p1=0 (always x1=0)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.0, 0.0, 0.5);
+    const var_val = dist.variance1();
+    try expectApproxEqAbs(0.0, var_val, 1e-12);
+}
+
+test "BivariateBinomial: variance2=0 when p0+p2=0 (always x2=0)" {
+    const dist = try BivariateBinomial(f64).init(5, 0.0, 0.5, 0.0);
+    const var_val = dist.variance2();
+    try expectApproxEqAbs(0.0, var_val, 1e-12);
+}
+
+test "BivariateBinomial: sample returns Sample struct with x1, x2 as u64" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+
+    // Draw multiple samples and verify: (1) they are u64, (2) within bounds,
+    // (3) samples vary (proves not a stub returning constant).
+    var found_variation = false;
+    var last_x1: u64 = 0;
+    var last_x2: u64 = 0;
+    var is_first = true;
+
+    for (0..30) |_| {
+        const sample = dist.sample(rng);
+
+        // Bounds check: x1 <= n and x2 <= n, also not overflowing
+        try testing.expect(sample.x1 <= 5);
+        try testing.expect(sample.x2 <= 5);
+
+        // Track variation: do we get different (x1, x2) pairs across draws?
+        if (!is_first) {
+            if (sample.x1 != last_x1 or sample.x2 != last_x2) {
+                found_variation = true;
+            }
+        }
+        last_x1 = sample.x1;
+        last_x2 = sample.x2;
+        is_first = false;
+    }
+
+    // Verify samples vary across draws, proving it's not a stub always returning a constant
+    try testing.expect(found_variation);
+}
+
+test "BivariateBinomial: sample empirical mean1 roughly matches theoretical (1000 samples)" {
+    var prng = std.Random.DefaultPrng.init(54321);
+    const rng = prng.random();
+
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const n_samples = 1000;
+    var sum_x1: u64 = 0;
+
+    for (0..n_samples) |_| {
+        const sample = dist.sample(rng);
+        sum_x1 += sample.x1;
+    }
+
+    const empirical_mean = @as(f64, @floatFromInt(sum_x1)) / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean1();
+    // Allow 20% tolerance for statistical variation
+    const tolerance = theoretical_mean * 0.20;
+    try expectApproxEqAbs(theoretical_mean, empirical_mean, tolerance);
+}
+
+test "BivariateBinomial: sample empirical mean2 roughly matches theoretical (1000 samples)" {
+    var prng = std.Random.DefaultPrng.init(11111);
+    const rng = prng.random();
+
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    const n_samples = 1000;
+    var sum_x2: u64 = 0;
+
+    for (0..n_samples) |_| {
+        const sample = dist.sample(rng);
+        sum_x2 += sample.x2;
+    }
+
+    const empirical_mean = @as(f64, @floatFromInt(sum_x2)) / @as(f64, @floatFromInt(n_samples));
+    const theoretical_mean = dist.mean2();
+    // Allow 20% tolerance for statistical variation
+    const tolerance = theoretical_mean * 0.20;
+    try expectApproxEqAbs(theoretical_mean, empirical_mean, tolerance);
+}
+
+test "BivariateBinomial: sample degenerate case n=0 returns (0,0)" {
+    var prng = std.Random.DefaultPrng.init(99999);
+    const rng = prng.random();
+
+    const dist = try BivariateBinomial(f64).init(0, 1.0, 0.0, 0.0);
+    for (0..10) |_| {
+        const sample = dist.sample(rng);
+        try expectEqual(0, sample.x1);
+        try expectEqual(0, sample.x2);
+    }
+}
+
+test "BivariateBinomial: validate passes for valid params" {
+    const dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    try dist.validate();
+}
+
+test "BivariateBinomial: validate passes for n=0" {
+    const dist = try BivariateBinomial(f64).init(0, 1.0, 0.0, 0.0);
+    try dist.validate();
+}
+
+test "BivariateBinomial: validate fails when p0<0" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p0 = -0.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p1<0" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p1 = -0.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p2<0" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p2 = -0.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p0>1" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p0 = 1.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p1>1" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p1 = 1.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p2>1" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p2 = 1.1;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when sum p0+p1+p2 > 1" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p0 = 0.5;
+    dist.p1 = 0.4;
+    dist.p2 = 0.3;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p0 is NaN" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p0 = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: validate fails when p1 is Inf" {
+    var dist = try BivariateBinomial(f64).init(5, 0.2, 0.3, 0.1);
+    dist.p1 = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "BivariateBinomial: f32 type support init" {
+    const dist = try BivariateBinomial(f32).init(5, 0.2, 0.3, 0.1);
+    try expectEqual(5, dist.n);
+    try expectApproxEqAbs(@as(f32, 0.2), dist.p0, 1e-6);
+    try expectApproxEqAbs(@as(f32, 0.3), dist.p1, 1e-6);
+}
+
+test "BivariateBinomial: f32 type support pmf with looser tolerance" {
+    const dist = try BivariateBinomial(f32).init(5, 0.2, 0.3, 0.1);
+    const pmf_val = dist.pmf(0, 0);
+    // f32 has lower precision, use 1e-6 tolerance instead of 1e-9
+    try expectApproxEqAbs(@as(f32, 0.01024), pmf_val, 1e-6);
 }
